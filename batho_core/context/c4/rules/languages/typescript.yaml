@@ -1,0 +1,470 @@
+# TypeScript-specific C4 Generation Rules
+
+language: "typescript"
+description: "Rules for TypeScript applications including Angular, React, Node.js, and TypeScript-specific frameworks"
+file_extensions: [".ts", ".tsx"]
+
+# TypeScript-specific external system rules
+external_systems:
+  - name: "TypeScript Database Detection"
+    description: "Detect TypeScript database systems and ORMs"
+    priority: 110
+    patterns:
+      # TypeScript ORMs
+      - "typeorm"
+      - "prisma"
+      - "@prisma/client"
+      - "sequelize"
+      - "mongoose"
+      - "bookshelf"
+      - "objection"
+      - "knex"
+      # TypeScript-specific
+      - "@types/mongoose"
+      - "@types/sequelize"
+      - "@types/pg"
+      - "@types/mysql"
+    system_type: "Database"
+    actor_name: "Database"
+    actor_description: "TypeScript database system"
+
+  - name: "TypeScript Framework Detection"
+    description: "Detect TypeScript framework usage"
+    priority: 108
+    patterns:
+      # Frontend Frameworks
+      - "angular"
+      - "@angular"
+      - "react"
+      - "next"
+      - "nuxt"
+      - "svelte"
+      - "vue"
+      # Backend Frameworks
+      - "nest"
+      - "@nestjs"
+      - "express"
+      - "@types/express"
+      - "fastify"
+      - "@types/fastify"
+    system_type: "Framework"
+    actor_name: "TypeScript Framework"
+    actor_description: "TypeScript application framework"
+
+  - name: "TypeScript Testing Framework Detection"
+    description: "Detect TypeScript testing frameworks"
+    priority: 95
+    patterns:
+      # Testing Frameworks
+      - "jest"
+      - "@types/jest"
+      - "mocha"
+      - "@types/mocha"
+      - "jasmine"
+      - "@types/jasmine"
+      - "cypress"
+      - "@types/cypress"
+      # Testing Utilities
+      - "@testing-library"
+      - "ts-jest"
+      - "ts-mocha"
+    system_type: "Testing"
+    actor_name: "Test Framework"
+    actor_description: "TypeScript testing framework"
+
+  - name: "TypeScript Build Tool Detection"
+    description: "Detect TypeScript build and bundling tools"
+    priority: 100
+    patterns:
+      # TypeScript Compiler
+      - "typescript"
+      - "ts-node"
+      - "ts-node-dev"
+      - "tsdx"
+      # Build Tools
+      - "webpack"
+      - "ts-loader"
+      - "awesome-typescript-loader"
+      - "rollup"
+      - "@rollup/plugin-typescript"
+      - "vite"
+      - "@vitejs/plugin-vue"
+      # Package Managers
+      - "npm"
+      - "yarn"
+      - "pnpm"
+    system_type: "BuildTool"
+    actor_name: "Build Tool"
+    actor_description: "TypeScript build and bundling tool"
+
+  - name: "TypeScript Decorator Detection"
+    description: "Detect TypeScript decorator libraries"
+    priority: 90
+    patterns:
+      # Decorator Libraries
+      - "reflect-metadata"
+      - "class-transformer"
+      - "class-validator"
+      - "type-graphql"
+      - "@nestjs/common"
+      - "inversify"
+      - "typedi"
+    system_type: "DecoratorFramework"
+    actor_name: "Decorator Framework"
+    actor_description: "TypeScript decorator framework"
+
+  - name: "TypeScript API Detection"
+    description: "Detect TypeScript API frameworks"
+    priority: 103
+    patterns:
+      # API Frameworks
+      - "@nestjs/common"
+      - "@nestjs/swagger"
+      - "swagger-ui-express"
+      - "@types/swagger-ui-express"
+      - "apollo-server"
+      - "@apollo/server"
+      - "type-graphql"
+      - "graphql"
+      - "@types/graphql"
+    system_type: "APIFramework"
+    actor_name: "API Framework"
+    actor_description: "TypeScript API framework"
+
+# TypeScript-specific container rules
+containers:
+  - name: "TypeScript NestJS Application"
+    description: "Detect NestJS application containers"
+    priority: 110
+    framework_patterns:
+      - "NestJS"
+      - "@nestjs"
+      - "nest"
+    directory_patterns:
+      - "src"
+      - "app"
+    file_patterns:
+      - "main.ts"
+      - "app.module.ts"
+      - "tsconfig.json"
+      - "nest-cli.json"
+      - "package.json"
+    container_type: "Web Application"
+    container_name: "NestJS App"
+    technology: ["TypeScript", "NestJS", "Decorators"]
+
+  - name: "TypeScript Angular Application"
+    description: "Detect Angular application containers"
+    priority: 108
+    framework_patterns:
+      - "Angular"
+      - "@angular"
+    directory_patterns:
+      - "src"
+      - "src/app"
+      - "src/components"
+      - "src/services"
+    file_patterns:
+      - "angular.json"
+      - "tsconfig.json"
+      - "package.json"
+      - "src/main.ts"
+      - "src/app/app.module.ts"
+    container_type: "Web Application"
+    container_name: "Angular App"
+    technology: ["TypeScript", "Angular", "RxJS"]
+
+  - name: "TypeScript React Application"
+    description: "Detect React TypeScript application containers"
+    priority: 105
+    framework_patterns:
+      - "React"
+      - "react"
+      - "next"
+      - "@types/react"
+    directory_patterns:
+      - "src"
+      - "src/components"
+      - "src/pages"
+      - "src/hooks"
+    file_patterns:
+      - "tsconfig.json"
+      - "package.json"
+      - "next.config.js"
+      - "src/App.tsx"
+      - "src/index.tsx"
+    container_type: "Web Application"
+    container_name: "React TS App"
+    technology: ["TypeScript", "React", "JSX"]
+
+  - name: "TypeScript Node.js API"
+    description: "Detect TypeScript Node.js API containers"
+    priority: 106
+    framework_patterns:
+      - "Express"
+      - "Fastify"
+      - "Koa"
+      - "@types/express"
+      - "@types/fastify"
+    directory_patterns:
+      - "src"
+      - "src/controllers"
+      - "src/services"
+      - "src/routes"
+    file_patterns:
+      - "tsconfig.json"
+      - "package.json"
+      - "src/server.ts"
+      - "src/app.ts"
+    container_type: "API Service"
+    container_name: "TypeScript API"
+    technology: ["TypeScript", "Node.js", "REST"]
+
+  - name: "TypeScript Vue Application"
+    description: "Detect Vue TypeScript application containers"
+    priority: 102
+    framework_patterns:
+      - "Vue"
+      - "vue"
+      - "nuxt"
+      - "@vue/runtime-core"
+    directory_patterns:
+      - "src"
+      - "src/components"
+      - "src/views"
+      - "src/store"
+    file_patterns:
+      - "tsconfig.json"
+      - "package.json"
+      - "vue.config.js"
+      - "nuxt.config.ts"
+      - "src/main.ts"
+    container_type: "Web Application"
+    container_name: "Vue TS App"
+    technology: ["TypeScript", "Vue", "Vuex"]
+
+  - name: "TypeScript GraphQL Service"
+    description: "Detect TypeScript GraphQL service containers"
+    priority: 100
+    framework_patterns:
+      - "Apollo"
+      - "apollo-server"
+      - "type-graphql"
+      - "@apollo/server"
+    directory_patterns:
+      - "src"
+      - "src/schema"
+      - "src/resolvers"
+    file_patterns:
+      - "schema.graphql"
+      - "schema.ts"
+      - "resolvers.ts"
+    container_type: "GraphQL Service"
+    container_name: "GraphQL Service"
+    technology: ["TypeScript", "GraphQL", "Apollo"]
+
+# TypeScript-specific component rules
+components:
+  - name: "TypeScript NestJS Components"
+    description: "Identify NestJS-specific components"
+    priority: 110
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.5
+    max_per_file: 5
+    component_type: "NestJS Component"
+    name_patterns:
+      - "*Controller"
+      - "*Service"
+      - "*Module"
+      - "*Guard"
+      - "*Interceptor"
+      - "*Filter"
+      - "*Pipe"
+      - "*Resolver"
+    file_patterns:
+      - "*.controller.ts"
+      - "*.service.ts"
+      - "*.module.ts"
+      - "*.guard.ts"
+      - "*.interceptor.ts"
+
+  - name: "TypeScript Angular Components"
+    description: "Identify Angular-specific components"
+    priority: 108
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.5
+    max_per_file: 5
+    component_type: "Angular Component"
+    name_patterns:
+      - "*Component"
+      - "*Service"
+      - "*Module"
+      - "*Directive"
+      - "*Pipe"
+      - "*Guard"
+      - "*Interceptor"
+      - "*Resolver"
+    file_patterns:
+      - "*.component.ts"
+      - "*.service.ts"
+      - "*.module.ts"
+      - "*.directive.ts"
+      - "*.pipe.ts"
+
+  - name: "TypeScript React Components"
+    description: "Identify React TypeScript components"
+    priority: 105
+    entity_types: ["function", "class"]
+    importance_threshold: 0.5
+    max_per_file: 5
+    component_type: "React Component"
+    name_patterns:
+      - "*Component"
+      - "*Container"
+      - "*Page"
+      - "*View"
+      - "*Hook"
+    file_patterns:
+      - "*.tsx"
+      - "components/"
+      - "hooks/"
+      - "pages/"
+      - "views/"
+
+  - name: "TypeScript Entity Components"
+    description: "Identify TypeScript entity/model components"
+    priority: 100
+    entity_types: ["class", "interface", "type"]
+    importance_threshold: 0.4
+    max_per_file: 10
+    component_type: "Entity"
+    name_patterns:
+      - "*Entity"
+      - "*Model"
+      - "*DTO"
+      - "*VO"
+      - "*Type"
+      - "*Interface"
+    file_patterns:
+      - "entity/"
+      - "entities/"
+      - "model/"
+      - "models/"
+      - "dto/"
+      - "types/"
+
+  - name: "TypeScript Service Components"
+    description: "Identify TypeScript service components"
+    priority: 98
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.5
+    max_per_file: 3
+    component_type: "Service"
+    name_patterns:
+      - "*Service"
+      - "*ServiceImpl"
+      - "*Provider"
+      - "*Manager"
+      - "*Business"
+    file_patterns:
+      - "service/"
+      - "services/"
+      - "provider/"
+      - "business/"
+
+  - name: "TypeScript Repository Components"
+    description: "Identify TypeScript repository components"
+    priority: 102
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.4
+    max_per_file: 5
+    component_type: "Repository"
+    name_patterns:
+      - "*Repository"
+      - "*Repo"
+      - "*DAO"
+      - "*Store"
+      - "*Persistence"
+    file_patterns:
+      - "repository/"
+      - "repositories/"
+      - "dao/"
+      - "storage/"
+
+  - name: "TypeScript Type Definitions"
+    description: "Identify TypeScript type definition components"
+    priority: 90
+    entity_types: ["type", "interface"]
+    importance_threshold: 0.3
+    max_per_file: 10
+    component_type: "Type Definition"
+    name_patterns:
+      - "*Type"
+      - "*Types"
+      - "*Interface"
+      - "*Schema"
+      - "*Config"
+    file_patterns:
+      - "types/"
+      - "interfaces/"
+      - "schemas/"
+      - "*.d.ts"
+
+  - name: "TypeScript Utility Components"
+    description: "Identify TypeScript utility components"
+    priority: 85
+    entity_types: ["function", "class"]
+    importance_threshold: 0.3
+    max_per_file: 3
+    component_type: "Utility"
+    name_patterns:
+      - "*Util"
+      - "*Utils"
+      - "*Helper"
+      - "*Tool"
+      - "*Common"
+    file_patterns:
+      - "util/"
+      - "utils/"
+      - "helper/"
+      - "tools/"
+      - "common/"
+
+  - name: "TypeScript Config Components"
+    description: "Identify TypeScript configuration components"
+    priority: 88
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.3
+    max_per_file: 2
+    component_type: "Configuration"
+    name_patterns:
+      - "*Config"
+      - "*Configuration"
+      - "*Settings"
+      - "*Options"
+      - "*Params"
+    file_patterns:
+      - "config/"
+      - "conf/"
+      - "settings/"
+      - "config.ts"
+
+  - name: "TypeScript GraphQL Components"
+    description: "Identify GraphQL components"
+    priority: 95
+    entity_types: ["class", "interface", "function"]
+    importance_threshold: 0.5
+    max_per_file: 5
+    component_type: "GraphQL Component"
+    name_patterns:
+      - "*Resolver"
+      - "*Mutation"
+      - "*Query"
+      - "*Subscription"
+      - "*Type"
+      - "*Schema"
+    file_patterns:
+      - "resolver/"
+      - "resolvers/"
+      - "schema/"
+      - "graphql/"

@@ -1,0 +1,48 @@
+{
+  "index_id": "batho_2616673518064b2ab9cb0d49ff9dc854_20260325T150554Z",
+  "timestamp": "2026-03-25T15:05:54.194192+00:00",
+  "root": "/private/var/folders/vq/s2ys6fm135j3fn4p4zz56btc0000gn/T/pytest-of-rishirajsharma/pytest-22/test_performance_benchmarks_an0/flask_benchmark",
+  "stats": {
+    "files_candidates": 31,
+    "files_parsed": 31,
+    "files_skipped": 0,
+    "files_cached": 31,
+    "errors": 0,
+    "entity_count": 696,
+    "relationship_count": 869,
+    "elapsed_seconds": 0.2199997901916504,
+    "cache_valid": true,
+    "workers_used": 4,
+    "loc_total": 26751,
+    "repo_size_bytes": 1254778,
+    "file_count_total": 137,
+    "text_files_count": 137,
+    "skipped_files_count": 0
+  },
+  "stack": {
+    "languages": [
+      "Python 3.8"
+    ],
+    "frameworks": [
+      "Click",
+      "Jinja2",
+      "python-dotenv"
+    ],
+    "build_tools": [
+      "Flit"
+    ],
+    "package_managers": [
+      "poetry/pdm/setuptools"
+    ],
+    "infra": []
+  },
+  "metrics": {
+    "file_count_total": 137,
+    "repo_size_bytes": 1254778,
+    "loc_total": 26751,
+    "text_files_count": 137,
+    "skipped_files_count": 0,
+    "token_input_estimate": 11189,
+    "cache_hit_rate": 1.0
+  }
+}

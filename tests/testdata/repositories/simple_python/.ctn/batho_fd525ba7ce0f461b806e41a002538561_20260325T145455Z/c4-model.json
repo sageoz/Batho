@@ -1,0 +1,356 @@
+{
+  "name": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python",
+  "description": "C4 model generated from .ctn artifacts",
+  "version": "1.0.0",
+  "revision": "2026-03-25T14:54:55.680179+00:00",
+  "model": {
+    "people": [],
+    "softwareSystems": [
+      {
+        "id": "system",
+        "name": "simple_python",
+        "description": "Command-line tool: simple_python",
+        "tags": [
+          "System",
+          "Software System"
+        ],
+        "properties": {
+          "language": "Python 3.10",
+          "frameworks": [
+            "Click",
+            "Pydantic",
+            "Requests"
+          ],
+          "buildTool": "Setuptools",
+          "entityCount": 15,
+          "relationshipCount": 7
+        },
+        "url": "",
+        "location": "Unspecified"
+      }
+    ],
+    "containers": [
+      {
+        "id": "container-1",
+        "name": "Python Web App",
+        "description": "Web Application container",
+        "tags": [
+          "Container",
+          "ASGI",
+          "Python",
+          "WebApplication",
+          "WSGI"
+        ],
+        "properties": {
+          "rule": "Python Web Application Container",
+          "framework_match": false,
+          "directory_match": true,
+          "file_match": false,
+          "matched_frameworks": [],
+          "matched_directories": [
+            "src"
+          ],
+          "confidence": 1.0,
+          "language": "python"
+        },
+        "url": "",
+        "technology": [
+          "Python",
+          "WSGI",
+          "ASGI"
+        ],
+        "configuration": {},
+        "systemId": "system"
+      },
+      {
+        "id": "container-2",
+        "name": "Python CLI",
+        "description": "CLI Application container",
+        "tags": [
+          "Python",
+          "Container",
+          "CLIApplication",
+          "CommandLine"
+        ],
+        "properties": {
+          "rule": "Python CLI Tool Container",
+          "framework_match": true,
+          "directory_match": false,
+          "file_match": false,
+          "matched_frameworks": [
+            "Click"
+          ],
+          "matched_directories": [],
+          "confidence": 1.0,
+          "language": "python"
+        },
+        "url": "",
+        "technology": [
+          "Python",
+          "Command Line"
+        ],
+        "configuration": {},
+        "systemId": "system"
+      },
+      {
+        "id": "container-3",
+        "name": "CLI Tool",
+        "description": "CLI Application container",
+        "tags": [
+          "Container",
+          "Terminal",
+          "CLIApplication",
+          "CommandLine"
+        ],
+        "properties": {
+          "rule": "CLI Tool Container",
+          "framework_match": true,
+          "directory_match": false,
+          "file_match": false,
+          "matched_frameworks": [
+            "Click"
+          ],
+          "matched_directories": [],
+          "confidence": 1.0,
+          "language": "python"
+        },
+        "url": "",
+        "technology": [
+          "Command Line",
+          "Terminal"
+        ],
+        "configuration": {},
+        "systemId": "system"
+      },
+      {
+        "id": "container-4",
+        "name": "Test Suite",
+        "description": "Test Suite container",
+        "tags": [
+          "Container",
+          "Automation",
+          "Testing",
+          "TestSuite",
+          "TDD"
+        ],
+        "properties": {
+          "rule": "Test Suite Container",
+          "framework_match": false,
+          "directory_match": true,
+          "file_match": false,
+          "matched_frameworks": [],
+          "matched_directories": [
+            "tests"
+          ],
+          "confidence": 1.0,
+          "language": "python"
+        },
+        "url": "",
+        "technology": [
+          "Testing",
+          "Automation",
+          "TDD"
+        ],
+        "configuration": {},
+        "systemId": "system"
+      }
+    ],
+    "components": []
+  },
+  "views": {
+    "systemLandscapeViews": [],
+    "systemContextViews": [],
+    "containerViews": [
+      {
+        "key": "containers",
+        "description": "Container diagram showing the high-level technology building blocks",
+        "title": "Container View",
+        "softwareSystemId": "system",
+        "viewType": "Container",
+        "elements": [
+          {
+            "id": "container-1",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "id": "container-2",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "id": "container-3",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "id": "container-4",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "relationships": [],
+        "animations": [],
+        "paperSize": "A4",
+        "automaticLayout": true
+      }
+    ],
+    "componentViews": [],
+    "dynamicViews": [],
+    "deploymentViews": [],
+    "filteredViews": []
+  },
+  "documentation": {
+    "sections": [
+      {
+        "id": "llm-business-capabilities",
+        "title": "LLM: Business Capabilities",
+        "content": "# Business Capabilities\n\n- Configuration\n- Testing\n- User Management\n- File Management",
+        "format": "Markdown",
+        "order": 1000
+      }
+    ],
+    "decisions": [],
+    "images": []
+  },
+  "configuration": {
+    "branding": {},
+    "styles": {
+      "elements": [
+        {
+          "tag": "Person",
+          "shape": "Person",
+          "icon": "assets/images/person.png",
+          "color": "#ffffff",
+          "stroke": "#9A9A9A",
+          "fontSize": 24,
+          "metadata": false,
+          "description": false
+        },
+        {
+          "tag": "Software System",
+          "shape": "Box",
+          "icon": "assets/images/software-system.png",
+          "color": "#438DD5",
+          "stroke": "#2E5C8A",
+          "fontSize": 24,
+          "metadata": false,
+          "description": false
+        },
+        {
+          "tag": "Container",
+          "shape": "Box",
+          "icon": "assets/images/container.png",
+          "color": "#85BBEF",
+          "stroke": "#4A86A8",
+          "fontSize": 20,
+          "metadata": false,
+          "description": false
+        },
+        {
+          "tag": "Component",
+          "shape": "Box",
+          "icon": "assets/images/component.png",
+          "color": "#B4B4B4",
+          "stroke": "#666666",
+          "fontSize": 16,
+          "metadata": false,
+          "description": false
+        },
+        {
+          "tag": "WebApplication",
+          "shape": "Box",
+          "color": "#08427B",
+          "stroke": "#053061",
+          "fontSize": 20
+        },
+        {
+          "tag": "Database",
+          "shape": "Cylinder",
+          "color": "#08427B",
+          "stroke": "#053061",
+          "fontSize": 20
+        },
+        {
+          "tag": "API Service",
+          "shape": "Box",
+          "color": "#999999",
+          "stroke": "#666666",
+          "fontSize": 20
+        }
+      ],
+      "relationships": [
+        {
+          "tag": "Relationship",
+          "routing": "Direct",
+          "fontSize": 12,
+          "width": 1,
+          "dashed": false,
+          "color": "#707070",
+          "position": 50
+        },
+        {
+          "tag": "Async",
+          "routing": "Direct",
+          "fontSize": 12,
+          "width": 2,
+          "dashed": true,
+          "color": "#707070",
+          "position": 50
+        }
+      ]
+    },
+    "themes": {}
+  },
+  "properties": {
+    "llm_extensions": {
+      "entity_summaries": [],
+      "interaction_patterns": [],
+      "data_flow": [],
+      "key_algorithms": [],
+      "extension_points": [],
+      "complexity_metrics": {
+        "entity_types": {
+          "FUNCTION": 9,
+          "METHOD": 3,
+          "CLASS": 1,
+          "DOCUMENT": 1,
+          "ELEMENT": 1
+        },
+        "relationship_types": {
+          "CONTAINS": 4,
+          "IMPORTS": 3
+        },
+        "files_with_most_entities": [
+          {
+            "file": "calculator.py",
+            "count": 8
+          },
+          {
+            "file": "test_calculator.py",
+            "count": 3
+          },
+          {
+            "file": "README.md",
+            "count": 2
+          },
+          {
+            "file": "utils.py",
+            "count": 2
+          }
+        ],
+        "average_entities_per_file": 3.75,
+        "relationship_density": 0.4666666666666667
+      },
+      "business_capabilities": [
+        "Configuration",
+        "Testing",
+        "User Management",
+        "File Management"
+      ],
+      "tech_debt_indicators": []
+    },
+    "generated_by": "batho-c4",
+    "schema_version": "c4-extensions-v1"
+  }
+}

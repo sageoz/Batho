@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sample XML document for testing language detection -->
+
+<root>
+    <!-- Document metadata -->
+    <metadata>
+        <title>Sample XML Document</title>
+        <author>Test Author</author>
+        <created>2023-01-01T00:00:00Z</created>
+        <version>1.0</version>
+        <description>This is a sample XML document for testing language detection and parsing.</description>
+    </metadata>
+    
+    <!-- Configuration section -->
+    <configuration>
+        <app name="SampleApplication" version="1.0.0">
+            <settings>
+                <setting name="debug" value="true" type="boolean"/>
+                <setting name="port" value="8080" type="integer"/>
+                <setting name="timeout" value="30" type="integer"/>
+                <setting name="log_level" value="INFO" type="string"/>
+            </settings>
+        </app>
+        
+        <database>
+            <connection>
+                <host>localhost</host>
+                <port>5432</port>
+                <name>sample_db</name>
+                <user>admin</user>
+                <password secret="true">secret</password>
+            </connection>
+            <options>
+                <ssl_enabled>true</ssl_enabled>
+                <pool_size>10</pool_size>
+                <timeout>5000</timeout>
+            </options>
+        </database>
+    </configuration>
+    
+    <!-- Data section with various data types -->
+    <data>
+        <users>
+            <user id="1" active="true">
+                <profile>
+                    <name>John Doe</name>
+                    <email>john.doe@example.com</email>
+                    <age>30</age>
+                    <birthdate>1993-05-15</birthdate>
+                    <address>
+                        <street>123 Main St</street>
+                        <city>New York</city>
+                        <state>NY</state>
+                        <zip>10001</zip>
+                        <country>USA</country>
+                    </address>
+                </profile>
+                <preferences>
+                    <theme>dark</theme>
+                    <language>en</language>
+                    <timezone>America/New_York</timezone>
+                    <notifications>
+                        <email>true</email>
+                        <sms>false</sms>
+                        <push>true</push>
+                    </notifications>
+                </preferences>
+                <roles>
+                    <role>user</role>
+                    <role>admin</role>
+                </roles>
+            </user>
+            
+            <user id="2" active="false">
+                <profile>
+                    <name>Jane Smith</name>
+                    <email>jane.smith@example.com</email>
+                    <age>25</age>
+                    <birthdate>1998-08-22</birthdate>
+                    <address>
+                        <street>456 Oak Ave</street>
+                        <city>Los Angeles</city>
+                        <state>CA</state>
+                        <zip>90001</zip>
+                        <country>USA</country>
+                    </address>
+                </profile>
+                <preferences>
+                    <theme>light</theme>
+                    <language>en</language>
+                    <timezone>America/Los_Angeles</timezone>
+                    <notifications>
+                        <email>false</email>
+                        <sms>true</sms>
+                        <push>false</push>
+                    </notifications>
+                </preferences>
+                <roles>
+                    <role>user</role>
+                </roles>
+            </user>
+        </users>
+        
+        <products>
+            <product id="prod1" category="electronics">
+                <name>Smartphone</name>
+                <description>A modern smartphone with advanced features</description>
+                <price currency="USD">699.99</price>
+                <specifications>
+                    <screen size="6.1" type="OLED"/>
+                    <storage capacity="128" unit="GB"/>
+                    <ram capacity="6" unit="GB"/>
+                    <camera resolution="12" unit="MP"/>
+                    <battery capacity="3000" unit="mAh"/>
+                </specifications>
+                <availability>
+                    <in_stock>true</in_stock>
+                    <quantity>150</quantity>
+                    <locations>
+                        <location warehouse="NYC" quantity="100"/>
+                        <location warehouse="LAX" quantity="50"/>
+                    </locations>
+                </availability>
+                <tags>
+                    <tag>smartphone</tag>
+                    <tag>mobile</tag>
+                    <tag>electronics</tag>
+                </tags>
+            </product>
+            
+            <product id="prod2" category="books">
+                <name>Programming Guide</name>
+                <description>A comprehensive guide to modern programming</description>
+                <price currency="USD">39.99</price>
+                <details>
+                    <author>John Programmer</author>
+                    <publisher>Tech Books Publishing</publisher>
+                    <pages>450</pages>
+                    <language>en</language>
+                    <isbn>978-0123456789</isbn>
+                    <format>paperback</format>
+                </details>
+                <categories>
+                    <category>Programming</category>
+                    <category>Technology</category>
+                    <category>Education</category>
+                </categories>
+            </product>
+        </products>
+        
+        <orders>
+            <order id="order1" date="2023-01-15T10:30:00Z" status="completed">
+                <customer user_id="1"/>
+                <items>
+                    <item product_id="prod1" quantity="1" price="699.99"/>
+                    <item product_id="prod2" quantity="2" price="39.99"/>
+                </items>
+                <payment>
+                    <method>credit_card</method>
+                    <amount>779.97</amount>
+                    <currency>USD</currency>
+                    <transaction_id>txn_123456789</transaction_id>
+                </payment>
+                <shipping>
+                    <method>express</method>
+                    <address>
+                        <street>123 Main St</street>
+                        <city>New York</city>
+                        <state>NY</state>
+                        <zip>10001</zip>
+                        <country>USA</country>
+                    </address>
+                    <tracking>1Z999AA1234567890</tracking>
+                </shipping>
+            </order>
+        </orders>
+    </data>
+    
+    <!-- Complex nested structure -->
+    <reports>
+        <sales_report period="2023-01">
+            <summary>
+                <total_revenue currency="USD">15456.78</total_revenue>
+                <total_orders>23</total_orders>
+                <total_customers>18</total_customers>
+                <average_order_value currency="USD">671.60</average_order_value>
+            </summary>
+            
+            <breakdown by="category">
+                <category name="electronics">
+                    <revenue>12567.89</revenue>
+                    <orders>15</orders>
+                    <items>18</items>
+                </category>
+                <category name="books">
+                    <revenue>2888.89</revenue>
+                    <orders>8</orders>
+                    <items>16</items>
+                </category>
+            </breakdown>
+            
+            <breakdown by="region">
+                <region name="Northeast">
+                    <revenue>8234.56</revenue>
+                    <orders>12</orders>
+                    <customers>9</customers>
+                </region>
+                <region name="West">
+                    <revenue>7222.22</revenue>
+                    <orders>11</orders>
+                    <customers>9</customers>
+                </region>
+            </breakdown>
+        </sales_report>
+    </reports>
+    
+    <!-- Comments and processing instructions -->
+    <!-- This document demonstrates various XML features including:
+         - Elements and attributes
+         - Nested structures
+         - Different data types
+         - Comments
+         - CDATA sections
+         - Processing instructions
+    -->
+    
+    <example_data>
+        <!-- CDATA example -->
+        <code_example><![CDATA[
+function helloWorld() {
+    console.log("Hello, World!");
+    return true;
+}
+        ]]></code_example>
+        
+        <!-- Mixed content -->
+        <description>
+            This is a paragraph with <emphasis>emphasized text</emphasis> and 
+            <code>inline code</code> elements.
+        </description>
+        
+        <!-- Empty elements -->
+        <empty_element/>
+        <empty_element_with_attrs attr1="value1" attr2="value2"/>
+    </example_data>
+</root>

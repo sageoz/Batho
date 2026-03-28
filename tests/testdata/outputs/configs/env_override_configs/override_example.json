@@ -1,0 +1,34 @@
+{
+  "logging": {
+    "level": "INFO",
+    "json_format": null
+  },
+  "paths": {
+    "ctn_dir": ".ctn"
+  },
+  "indexer": {
+    "max_file_size_kb": 500,
+    "max_indexed_files": 200000,
+    "max_workers": 0,
+    "max_files": null,
+    "fail_on_warning": false,
+    "strict": false
+  },
+  "flags": {
+    "fail_on_warning": false,
+    "strict": false
+  },
+  "_note": "Environment variables that can override these settings:",
+  "_env_overrides": {
+    "BATHO_LOG_LEVEL": "Overrides logging.level",
+    "BATHO_JSON_LOGS": "Overrides logging.json_format (true/false)",
+    "BATHO_CTN_DIR": "Overrides paths.ctn_dir",
+    "BATHO_MAX_FILE_SIZE_KB": "Overrides indexer.max_file_size_kb",
+    "BATHO_MAX_INDEXED_FILES": "Overrides indexer.max_indexed_files",
+    "BATHO_MAX_WORKERS": "Overrides indexer.max_workers",
+    "BATHO_MAX_FILES": "Overrides indexer.max_files",
+    "BATHO_FAIL_ON_WARNING": "Overrides indexer.fail_on_warning and flags.fail_on_warning",
+    "BATHO_STRICT": "Overrides indexer.strict and flags.strict",
+    "BATHO_CONFIG_FILE": "Path to config file that overrides all defaults"
+  }
+}

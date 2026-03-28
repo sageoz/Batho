@@ -1,0 +1,834 @@
+{
+  "schema_version": "file-cache.v1",
+  "files": {
+    "batho_core/.github/workflows/ci.yml": {
+      "mtime": 1774368765.738943,
+      "sha256": "932fbe6000c8aa6db2f3aca4268b66127904897ee55659b8f4ceda2b096fb740"
+    },
+    "batho_core/config.py": {
+      "mtime": 1774443306.0034955,
+      "sha256": "946435302958f46621d210b52e085237f906bd7d9dd2bda4483057b2dd2ff3d8"
+    },
+    "README.md": {
+      "mtime": 1774370777.3884838,
+      "sha256": "da10c48cc31a3629dcc85ea4898ba89238fa9aa47245c01704b0f39a6914f99c"
+    },
+    "Brownfield-Core-Engine-PDD.docx.md": {
+      "mtime": 1774179273.4609482,
+      "sha256": "5aa19a007e706f753e2cee67cce4051fae984fb3b2f029c002fdc47fe4c6fbd2"
+    },
+    "batho.py": {
+      "mtime": 1774446208.336195,
+      "sha256": "24185337bb54f8b1f3003392ddc84b909f7ea02aebc16d49303359e55b5b8cbd"
+    },
+    "batho_core/context/__init__.py": {
+      "mtime": 1774443306.009249,
+      "sha256": "462da38e22760a4d27f92a5f81a0651b2e6d74bfa69259d5acaed12fbb3efe57"
+    },
+    "batho_core/context/codegraph.py": {
+      "mtime": 1774443306.0083292,
+      "sha256": "7866615a328da2842a49eb1014c1464e747ab11c12045dfef24ce8f263020b8a"
+    },
+    "batho_core/context/languages/__init__.py": {
+      "mtime": 1774443306.0297577,
+      "sha256": "ebcda0b174ceafe011ebc26e30ebe32723b4a08ae39af04ec92f53fd96cc7284"
+    },
+    "batho_core/context/languages/bash.py": {
+      "mtime": 1774155995.2281141,
+      "sha256": "7ff5de2614cec2e86497f28eb68b0f2eeda581b6b6672a391807db54cb636dd6"
+    },
+    "batho_core/context/languages/_common.py": {
+      "mtime": 1774443302.938793,
+      "sha256": "5861e35e8b9bbddecb9fc60c59536b58f02d84bf8f1b384a73f1231e5635eca4"
+    },
+    "batho_core/context/extractor.py": {
+      "mtime": 1774443315.5982509,
+      "sha256": "30ec29f989459a32c27de5208fe82a20e295a181fb019bc00ffe2dbfa29f7c61"
+    },
+    "batho_core/context/languages/css.py": {
+      "mtime": 1774443306.0336683,
+      "sha256": "5662a31d1f74db8594eb9fe9af41bd25e13bdc20c1738e52b96114c93bd86c01"
+    },
+    "batho_core/context/languages/c.py": {
+      "mtime": 1774155995.2291253,
+      "sha256": "7a369a6c120ed46d483b9a2be7eccf832afdf18848fe596908cf7ba3c3613069"
+    },
+    "batho_core/context/categorizer.py": {
+      "mtime": 1774443302.9545379,
+      "sha256": "4017bf9efc9b0f6fa8e8502608d2c151b167d2ce1b4bc6c11e738302373cc1bb"
+    },
+    "batho_core/context/languages/cpp.py": {
+      "mtime": 1774155995.2297685,
+      "sha256": "d88bc5de9c54eff45f0bfa4fd9f621dd0325fe1e95341e7541ef063a820f61d6"
+    },
+    "batho_core/context/languages/dart.py": {
+      "mtime": 1774155995.2320936,
+      "sha256": "3c42fe8d9cec70da1851acb26cf21f7bebc0c365c4d5291abdb670f60cc89639"
+    },
+    "batho_core/context/languages/factory.py": {
+      "mtime": 1774443302.946497,
+      "sha256": "e6114a3ef27144672c13f698a4830e77c7e5f7cbef23ecd851767fecc6c457df"
+    },
+    "batho_core/context/languages/go.py": {
+      "mtime": 1774155995.2350476,
+      "sha256": "9b607880a4d2bf607dd5d76b037ec4316f69edc5055540a471469afb383a2674"
+    },
+    "batho_core/context/languages/hack.py": {
+      "mtime": 1774155995.2355256,
+      "sha256": "a13a9893541374d2d75fd8c25ef6c3f6383182821fc031296fdb15f1c4c4a36b"
+    },
+    "batho_core/context/languages/detector.py": {
+      "mtime": 1774443321.8529642,
+      "sha256": "4d0b2f8695bd8c6575bd941c4e44ba4ab9247a15f2cf604f51a8dd4ebbd48f8b"
+    },
+    "batho_core/context/languages/csharp.py": {
+      "mtime": 1774155995.230563,
+      "sha256": "e0723f91c527cee505edaa2e3e78e463001e4c2f67daa82bba55a7dafa2c9471"
+    },
+    "batho_core/context/languages/haskell.py": {
+      "mtime": 1774155995.2362187,
+      "sha256": "d2b0805bab4ecb772edbf2981aacb3bf26f9a69aba153a1043f15b2d0545a21e"
+    },
+    "batho_core/context/languages/erlang.py": {
+      "mtime": 1774155995.2333226,
+      "sha256": "f381a9183b6e93d7e7b63aff08381456a0c6a96baa5cf98f66a1b0570ffb70af"
+    },
+    "batho_core/context/languages/javascript.py": {
+      "mtime": 1774155995.2383077,
+      "sha256": "d6dacf0174b456a90566a195d57caac7b4f12cf15908e66bbb5bd3e297a2c3a3"
+    },
+    "batho_core/context/languages/html.py": {
+      "mtime": 1774443306.027534,
+      "sha256": "0fab8eb53e672b07cddf3fe97c8e87b52408f120352d9d1f819ea649e6cbcdc2"
+    },
+    "batho_core/context/languages/julia.py": {
+      "mtime": 1774155995.2393737,
+      "sha256": "31eac7521072e67681ce76bf007ea253a89e32ab853bd3add20e7fa7409cc0e5"
+    },
+    "batho_core/context/languages/hcl.py": {
+      "mtime": 1774443427.4313295,
+      "sha256": "2dccb32b9ec83c4bd1296aff676a060908b5d10ca0c42b8d1c06347cf1d92e26"
+    },
+    "batho_core/context/languages/json.py": {
+      "mtime": 1774443306.043137,
+      "sha256": "4235cf5e92ce7d740a9b7b03ad30a53dde9afbf80c24fae241f3b25e49e76598"
+    },
+    "batho_core/context/languages/java.py": {
+      "mtime": 1774155995.2376425,
+      "sha256": "41db39faa8d3c91d2d426959950a818355580d3924818a8b14d855ad502564f2"
+    },
+    "batho_core/context/languages/kotlin.py": {
+      "mtime": 1774155995.2398753,
+      "sha256": "8df797023e6d9641b70b84ae267c4364635d3386eca51c7f87ae80538b30c7e5"
+    },
+    "batho_core/context/languages/php.py": {
+      "mtime": 1774155995.2435005,
+      "sha256": "f1b4dd53a0b2014f77434f2fbd3d5f35df7e9815d395adbf728904cde4b44b30"
+    },
+    "batho_core/context/languages/ocaml.py": {
+      "mtime": 1774155995.241939,
+      "sha256": "6ce7820983483d1c8f522ba398da9e335fc7dc5153dcbcc677087bae7edee98e"
+    },
+    "batho_core/context/languages/perl.py": {
+      "mtime": 1774155995.2427888,
+      "sha256": "f925aec9263a378ed43e0683be15b8cd3b0ce5e430af041bcf37c83e2e88a18b"
+    },
+    "batho_core/context/languages/r.py": {
+      "mtime": 1774155995.2443721,
+      "sha256": "62d71e50f11cc2e16e0e784b5daabbe1824966e2cadd190a24ea9b32769f596d"
+    },
+    "batho_core/context/languages/python.py": {
+      "mtime": 1774155995.243958,
+      "sha256": "0072c990ffc23f7ad3c44cc77d20c0384e8586fcc0e4e0dbe76c2c496cd364ab"
+    },
+    "batho_core/context/languages/lua.py": {
+      "mtime": 1774155995.2403152,
+      "sha256": "b77f07e4f7b9b7c04ec665c298a1bc20040bd3615c8b8d335ce23103545deaba"
+    },
+    "batho_core/context/languages/markdown.py": {
+      "mtime": 1774443306.0365694,
+      "sha256": "5c94f5a3cdc9f2ad28bc8c5604d9fe8e656f3cce043c928208b449a4800a1f3c"
+    },
+    "batho_core/context/languages/ruby.py": {
+      "mtime": 1774155995.2456539,
+      "sha256": "fa9feef0e5757914e7a67d0b896d8be9f37feb5c2af40e61fbf46ddaec7b9d53"
+    },
+    "batho_core/context/languages/toml.py": {
+      "mtime": 1774443306.0443537,
+      "sha256": "270ad0239c723da279815200984efe555ed54bbf7dedf306caa9bea9c5cb73e0"
+    },
+    "batho_core/context/languages/registry.py": {
+      "mtime": 1774443306.0251923,
+      "sha256": "9965e8918a20fc3842029c829d56d9186b3a1f9fc900b118315dbfb70457d159"
+    },
+    "batho_core/context/languages/swift.py": {
+      "mtime": 1774155995.2471905,
+      "sha256": "2cf96d0c09a9c50179024a297bb8bce33239e6c4088050f44e396a06f8a71144"
+    },
+    "batho_core/context/languages/rust.py": {
+      "mtime": 1774155995.246261,
+      "sha256": "a6035c4a6f87e26d8504ed90f3d7627590cac256c181e018ed4335ad25ef328f"
+    },
+    "batho_core/context/languages/scala.py": {
+      "mtime": 1774155995.2467225,
+      "sha256": "49f63d2e2080dd3379a5d2d2935bc834a05aaf3e0271ae027eccb052b2196ba9"
+    },
+    "batho_core/context/languages/verilog.py": {
+      "mtime": 1774155995.248479,
+      "sha256": "20a02928395777bcf710e7abe54697f63785788b137d3b64540bf00f330615c1"
+    },
+    "batho_core/context/languages/zig.py": {
+      "mtime": 1774155995.2496157,
+      "sha256": "ee968264f757da43c2336f4d6df2e115617daf8863ecafa7210f9a7890bc4506"
+    },
+    "batho_core/context/schema.py": {
+      "mtime": 1774443303.0686138,
+      "sha256": "62b167a20780e7083219bdb414ea1725ca340e1832e8eab56ff0e6deddcd91ae"
+    },
+    "batho_core/context/stack_detector.py": {
+      "mtime": 1774443306.014258,
+      "sha256": "164ee70f9d5dbfac69ffdfd99b7ca539dd8f3ae04681887a98787bcbd30d18da"
+    },
+    "batho_core/context/languages/yaml.py": {
+      "mtime": 1774443306.0346043,
+      "sha256": "9bfdbc0b135f815222a2e65e1d9fa744d61601472811695c91cab0aacd443d23"
+    },
+    "batho_core/time_machine.py": {
+      "mtime": 1774443303.1218705,
+      "sha256": "4d2797e92ce05e513697aca5e152bd79830e17a67fda1a58154053a486a8c20f"
+    },
+    "batho_core/context/repomap.py": {
+      "mtime": 1774443306.0063107,
+      "sha256": "6baed0b76c1e470136b4c410496ea9ab4cd8113a12dd1823f5411f0cb3ac0fff"
+    },
+    "batho_core/context/languages/typescript.py": {
+      "mtime": 1774155995.248069,
+      "sha256": "8ec2e4bf176c287500eeaf42d87d9eab72e6d1a9a8039ce18be8e97b103a79f2"
+    },
+    "batho_core/utils/hash.py": {
+      "mtime": 1774443303.0855381,
+      "sha256": "0ff4453d31d37831e6a3cd61e82f1fb5d1742f8eea2cc9adcb86f09e4c97e544"
+    },
+    "batho_core/pyproject.toml": {
+      "mtime": 1774155995.2523007,
+      "sha256": "66dfccd58bd175574a51e5a3321197e365719c1d1a2156cbf61dfe4e7e0c2db0"
+    },
+    "batho_core/utils/logging.py": {
+      "mtime": 1774443303.1019297,
+      "sha256": "002dee0948ebb20a875e96a93e3e716fbbe1f117d4cd9c2b35c393bf7918e96c"
+    },
+    "batho_core/utils/encoding.py": {
+      "mtime": 1774443401.3739693,
+      "sha256": "35f47e9c5dc21d06a1102a2448c19aae7eb8ebb67e9525e42a0f4779dc0b8d25"
+    },
+    "batho_core/utils/__init__.py": {
+      "mtime": 1774443306.0524197,
+      "sha256": "7bd0482bdcc71c872ecd9dffc0f470a43312e08b6005810ba4bd63ce0860a8b8"
+    },
+    "batho_core/utils/dependencies.py": {
+      "mtime": 1774443303.178497,
+      "sha256": "c6c65349c413438ddb429bf1aa3cccf45bd7ce8c5d8c5a7e9c8befe6d58730ea"
+    },
+    "docs/architecture-diagrams.md": {
+      "mtime": 1774159585.3860528,
+      "sha256": "773589492b2015f218873f18670248a3327d428fcf012067fdfcbb4aa9953bac"
+    },
+    "batho_core/utils/ignore.py": {
+      "mtime": 1774443303.1305842,
+      "sha256": "e597e534a25e3440b8af8f5472f13c48c18e281ec942a03d3a173b74583164f3"
+    },
+    "debug_html.py": {
+      "mtime": 1774172101.5037165,
+      "sha256": "52f28f1a44eb4ec9e6616b2299d81c2e40e0e6ff802e2db4e6a9452d31d41221"
+    },
+    "docs/batho-kt.md": {
+      "mtime": 1774159577.0283864,
+      "sha256": "6c263e8451387adf54cdb860241e33ba7b7e8f5c05895588db529b7049d91deb"
+    },
+    "docs/cleanup.md": {
+      "mtime": 1774177261.3254077,
+      "sha256": "1d92ebadcd19a7c15864532de8d606c185f1694910ec600325119d87053c4cb9"
+    },
+    "docs/v1-feature-checklist.md": {
+      "mtime": 1774177453.9983497,
+      "sha256": "c82ddae1470b9d46e0f936a676cf281b6870412b0d4012e22d0ba16ab85fa722"
+    },
+    "docs/sageoz-core-scope-validation.md": {
+      "mtime": 1774179748.0085492,
+      "sha256": "c679f4631e42ec359b635b299970fa9e479a34e1c140998cf15ea031bf7e15f2"
+    },
+    "debug_markdown.py": {
+      "mtime": 1774172326.4408042,
+      "sha256": "01144229fef2c391cc5315a75e419bb0af0f38700ed27035b22ed42f2df58ba7"
+    },
+    "pyproject.toml": {
+      "mtime": 1774443309.4380908,
+      "sha256": "1be875afea80cf548224d2a00eeca661e34a08fee812ab3646931f302b1a00db"
+    },
+    "tasks.md": {
+      "mtime": 1774171869.945073,
+      "sha256": "b2fe0700d9819bc422740ab6a67777a9d3c20e0b0cb7679b0d365d2f8e5c1af0"
+    },
+    "tests/__init__.py": {
+      "mtime": 1774165013.5315228,
+      "sha256": "7e6409d9f150666c65da09e371d9c766677b993744cf263e8308967833cd85c1"
+    },
+    "docs/v2.md": {
+      "mtime": 1774177122.5558515,
+      "sha256": "05742b96269f7c956cae5bd313e89bdb04021ac85ca1329997cdbf3030827bc5"
+    },
+    "rulebased-c4-generation-plan.md": {
+      "mtime": 1774286056.3639643,
+      "sha256": "64d8a9907dfb8b476365477942cd8c94c39a867cb58be60e4e360ca4e4905fcd"
+    },
+    "tests/cli/__init__.py": {
+      "mtime": 1774165021.563622,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tests/cli/test_cli_commands.py": {
+      "mtime": 1774176713.1277633,
+      "sha256": "f95d07eeb3bc2f5db68444185b7b8d51d738a9a714209ef28911bc630c8f009c"
+    },
+    "tests/cli/test_cli_parser.py": {
+      "mtime": 1774362307.6141386,
+      "sha256": "441998cba6f3685a30350566be5262218adbebad956b4365b9560f320a1bf6af"
+    },
+    "test.py": {
+      "mtime": 1774168365.4288664,
+      "sha256": "b895764c15100e78c66b0ce1ebd08e495c4d8365de87d3682202977b69ccb210"
+    },
+    "tests/context/__init__.py": {
+      "mtime": 1774165019.5579786,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tests/conftest.py": {
+      "mtime": 1774168436.424315,
+      "sha256": "90afc830a52535b731045721e33d31f6db96cece3e8775c52665efd5acda6610"
+    },
+    "tests/cli/test_cli_integration.py": {
+      "mtime": 1774362229.736473,
+      "sha256": "029f3609ac84aaa1c02af178b04df9c2d0ab5ac5a9fc4fe33fd823e4fbcc14c8"
+    },
+    "tests/context/test_codegraph.py": {
+      "mtime": 1774443408.300071,
+      "sha256": "766e22e70e55113f04c052147b1ec898d384e0ae056dcd59d5499703852cbdef"
+    },
+    "tests/context/test_factory.py": {
+      "mtime": 1774172216.3945832,
+      "sha256": "e4aedc6b8bceb5622a95a80535fd98168391ca6a27837fec77e4f66f1f57c196"
+    },
+    "tests/context/test_hcl_extractor.py": {
+      "mtime": 1774171162.4815896,
+      "sha256": "f1f90ee40569ccf76264632db0dd364b403ea9e8ad5cff1de0040bcea0958584"
+    },
+    "tests/context/test_repomap.py": {
+      "mtime": 1774165543.9847906,
+      "sha256": "ded7c75d6c1798c6ed31e9674e52978b5562bcbba76aaa7aadb2d028e5263d47"
+    },
+    "tests/context/test_html_extractor.py": {
+      "mtime": 1774172158.8444915,
+      "sha256": "01b0bad2c2c19a20e884701950a39694ea0fdab4f05c2446198fdd927ce6dd56"
+    },
+    "tests/context/test_language_detector_comprehensive.py": {
+      "mtime": 1774171313.1316397,
+      "sha256": "80856cc94a102397e23ec8dbd8294917b57c6231d21895ff67ee081df891a14b"
+    },
+    "tests/core/__init__.py": {
+      "mtime": 1774165017.5474682,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tests/core/test_config.py": {
+      "mtime": 1774175941.9654264,
+      "sha256": "5991ed057b6d80133abfffba2fabfbdae4a2a80abed7eb0fc48ba2ce678d98c3"
+    },
+    "tests/context/test_css_extractor.py": {
+      "mtime": 1774171003.002723,
+      "sha256": "a2d28a3bc07de5010595f9b3b274e48e77e19684aa4e76103bcf04d75a2ec845"
+    },
+    "tests/context/test_markdown_extractor.py": {
+      "mtime": 1774172363.127081,
+      "sha256": "0b803cf41efccd71d1b6522afd21aa68fd7208cdbdf96e79aff8d4e9a03ac273"
+    },
+    "tests/context/test_yaml_extractor.py": {
+      "mtime": 1774175795.369237,
+      "sha256": "5ae7600b8c0dcec90a142f95cc2974a3a228be0399afec7f98da69a030385b42"
+    },
+    "tests/integration/__init__.py": {
+      "mtime": 1774165023.5769916,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tests/context/test_stack_detector.py": {
+      "mtime": 1774174864.8807106,
+      "sha256": "dc3655961ecb4e0e6649e7a0d9fe153620b959c75d39ae79cda673048ffd3854"
+    },
+    "tests/context/test_languages.py": {
+      "mtime": 1774166132.743563,
+      "sha256": "715037cd0f3f3bc8612b95de64aa7669f156c29c2ae95fe5571ef4360db37cf9"
+    },
+    "tests/core/test_schema.py": {
+      "mtime": 1774166127.4990036,
+      "sha256": "b43f6779af0dac413c358ff2de1df7db232b60ec5805fc513dd9ae90bfdae9e8"
+    },
+    "tests/integration/test_cross_platform.py": {
+      "mtime": 1774171721.4277716,
+      "sha256": "8001c180a80cdeacf2d4f8ba2edbe2dd7e7362c4643898f08a9961c976e96817"
+    },
+    "tests/test_flask_fixture.py": {
+      "mtime": 1774168548.1049054,
+      "sha256": "c79b526b5983e8ea23906a57937fe8f1cf5f71dd29e007a0b22a7f7a4bf0b9ae"
+    },
+    "tests/integration/test_workflows.py": {
+      "mtime": 1774176646.1229472,
+      "sha256": "bd9fb0b2ec8a7a92adfa9b4486b5e0e4170394c2441cb58bfc91120d673fdfb9"
+    },
+    "tests/performance/test_performance.py": {
+      "mtime": 1774176960.1569784,
+      "sha256": "261771fef08b0c7cb8707cb77d2bba3ca66140cca6d7b60bbaa34b1213cb5443"
+    },
+    "tests/core/test_extractor.py": {
+      "mtime": 1774443414.8478866,
+      "sha256": "bd466d28e4c00edbd65f9ed01c7278465a8463eb206a022aceacfffe0b4ac1cc"
+    },
+    "tests/test_time_machine.py": {
+      "mtime": 1774165580.1146212,
+      "sha256": "82295c55171db57388985454cb182886c332599127d1bde37e88b7101f713651"
+    },
+    "tests/testdata/PHASES1_5_COMPLETION_SUMMARY.md": {
+      "mtime": 1774168943.1754644,
+      "sha256": "bdb3c785458721c04a7555751f42c34b63cb6231aca801584d749023c9bfdb2f"
+    },
+    "tests/testdata/PHASE1_COMPLETION_SUMMARY.md": {
+      "mtime": 1774168567.5293412,
+      "sha256": "554d421c4dc3e20394dc0d60b26e6916625646d722fb63b37c85a20ad20f5381"
+    },
+    "tests/integration/test_error_handling.py": {
+      "mtime": 1774176637.6219304,
+      "sha256": "80760e10d52eea43c51166025214af86678b944f1c6b79dcae48f78568f39d98"
+    },
+    "tests/testdata/files/config/sample_config.json": {
+      "mtime": 1774168729.1344125,
+      "sha256": "9ce2c3dd04ef203f8bb286a37bc049a44a58576b47ce0d3aec172052c354f260"
+    },
+    "tests/testdata/files/config/sample_config.yaml": {
+      "mtime": 1774168724.3608632,
+      "sha256": "46cfb8239fd52890fb4abb5d90a9c5b538b9fc8371fd8a4c8aaf16fbf85f25bd"
+    },
+    "tests/testdata/files/config/sample_config.toml": {
+      "mtime": 1774168733.6085775,
+      "sha256": "5ff2c733f95d4fa317ea7f163dc91767c402f40275faae93d5344a008315e1dc"
+    },
+    "tests/testdata/files/css/basic.css": {
+      "mtime": 1774169884.6015892,
+      "sha256": "79eb3b29146c0ef44d4e9252a634cc74961005ddbad69e9f2bb8c78874ef2e3e"
+    },
+    "tests/testdata/files/css/advanced.css": {
+      "mtime": 1774169888.4835687,
+      "sha256": "c0da11e9df0cec32d4380677380fc2c3056cc6e2ed499756bc3ede6bceadacc4"
+    },
+    "tests/testdata/files/README.md": {
+      "mtime": 1774168346.598761,
+      "sha256": "7525035bc41ac4fdd68c75ef9ee7e3be92da709190192c9da020e728817d4f72"
+    },
+    "tests/testdata/files/css/complex_selectors.css": {
+      "mtime": 1774169900.2335827,
+      "sha256": "ebdf64d1dd9c12bfa7c233c79c5245ad868f4e208f58e9833ecc949bb7ec28fd"
+    },
+    "tests/testdata/files/cpp/sample_cpp.cpp": {
+      "mtime": 1774168719.3498347,
+      "sha256": "b7ebfb14c82bd36c2b7e15d36493a7e9a9b78547f185c3aac2ade54afcb6e52f"
+    },
+    "tests/testdata/files/css/scss_style.scss": {
+      "mtime": 1774169892.3292117,
+      "sha256": "a3e25429f8536042e6a64ebe08999e4dded41609b38d33c715aa819abf3a876e"
+    },
+    "tests/testdata/files/hcl/basic.tf": {
+      "mtime": 1774170188.771005,
+      "sha256": "5ded2c82035f3e1cbd2bcea741ec7cccae6fcc9a5598e3c6aa6bd056a1a45e92"
+    },
+    "tests/testdata/files/java/SampleClass.java": {
+      "mtime": 1774168710.344483,
+      "sha256": "bee00ea14ae10f5d7cb571f357ea88b1197fe7be1effb4a204371c1cc27d82aa"
+    },
+    "tests/testdata/files/go/sample_go.go": {
+      "mtime": 1774168697.0194156,
+      "sha256": "12d94360d11c1711aa927c61fef0fcd19f6de1b7f09c158aaedc38739148ada6"
+    },
+    "tests/testdata/files/javascript/sample_es6.js": {
+      "mtime": 1774168691.1541886,
+      "sha256": "f02b675c39e069a40574aa52e0da7f0eff23753b28aa7e98b13b443a2f175843"
+    },
+    "tests/testdata/files/markup/sample_html.html": {
+      "mtime": 1774168758.2452307,
+      "sha256": "0afb7482d9434e7a0f563b6a518c336134b0987a97ba8912448135e01827d8a0"
+    },
+    "tests/testdata/files/yaml/basic.yaml": {
+      "mtime": 1774170283.1820076,
+      "sha256": "79e1cc989af36cb1dab9f5449b4b4c568a166b4983c7dac93cac4d8b86147e01"
+    },
+    "tests/testdata/files/markup/sample_markdown.md": {
+      "mtime": 1774168747.065846,
+      "sha256": "44547ab0c5594c579a3a0d9a8af24914a39edab20b325af47be410de46e5aec5"
+    },
+    "tests/testdata/files/hcl/complex.tf": {
+      "mtime": 1774170194.0537171,
+      "sha256": "c1b1d13da6bc2453b4ed8ed6ce6715f3975722dea2d23e56bbad6595ed92a65d"
+    },
+    "tests/testdata/files/rust/sample_rust.rs": {
+      "mtime": 1774168704.0856116,
+      "sha256": "b8c406b6e384969af1acabd4cf55aa1a93fe4d7c3c98d3040fa24a4f43a4315a"
+    },
+    "tests/testdata/files/yaml/complex.yaml": {
+      "mtime": 1774170291.0088844,
+      "sha256": "e3cb4049c481b4739b9195f55deca22e9057ed027eeb0bd194e40f6471739b99"
+    },
+    "tests/testdata/fixtures/README.md": {
+      "mtime": 1774168353.635028,
+      "sha256": "09042a00ee9edf8bbf78cf6a441a68c972ff5403ae692d44fb2c5e2e1acc322f"
+    },
+    "tests/testdata/files/python/sample_functions.py": {
+      "mtime": 1774168686.248166,
+      "sha256": "9ca7c65ac67e9bd52aefe473d644d41e94c87d354415bc47a8a4508c6feacfe3"
+    },
+    "tests/testdata/outputs/README.md": {
+      "mtime": 1774168350.1649904,
+      "sha256": "ee9d09e931524fbe44fc85647a9ca496adde19b3307546d7f4446600bdc5380e"
+    },
+    "tests/testdata/outputs/api_responses/index_success.json": {
+      "mtime": 1774169517.030764,
+      "sha256": "f19a73a1260c554fa285ed986262f71e85b5982a7e8ed20715c797f5295bf01a"
+    },
+    "tests/testdata/outputs/PHASE7_COMPLETION_SUMMARY.md": {
+      "mtime": 1774169536.5450945,
+      "sha256": "d0899d5e1543f4f246b5a4b5d2a21e029acfd1fdce44843e13223ee4e0c2a197"
+    },
+    "tests/testdata/outputs/api_responses/error_response.json": {
+      "mtime": 1774169524.9721873,
+      "sha256": "4e44754ece206f86768982c3142c89b0acea2bf1188c4d0ae25d0b70a86675b0"
+    },
+    "tests/testdata/outputs/configs/custom_configs/language_specific_config.yaml": {
+      "mtime": 1774169466.1048956,
+      "sha256": "36c2c873ba67b8e35e04edbe9dbcaa1cdeb88fb4f76ba35b432c361ffb4a90c8"
+    },
+    "tests/testdata/outputs/configs/custom_configs/performance_tuning_config.toml": {
+      "mtime": 1774169469.5005894,
+      "sha256": "56e54ffb027514325039ffd245b2840785937a541eab9c2c7cd3bb806ff4373f"
+    },
+    "tests/testdata/outputs/api_responses/stats_response.json": {
+      "mtime": 1774169521.5221462,
+      "sha256": "5e5f1f66d93598992f9ae7b8582db940815c9bb9e785fed958af850e8a67a782"
+    },
+    "tests/testdata/outputs/configs/invalid_configs/missing_fields.json": {
+      "mtime": 1774169481.1374664,
+      "sha256": "60e6bb5e3536fe15b5b37290670ba310e56ff3f7b370dd7293b1e51c516e28bd"
+    },
+    "tests/testdata/outputs/configs/custom_configs/large_repository_config.json": {
+      "mtime": 1774169462.7343378,
+      "sha256": "f1126d2e9f2c7d95fa254d51962dba21f610655d4fe80d8883b4e9e865a6e890"
+    },
+    "tests/testdata/outputs/configs/default_config.json": {
+      "mtime": 1774169459.3119357,
+      "sha256": "43d8323e9df25c6ece8827a0f6efc38ee882cb3914873cbcbb245a1eaf005dec"
+    },
+    "tests/testdata/outputs/configs/env_override_configs/override_example.json": {
+      "mtime": 1774169474.074871,
+      "sha256": "932a325a8118b260522327eb78c67293bf3f0941ffcf141ee43d908978a4d298"
+    },
+    "tests/testdata/outputs/graphs/simple_python_graph.json": {
+      "mtime": 1774169326.893146,
+      "sha256": "78aa8918689464876f05a830d5519d3657f456569556f4581a0830eb1ee4351a"
+    },
+    "tests/testdata/outputs/configs/invalid_configs/schema_violation.json": {
+      "mtime": 1774169477.5037344,
+      "sha256": "c63608aee5ecb84e8cef77eb020ba6bdb335f5121e904314512a5310bb0ae772"
+    },
+    "tests/testdata/outputs/configs/invalid_configs/type_errors.json": {
+      "mtime": 1774169484.711042,
+      "sha256": "a6074366e2ab5289df38aad53a6aeb4b3d68d5509670e1c3eb048f3360d0d560"
+    },
+    "tests/testdata/outputs/graphs/multi_language_graph.json": {
+      "mtime": 1774169345.171905,
+      "sha256": "ef7df07e79f59bad12365ccbb6f4f003a957c37da99bf08b3ebfc4665ef3c8cf"
+    },
+    "tests/testdata/outputs/webhooks/github_pr_merged.json": {
+      "mtime": 1774169502.4705462,
+      "sha256": "aebbd787aa262a468118c0c696b9a228f82110a9bc73ad463cbcefbffdf87126"
+    },
+    "tests/testdata/outputs/repomaps/flask_sample_repomap.json": {
+      "mtime": 1774169414.7381184,
+      "sha256": "bb1113f78ee7ea0bd2364da193fb6449994e20e0696f0c4b702c8f1c7405ef58"
+    },
+    "tests/testdata/outputs/repomaps/multi_language_repomap.json": {
+      "mtime": 1774169412.0646932,
+      "sha256": "19686c56e79b07543e8946bc75680cb096d3efb683e9778c45c8a959f95364cf"
+    },
+    "tests/testdata/outputs/repomaps/simple_python_repomap.json": {
+      "mtime": 1774169408.7721946,
+      "sha256": "d1839645bb454cf8d8686cbe32753760603c83cbb2f3f2c32e539a82bd7c3a34"
+    },
+    "tests/testdata/outputs/webhooks/github_push_main.json": {
+      "mtime": 1774169492.203611,
+      "sha256": "a5b158fec318b40c476792437799a214f86688e7af0bec004a0331ec0aae2321"
+    },
+    "tests/testdata/outputs/webhooks/invalid_wrong_format.json": {
+      "mtime": 1774169512.4198985,
+      "sha256": "43550e4ef99512239773d780ef93bdc2f067cc0bd27f2017d8d1b60450b9ad15"
+    },
+    "tests/testdata/outputs/webhooks/github_pr_opened.json": {
+      "mtime": 1774169497.1371875,
+      "sha256": "e078dbd49a49b64282e2b9d22b9447cc25720f0b3dff69e569e454f85bfc754c"
+    },
+    "tests/testdata/outputs/webhooks/invalid_missing_fields.json": {
+      "mtime": 1774169506.0722964,
+      "sha256": "ddcdb7cf9a2d51c441285bd79758b4f5a8f5559a4df7a0c7575c77ad5938cc3e"
+    },
+    "tests/testdata/repositories/edge_cases/deep/nested/path/to/file.py": {
+      "mtime": 1774165295.0677624,
+      "sha256": "c291f32a541dca0bb5bf3a2c63334dce740c079bab56e421b3222a5f6197e8e5"
+    },
+    "tests/testdata/repositories/edge_cases/empty_file.py": {
+      "mtime": 1774165295.0676322,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tests/testdata/repositories/flask/.devcontainer/on-create-command.sh": {
+      "mtime": 1774168392.7390258,
+      "sha256": "6785abbdaf0a3d2cc68d5ba322eb8eb48b0b0bf421e69b57ab736e9399df9a27"
+    },
+    "tests/testdata/repositories/flask/.devcontainer/devcontainer.json": {
+      "mtime": 1774168392.7389553,
+      "sha256": "b8fdd479fae20d10e0563d343d4a8e3fa728a88288ef8b24e9e9c761f1e00dc6"
+    },
+    "tests/testdata/repositories/edge_cases/latin1_file.py": {
+      "mtime": 1774165295.067535,
+      "sha256": "d12d9c33b9781a29624977c617754d3ed76f8d07fdcec638cf735c7220abe0c4"
+    },
+    "tests/testdata/repositories/edge_cases/whitespace_only.py": {
+      "mtime": 1774165295.067711,
+      "sha256": "9afccfcefeb8c670de1e0076249d2e41b702fb0dc2623770b5e001ff47a44784"
+    },
+    "tests/testdata/repositories/flask/.pre-commit-config.yaml": {
+      "mtime": 1774168392.7400765,
+      "sha256": "af0369858e952d72687da160237e713cbdf84690466f4e82844dcb7caf60170f"
+    },
+    "tests/testdata/repositories/flask/.readthedocs.yaml": {
+      "mtime": 1774168392.740219,
+      "sha256": "dd47a46c7c3027f89216b0a9c2f2ea91275cc7dd2717f6a271a661a29beb2b1a"
+    },
+    "tests/testdata/repositories/flask/CODE_OF_CONDUCT.md": {
+      "mtime": 1774168392.7404404,
+      "sha256": "3b3eee7b9db5c0c0a27b60a60883dd706dc954b5dcb25264ff1611ef87426c79"
+    },
+    "tests/testdata/repositories/flask/docs/conf.py": {
+      "mtime": 1774168392.74255,
+      "sha256": "46859ff27d0e416563dab19969c7a69009655fc11e73a8a00c8f901441efaa7e"
+    },
+    "tests/testdata/repositories/flask/pyproject.toml": {
+      "mtime": 1774168392.7538614,
+      "sha256": "09cd53cb0c1dbd80af863dc1bd76aeeabb952ad8281b6759ae3130aba9939822"
+    },
+    "tests/testdata/repositories/flask/metadata.py": {
+      "mtime": 1774168403.8256562,
+      "sha256": "d85bd42f377bbc3042f4926f4eb712c782f284003dcf7abeac137c6aef9b6a78"
+    },
+    "tests/testdata/repositories/flask/src/flask/__main__.py": {
+      "mtime": 1774168392.756172,
+      "sha256": "6d8b7d7846a845059d7a3107143f11131f63c5511d669b44085b15ec5e3d2279"
+    },
+    "tests/testdata/repositories/flask/repository_metadata.json": {
+      "mtime": 1774168434.4772675,
+      "sha256": "3eb4602c6d2b3b06766624dc64a8a95a790ef7909965d025c0718a27faad1a82"
+    },
+    "tests/testdata/repositories/flask/src/flask/app.py": {
+      "mtime": 1774168392.7564347,
+      "sha256": "86ddd0c7d53dcf4235a947cba12edb62125cb9b76993e8b9e1e1eadfb2c394df"
+    },
+    "tests/testdata/repositories/flask/src/flask/__init__.py": {
+      "mtime": 1774168392.7560391,
+      "sha256": "c6ad3d5cd28ff98f9f76fe817861fb46515a634d3ab54037a3f96519c97e767a"
+    },
+    "tests/testdata/repositories/flask/src/flask/cli.py": {
+      "mtime": 1774168392.7566493,
+      "sha256": "3c3c1909f3da822e465336fe0fa74437bcb6d205a25408377a3467c4128d1cf0"
+    },
+    "tests/testdata/repositories/flask/src/flask/config.py": {
+      "mtime": 1774168392.756798,
+      "sha256": "619499fb1a458f5896d41d4a8f5883869739b3ba479dc9688912ea5e1b14ec7b"
+    },
+    "tests/testdata/repositories/flask/src/flask/blueprints.py": {
+      "mtime": 1774168392.7565424,
+      "sha256": "66956bc1af1463e627543b17ff52b5d174230f0094a7b427da198a967e627044"
+    },
+    "tests/testdata/repositories/flask/src/flask/globals.py": {
+      "mtime": 1774168392.7572346,
+      "sha256": "294cd5bd23e1f2fdbc9146ac5438bf690281f612368d9498407a9a0d4d8fe35e"
+    },
+    "tests/testdata/repositories/flask/src/flask/debughelpers.py": {
+      "mtime": 1774168392.757077,
+      "sha256": "051d3191dfac03216e156d3b0fa35faea370499c64d48ae41b99fccde9bedecc"
+    },
+    "tests/testdata/repositories/flask/src/flask/helpers.py": {
+      "mtime": 1774168392.7573256,
+      "sha256": "b9584cc2185fc208c1b7c6fefb32194e391f0512b6f323e998d86057384fe38e"
+    },
+    "tests/testdata/repositories/flask/src/flask/ctx.py": {
+      "mtime": 1774168392.7569582,
+      "sha256": "c76906cd45ed3f35728b66122ab53f3d5d40bedc539a1da245dae22514d23c63"
+    },
+    "tests/testdata/repositories/flask/src/flask/json/tag.py": {
+      "mtime": 1774168392.7576907,
+      "sha256": "8a16fb416acd12bd180b7283e13a2565b7ed8123c2b8b93b140bcae3d86e602d"
+    },
+    "tests/testdata/repositories/flask/src/flask/json/__init__.py": {
+      "mtime": 1774168392.7574768,
+      "sha256": "a5db69a0ad9bd1bd6eed2c5bc777de33b55686c236d25d72180bdb616c5ac6f7"
+    },
+    "tests/testdata/repositories/flask/src/flask/templating.py": {
+      "mtime": 1774168392.7582073,
+      "sha256": "5dd3f684c16767914264e1bb1d468b8c2d950be6f8b874969438f0bffd69dea7"
+    },
+    "tests/testdata/repositories/flask/src/flask/json/provider.py": {
+      "mtime": 1774168392.757587,
+      "sha256": "3acd1fadbf2819fc9628bf930f16f4532f8c63a80384f749911694979c403972"
+    },
+    "tests/testdata/repositories/flask/src/flask/logging.py": {
+      "mtime": 1774168392.757758,
+      "sha256": "940af1d81abda13b5427e0e764bf6df3cc54db3cadce9e1459233d05def63434"
+    },
+    "tests/testdata/repositories/flask/src/flask/sessions.py": {
+      "mtime": 1774168392.7580373,
+      "sha256": "ac51f640a5c6db87446b390a1b1007a94a40521ff7d210c7add761558800718d"
+    },
+    "tests/testdata/repositories/flask/src/flask/signals.py": {
+      "mtime": 1774168392.758097,
+      "sha256": "b351f8c8a8dfddce5d815af8d55eac26913d74b26f99324c62e2b4ae4ab1decc"
+    },
+    "tests/testdata/repositories/flask/src/flask/typing.py": {
+      "mtime": 1774168392.7583692,
+      "sha256": "e0b8fe613c54a18bcf6287c2f462aefb5a341edf25ca3a7dcf7237dfa275dffa"
+    },
+    "tests/testdata/repositories/flask/src/flask/testing.py": {
+      "mtime": 1774168392.7583103,
+      "sha256": "87b0229e082b3201b32a50cdeba55f074263596e19d54fce0fa1728ea04d8983"
+    },
+    "tests/testdata/repositories/flask/src/flask/views.py": {
+      "mtime": 1774168392.7584763,
+      "sha256": "57984e1992f1d019fdf5019c33a9a1e71fee33e332a554f4f91cac10553ce237"
+    },
+    "tests/testdata/repositories/flask/src/flask/scaffold.py": {
+      "mtime": 1774168392.7578955,
+      "sha256": "00b1872dccb6a926c9ec435dd47f1d3a7ab9543807e57485b0e9037a570e295f"
+    },
+    "tests/testdata/repositories/multi_language/frontend/package.json": {
+      "mtime": 1774165138.395365,
+      "sha256": "c04f1b43ab39024d357e8bb5a4bd8274d774c9addf83a3dd5b088179be5ab99d"
+    },
+    "tests/testdata/repositories/multi_language/backend/app.py": {
+      "mtime": 1774165127.0275345,
+      "sha256": "29cc1e607c91781becbe6f0cdef87dd6811a049b0e39e5b10bff283537b262ac"
+    },
+    "tests/testdata/repositories/multi_language/backend/models.py": {
+      "mtime": 1774165129.0331192,
+      "sha256": "4303ad036d93a520db3469dc8f3668fa409778b5a735b040b7e5d584631559bf"
+    },
+    "tests/testdata/repositories/multi_language/frontend/tsconfig.json": {
+      "mtime": 1774165140.6913607,
+      "sha256": "df4d67b968d22aa677cd98fa244d7328b84b7252e366b25b084673827cc8448f"
+    },
+    "tests/testdata/repositories/simple_python/README.md": {
+      "mtime": 1774165107.7689066,
+      "sha256": "2e3d2c26877bbb755e8784f685f6dc3bdd7e2ac087fa49004854c7655b55d0ff"
+    },
+    "tests/testdata/repositories/simple_python/setup.py": {
+      "mtime": 1774165103.740213,
+      "sha256": "2b3451cf698557d36246939415d469aa9a38d0d83fce0d4c347ec5597c6f26ff"
+    },
+    "tests/testdata/repositories/multi_language/frontend/src/App.tsx": {
+      "mtime": 1774165133.6453648,
+      "sha256": "d79b135eda23c19f9432b18965c92f921458b7adda9db3a9597bd7c624efeecf"
+    },
+    "tests/testdata/repositories/multi_language/frontend/src/utils.ts": {
+      "mtime": 1774165136.3444977,
+      "sha256": "8ca31f78922dccc62c15ca89caf38cfac14d3d77028b284e02e9ca0049622314"
+    },
+    "tests/testdata/repositories/flask/src/flask/wrappers.py": {
+      "mtime": 1774168392.7585857,
+      "sha256": "3e1329ded78add29c4988768839f5c3bf0c7899f41b67d2a2351227eb4ddc0ff"
+    },
+    "tests/utils/__init__.py": {
+      "mtime": 1774165015.5394874,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tests/testdata/repositories/simple_python/src/utils.py": {
+      "mtime": 1774165096.6968327,
+      "sha256": "01292d82bd7a19f3efb7416a861ee5c6f6b2d5b9d474d157ae8ae5cf16cf1b10"
+    },
+    "tests/utils/test_encoding.py": {
+      "mtime": 1774165350.2296276,
+      "sha256": "bce1d80d3fd581b257b835edfa89e7e8b38887fc9a6b5d6e92670329e4e92b42"
+    },
+    "tests/testdata/repositories/simple_python/src/__init__.py": {
+      "mtime": 1774165099.7252898,
+      "sha256": "04b1e6509be4c864cf32050be9e14efbffbda7d7e79316168a6978a6452bd776"
+    },
+    "tests/testdata/repositories/simple_python/src/calculator.py": {
+      "mtime": 1774165094.466038,
+      "sha256": "c325600c67b9c0cc549078ce943b640edd9ac8d6e9bc45da196f5dda5fb734af"
+    },
+    "tests/testdata/repositories/simple_python/tests/test_calculator.py": {
+      "mtime": 1774165101.7298892,
+      "sha256": "049b361d21a0d8443c605be5471c544e504afd650f3da0b089827d8f03a8d86e"
+    },
+    "tests/utils/test_hash.py": {
+      "mtime": 1774165348.2197897,
+      "sha256": "cf2f8444e07b57b5e6f09c247f799bb9c97345ccd3868e33af868ef3a7b90370"
+    },
+    "tests/utils/test_dependencies.py": {
+      "mtime": 1774172672.1230354,
+      "sha256": "558eb8b1ac5a89f4f0f525865ff9bd5866b55814abe82531cd25a13ce851f4cf"
+    },
+    "tests/utils/test_logging.py": {
+      "mtime": 1774165352.2421966,
+      "sha256": "e4b2a3101024719d9ade77682ad303823003db994daae3bb6fbece95e00257c4"
+    },
+    "tests/utils/test_ignore.py": {
+      "mtime": 1774165405.905552,
+      "sha256": "056dd48f3317d44062341862eb52bcb53b7d004c55c443c188b6890bca30dbf8"
+    },
+    "verify_repomap_entity_types.py": {
+      "mtime": 1774193866.908192,
+      "sha256": "89d120a31812a8eb9f413584659268419a853db0ae7a5f589ff222f6ecb128a0"
+    },
+    "batho_core/context/c4_generator.py": {
+      "mtime": 1774446149.115903,
+      "sha256": "627f00edb208cd29933f1934152c577c6e8550875371a585609d0abe70dad863"
+    },
+    "batho_core/context/c4_llm_extensions.py": {
+      "mtime": 1774446184.6163585,
+      "sha256": "60f02249f232b156a5864fac9c9f34ea767496421e74d919ad403a0e79bf550c"
+    },
+    "batho_core/context/c4_structurizr.py": {
+      "mtime": 1774446164.2784114,
+      "sha256": "c2abb15963fec60fe0ee36e3435d5655f927feb77eb1a6758386554b3ca67edb"
+    },
+    "batho_core/context/c4_rules.py": {
+      "mtime": 1774446157.3681939,
+      "sha256": "0ae32f3d2d07baeb61425815313917af7df692da1253374d908df9c244fc2f1e"
+    },
+    "batho_core/utils/file_io.py": {
+      "mtime": 1774443306.055086,
+      "sha256": "2fb47da3b9926304e87c2b6b0b3ad9320b8665d987e4693ef370fe42728d4ad8"
+    },
+    "docs/tasks.md": {
+      "mtime": 1774171869.945073,
+      "sha256": "b2fe0700d9819bc422740ab6a67777a9d3c20e0b0cb7679b0d365d2f8e5c1af0"
+    },
+    "docs/Brownfield-Core-Engine-PDD.docx.md": {
+      "mtime": 1774179273.4609482,
+      "sha256": "5aa19a007e706f753e2cee67cce4051fae984fb3b2f029c002fdc47fe4c6fbd2"
+    },
+    "tests/context/test_c4_generator.py": {
+      "mtime": 1774446348.476507,
+      "sha256": "be410d3d8aaa73000d4355bb808d4d7ecc4db33b72198c11e3ec6cff71c90258"
+    }
+  },
+  "_checksum": "ee45c89324af711415fb7c5d643879cccbf1a845ac0b838e13be409e0e3e37dd"
+}

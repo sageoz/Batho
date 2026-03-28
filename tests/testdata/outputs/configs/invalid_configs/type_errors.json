@@ -1,0 +1,21 @@
+{
+  "logging": {
+    "level": 123,
+    "json_format": null
+  },
+  "paths": {
+    "ctn_dir": [".ctn"]
+  },
+  "indexer": {
+    "max_file_size_kb": "500KB",
+    "max_indexed_files": [200000],
+    "max_workers": "auto",
+    "max_files": {"limit": 1000},
+    "fail_on_warning": 1,
+    "strict": 0
+  },
+  "flags": {
+    "fail_on_warning": "yes",
+    "strict": "no"
+  }
+}

@@ -1,0 +1,692 @@
+{
+  "schema_version": "snapshot.v1",
+  "snapshot_id": "batho_ceb9d56db5914d38bdefdda303662696_20260322T092546Z",
+  "created_at": "2026-03-22T09:25:46.857241+00:00",
+  "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python",
+  "label": "v1",
+  "graph": {
+    "entities": [
+      {
+        "id": "c4a36242d3f7180a",
+        "type": "DOCUMENT",
+        "name": "document",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/README.md",
+        "start_line": 1,
+        "end_line": 3,
+        "start_byte": 0,
+        "end_byte": 68,
+        "signature": null,
+        "metadata": {
+          "language": "markdown",
+          "title": "Simple Python",
+          "header_count": 1,
+          "has_frontmatter": false
+        },
+        "parent_id": null
+      },
+      {
+        "id": "76ee51d51c31c047",
+        "type": "ELEMENT",
+        "name": "header_1_Simple Python",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/README.md",
+        "start_line": 1,
+        "end_line": 1,
+        "start_byte": 0,
+        "end_byte": 15,
+        "signature": null,
+        "metadata": {
+          "language": "markdown",
+          "header_level": 1,
+          "header_text": "Simple Python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "809b691ca7832dbd",
+        "type": "FUNCTION",
+        "name": "test_add",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/tests/test_calculator.py",
+        "start_line": 6,
+        "end_line": 7,
+        "start_byte": 91,
+        "end_byte": 132,
+        "signature": "test_add()",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "0e8ccd70148a71ec",
+        "type": "FUNCTION",
+        "name": "test_subtract",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/tests/test_calculator.py",
+        "start_line": 10,
+        "end_line": 11,
+        "start_byte": 135,
+        "end_byte": 186,
+        "signature": "test_subtract()",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "59b6935adc1b0052",
+        "type": "FUNCTION",
+        "name": "test_calculator_history",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/tests/test_calculator.py",
+        "start_line": 14,
+        "end_line": 17,
+        "start_byte": 189,
+        "end_byte": 310,
+        "signature": "test_calculator_history()",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "44c96aaa2251fab5",
+        "type": "FUNCTION",
+        "name": "add",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 4,
+        "end_line": 6,
+        "start_byte": 46,
+        "end_byte": 121,
+        "signature": "add(a: int, b: int) -> int",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "0dd5ac2d9bf16f56",
+        "type": "FUNCTION",
+        "name": "subtract",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 9,
+        "end_line": 11,
+        "start_byte": 124,
+        "end_byte": 206,
+        "signature": "subtract(a: int, b: int) -> int",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "bed29592a54f45b1",
+        "type": "FUNCTION",
+        "name": "multiply",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 14,
+        "end_line": 16,
+        "start_byte": 209,
+        "end_byte": 294,
+        "signature": "multiply(a: int, b: int) -> int",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "3b620a004295622a",
+        "type": "FUNCTION",
+        "name": "divide",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 19,
+        "end_line": 23,
+        "start_byte": 297,
+        "end_byte": 444,
+        "signature": "divide(a: float, b: float) -> float",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "b03e951249fd6161",
+        "type": "CLASS",
+        "name": "Calculator",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 26,
+        "end_line": 43,
+        "start_byte": 447,
+        "end_byte": 1115,
+        "signature": null,
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "f79198bd9920d8d6",
+        "type": "METHOD",
+        "name": "__init__",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 29,
+        "end_line": 30,
+        "start_byte": 507,
+        "end_byte": 577,
+        "signature": "__init__(self) -> float",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "97ee4ca82a6176ae",
+        "type": "METHOD",
+        "name": "calculate",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 32,
+        "end_line": 39,
+        "start_byte": 583,
+        "end_byte": 963,
+        "signature": "calculate(self, op: str, a: float, b: float) -> float",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "d05be26025651932",
+        "type": "METHOD",
+        "name": "last_result",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 41,
+        "end_line": 43,
+        "start_byte": 969,
+        "end_byte": 1115,
+        "signature": "last_result(self) -> float | None",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "5dd5f1066518c50b",
+        "type": "FUNCTION",
+        "name": "double",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/utils.py",
+        "start_line": 6,
+        "end_line": 8,
+        "start_byte": 93,
+        "end_byte": 176,
+        "signature": "double(x: int) -> int",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      {
+        "id": "7ee7d39fab38f96b",
+        "type": "FUNCTION",
+        "name": "create_calculator",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/utils.py",
+        "start_line": 11,
+        "end_line": 13,
+        "start_byte": 179,
+        "end_byte": 284,
+        "signature": "create_calculator() -> Calculator",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      }
+    ],
+    "entities_by_id": {
+      "c4a36242d3f7180a": {
+        "id": "c4a36242d3f7180a",
+        "type": "DOCUMENT",
+        "name": "document",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/README.md",
+        "start_line": 1,
+        "end_line": 3,
+        "start_byte": 0,
+        "end_byte": 68,
+        "signature": null,
+        "metadata": {
+          "language": "markdown",
+          "title": "Simple Python",
+          "header_count": 1,
+          "has_frontmatter": false
+        },
+        "parent_id": null
+      },
+      "76ee51d51c31c047": {
+        "id": "76ee51d51c31c047",
+        "type": "ELEMENT",
+        "name": "header_1_Simple Python",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/README.md",
+        "start_line": 1,
+        "end_line": 1,
+        "start_byte": 0,
+        "end_byte": 15,
+        "signature": null,
+        "metadata": {
+          "language": "markdown",
+          "header_level": 1,
+          "header_text": "Simple Python"
+        },
+        "parent_id": null
+      },
+      "809b691ca7832dbd": {
+        "id": "809b691ca7832dbd",
+        "type": "FUNCTION",
+        "name": "test_add",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/tests/test_calculator.py",
+        "start_line": 6,
+        "end_line": 7,
+        "start_byte": 91,
+        "end_byte": 132,
+        "signature": "test_add()",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "0e8ccd70148a71ec": {
+        "id": "0e8ccd70148a71ec",
+        "type": "FUNCTION",
+        "name": "test_subtract",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/tests/test_calculator.py",
+        "start_line": 10,
+        "end_line": 11,
+        "start_byte": 135,
+        "end_byte": 186,
+        "signature": "test_subtract()",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "59b6935adc1b0052": {
+        "id": "59b6935adc1b0052",
+        "type": "FUNCTION",
+        "name": "test_calculator_history",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/tests/test_calculator.py",
+        "start_line": 14,
+        "end_line": 17,
+        "start_byte": 189,
+        "end_byte": 310,
+        "signature": "test_calculator_history()",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "44c96aaa2251fab5": {
+        "id": "44c96aaa2251fab5",
+        "type": "FUNCTION",
+        "name": "add",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 4,
+        "end_line": 6,
+        "start_byte": 46,
+        "end_byte": 121,
+        "signature": "add(a: int, b: int) -> int",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "0dd5ac2d9bf16f56": {
+        "id": "0dd5ac2d9bf16f56",
+        "type": "FUNCTION",
+        "name": "subtract",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 9,
+        "end_line": 11,
+        "start_byte": 124,
+        "end_byte": 206,
+        "signature": "subtract(a: int, b: int) -> int",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "bed29592a54f45b1": {
+        "id": "bed29592a54f45b1",
+        "type": "FUNCTION",
+        "name": "multiply",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 14,
+        "end_line": 16,
+        "start_byte": 209,
+        "end_byte": 294,
+        "signature": "multiply(a: int, b: int) -> int",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "3b620a004295622a": {
+        "id": "3b620a004295622a",
+        "type": "FUNCTION",
+        "name": "divide",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 19,
+        "end_line": 23,
+        "start_byte": 297,
+        "end_byte": 444,
+        "signature": "divide(a: float, b: float) -> float",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "b03e951249fd6161": {
+        "id": "b03e951249fd6161",
+        "type": "CLASS",
+        "name": "Calculator",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 26,
+        "end_line": 43,
+        "start_byte": 447,
+        "end_byte": 1115,
+        "signature": null,
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "f79198bd9920d8d6": {
+        "id": "f79198bd9920d8d6",
+        "type": "METHOD",
+        "name": "__init__",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 29,
+        "end_line": 30,
+        "start_byte": 507,
+        "end_byte": 577,
+        "signature": "__init__(self) -> float",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "97ee4ca82a6176ae": {
+        "id": "97ee4ca82a6176ae",
+        "type": "METHOD",
+        "name": "calculate",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 32,
+        "end_line": 39,
+        "start_byte": 583,
+        "end_byte": 963,
+        "signature": "calculate(self, op: str, a: float, b: float) -> float",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "d05be26025651932": {
+        "id": "d05be26025651932",
+        "type": "METHOD",
+        "name": "last_result",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py",
+        "start_line": 41,
+        "end_line": 43,
+        "start_byte": 969,
+        "end_byte": 1115,
+        "signature": "last_result(self) -> float | None",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "5dd5f1066518c50b": {
+        "id": "5dd5f1066518c50b",
+        "type": "FUNCTION",
+        "name": "double",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/utils.py",
+        "start_line": 6,
+        "end_line": 8,
+        "start_byte": 93,
+        "end_byte": 176,
+        "signature": "double(x: int) -> int",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      },
+      "7ee7d39fab38f96b": {
+        "id": "7ee7d39fab38f96b",
+        "type": "FUNCTION",
+        "name": "create_calculator",
+        "file": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/utils.py",
+        "start_line": 11,
+        "end_line": 13,
+        "start_byte": 179,
+        "end_byte": 284,
+        "signature": "create_calculator() -> Calculator",
+        "metadata": {
+          "language": "python"
+        },
+        "parent_id": null
+      }
+    },
+    "relationships": [
+      {
+        "id": "a380228c6bef835c",
+        "source_id": "c4a36242d3f7180a",
+        "target_id": "76ee51d51c31c047",
+        "type": "CONTAINS",
+        "metadata": {
+          "line_number": 1
+        }
+      },
+      {
+        "id": "dd6ec048363a5e2e",
+        "source_id": "b03e951249fd6161",
+        "target_id": "f79198bd9920d8d6",
+        "type": "CONTAINS",
+        "metadata": {
+          "line_number": 29
+        }
+      },
+      {
+        "id": "b035088cf57f3694",
+        "source_id": "b03e951249fd6161",
+        "target_id": "97ee4ca82a6176ae",
+        "type": "CONTAINS",
+        "metadata": {
+          "line_number": 32
+        }
+      },
+      {
+        "id": "bb0f45b5e07d546d",
+        "source_id": "b03e951249fd6161",
+        "target_id": "d05be26025651932",
+        "type": "CONTAINS",
+        "metadata": {
+          "line_number": 41
+        }
+      },
+      {
+        "id": "3f96c94f94cc39b5",
+        "source_id": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/setup.py",
+        "target_id": "setuptools",
+        "type": "IMPORTS",
+        "metadata": {
+          "line_number": 1
+        }
+      },
+      {
+        "id": "e02b6e0e188356ca",
+        "source_id": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/tests/test_calculator.py",
+        "target_id": "src.calculator",
+        "type": "IMPORTS",
+        "metadata": {
+          "line_number": 3
+        }
+      },
+      {
+        "id": "6fc18726f03e180a",
+        "source_id": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/utils.py",
+        "target_id": "calculator",
+        "type": "IMPORTS",
+        "metadata": {
+          "line_number": 3
+        }
+      }
+    ]
+  },
+  "repomap": {
+    "schema_version": "repomap.v1",
+    "files": {
+      "README.md": [
+        {
+          "name": "document",
+          "type": "document",
+          "lines": [
+            1,
+            3
+          ]
+        },
+        {
+          "name": "header_1_Simple Python",
+          "type": "element",
+          "lines": [
+            1,
+            1
+          ]
+        }
+      ],
+      "src/calculator.py": [
+        {
+          "name": "add",
+          "type": "function",
+          "lines": [
+            4,
+            6
+          ],
+          "signature": "add(a: int, b: int) -> int"
+        },
+        {
+          "name": "subtract",
+          "type": "function",
+          "lines": [
+            9,
+            11
+          ],
+          "signature": "subtract(a: int, b: int) -> int"
+        },
+        {
+          "name": "multiply",
+          "type": "function",
+          "lines": [
+            14,
+            16
+          ],
+          "signature": "multiply(a: int, b: int) -> int"
+        },
+        {
+          "name": "divide",
+          "type": "function",
+          "lines": [
+            19,
+            23
+          ],
+          "signature": "divide(a: float, b: float) -> float"
+        },
+        {
+          "name": "Calculator",
+          "type": "class",
+          "lines": [
+            26,
+            43
+          ]
+        },
+        {
+          "name": "__init__",
+          "type": "method",
+          "lines": [
+            29,
+            30
+          ],
+          "signature": "__init__(self) -> float"
+        },
+        {
+          "name": "calculate",
+          "type": "method",
+          "lines": [
+            32,
+            39
+          ],
+          "signature": "calculate(self, op: str, a: float, b: float) -> float"
+        },
+        {
+          "name": "last_result",
+          "type": "method",
+          "lines": [
+            41,
+            43
+          ],
+          "signature": "last_result(self) -> float | None"
+        }
+      ],
+      "src/utils.py": [
+        {
+          "name": "double",
+          "type": "function",
+          "lines": [
+            6,
+            8
+          ],
+          "signature": "double(x: int) -> int"
+        },
+        {
+          "name": "create_calculator",
+          "type": "function",
+          "lines": [
+            11,
+            13
+          ],
+          "signature": "create_calculator() -> Calculator"
+        }
+      ],
+      "tests/test_calculator.py": [
+        {
+          "name": "test_add",
+          "type": "function",
+          "lines": [
+            6,
+            7
+          ],
+          "signature": "test_add()"
+        },
+        {
+          "name": "test_subtract",
+          "type": "function",
+          "lines": [
+            10,
+            11
+          ],
+          "signature": "test_subtract()"
+        },
+        {
+          "name": "test_calculator_history",
+          "type": "function",
+          "lines": [
+            14,
+            17
+          ],
+          "signature": "test_calculator_history()"
+        }
+      ]
+    },
+    "dependencies": {},
+    "total_files": 4,
+    "total_entities": 15
+  },
+  "stats": {
+    "entity_count": 15,
+    "relationship_count": 7,
+    "file_count": 4
+  },
+  "_checksum": "cebc86bd2efa90c95b4333c8f5172d2a25ca0d8f35191530cf8a00b27688c1f7"
+}
