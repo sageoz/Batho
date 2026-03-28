@@ -9,7 +9,7 @@ import platform
 
 import pytest
 
-from batho import main
+from batho_core.batho import main
 
 
 class TestCrossPlatform:

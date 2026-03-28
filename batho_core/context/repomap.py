@@ -18,13 +18,17 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from batho_core.config import REPOMAP_SCHEMA_VERSION
 from batho_core.utils.logging import get_logger
 
 from .categorizer import FileCategorizer, FileCategory
 from .schema import Entity, EntityType
+
+if TYPE_CHECKING:
+    from batho_core.time_machine import FileChange
+    from .codegraph import InMemoryGraph
 
 # ---------------------------------------------------------------------------
 # Token estimation
@@ -69,6 +73,122 @@ class RepoMap:
     # ------------------------------------------------------------------
     # Construction
     # ------------------------------------------------------------------
+
+    def patch(self, changes: list["FileChange"], graph: "InMemoryGraph") -> None:
+        """
+        Update the repomap for changed files without full rebuild.
+
+        Applies incremental changes to the symbol index based on file changes.
+        Removes entities for deleted files, updates entities for modified files,
+        and adds entities for new files.
+
+        Args:
+            changes: List of FileChange objects representing what changed
+            graph: Updated InMemoryGraph with the changes applied
+        """
+        from batho_core.time_machine import FileChangeType
+
+        # Rebuild from updated graph - for now this is a full rebuild
+        # TODO: Implement true incremental updates
+        root_path = Path(self._root)
+
+        def _rel(p: str) -> str:
+            """Convert absolute path *p* to a path relative to *root_path*."""
+            try:
+                return Path(p).relative_to(root_path).as_posix()
+            except ValueError:
+                return p  # already relative or outside root
+
+        by_file: dict[str, list[Entity]] = defaultdict(list)
+        for entity in graph.entities.values():
+            by_file[_rel(entity.file)].append(entity)
+
+        dependencies: dict[str, set[str]] = defaultdict(set)
+        from .schema import RelationshipType
+
+        for rel in graph.relationships:
+            if rel.type.name in ("IMPORTS", "CALLS", "USES"):
+                source_ent = graph.get_entity(rel.source_id)
+                target_ent = graph.get_entity(rel.target_id)
+
+                if source_ent:
+                    source_file = _rel(source_ent.file)
+                    # target_file: normalise if it looks like an absolute path,
+                    # else keep as module name (e.g. "os", "pathlib")
+                    raw_target = target_ent.file if target_ent else rel.target_id
+                    target_file = (
+                        _rel(raw_target) if raw_target.startswith("/") else raw_target
+                    )
+                    if source_file != target_file:
+                        dependencies[source_file].add(target_file)
+
+        sorted_map: dict[str, list[Entity]] = {
+            path: sorted(entities, key=lambda e: e.start_line)
+            for path, entities in sorted(by_file.items())
+        }
+        sorted_deps: dict[str, list[str]] = {
+            path: sorted(list(deps)) for path, deps in dependencies.items()
+        }
+
+        self._by_file = sorted_map
+        self._dependencies = sorted_deps
+
+        self._logger.debug(
+            "repomap_patched",
+            change_count=len(changes),
+            file_count=len(sorted_map),
+            entity_count=sum(len(v) for v in sorted_map.values()),
+        )
+
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RepoMap":
+        """
+        Reconstruct a RepoMap from serialized data.
+
+        Args:
+            data: Dict from render_json() or snapshot
+
+        Returns:
+            Reconstructed RepoMap instance
+        """
+        # Extract entities from the JSON structure
+        by_file = {}
+        dependencies = data.get("dependencies", {})
+
+        for file_path, entities_data in data.get("files", {}).items():
+            entities = []
+            for ent_data in entities_data:
+                # Convert back to Entity - simplified reconstruction
+                from .schema import Entity, EntityType
+
+                # Handle string type conversion
+                type_str = ent_data.get("type", "unknown")
+                if isinstance(type_str, str):
+                    type_str = type_str.upper()
+                    entity_type = EntityType[type_str] if type_str in EntityType.__members__ else EntityType.VARIABLE
+                else:
+                    entity_type = EntityType.VARIABLE
+
+                entity = Entity(
+                    id=ent_data.get("name", ""),
+                    name=ent_data.get("name", ""),
+                    type=entity_type,
+                    file=file_path,  # This needs to be absolute path, but we don't have root here
+                    start_line=ent_data.get("lines", [0, 0])[0],
+                    end_line=ent_data.get("lines", [0, 0])[1],
+                    signature=ent_data.get("signature"),
+                    metadata={"docstring": ent_data.get("docstring", "")},
+                )
+                entities.append(entity)
+            by_file[file_path] = entities
+
+        # Create instance - root will be set later if needed
+        instance = cls(_root="", _by_file=by_file, _dependencies=dependencies)
+        return instance
 
     @classmethod
     def build(cls, graph: "object", root: str) -> "RepoMap":
@@ -115,7 +235,9 @@ class RepoMap:
                     # target_file: normalise if it looks like an absolute path,
                     # else keep as module name (e.g. "os", "pathlib")
                     raw_target = target_ent.file if target_ent else rel.target_id
-                    target_file = _rel(raw_target) if raw_target.startswith("/") else raw_target
+                    target_file = (
+                        _rel(raw_target) if raw_target.startswith("/") else raw_target
+                    )
                     if source_file != target_file:
                         dependencies[source_file].add(target_file)
 
@@ -342,7 +464,9 @@ class RepoMap:
         for dir_path, files in grouped.items():
             display_path = dir_path if dir_path else "(root)"
             label = self._get_directory_label(dir_path)
-            lines.append(f"📁 {display_path}/ ({label})" if label else f"📁 {display_path}/")
+            lines.append(
+                f"📁 {display_path}/ ({label})" if label else f"📁 {display_path}/"
+            )
 
             for file_name, entities in files:
                 lines.append(f"  📄 {file_name}")
@@ -447,7 +571,9 @@ class RepoMap:
                 else:
                     entity_count = len(entities)
                     entity_types = self._summarize_entity_types(entities)
-                    lines.append(f"  📄 {file_name} ({entity_count} entities: {entity_types})")
+                    lines.append(
+                        f"  📄 {file_name} ({entity_count} entities: {entity_types})"
+                    )
 
             lines.append("")
 
@@ -472,7 +598,9 @@ class RepoMap:
         type_counts: dict[str, int] = defaultdict(int)
         for ent in entities:
             type_counts[str(ent.type)] += 1
-        return ", ".join(f"{count} {name}" for name, count in sorted(type_counts.items()))
+        return ", ".join(
+            f"{count} {name}" for name, count in sorted(type_counts.items())
+        )
 
     # ------------------------------------------------------------------
     # Overview generator
@@ -526,7 +654,8 @@ class RepoMap:
         lines.append("")
         cat_counts = {cat: len(files) for cat, files in categorized.items()}
         cat_entities = {
-            cat: sum(len(ents) for ents in files.values()) for cat, files in categorized.items()
+            cat: sum(len(ents) for ents in files.values())
+            for cat, files in categorized.items()
         }
 
         for cat in [
@@ -540,7 +669,9 @@ class RepoMap:
             entities = cat_entities.get(cat, 0)
             pct = (count / total_files * 100) if total_files > 0 else 0
             bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
-            lines.append(f"- **{cat.name}**: {count} files ({pct:.1f}%) | {entities} entities")
+            lines.append(
+                f"- **{cat.name}**: {count} files ({pct:.1f}%) | {entities} entities"
+            )
         lines.append("")
 
         lines.append("## Language Breakdown")
@@ -552,7 +683,11 @@ class RepoMap:
             for lang, count in sorted(lang_counts.items(), key=lambda x: -x[1]):
                 pct = (count / total_files * 100) if total_files > 0 else 0
                 lines.append(f"| {lang} | {count} | {pct:.1f}% |")
-            primary = max(lang_counts.items(), key=lambda x: x[1])[0] if lang_counts else "N/A"
+            primary = (
+                max(lang_counts.items(), key=lambda x: x[1])[0]
+                if lang_counts
+                else "N/A"
+            )
             lines.append(f"\n**Primary Language**: {primary}")
         else:
             lines.append("No language data available.")
@@ -671,7 +806,9 @@ class RepoMap:
                 lines.append(f"📁 {dir_name}/")
             else:
                 lines.append(
-                    f"{indent}📁 {dir_name}/ ({label})" if label else f"{indent}📁 {dir_name}/"
+                    f"{indent}📁 {dir_name}/ ({label})"
+                    if label
+                    else f"{indent}📁 {dir_name}/"
                 )
 
             if depth < max_depth:

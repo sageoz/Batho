@@ -1,4 +1,5 @@
 """Tests for batho_core.context.codegraph module."""
+
 from __future__ import annotations
 
 import json
@@ -12,7 +13,8 @@ from batho_core.context.codegraph import (
     InMemoryGraph,
     _FileStateCache,
 )
-from batho_core.utils.file_io import _calculate_shannon_entropy, _is_binary, _read_file_content
+from batho_core.utils.file_io import _read_file_content
+from batho_core.utils.hash import _calculate_shannon_entropy, _is_binary
 from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
 
 
@@ -20,8 +22,8 @@ from batho_core.context.schema import Entity, EntityType, Relationship, Relation
 # _calculate_shannon_entropy
 # ---------------------------------------------------------------------------
 
-class TestShannonEntropy:
 
+class TestShannonEntropy:
     def test_empty_data(self):
         assert _calculate_shannon_entropy(b"") == 0.0
 
@@ -45,8 +47,8 @@ class TestShannonEntropy:
 # _is_binary
 # ---------------------------------------------------------------------------
 
-class TestIsBinary:
 
+class TestIsBinary:
     def test_empty_not_binary(self):
         assert not _is_binary(b"")
 
@@ -75,8 +77,8 @@ class TestIsBinary:
 # _read_file_content
 # ---------------------------------------------------------------------------
 
-class TestReadFileContent:
 
+class TestReadFileContent:
     def test_reads_text_file(self, tmp_path: Path):
         f = tmp_path / "code.py"
         f.write_text("print('hello')\n")
@@ -101,11 +103,13 @@ class TestReadFileContent:
 # InMemoryGraph
 # ---------------------------------------------------------------------------
 
-class TestInMemoryGraph:
 
+class TestInMemoryGraph:
     def test_add_and_get_entity(self):
         graph = InMemoryGraph()
-        e = Entity(type=EntityType.FUNCTION, name="f", file="a.py", start_line=1, end_line=2)
+        e = Entity(
+            type=EntityType.FUNCTION, name="f", file="a.py", start_line=1, end_line=2
+        )
         graph.add_entity(e)
         assert graph.get_entity(e.id) is e
 
@@ -129,28 +133,55 @@ class TestInMemoryGraph:
 
     def test_neighbors_both(self):
         graph = InMemoryGraph()
-        graph.add_relationship(Relationship(source_id="a", target_id="b", type=RelationshipType.CALLS))
+        graph.add_relationship(
+            Relationship(source_id="a", target_id="b", type=RelationshipType.CALLS)
+        )
         result = graph.neighbors("a", "both")
         assert "b" in result
 
     def test_entities_by_file(self):
         graph = InMemoryGraph()
-        e1 = Entity(type=EntityType.FUNCTION, name="f", file="a.py", start_line=1, end_line=2)
-        e2 = Entity(type=EntityType.FUNCTION, name="g", file="b.py", start_line=1, end_line=2)
+        e1 = Entity(
+            type=EntityType.FUNCTION, name="f", file="a.py", start_line=1, end_line=2
+        )
+        e2 = Entity(
+            type=EntityType.FUNCTION, name="g", file="b.py", start_line=1, end_line=2
+        )
         graph.add_entity(e1)
         graph.add_entity(e2)
         assert len(graph.entities_by_file("a.py")) == 1
 
     def test_entities_by_type(self):
         graph = InMemoryGraph()
-        graph.add_entity(Entity(type=EntityType.FUNCTION, name="f", file="a.py", start_line=1, end_line=2))
-        graph.add_entity(Entity(type=EntityType.CLASS, name="C", file="a.py", start_line=5, end_line=10))
+        graph.add_entity(
+            Entity(
+                type=EntityType.FUNCTION,
+                name="f",
+                file="a.py",
+                start_line=1,
+                end_line=2,
+            )
+        )
+        graph.add_entity(
+            Entity(
+                type=EntityType.CLASS, name="C", file="a.py", start_line=5, end_line=10
+            )
+        )
         assert len(graph.entities_by_type(EntityType.FUNCTION)) == 1
 
     def test_root_entities(self):
         graph = InMemoryGraph()
-        e1 = Entity(type=EntityType.FUNCTION, name="f", file="a.py", start_line=1, end_line=2)
-        e2 = Entity(type=EntityType.METHOD, name="m", file="a.py", start_line=3, end_line=4, parent_id="some_id")
+        e1 = Entity(
+            type=EntityType.FUNCTION, name="f", file="a.py", start_line=1, end_line=2
+        )
+        e2 = Entity(
+            type=EntityType.METHOD,
+            name="m",
+            file="a.py",
+            start_line=3,
+            end_line=4,
+            parent_id="some_id",
+        )
         graph.add_entity(e1)
         graph.add_entity(e2)
         roots = graph.root_entities()
@@ -159,14 +190,24 @@ class TestInMemoryGraph:
 
     def test_stats(self):
         graph = InMemoryGraph()
-        graph.add_entity(Entity(type=EntityType.FUNCTION, name="f", file="a.py", start_line=1, end_line=2))
+        graph.add_entity(
+            Entity(
+                type=EntityType.FUNCTION,
+                name="f",
+                file="a.py",
+                start_line=1,
+                end_line=2,
+            )
+        )
         s = graph.stats()
         assert s["entity_count"] == 1
         assert s["file_count"] == 1
 
     def test_len_and_contains(self):
         graph = InMemoryGraph()
-        e = Entity(type=EntityType.FUNCTION, name="f", file="a.py", start_line=1, end_line=2)
+        e = Entity(
+            type=EntityType.FUNCTION, name="f", file="a.py", start_line=1, end_line=2
+        )
         graph.add_entity(e)
         assert len(graph) == 1
         assert e.id in graph
@@ -186,8 +227,8 @@ class TestInMemoryGraph:
 # _FileStateCache
 # ---------------------------------------------------------------------------
 
-class TestFileStateCache:
 
+class TestFileStateCache:
     def test_save_and_load(self, tmp_path: Path):
         cache_path = tmp_path / "cache.json"
         cache = _FileStateCache(cache_path)
@@ -218,11 +259,15 @@ class TestFileStateCache:
 
     def test_corrupted_checksum(self, tmp_path: Path):
         cache_path = tmp_path / "cache.json"
-        cache_path.write_text(json.dumps({
-            "schema_version": "file-cache.v1",
-            "files": {"a.py": {"mtime": 1.0, "sha256": "h1"}},
-            "_checksum": "invalid_checksum",
-        }))
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "file-cache.v1",
+                    "files": {"a.py": {"mtime": 1.0, "sha256": "h1"}},
+                    "_checksum": "invalid_checksum",
+                }
+            )
+        )
         cache = _FileStateCache(cache_path)
         # Should not load corrupted data
         assert not cache.is_cached("a.py", "h1")
@@ -235,11 +280,13 @@ class TestFileStateCache:
 # CodeGraphIndexer
 # ---------------------------------------------------------------------------
 
-class TestCodeGraphIndexer:
 
+class TestCodeGraphIndexer:
     def test_build_graph_simple_python(self, simple_python_repo: Path, tmp_path: Path):
         cache_path = tmp_path / "cache.json"
-        indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(simple_python_repo))
+        indexer = CodeGraphIndexer(
+            cache_path=str(cache_path), root=str(simple_python_repo)
+        )
         graph = indexer.build_graph(root=str(simple_python_repo))
         assert len(graph.entities) > 0
         assert len(graph.relationships) >= 0
@@ -247,11 +294,15 @@ class TestCodeGraphIndexer:
     def test_build_graph_caches(self, simple_python_repo: Path, tmp_path: Path):
         """Second run should hit cache entries."""
         cache_path = tmp_path / "cache.json"
-        indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(simple_python_repo))
+        indexer = CodeGraphIndexer(
+            cache_path=str(cache_path), root=str(simple_python_repo)
+        )
         graph1 = indexer.build_graph(root=str(simple_python_repo))
         stats1 = indexer.stats
 
-        indexer2 = CodeGraphIndexer(cache_path=str(cache_path), root=str(simple_python_repo))
+        indexer2 = CodeGraphIndexer(
+            cache_path=str(cache_path), root=str(simple_python_repo)
+        )
         graph2 = indexer2.build_graph(root=str(simple_python_repo))
         stats2 = indexer2.stats
 
@@ -265,9 +316,13 @@ class TestCodeGraphIndexer:
         graph = indexer.build_graph(root=str(root))
         assert len(graph.entities) == 0
 
-    def test_build_graph_with_extensions_filter(self, simple_python_repo: Path, tmp_path: Path):
+    def test_build_graph_with_extensions_filter(
+        self, simple_python_repo: Path, tmp_path: Path
+    ):
         cache_path = tmp_path / "cache.json"
-        indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(simple_python_repo))
+        indexer = CodeGraphIndexer(
+            cache_path=str(cache_path), root=str(simple_python_repo)
+        )
         graph = indexer.build_graph(root=str(simple_python_repo), extensions=[".py"])
         # Should only index .py files
         for e in graph.entities.values():

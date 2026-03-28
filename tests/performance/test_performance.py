@@ -10,7 +10,7 @@ from typing import Dict, Any
 
 import pytest
 
-from batho import main
+from batho_core.batho import main
 
 
 @pytest.mark.slow

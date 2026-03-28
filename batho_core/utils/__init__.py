@@ -13,6 +13,15 @@ from .hash import (
 )
 from .ignore import is_ignored, load_ignore_spec
 from .logging import get_log_level, get_logger
+from .patch_errors import (
+    PatchValidationError,
+    PatchConsistencyError,
+    PatchSnapshotError,
+    PatchFileError,
+    PatchTimeoutError,
+    PatchAuditLogger,
+    audit_logger,
+)
 
 __all__ = [
     "compute_bytes_hash",
@@ -26,4 +35,11 @@ __all__ = [
     "is_ignored",
     "get_logger",
     "get_log_level",
+    "PatchValidationError",
+    "PatchConsistencyError",
+    "PatchSnapshotError",
+    "PatchFileError",
+    "PatchTimeoutError",
+    "PatchAuditLogger",
+    "audit_logger",
 ]

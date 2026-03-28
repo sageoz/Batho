@@ -39,12 +39,19 @@ from batho_core.time_machine import (
     compute_staleness,
     create_snapshot,
     diff_snapshots,
+    incremental_patch,
     list_snapshots,
     load_snapshot,
     webhook_stub,
+    FileChangeTracker,
+    FileChange,
+    FileChangeType,
+    FileChangeSummary,
+    FileTrackingConfig,
+    PatchOperation,
 )
-from batho_core.utils.file_io import read_file_bytes, write_atomically
-from batho_core.utils.hash import compute_bytes_hash
+from batho_core.utils.file_io import read_file_bytes, write_atomically, _is_binary
+from batho_core.utils.hash import compute_bytes_hash, compute_file_hash
 from batho_core.utils.ignore import is_ignored, load_ignore_spec
 from batho_core.utils.logging import configure_logging, get_logger
 
@@ -120,9 +127,9 @@ def _save_index_metadata(ctn_dir: Path, metadata: dict[str, Any]) -> None:
         "index_metadata_schema_version", "index-metadata.v1"
     )
     payload["_checksum"] = compute_bytes_hash(
-        json.dumps({k: v for k, v in payload.items() if k != "_checksum"}, sort_keys=True).encode(
-            "utf-8"
-        )
+        json.dumps(
+            {k: v for k, v in payload.items() if k != "_checksum"}, sort_keys=True
+        ).encode("utf-8")
     )
     write_atomically(index_path, payload, is_json=True)
 
@@ -148,7 +155,9 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text.encode("utf-8")) // 4)
 
 
-def _collect_repo_metrics(root: Path, max_file_size_kb: int | None = None) -> dict[str, Any]:
+def _collect_repo_metrics(
+    root: Path, max_file_size_kb: int | None = None
+) -> dict[str, Any]:
     ignore_spec = load_ignore_spec(root)
     file_count_total = 0
     repo_size_bytes = 0
@@ -206,7 +215,9 @@ def _backfill_index_metrics(ctn_dir: Path, root: Path) -> bool:
         if not isinstance(entry, dict):
             continue
         stats = entry.get("stats", {}) if isinstance(entry.get("stats"), dict) else {}
-        metrics = entry.get("metrics", {}) if isinstance(entry.get("metrics"), dict) else {}
+        metrics = (
+            entry.get("metrics", {}) if isinstance(entry.get("metrics"), dict) else {}
+        )
         for key in (
             "loc_total",
             "repo_size_bytes",
@@ -256,8 +267,12 @@ def _load_current_graph(ctn_dir: Path, index_id: str) -> InMemoryGraph | None:
 
 def _strip_files(graph: InMemoryGraph, file_paths: Iterable[str]) -> None:
     targets = set(file_paths)
-    remove_ids = {eid for eid, ent in list(graph.entities.items()) if ent.file in targets}
-    graph.entities = {eid: ent for eid, ent in graph.entities.items() if ent.file not in targets}
+    remove_ids = {
+        eid for eid, ent in list(graph.entities.items()) if ent.file in targets
+    }
+    graph.entities = {
+        eid: ent for eid, ent in graph.entities.items() if ent.file not in targets
+    }
     graph.relationships = [
         r
         for r in graph.relationships
@@ -323,7 +338,9 @@ def cmd_index(args: argparse.Namespace) -> int:
         print(f"❌ Root does not exist or is not a directory: {root}")
         return 1
 
-    configure_logging(get_config_cached()["logging"]["level"], json_format=args.log_json)
+    configure_logging(
+        get_config_cached()["logging"]["level"], json_format=args.log_json
+    )
     ctn_dir = _ensure_ctn_dir(root)
 
     cache_path = ctn_dir / "file_cache.json"
@@ -358,7 +375,9 @@ def cmd_index(args: argparse.Namespace) -> int:
 
     with _ctn_lock(ctn_dir):
         # Outputs
-        graph_path = Path(args.output_json) if args.output_json else versioned_dir / "graph.json"
+        graph_path = (
+            Path(args.output_json) if args.output_json else versioned_dir / "graph.json"
+        )
         repomap_path = versioned_dir / "repomap.json"
 
         _write_json(graph_path, graph.to_dict())
@@ -379,25 +398,35 @@ def cmd_index(args: argparse.Namespace) -> int:
         _write_text(context_dir / "overview.md", overview_content)
 
         # architecture.md - Main codebase only (full entities)
-        arch_content = repomap.render_category(FileCategory.SOURCE, include_full_entities=True)
+        arch_content = repomap.render_category(
+            FileCategory.SOURCE, include_full_entities=True
+        )
         _write_text(context_dir / "architecture.md", arch_content)
 
         # tests.md - Test files (summary format)
-        tests_content = repomap.render_category(FileCategory.TESTS, include_full_entities=False)
+        tests_content = repomap.render_category(
+            FileCategory.TESTS, include_full_entities=False
+        )
         _write_text(context_dir / "tests.md", tests_content)
 
         # docs.md - Documentation files (summary format)
-        docs_content = repomap.render_category(FileCategory.DOCS, include_full_entities=False)
+        docs_content = repomap.render_category(
+            FileCategory.DOCS, include_full_entities=False
+        )
         _write_text(context_dir / "docs.md", docs_content)
 
         # config.md - Configuration files (summary format)
-        config_content = repomap.render_category(FileCategory.CONFIG, include_full_entities=False)
+        config_content = repomap.render_category(
+            FileCategory.CONFIG, include_full_entities=False
+        )
         _write_text(context_dir / "config.md", config_content)
 
         # Metadata
         metadata = _load_index_metadata(ctn_dir)
         prev_index_id = metadata.get("current_index_id")
-        prev_entry = metadata.get("indexes", {}).get(prev_index_id) if prev_index_id else None
+        prev_entry = (
+            metadata.get("indexes", {}).get(prev_index_id) if prev_index_id else None
+        )
         repo_hash = _compute_repo_hash(root)
         stats = dict(indexer.stats)
         cache_hit_rate = 0.0
@@ -434,7 +463,9 @@ def cmd_index(args: argparse.Namespace) -> int:
                 "graph_json": str(graph_path.relative_to(root)),
                 "repomap_json": str(repomap_path.relative_to(root)),
                 "overview_md": str((context_dir / "overview.md").relative_to(root)),
-                "architecture_md": str((context_dir / "architecture.md").relative_to(root)),
+                "architecture_md": str(
+                    (context_dir / "architecture.md").relative_to(root)
+                ),
                 "tests_md": str((context_dir / "tests.md").relative_to(root)),
                 "docs_md": str((context_dir / "docs.md").relative_to(root)),
                 "config_md": str((context_dir / "config.md").relative_to(root)),
@@ -446,15 +477,17 @@ def cmd_index(args: argparse.Namespace) -> int:
         }
         snapshot_id = None
         if args.snapshot:
-            snapshot_id = create_snapshot(ctn_dir, root, graph, repomap, label=args.snapshot_label)
+            snapshot_id = create_snapshot(
+                ctn_dir, root, graph, repomap, label=args.snapshot_label
+            )
             entry["snapshot_id"] = snapshot_id
         metadata.setdefault("indexes", {})[index_id] = entry
         metadata["current_index_id"] = index_id
         _save_index_metadata(ctn_dir, metadata)
 
-        metrics_path = args.metrics_output or get_config_cached().get("indexer", {}).get(
-            "metrics_output"
-        )
+        metrics_path = args.metrics_output or get_config_cached().get(
+            "indexer", {}
+        ).get("metrics_output")
         if metrics_path:
             metrics_payload = {
                 "index_id": index_id,
@@ -467,67 +500,69 @@ def cmd_index(args: argparse.Namespace) -> int:
             try:
                 _write_metrics(Path(metrics_path), metrics_payload)
             except OSError as exc:
-                LOGGER.warning("metrics_write_failed", path=metrics_path, error=str(exc))
-        
+                LOGGER.warning(
+                    "metrics_write_failed", path=metrics_path, error=str(exc)
+                )
+
         # Generate C4 model if not disabled
         if not args.no_c4:
             try:
                 if args.verbose:
                     print("🏗️  Generating C4 model...")
-                
+
                 generator = C4Generator(ctn_dir, index_id)
                 c4_model = generator.generate_c4_model()
-                
+
                 # Format as Structurizr JSON
                 formatter = StructurizrFormatter(
                     workspace_name=c4_model["name"],
-                    workspace_description=c4_model["description"]
+                    workspace_description=c4_model["description"],
                 )
-                
+
                 # Add all model elements
                 for person in c4_model["model"]["people"]:
                     formatter.add_person(person)
-                
+
                 for system in c4_model["model"]["softwareSystems"]:
                     formatter.add_software_system(system)
-                
+
                 for container in c4_model["model"]["containers"]:
                     formatter.add_container(container)
-                
+
                 for component in c4_model["model"]["components"]:
                     formatter.add_component(component)
-                
+
                 # Add views
                 for view in c4_model["views"]["systemContext"]:
                     formatter.add_system_context_view(view)
-                
+
                 for view in c4_model["views"]["container"]:
                     formatter.add_container_view(view)
-                
+
                 for view in c4_model["views"]["component"]:
                     formatter.add_component_view(view)
-                
+
                 # Add LLM extensions
                 formatter.add_llm_extensions(c4_model["llm_extensions"])
-                
+
                 # Add styling
                 formatter.add_styling()
-                
+
                 # Write C4 model
                 c4_path = versioned_dir / "c4-model.json"
                 formatter.save_to_file(str(c4_path))
-                
+
                 # Update entry with C4 output
                 entry["outputs"]["c4_model"] = str(c4_path.relative_to(root))
                 metadata["indexes"][index_id] = entry
                 _save_index_metadata(ctn_dir, metadata)
-                
+
                 if args.verbose:
                     print(f"   C4 model: {c4_path.relative_to(root)}")
                     print(f"   Systems: {len(c4_model['model']['softwareSystems'])}")
                     print(f"   Containers: {len(c4_model['model']['containers'])}")
                     print(f"   Components: {len(c4_model['model']['components'])}")
-                
+
             except Exception as e:
                 LOGGER.warning("c4_generation_failed", error=str(e))
                 if args.verbose:
@@ -538,7 +573,9 @@ def cmd_index(args: argparse.Namespace) -> int:
 
     if args.verbose:
         print(f"✅ Indexed {root} → {index_id}")
-        print(f"   Entities: {entry['entity_count']}, Relationships: {entry['relationship_count']}")
+        print(
+            f"   Entities: {entry['entity_count']}, Relationships: {entry['relationship_count']}"
+        )
         print(f"   Outputs: {entry['outputs']}")
         if stack_info:
             print(f"   Stack: {stack_info}")
@@ -561,7 +598,8 @@ def cmd_stats(args: argparse.Namespace) -> int:
     metrics = entry.get("metrics", {}) if isinstance(entry, dict) else {}
     summary = {
         "loc_total": stats.get("loc_total") or metrics.get("loc_total"),
-        "repo_size_bytes": stats.get("repo_size_bytes") or metrics.get("repo_size_bytes"),
+        "repo_size_bytes": stats.get("repo_size_bytes")
+        or metrics.get("repo_size_bytes"),
         "compression_ratio": metrics.get("compression_ratio"),
         "cache_hit_rate": metrics.get("cache_hit_rate"),
     }
@@ -598,9 +636,181 @@ def cmd_diff_snapshots(args: argparse.Namespace) -> int:
     return 0
 
 
+def _detect_file_changes(root: Path, files: list[Path], ctn_dir: Path, base_snapshot_id: str) -> list[FileChange]:
+    """Detect changes for explicitly provided files by comparing with base snapshot."""
+    changes = []
+    base_snapshot = load_snapshot(ctn_dir, base_snapshot_id)
+    if not base_snapshot:
+        LOGGER.warning("base_snapshot_not_found", snapshot_id=base_snapshot_id)
+        return []
+    
+    # Get file hashes from base snapshot
+    base_files = {}
+    for entity in base_snapshot.get("graph", {}).get("entities", []):
+        file_path = entity.get("file", "")
+        if file_path:
+            if file_path not in base_files:
+                base_files[file_path] = set()
+            base_files[file_path].add(entity.get("name", ""))
+    
+    for file_path in files:
+        if not file_path.exists():
+            # File was deleted
+            relative_path = str(file_path.relative_to(root))
+            if relative_path in base_files:
+                changes.append(FileChange(
+                    path=relative_path,
+                    change_type=FileChangeType.DELETED,
+                    old_hash=None,
+                    new_hash=None,
+                ))
+        else:
+            # File exists - check if it's new or modified
+            relative_path = str(file_path.relative_to(root))
+            current_hash = compute_file_hash(file_path)
+            
+            if relative_path in base_files:
+                # File existed before - assume modified
+                changes.append(FileChange(
+                    path=relative_path,
+                    change_type=FileChangeType.MODIFIED,
+                    old_hash=None,  # Could be tracked if needed
+                    new_hash=current_hash,
+                    file_size=file_path.stat().st_size,
+                    mtime=datetime.fromtimestamp(file_path.stat().st_mtime, timezone.utc),
+                ))
+            else:
+                # New file
+                changes.append(FileChange(
+                    path=relative_path,
+                    change_type=FileChangeType.ADDED,
+                    old_hash=None,
+                    new_hash=current_hash,
+                    file_size=file_path.stat().st_size,
+                    mtime=datetime.fromtimestamp(file_path.stat().st_mtime, timezone.utc),
+                ))
+    
+    return changes
+
+
+def _auto_detect_changes(root: Path, ctn_dir: Path, base_snapshot_id: str, max_file_size_kb: int) -> list[FileChange]:
+    """Auto-detect changes by comparing current filesystem with base snapshot."""
+    changes = []
+    base_snapshot = load_snapshot(ctn_dir, base_snapshot_id)
+    if not base_snapshot:
+        LOGGER.warning("base_snapshot_not_found", snapshot_id=base_snapshot_id)
+        return []
+    
+    # Get files from base snapshot
+    base_files = set()
+    for entity in base_snapshot.get("graph", {}).get("entities", []):
+        file_path = entity.get("file", "")
+        if file_path:
+            base_files.add(file_path)
+    
+    # Get current files (respecting ignore rules)
+    ignore_spec = load_ignore_spec(root)
+    current_files = set()
+    
+    for file_path in root.rglob("*"):
+        if file_path.is_file() and not is_ignored(file_path, root, ignore_spec):
+            # Skip files that are too large
+            if file_path.stat().st_size > max_file_size_kb * 1024:
+                continue
+            
+            # Skip binary files
+            try:
+                content = file_path.read_bytes()
+                if _is_binary(content):
+                    continue
+            except (OSError, IOError):
+                continue
+            
+            relative_path = str(file_path.relative_to(root))
+            current_files.add(relative_path)
+    
+    # Detect deletions
+    for base_file in base_files:
+        if base_file not in current_files:
+            changes.append(FileChange(
+                path=base_file,
+                change_type=FileChangeType.DELETED,
+                old_hash=None,
+                new_hash=None,
+            ))
+    
+    # Detect additions and modifications
+    for current_file in current_files:
+        full_path = root / current_file
+        current_hash = compute_file_hash(full_path)
+        
+        if current_file in base_files:
+            # File existed before - assume modified
+            changes.append(FileChange(
+                path=current_file,
+                change_type=FileChangeType.MODIFIED,
+                old_hash=None,
+                new_hash=current_hash,
+                file_size=full_path.stat().st_size,
+                mtime=datetime.fromtimestamp(full_path.stat().st_mtime, timezone.utc),
+            ))
+        else:
+            # New file
+            changes.append(FileChange(
+                path=current_file,
+                change_type=FileChangeType.ADDED,
+                old_hash=None,
+                new_hash=current_hash,
+                file_size=full_path.stat().st_size,
+                mtime=datetime.fromtimestamp(full_path.stat().st_mtime, timezone.utc),
+            ))
+    
+    return changes
+
+
+def _get_latest_snapshot(ctn_dir: Path) -> str | None:
+    """Get the most recent snapshot ID from the snapshots directory."""
+    snapshots_dir = ctn_dir / "snapshots"
+    if not snapshots_dir.exists():
+        return None
+    
+    snapshot_files = list(snapshots_dir.glob("batho_*.json"))
+    if not snapshot_files:
+        return None
+    
+    # Sort by modification time and get the latest
+    latest_file = max(snapshot_files, key=lambda f: f.stat().st_mtime)
+    snapshot_id = latest_file.stem  # Remove .json extension
+    
+    return snapshot_id
+
+
 def cmd_patch(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
+
+    # Check if using snapshot-based patching
+    if args.base_snapshot:
+        # Use snapshot-based incremental patching
+        return _cmd_patch_snapshot_based(args, root, ctn_dir)
+    elif args.force_index_patch:
+        # Force traditional index-based patching
+        return _cmd_patch_index_based(args, root, ctn_dir)
+    else:
+        # Try to use incremental patching if snapshots are available
+        latest_snapshot = _get_latest_snapshot(ctn_dir)
+        if latest_snapshot and not args.diff:
+            # Auto-use snapshot-based incremental patching for better performance
+            args.base_snapshot = latest_snapshot
+            LOGGER.info("auto_using_snapshot_patch", snapshot_id=latest_snapshot)
+            return _cmd_patch_snapshot_based(args, root, ctn_dir)
+        else:
+            # Fall back to traditional index-based patching
+            return _cmd_patch_index_based(args, root, ctn_dir)
+
+
+def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) -> int:
+    """Traditional index-based patching for backward compatibility."""
     metadata = _load_index_metadata(ctn_dir)
     current_id = metadata.get("current_index_id")
     if not current_id:
@@ -616,13 +826,40 @@ def cmd_patch(args: argparse.Namespace) -> int:
     indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
 
     files: list[Path] = []
-    if args.diff:
-        files.extend(_files_from_diff(Path(args.diff), root))
-    if args.files:
-        files.extend(
-            Path(f).resolve() if not Path(f).is_absolute() else Path(f) for f in args.files
-        )
-    files = sorted({f for f in files if f.exists()})
+
+    if args.scan:
+        hash_cache_path = ctn_dir / "file_hashes.json"
+        tracker = FileChangeTracker(root)
+        tracker.load(hash_cache_path)
+        changes = tracker.scan_for_changes(max_file_size_kb=args.max_file_size_kb)
+        deleted_paths = tracker.get_deleted_files(changes)
+        if deleted_paths:
+            _strip_files(graph, deleted_paths)
+        files = tracker.get_changed_files(changes)
+        if not files:
+            print("No changes detected.")
+            return 0
+        tracker.save(hash_cache_path)
+        print(f"Scanned: {len(files)} changed files, {len(deleted_paths)} deleted")
+    else:
+        if args.diff:
+            files.extend(_files_from_diff(Path(args.diff), root))
+        if args.files:
+            files.extend(
+                Path(f).resolve() if not Path(f).is_absolute() else Path(f)
+                for f in args.files
+            )
+        files = sorted({f for f in files if f.exists()})
+
+    if not files:
+        print("No files to patch.")
+        return 1
+
+    if args.dry_run:
+        print("Dry run mode - would apply changes to these files:")
+        for f in files:
+            print(f"  {f.relative_to(root)}")
+        return 0
 
     patch_start = time.perf_counter()
     _reindex_files(root, files, indexer, graph)
@@ -639,7 +876,7 @@ def cmd_patch(args: argparse.Namespace) -> int:
         # Load metadata for stack info
         metadata = _load_index_metadata(ctn_dir)
         entry = metadata.get("indexes", {}).get(current_id, {})
-        
+
         _write_json(graph_path, graph.to_dict())
         repomap_json = repomap.render_json()
         _write_json(repomap_path, repomap_json)
@@ -657,19 +894,27 @@ def cmd_patch(args: argparse.Namespace) -> int:
         _write_text(context_dir / "overview.md", overview_content)
 
         # architecture.md - Main codebase only
-        arch_content = repomap.render_category(FileCategory.SOURCE, include_full_entities=True)
+        arch_content = repomap.render_category(
+            FileCategory.SOURCE, include_full_entities=True
+        )
         _write_text(context_dir / "architecture.md", arch_content)
 
         # tests.md
-        tests_content = repomap.render_category(FileCategory.TESTS, include_full_entities=False)
+        tests_content = repomap.render_category(
+            FileCategory.TESTS, include_full_entities=False
+        )
         _write_text(context_dir / "tests.md", tests_content)
 
         # docs.md
-        docs_content = repomap.render_category(FileCategory.DOCS, include_full_entities=False)
+        docs_content = repomap.render_category(
+            FileCategory.DOCS, include_full_entities=False
+        )
         _write_text(context_dir / "docs.md", docs_content)
 
         # config.md
-        config_content = repomap.render_category(FileCategory.CONFIG, include_full_entities=False)
+        config_content = repomap.render_category(
+            FileCategory.CONFIG, include_full_entities=False
+        )
         _write_text(context_dir / "config.md", config_content)
 
         # Update metadata entry
@@ -725,7 +970,143 @@ def cmd_patch(args: argparse.Namespace) -> int:
         metadata.setdefault("indexes", {})[current_id] = entry
         _save_index_metadata(ctn_dir, metadata)
 
-    print(json.dumps({"patched": [str(f) for f in files], "index_id": current_id}, indent=2))
+        snapshot_id = None
+        if args.snapshot:
+            snapshot_id = create_snapshot(ctn_dir, root, graph, repomap)
+            entry["snapshot_id"] = snapshot_id
+            metadata["indexes"][current_id] = entry
+            _save_index_metadata(ctn_dir, metadata)
+
+    summary = FileChangeSummary(
+        total_changes=len(files),
+        added=0,  # TODO: track these separately
+        modified=len(files),
+        deleted=0,
+        unchanged=0,
+        affected_files=[str(f.relative_to(root)) for f in files],
+    )
+
+    print(
+        json.dumps(
+            {
+                "patched": summary.affected_files,
+                "index_id": current_id,
+                "summary": {
+                    "total_changes": summary.total_changes,
+                    "modified": summary.modified,
+                },
+                "snapshot_id": snapshot_id,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def _cmd_patch_snapshot_based(
+    args: argparse.Namespace, root: Path, ctn_dir: Path
+) -> int:
+    """Snapshot-based incremental patching using base snapshot."""
+    # Collect changes from various sources
+    changes: list[FileChange] = []
+
+    if args.scan:
+        tracker = FileChangeTracker(root)
+        hash_cache_path = ctn_dir / "file_hashes.json"
+        tracker.load(hash_cache_path)
+        changes = tracker.scan_for_changes(max_file_size_kb=args.max_file_size_kb)
+        tracker.save(hash_cache_path)
+        print(f"Scanned: {len(changes)} changes detected")
+    else:
+        # Process explicit file changes or auto-detect from current index
+        explicit_files = []
+        if args.diff:
+            explicit_files.extend(_files_from_diff(Path(args.diff), root))
+        if args.files:
+            explicit_files.extend(
+                Path(f).resolve() if not Path(f).is_absolute() else Path(f)
+                for f in args.files
+            )
+        
+        if explicit_files:
+            # Use explicitly provided files
+            explicit_files = sorted({f for f in explicit_files})
+            changes = _detect_file_changes(root, explicit_files, ctn_dir, args.base_snapshot)
+        else:
+            # Auto-detect changes by comparing current state with base snapshot
+            changes = _auto_detect_changes(root, ctn_dir, args.base_snapshot, args.max_file_size_kb)
+        
+        print(f"Detected: {len(changes)} changes")
+
+    if not changes:
+        print("No changes detected.")
+        return 0
+
+    # Create summary for reporting
+    summary = FileChangeSummary(
+        total_changes=len(changes),
+        added=sum(1 for c in changes if c.change_type == FileChangeType.ADDED),
+        modified=sum(1 for c in changes if c.change_type == FileChangeType.MODIFIED),
+        deleted=sum(1 for c in changes if c.change_type == FileChangeType.DELETED),
+        unchanged=0,
+        affected_files=[c.path for c in changes],
+    )
+
+    if args.dry_run:
+        print("Dry run mode - would apply changes:")
+        print(f"  Added: {summary.added}")
+        print(f"  Modified: {summary.modified}")
+        print(f"  Deleted: {summary.deleted}")
+        print(f"  Files: {', '.join(summary.affected_files)}")
+        return 0
+
+    # Apply incremental patch
+    result = incremental_patch(ctn_dir, args.base_snapshot, changes)
+
+    if not result["success"]:
+        print(
+            json.dumps(
+                {"error": result["error"], "operation_id": result.get("operation_id")},
+                indent=2,
+            )
+        )
+        return 1
+
+    # Create additional snapshot if requested
+    final_snapshot_id = result["new_snapshot_id"]
+    if args.snapshot:
+        # Load the newly created snapshot and create another one if needed
+        base_snapshot = load_snapshot(ctn_dir, result["new_snapshot_id"])
+        if base_snapshot:
+            final_snapshot_id = create_snapshot(
+                ctn_dir,
+                root,
+                InMemoryGraph.from_dict(base_snapshot["graph"]),
+                RepoMap.from_dict(base_snapshot["repomap"]),
+                label="Post-patch snapshot",
+            )
+
+    print(
+        json.dumps(
+            {
+                "success": True,
+                "new_snapshot_id": result["new_snapshot_id"],
+                "operation_id": result["operation_id"],
+                "applied_changes": result["applied_changes"],
+                "base_snapshot_id": result["base_snapshot_id"],
+                "summary": {
+                    "total_changes": summary.total_changes,
+                    "added": summary.added,
+                    "modified": summary.modified,
+                    "deleted": summary.deleted,
+                },
+                "final_snapshot_id": final_snapshot_id
+                if args.snapshot
+                else result["new_snapshot_id"],
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -758,65 +1139,79 @@ def cmd_c4(args: argparse.Namespace) -> int:
         print(f"❌ Root does not exist or is not a directory: {root}")
         return 1
 
-    configure_logging(get_config_cached()["logging"]["level"], json_format=args.log_json)
+    configure_logging(
+        get_config_cached()["logging"]["level"], json_format=args.log_json
+    )
     ctn_dir = _ensure_ctn_dir(root)
-    
+
     # Load current index
     metadata = _load_index_metadata(ctn_dir)
     current_id = metadata.get("current_index_id")
-    
+
     if not current_id:
         print("❌ No index found. Run 'batho index' first.")
         return 1
-    
+
     try:
         # Generate C4 model with new rule system options
         generator = C4Generator(
-            ctn_dir, 
-            current_id, 
-            rules_dir=getattr(args, 'rules_dir', None)
+            ctn_dir, current_id, rules_dir=getattr(args, "rules_dir", None)
         )
-        
+
         # Override language detection if specified
-        if getattr(args, 'language', None):
+        if getattr(args, "language", None):
             generator.primary_language = args.language
             # Regenerate dynamic rules with overridden language
-            if not getattr(args, 'no_dynamic_rules', False):
-                generator.rule_engine.generate_dynamic_rules(generator.graph, generator.repomap)
-        
+            if not getattr(args, "no_dynamic_rules", False):
+                generator.rule_engine.generate_dynamic_rules(
+                    generator.graph, generator.repomap
+                )
+
         # Apply granularity override if specified
-        if getattr(args, 'granularity', None):
+        if getattr(args, "granularity", None):
             from batho_core.context.c4.granularity.engine import GranularityLevel
+
             override_level = GranularityLevel(args.granularity)
-            generator.granularity_decision = generator.granularity_engine.decide_granularity(
-                generator.repository_metrics,
-                override=override_level
+            generator.granularity_decision = (
+                generator.granularity_engine.decide_granularity(
+                    generator.repository_metrics, override=override_level
+                )
             )
             print(f"🎯 Applied granularity override: {args.granularity}")
-        
+
         # Apply grouping strategy if specified
-        if getattr(args, 'grouping_strategy', None):
+        if getattr(args, "grouping_strategy", None):
             from batho_core.context.c4.granularity.grouping import GroupingStrategy
+
             strategy = GroupingStrategy(args.grouping_strategy)
-            generator.granularity_decision.settings["grouping_strategy"] = strategy.value
+            generator.granularity_decision.settings["grouping_strategy"] = (
+                strategy.value
+            )
             generator.granularity_decision.settings["group_components"] = True
             print(f"📦 Applied grouping strategy: {args.grouping_strategy}")
-        
+
         # Apply importance threshold if specified
-        if getattr(args, 'importance_threshold', None) and args.importance_threshold > 0:
-            generator.granularity_decision.settings["importance_threshold"] = args.importance_threshold
+        if (
+            getattr(args, "importance_threshold", None)
+            and args.importance_threshold > 0
+        ):
+            generator.granularity_decision.settings["importance_threshold"] = (
+                args.importance_threshold
+            )
             generator.granularity_decision.settings["filter_by_importance"] = True
             print(f"⭐ Applied importance threshold: {args.importance_threshold}")
-        
+
         # Apply max components limit if specified
-        if getattr(args, 'max_components', None):
-            generator.granularity_decision.settings["max_components"] = args.max_components
+        if getattr(args, "max_components", None):
+            generator.granularity_decision.settings["max_components"] = (
+                args.max_components
+            )
             print(f"🔢 Applied max components limit: {args.max_components}")
-        
+
         # Configure pattern detectors
-        enable_detectors = getattr(args, 'enable_detectors', None)
-        disable_detectors = getattr(args, 'disable_detectors', None)
-        
+        enable_detectors = getattr(args, "enable_detectors", None)
+        disable_detectors = getattr(args, "disable_detectors", None)
+
         if enable_detectors or disable_detectors:
             # Re-run detection with specific detectors
             all_rules = generator.rule_engine.rule_loader.load_all_rules()
@@ -824,118 +1219,121 @@ def cmd_c4(args: argparse.Namespace) -> int:
                 generator.graph,
                 generator.repomap,
                 all_rules,
-                detector_names=enable_detectors
+                detector_names=enable_detectors,
             )
-        
+
         c4_model = generator.generate_c4_model()
-        
+
         # Determine output format and formatter
-        output_format = getattr(args, 'output_format', 'json')
-        
-        if output_format == 'json':
+        output_format = getattr(args, "output_format", "json")
+
+        if output_format == "json":
             # Use Structurizr JSON formatter
             from batho_core.context.c4_structurizr import StructurizrFormatter
+
             formatter = StructurizrFormatter(
                 workspace_name=c4_model["name"],
-                workspace_description=c4_model["description"]
+                workspace_description=c4_model["description"],
             )
-            
+
             # Add all model elements
             for person in c4_model["model"]["people"]:
                 formatter.add_person(person)
-            
+
             for system in c4_model["model"]["softwareSystems"]:
                 formatter.add_software_system(system)
-            
+
             for container in c4_model["model"]["containers"]:
                 formatter.add_container(container)
-            
+
             for component in c4_model["model"]["components"]:
                 formatter.add_component(component)
-            
+
             # Add views
             for view in c4_model["views"]["systemContext"]:
                 formatter.add_system_context_view(view)
-            
+
             for view in c4_model["views"]["container"]:
                 formatter.add_container_view(view)
-            
+
             for view in c4_model["views"]["component"]:
                 formatter.add_component_view(view)
-            
+
             # Add LLM extensions
             formatter.add_llm_extensions(c4_model["llm_extensions"])
-            
+
             # Add styling
             formatter.add_styling()
-            
+
             # Get formatted output
             output_content = formatter.to_json()
-            
+
         else:
             # Use new format registry
             from batho_core.context.c4.formatters import get_format_registry
             from batho_core.context.c4.formatters.base import FormatConfig
-            
+
             registry = get_format_registry()
-            
+
             # Build formatter configuration
             config = {
-                "theme": getattr(args, 'theme', None),
-                "split_threshold": getattr(args, 'split_threshold', None),
+                "theme": getattr(args, "theme", None),
+                "split_threshold": getattr(args, "split_threshold", None),
                 "include_relationships": True,
                 "include_descriptions": True,
-                "custom_options": {}
+                "custom_options": {},
             }
-            
+
             # Add format-specific options
-            if output_format == 'plantuml':
+            if output_format == "plantuml":
                 config["custom_options"]["include_sprites"] = True
-            elif output_format == 'interactive':
+            elif output_format == "interactive":
                 config["custom_options"]["default_zoom"] = 0.8
                 config["custom_options"]["show_minimap"] = True
                 config["custom_options"]["enable_search"] = True
-            elif output_format == 'mermaid':
+            elif output_format == "mermaid":
                 config["custom_options"]["collapsible"] = True
-            
+
             # Get formatter and format model
             formatter = registry.get_formatter(output_format, config)
             output_content = formatter.format_model(c4_model)
-        
+
         # Determine output path
         if args.output:
             output_path = Path(args.output)
         else:
             # Default based on format
             format_extensions = {
-                'json': 'json',
-                'plantuml': 'puml',
-                'mermaid': 'mmd',
-                'interactive': 'html',
-                'd2': 'd2'
+                "json": "json",
+                "plantuml": "puml",
+                "mermaid": "mmd",
+                "interactive": "html",
+                "d2": "d2",
             }
-            ext = format_extensions.get(output_format, 'txt')
+            ext = format_extensions.get(output_format, "txt")
             output_path = ctn_dir / current_id / f"c4-model.{ext}"
-        
+
         # Write output
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(output_content, encoding='utf-8')
-        
+        output_path.write_text(output_content, encoding="utf-8")
+
         # Update index metadata
         with _ctn_lock(ctn_dir):
             entry = metadata.get("indexes", {}).get(current_id, {})
-            entry.setdefault("outputs", {})[f"c4_model_{output_format}"] = str(output_path.relative_to(root))
+            entry.setdefault("outputs", {})[f"c4_model_{output_format}"] = str(
+                output_path.relative_to(root)
+            )
             metadata.setdefault("indexes", {})[current_id] = entry
             _save_index_metadata(ctn_dir, metadata)
-        
+
         print(f"✅ Generated C4 model ({output_format}): {output_path}")
-        if output_format == 'json':
+        if output_format == "json":
             print(f"   Systems: {len(c4_model['model']['softwareSystems'])}")
             print(f"   Containers: {len(c4_model['model']['containers'])}")
             print(f"   Components: {len(c4_model['model']['components'])}")
-        
+
         return 0
-        
+
     except FileNotFoundError as e:
         print(f"❌ {e}")
         print("   Make sure the index artifacts exist in .ctn directory")
@@ -944,6 +1342,7 @@ def cmd_c4(args: argparse.Namespace) -> int:
         print(f"❌ Failed to generate C4 model: {e}")
         if args.verbose:
             import traceback
+
             traceback.print_exc()
         return 1
 
@@ -962,18 +1361,31 @@ def build_parser() -> argparse.ArgumentParser:
     idx = sub.add_parser("index", help="Index a repository")
     idx.add_argument("--root", required=True, help="Path to repo root")
     idx.add_argument(
-        "--extensions", nargs="*", default=None, help="File extensions to include (e.g., .py .ts)"
+        "--extensions",
+        nargs="*",
+        default=None,
+        help="File extensions to include (e.g., .py .ts)",
     )
-    idx.add_argument("--max-workers", type=int, default=0, help="Worker threads (0=auto)")
-    idx.add_argument("--max-file-size-kb", type=int, default=None, help="Max file size KB")
+    idx.add_argument(
+        "--max-workers", type=int, default=0, help="Worker threads (0=auto)"
+    )
+    idx.add_argument(
+        "--max-file-size-kb", type=int, default=None, help="Max file size KB"
+    )
     idx.add_argument("--force", action="store_true", help="Clear cache before indexing")
     idx.add_argument("--output-json", default=None, help="Path for graph.json output")
-    idx.add_argument("--metrics-output", default=None, help="Write metrics JSON to path")
-    idx.add_argument("--snapshot", action="store_true", help="Write a snapshot after indexing")
+    idx.add_argument(
+        "--metrics-output", default=None, help="Write metrics JSON to path"
+    )
+    idx.add_argument(
+        "--snapshot", action="store_true", help="Write a snapshot after indexing"
+    )
     idx.add_argument("--snapshot-label", default=None, help="Optional snapshot label")
     idx.add_argument("--verbose", action="store_true", help="Verbose output")
     idx.add_argument(
-        "--log-json", action="store_true", help="Emit logs in JSON instead of color console"
+        "--log-json",
+        action="store_true",
+        help="Emit logs in JSON instead of color console",
     )
     idx.add_argument("--no-c4", action="store_true", help="Skip C4 model generation")
     idx.set_defaults(func=cmd_index)
@@ -992,11 +1404,72 @@ def build_parser() -> argparse.ArgumentParser:
     diff.add_argument("--snapshot-b", dest="snapshot_b", required=True)
     diff.set_defaults(func=cmd_diff_snapshots)
 
-    patch = sub.add_parser("patch", help="Incremental patch for changed files or diff")
+    patch = sub.add_parser(
+    "patch", 
+    help="Incremental patch for changed files or diff (auto-uses snapshots when available)",
+    epilog="When snapshots are available, automatically uses true incremental patching for better performance. Use --force-index-patch to use traditional reindexing."
+)
     patch.add_argument("--root", required=True, help="Path to repo root")
     patch.add_argument("--diff", help="Path to unified diff file")
+    patch.add_argument(
+        "--scan", action="store_true", help="Auto-detect changes via file hash scan"
+    )
+    patch.add_argument(
+        "--base-snapshot", help="Base snapshot ID for incremental patching"
+    )
+    patch.add_argument(
+        "--force-index-patch", action="store_true", 
+        help="Force traditional index-based patching instead of incremental"
+    )
+    patch.add_argument(
+        "--snapshot", action="store_true", help="Create snapshot after patching"
+    )
+    patch.add_argument(
+        "--dry-run", action="store_true", help="Preview changes without applying them"
+    )
+    patch.add_argument(
+        "--max-file-size-kb",
+        type=int,
+        default=500,
+        help="Maximum file size in KB (default: 500)",
+    )
     patch.add_argument("files", nargs="*", help="Changed files (absolute or relative)")
     patch.set_defaults(func=cmd_patch)
+
+    # NEW: Patch management commands
+    patches = sub.add_parser("patches", help="List patch operations")
+    patches.add_argument("--root", required=True, help="Path to repo root")
+    patches.add_argument("--format", choices=["json", "timeline"], default="json", help="Output format")
+    patches.add_argument("--operation-type", help="Filter by operation type")
+    patches.add_argument("--base-snapshot", help="Filter by base snapshot ID")
+    patches.set_defaults(func=cmd_patches)
+
+    patch_info = sub.add_parser("patch-info", help="Show detailed patch operation information")
+    patch_info.add_argument("--root", required=True, help="Path to repo root")
+    patch_info.add_argument("--patch-id", required=True, help="Patch operation ID")
+    patch_info.add_argument("--format", choices=["json", "summary"], default="json", help="Output format")
+    patch_info.set_defaults(func=cmd_patch_info)
+
+    patch_chain = sub.add_parser("patch-chain", help="Show patch chain for a snapshot")
+    patch_chain.add_argument("--root", required=True, help="Path to repo root")
+    patch_chain.add_argument("--snapshot-id", required=True, help="Snapshot ID")
+    patch_chain.add_argument("--full", action="store_true", help="Show full details")
+    patch_chain.set_defaults(func=cmd_patch_chain)
+
+    apply_patch = sub.add_parser("apply-patch", help="Apply patch from diff file or cherry-pick")
+    apply_patch.add_argument("--root", required=True, help="Path to repo root")
+    apply_patch.add_argument("--base-snapshot", required=True, help="Base snapshot ID")
+    apply_patch.add_argument("--diff-file", help="Path to unified diff file")
+    apply_patch.add_argument("--patch-id", help="Patch operation ID to cherry-pick")
+    apply_patch.add_argument("--dry-run", action="store_true", help="Preview without applying")
+    apply_patch.set_defaults(func=cmd_apply_patch)
+
+    cherry_pick = sub.add_parser("cherry-pick", help="Cherry-pick patch to different base snapshot")
+    cherry_pick.add_argument("--root", required=True, help="Path to repo root")
+    cherry_pick.add_argument("--patch-id", required=True, help="Patch operation ID")
+    cherry_pick.add_argument("--target-snapshot", required=True, help="Target snapshot ID")
+    cherry_pick.add_argument("--dry-run", action="store_true", help="Preview without applying")
+    cherry_pick.set_defaults(func=cmd_cherry_pick)
 
     wh = sub.add_parser("webhook", help="Webhook stub for push/PR events")
     wh.add_argument("--payload", required=True, help="JSON payload string")
@@ -1010,75 +1483,293 @@ def build_parser() -> argparse.ArgumentParser:
     c4.add_argument("--root", required=True, help="Path to repo root")
     c4.add_argument("--verbose", action="store_true", help="Verbose output")
     c4.add_argument(
-        "--log-json", action="store_true", help="Emit logs in JSON instead of color console"
+        "--log-json",
+        action="store_true",
+        help="Emit logs in JSON instead of color console",
     )
     c4.add_argument(
-        "--rules-dir", type=Path, help="Custom rules directory (default: built-in rules)"
+        "--rules-dir",
+        type=Path,
+        help="Custom rules directory (default: built-in rules)",
     )
     c4.add_argument(
-        "--language", 
-        help="Override language detection (e.g., python, java, javascript, typescript, go)"
+        "--language",
+        help="Override language detection (e.g., python, java, javascript, typescript, go)",
     )
     c4.add_argument(
-        "--no-dynamic-rules", 
-        action="store_true", 
-        help="Disable dynamic rule generation"
+        "--no-dynamic-rules",
+        action="store_true",
+        help="Disable dynamic rule generation",
     )
     c4.add_argument(
         "--enable-detectors",
         nargs="*",
         choices=["microservices", "event_driven", "cloud_native", "data_patterns"],
-        help="Enable specific pattern detectors (default: all)"
+        help="Enable specific pattern detectors (default: all)",
     )
     c4.add_argument(
         "--disable-detectors",
         nargs="*",
         choices=["microservices", "event_driven", "cloud_native", "data_patterns"],
-        help="Disable specific pattern detectors"
+        help="Disable specific pattern detectors",
     )
     c4.add_argument(
         "--granularity",
         choices=["fine", "medium", "coarse", "adaptive"],
-        help="Override granularity selection (default: adaptive based on repo size)"
+        help="Override granularity selection (default: adaptive based on repo size)",
     )
     c4.add_argument(
         "--grouping-strategy",
         choices=["domain", "functional", "data_flow", "team", "hybrid"],
-        help="Component grouping strategy for medium/adaptive granularity"
+        help="Component grouping strategy for medium/adaptive granularity",
     )
     c4.add_argument(
         "--importance-threshold",
         type=float,
         default=0.0,
-        help="Minimum importance threshold for components (0.0-1.0)"
+        help="Minimum importance threshold for components (0.0-1.0)",
     )
     c4.add_argument(
-        "--max-components",
-        type=int,
-        help="Maximum number of components to include"
+        "--max-components", type=int, help="Maximum number of components to include"
     )
     c4.add_argument(
         "--output-format",
         choices=["json", "plantuml", "mermaid", "interactive", "d2"],
         default="json",
-        help="Output format for C4 model (default: json)"
+        help="Output format for C4 model (default: json)",
     )
     c4.add_argument(
         "--output",
-        help="Output file path (default: stdout or .c4/{format}/model.{ext})"
+        help="Output file path (default: stdout or .c4/{format}/model.{ext})",
     )
-    c4.add_argument(
-        "--theme",
-        help="Theme for supported formats (light, dark, github)"
-    )
+    c4.add_argument("--theme", help="Theme for supported formats (light, dark, github)")
     c4.add_argument(
         "--split-threshold",
         type=int,
-        help="Component threshold for diagram splitting (PlantUML only)"
+        help="Component threshold for diagram splitting (PlantUML only)",
     )
     c4.set_defaults(func=cmd_c4)
 
     return parser
+
+
+# ---------------------------------------------------------------------------
+# NEW: Patch Management CLI Commands (Phase 4)
+# ---------------------------------------------------------------------------
+
+def cmd_patches(args: argparse.Namespace) -> int:
+    """List patch operations."""
+    from batho_core.time_machine import list_patch_operations
+    
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    
+    filters = {}
+    if args.operation_type:
+        filters["operation_type"] = args.operation_type
+    if args.base_snapshot:
+        filters["base_snapshot_id"] = args.base_snapshot
+    
+    patches = list_patch_operations(ctn_dir, filters)
+    
+    if args.format == "timeline":
+        # Output as detailed timeline
+        timeline = []
+        for patch in patches:
+            timeline.append({
+                "operation_id": patch.operation_id,
+                "timestamp": patch.timestamp.isoformat(),
+                "operation_type": patch.operation_type,
+                "base_snapshot_id": patch.base_snapshot_id,
+                "new_snapshot_id": patch.new_snapshot_id,
+                "metrics": patch.metrics,
+                "patch_chain_length": len(patch.patch_chain),
+            })
+        print(json.dumps(timeline, indent=2))
+    else:
+        # Output as JSON list
+        output = []
+        for patch in patches:
+            output.append(patch.serialize())
+        print(json.dumps(output, indent=2))
+    
+    return 0
+
+
+def cmd_patch_info(args: argparse.Namespace) -> int:
+    """Show detailed patch operation information."""
+    from batho_core.time_machine import load_patch_operation
+    
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    
+    operation = load_patch_operation(ctn_dir, args.patch_id)
+    if not operation:
+        print(f"❌ Patch operation {args.patch_id} not found")
+        return 1
+    
+    if args.format == "summary":
+        # Output as human-readable summary
+        print(f"Patch Operation: {operation.operation_id}")
+        print(f"Type: {operation.operation_type}")
+        print(f"Timestamp: {operation.timestamp.isoformat()}")
+        print(f"Base Snapshot: {operation.base_snapshot_id}")
+        print(f"New Snapshot: {operation.new_snapshot_id}")
+        print(f"Changes Applied: {len(operation.changes_applied)}")
+        print(f"Patch Chain Length: {len(operation.patch_chain)}")
+        print(f"Metrics: {operation.metrics}")
+        print(f"User Info: {operation.user_info}")
+    else:
+        # Output as full JSON
+        print(json.dumps(operation.serialize(), indent=2))
+    
+    return 0
+
+
+def cmd_patch_chain(args: argparse.Namespace) -> int:
+    """Show patch chain for a snapshot."""
+    from batho_core.time_machine import get_patches_for_snapshot
+    
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    
+    # Get patches that led to this snapshot
+    patches = get_patches_for_snapshot(ctn_dir, args.snapshot_id)
+    
+    if not patches:
+        print(f"❌ No patches found for snapshot {args.snapshot_id}")
+        return 1
+    
+    if args.full:
+        # Show full details
+        chain_data = []
+        for patch in patches:
+            chain_data.append(patch.serialize())
+        print(json.dumps(chain_data, indent=2))
+    else:
+        # Show simple chain
+        chain_ids = [p.operation_id for p in patches]
+        print(json.dumps({
+            "snapshot_id": args.snapshot_id,
+            "patch_chain": chain_ids,
+            "chain_length": len(chain_ids)
+        }, indent=2))
+    
+    return 0
+
+
+def cmd_apply_patch(args: argparse.Namespace) -> int:
+    """Apply patch from diff file or cherry-pick."""
+    from batho_core.time_machine import parse_unified_diff, load_patch_operation
+    
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    
+    if args.diff_file and args.patch_id:
+        print("❌ Cannot specify both --diff-file and --patch-id")
+        return 1
+    
+    if args.diff_file:
+        # Apply patch from diff file
+        diff_path = Path(args.diff_file)
+        if not diff_path.exists():
+            print(f"❌ Diff file {args.diff_file} not found")
+            return 1
+        
+        try:
+            diff_content = diff_path.read_text(encoding="utf-8")
+            changes = parse_unified_diff(diff_content)
+            
+            if args.dry_run:
+                print(f"🔍 Dry run: Would apply {len(changes)} changes")
+                for change in changes:
+                    print(f"  {change.change_type.value}: {change.path}")
+                return 0
+            
+            result = incremental_patch(ctn_dir, args.base_snapshot, changes)
+            
+            if result.get("success"):
+                print(f"✅ Patch applied successfully")
+                print(f"New snapshot: {result.get('new_snapshot_id')}")
+                return 0
+            else:
+                print(f"❌ Patch application failed: {result.get('error')}")
+                return 1
+                
+        except Exception as exc:
+            print(f"❌ Error reading diff file: {exc}")
+            return 1
+    
+    elif args.patch_id:
+        # Cherry-pick existing patch
+        from batho_core.time_machine import apply_deltas_to_snapshot
+        
+        operation = load_patch_operation(ctn_dir, args.patch_id)
+        if not operation:
+            print(f"❌ Patch operation {args.patch_id} not found")
+            return 1
+        
+        if args.dry_run:
+            print(f"🔍 Dry run: Would cherry-pick patch {args.patch_id}")
+            print(f"Changes: {len(operation.changes_applied)}")
+            return 0
+        
+        deltas = extract_patch_deltas(operation)
+        new_snapshot_id = apply_deltas_to_snapshot(ctn_dir, args.base_snapshot, deltas)
+        
+        if new_snapshot_id:
+            print(f"✅ Cherry-pick applied successfully")
+            print(f"New snapshot: {new_snapshot_id}")
+            return 0
+        else:
+            print("❌ Cherry-pick failed")
+            return 1
+    
+    else:
+        print("❌ Must specify either --diff-file or --patch-id")
+        return 1
+
+
+def cmd_cherry_pick(args: argparse.Namespace) -> int:
+    """Cherry-pick patch to different base snapshot."""
+    from batho_core.time_machine import load_patch_operation, apply_deltas_to_snapshot
+    
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    
+    operation = load_patch_operation(ctn_dir, args.patch_id)
+    if not operation:
+        print(f"❌ Patch operation {args.patch_id} not found")
+        return 1
+    
+    if args.dry_run:
+        print(f"🔍 Dry run: Would cherry-pick patch {args.patch_id}")
+        print(f"From: {operation.base_snapshot_id}")
+        print(f"To: {args.target_snapshot}")
+        print(f"Changes: {len(operation.changes_applied)}")
+        return 0
+    
+    deltas = extract_patch_deltas(operation)
+    new_snapshot_id = apply_deltas_to_snapshot(ctn_dir, args.target_snapshot, deltas)
+    
+    if new_snapshot_id:
+        print(f"✅ Cherry-pick applied successfully")
+        print(f"New snapshot: {new_snapshot_id}")
+        return 0
+    else:
+        print("❌ Cherry-pick failed")
+        return 1
+
+
+def extract_patch_deltas(operation) -> dict[str, Any]:
+    """Extract reusable deltas from a patch operation."""
+    return {
+        'operation_id': operation.operation_id,
+        'changes_applied': operation.changes_applied,
+        'operation_type': operation.operation_type,
+        'metrics': operation.metrics,
+        'timestamp': operation.timestamp.isoformat(),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

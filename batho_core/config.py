@@ -34,6 +34,10 @@ DEFAULT_REPOMAP_BUDGET_MAX_TOKENS = 40000
 DEFAULT_IGNORE_FILES: list[str] | None = None
 DEFAULT_METRICS_OUTPUT: str | None = ".ctn/metrics.json"
 DEFAULT_CONFIG_FILE_ENV = "BATHO_CONFIG_FILE"
+DEFAULT_PATCH_TIMEOUT_SECONDS = 300  # 5 minutes
+DEFAULT_MAX_PATCH_CHANGES = 10000  # Max changes in a single patch
+DEFAULT_PATCH_HISTORY_DAYS = 90  # Retention policy for patches
+DEFAULT_PATCH_COUNT = 1000  # Alternative retention limit
 
 GRAPH_SCHEMA_VERSION = "graph.v1"
 REPOMAP_SCHEMA_VERSION = "repomap.v1"
@@ -72,10 +76,18 @@ class IndexerConfig(BaseModel):
         default=None, ge=1, description="Hard cap on files processed in a run"
     )
     repomap_budget_tokens: int = Field(default=DEFAULT_REPOMAP_BUDGET_TOKENS, ge=0)
-    repomap_budget_ratio: float = Field(default=DEFAULT_REPOMAP_BUDGET_RATIO, ge=0.0, le=1.0)
-    repomap_budget_min_tokens: int = Field(default=DEFAULT_REPOMAP_BUDGET_MIN_TOKENS, ge=0)
-    repomap_budget_max_tokens: int = Field(default=DEFAULT_REPOMAP_BUDGET_MAX_TOKENS, ge=0)
-    ignore_patterns: list[str] = Field(default_factory=list, description="Extra ignore patterns")
+    repomap_budget_ratio: float = Field(
+        default=DEFAULT_REPOMAP_BUDGET_RATIO, ge=0.0, le=1.0
+    )
+    repomap_budget_min_tokens: int = Field(
+        default=DEFAULT_REPOMAP_BUDGET_MIN_TOKENS, ge=0
+    )
+    repomap_budget_max_tokens: int = Field(
+        default=DEFAULT_REPOMAP_BUDGET_MAX_TOKENS, ge=0
+    )
+    ignore_patterns: list[str] = Field(
+        default_factory=list, description="Extra ignore patterns"
+    )
     ignore_files: list[str] | None = Field(
         default=DEFAULT_IGNORE_FILES,
         description="Ignore file names to load (None uses defaults)",
@@ -85,18 +97,24 @@ class IndexerConfig(BaseModel):
         description="Optional path to write metrics JSON",
     )
     fail_on_warning: bool = Field(default=False)
-    strict: bool = Field(default=False, description="Strict mode: treat parse warnings as errors")
+    strict: bool = Field(
+        default=False, description="Strict mode: treat parse warnings as errors"
+    )
 
 
 class FlagsConfig(BaseModel):
     fail_on_warning: bool = Field(default=False)
     strict: bool = Field(default=False)
+    audit_log_enabled: bool = Field(
+        default=True, description="Enable patch operation audit logging"
+    )
 
 
 class Config(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     indexer: IndexerConfig = Field(default_factory=IndexerConfig)
+    patch: dict = Field(default_factory=dict)
     flags: FlagsConfig = Field(default_factory=FlagsConfig)
 
     @field_validator("logging")
@@ -195,7 +213,15 @@ def get_config(config_file: str | None = None) -> Dict[str, Any]:
             "fail_on_warning": False,
             "strict": False,
         },
-        "flags": {"fail_on_warning": False, "strict": False},
+        "patch": {
+            "timeout_seconds": DEFAULT_PATCH_TIMEOUT_SECONDS,
+            "max_changes": DEFAULT_MAX_PATCH_CHANGES,
+            "audit_log_path": ".ctn/patch_audit.log",
+            "history_days": DEFAULT_PATCH_HISTORY_DAYS,
+            "max_count": DEFAULT_PATCH_COUNT,
+            "cleanup_on_startup": False,
+        },
+        "flags": {"fail_on_warning": False, "strict": False, "audit_log_enabled": True},
         "schemas": {
             "graph": GRAPH_SCHEMA_VERSION,
             "repomap": REPOMAP_SCHEMA_VERSION,
@@ -207,7 +233,9 @@ def get_config(config_file: str | None = None) -> Dict[str, Any]:
 
     # Config file override
     cfg_path_env = _env(DEFAULT_CONFIG_FILE_ENV)
-    cfg_path = Path(config_file or cfg_path_env) if (config_file or cfg_path_env) else None
+    cfg_path = (
+        Path(config_file or cfg_path_env) if (config_file or cfg_path_env) else None
+    )
     if cfg_path:
         try:
             file_cfg = _load_config_file(cfg_path)
@@ -217,10 +245,12 @@ def get_config(config_file: str | None = None) -> Dict[str, Any]:
 
     # Env overrides (compatible with previous behavior)
     base_cfg["logging"]["level"] = (
-        _env("BATHO_LOG_LEVEL", base_cfg["logging"]["level"]) or base_cfg["logging"]["level"]
+        _env("BATHO_LOG_LEVEL", base_cfg["logging"]["level"])
+        or base_cfg["logging"]["level"]
     )
     base_cfg["paths"]["ctn_dir"] = (
-        _env("BATHO_CTN_DIR", base_cfg["paths"]["ctn_dir"]) or base_cfg["paths"]["ctn_dir"]
+        _env("BATHO_CTN_DIR", base_cfg["paths"]["ctn_dir"])
+        or base_cfg["paths"]["ctn_dir"]
     )
     base_cfg["indexer"]["max_file_size_kb"] = _env_int(
         "BATHO_MAX_FILE_SIZE_KB", base_cfg["indexer"]["max_file_size_kb"]
@@ -238,10 +268,12 @@ def get_config(config_file: str | None = None) -> Dict[str, Any]:
         "BATHO_REPOMAP_BUDGET_RATIO", base_cfg["indexer"]["repomap_budget_ratio"]
     )
     base_cfg["indexer"]["repomap_budget_min_tokens"] = _env_int(
-        "BATHO_REPOMAP_BUDGET_MIN_TOKENS", base_cfg["indexer"]["repomap_budget_min_tokens"]
+        "BATHO_REPOMAP_BUDGET_MIN_TOKENS",
+        base_cfg["indexer"]["repomap_budget_min_tokens"],
     )
     base_cfg["indexer"]["repomap_budget_max_tokens"] = _env_int(
-        "BATHO_REPOMAP_BUDGET_MAX_TOKENS", base_cfg["indexer"]["repomap_budget_max_tokens"]
+        "BATHO_REPOMAP_BUDGET_MAX_TOKENS",
+        base_cfg["indexer"]["repomap_budget_max_tokens"],
     )
     env_ignore_patterns = _env_list("BATHO_IGNORE_PATTERNS")
     if env_ignore_patterns is not None:
@@ -257,11 +289,38 @@ def get_config(config_file: str | None = None) -> Dict[str, Any]:
     env_fail_on_warning = os.getenv("BATHO_FAIL_ON_WARNING")
     env_strict = os.getenv("BATHO_STRICT")
     if env_fail_on_warning is not None:
-        base_cfg["indexer"]["fail_on_warning"] = env_fail_on_warning.lower() in {"1", "true", "yes"}
+        base_cfg["indexer"]["fail_on_warning"] = env_fail_on_warning.lower() in {
+            "1",
+            "true",
+            "yes",
+        }
     if env_strict is not None:
         base_cfg["indexer"]["strict"] = env_strict.lower() in {"1", "true", "yes"}
-    base_cfg["flags"]["fail_on_warning"] = base_cfg["indexer"].get("fail_on_warning", False)
+    base_cfg["flags"]["fail_on_warning"] = base_cfg["indexer"].get(
+        "fail_on_warning", False
+    )
     base_cfg["flags"]["strict"] = base_cfg["indexer"].get("strict", False)
+    base_cfg["flags"]["audit_log_enabled"] = _env(
+        "BATHO_AUDIT_LOG_ENABLED", "true"
+    ).lower() in {"1", "true", "yes"}
+    base_cfg["patch"]["timeout_seconds"] = _env_int(
+        "BATHO_PATCH_TIMEOUT_SECONDS", base_cfg["patch"]["timeout_seconds"]
+    )
+    base_cfg["patch"]["max_changes"] = _env_int(
+        "BATHO_MAX_PATCH_CHANGES", base_cfg["patch"]["max_changes"]
+    )
+    base_cfg["patch"]["history_days"] = _env_int(
+        "BATHO_PATCH_HISTORY_DAYS", base_cfg["patch"]["history_days"]
+    )
+    base_cfg["patch"]["max_count"] = _env_int(
+        "BATHO_PATCH_COUNT", base_cfg["patch"]["max_count"]
+    )
+    base_cfg["patch"]["cleanup_on_startup"] = _env(
+        "BATHO_PATCH_CLEANUP_ON_STARTUP", "false"
+    ).lower() in {"1", "true", "yes"}
+    env_audit_log_path = _env("BATHO_PATCH_AUDIT_LOG_PATH")
+    if env_audit_log_path:
+        base_cfg["patch"]["audit_log_path"] = env_audit_log_path
 
     try:
         cfg = Config.model_validate(base_cfg)
@@ -274,11 +333,15 @@ def get_config(config_file: str | None = None) -> Dict[str, Any]:
     schemas = cfg_dict.get("schemas", {})
     cfg_dict["graph_schema_version"] = schemas.get("graph", GRAPH_SCHEMA_VERSION)
     cfg_dict["repomap_schema_version"] = schemas.get("repomap", REPOMAP_SCHEMA_VERSION)
-    cfg_dict["snapshot_schema_version"] = schemas.get("snapshot", SNAPSHOT_SCHEMA_VERSION)
+    cfg_dict["snapshot_schema_version"] = schemas.get(
+        "snapshot", SNAPSHOT_SCHEMA_VERSION
+    )
     cfg_dict["index_metadata_schema_version"] = schemas.get(
         "index_metadata", INDEX_METADATA_SCHEMA_VERSION
     )
-    cfg_dict["file_cache_schema_version"] = schemas.get("file_cache", FILE_CACHE_SCHEMA_VERSION)
+    cfg_dict["file_cache_schema_version"] = schemas.get(
+        "file_cache", FILE_CACHE_SCHEMA_VERSION
+    )
     return cfg_dict
 
 

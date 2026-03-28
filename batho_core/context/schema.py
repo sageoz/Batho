@@ -136,7 +136,9 @@ class Entity(BaseModel):
         d = data.copy()
         d.pop("id", None)
         if "type" in d and isinstance(d["type"], str):
-            d["type"] = EntityType[d["type"]]
+            # Convert lowercase string to uppercase enum key
+            type_str = d["type"].upper()
+            d["type"] = EntityType[type_str]
         return cls(**d)
 
     def __str__(self) -> str:
@@ -195,7 +197,9 @@ class Relationship(BaseModel):
         d = data.copy()
         d.pop("id", None)
         if "type" in d and isinstance(d["type"], str):
-            d["type"] = RelationshipType[d["type"]]
+            # Convert lowercase string to uppercase enum key
+            type_str = d["type"].upper()
+            d["type"] = RelationshipType[type_str]
         return cls(**d)
 
     def __str__(self) -> str:

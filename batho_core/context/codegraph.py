@@ -67,7 +67,9 @@ class InMemoryGraph:
         relationships: list[Relationship] | None = None,
     ) -> None:
         self.entities: dict[str, Entity] = entities if entities is not None else {}
-        self.relationships: list[Relationship] = relationships if relationships is not None else []
+        self.relationships: list[Relationship] = (
+            relationships if relationships is not None else []
+        )
         self._adj_out: dict[str, list[str]] | None = None
         self._adj_in: dict[str, list[str]] | None = None
 
@@ -147,9 +149,7 @@ class InMemoryGraph:
         return entity_id in self.entities
 
     def __repr__(self) -> str:
-        return (
-            f"InMemoryGraph(entities={len(self.entities)}, relationships={len(self.relationships)})"
-        )
+        return f"InMemoryGraph(entities={len(self.entities)}, relationships={len(self.relationships)})"
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +186,9 @@ class _FileStateCache:
                     self._schema_version = raw.get("schema_version")
                     files = raw.get("files", {})
                     checksum = raw.get("_checksum")
-                    calc = compute_bytes_hash(json.dumps(files, sort_keys=True).encode("utf-8"))
+                    calc = compute_bytes_hash(
+                        json.dumps(files, sort_keys=True).encode("utf-8")
+                    )
                     if checksum and checksum != calc:
                         self._mark_corrupt("checksum_mismatch")
                     else:
@@ -230,9 +232,13 @@ class _FileStateCache:
     def save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "schema_version": get_config_cached().get("file_cache_schema_version", "file-cache.v1"),
+            "schema_version": get_config_cached().get(
+                "file_cache_schema_version", "file-cache.v1"
+            ),
             "files": self._data,
-            "_checksum": compute_bytes_hash(json.dumps(self._data, sort_keys=True).encode("utf-8")),
+            "_checksum": compute_bytes_hash(
+                json.dumps(self._data, sort_keys=True).encode("utf-8")
+            ),
         }
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -250,6 +256,191 @@ class _FileStateCache:
 
     def invalidate(self, filepath: str) -> None:
         self._data.pop(self._normalise(filepath), None)
+
+
+# ---------------------------------------------------------------------------
+# IncrementalGraphUpdater
+# ---------------------------------------------------------------------------
+
+
+class IncrementalGraphUpdater:
+    """
+    Handles incremental updates to the InMemoryGraph for modified files.
+
+    Provides methods to update entities for changed files without full rebuild.
+    Maintains graph consistency and handles edge cases like missing files and parse errors.
+    """
+
+    def __init__(self) -> None:
+        self.logger = get_logger(__name__, operation="incremental_updater")
+
+    def update_entities_for_file(
+        self,
+        graph: InMemoryGraph,
+        file_path: str,
+        extractor: ASTExtractor,
+    ) -> None:
+        """
+        Update entities for a modified file.
+
+        Removes existing entities for the file and re-parses to add new ones.
+        Handles parse errors gracefully by logging and leaving graph unchanged.
+
+        Args:
+            graph: The InMemoryGraph to update
+            file_path: Absolute path to the modified file
+            extractor: ASTExtractor instance for parsing the file
+        """
+        # Remove existing entities for this file
+        self.remove_entities_for_file(graph, file_path)
+
+        # Add new entities by parsing the file
+        self.add_entities_for_file(graph, file_path, extractor)
+
+    def remove_entities_for_file(self, graph: InMemoryGraph, file_path: str) -> None:
+        """
+        Remove all entities from a deleted file.
+
+        Also removes any relationships involving entities from this file.
+
+        Args:
+            graph: The InMemoryGraph to update
+            file_path: Absolute path to the deleted file
+        """
+        # Get all entity IDs for this file
+        entities_to_remove = [
+            eid for eid, entity in graph.entities.items() if entity.file == file_path
+        ]
+
+        # Remove entities
+        for eid in entities_to_remove:
+            del graph.entities[eid]
+
+        # Remove relationships involving these entities
+        relationships_to_keep = []
+        for rel in graph.relationships:
+            if (
+                rel.source_id not in entities_to_remove
+                and rel.target_id not in entities_to_remove
+            ):
+                relationships_to_keep.append(rel)
+
+        graph.relationships = relationships_to_keep
+
+        # Invalidate adjacency cache
+        graph._adj_out = None
+        graph._adj_in = None
+
+        self.logger.debug(
+            "removed_entities_for_file",
+            file_path=file_path,
+            entity_count=len(entities_to_remove),
+        )
+
+    def add_entities_for_file(
+        self,
+        graph: InMemoryGraph,
+        file_path: str,
+        extractor: ASTExtractor,
+    ) -> None:
+        """
+        Add entities for a new file.
+
+        Parses the file and adds all entities and relationships to the graph.
+        Handles parse errors gracefully by logging and skipping the file.
+
+        Args:
+            graph: The InMemoryGraph to update
+            file_path: Absolute path to the new file
+            extractor: ASTExtractor instance for parsing the file
+        """
+        from .languages.detector import default_detector
+        from .languages.registry import get_extractor as _registry_get_extractor
+
+        try:
+            # Check if file exists and read content
+            if not Path(file_path).exists():
+                self.logger.warning("file_not_found", file_path=file_path)
+                return
+
+            content = _read_file_content(
+                file_path, get_config_cached()["indexer"]["max_file_size_kb"]
+            )
+            if content is None:
+                self.logger.warning("file_read_failed", file_path=file_path)
+                return
+
+            # Determine extractor
+            file_extractor: ASTExtractor | None = extractor
+            if extractor is None:
+                suffix = Path(file_path).suffix.lower()
+                file_extractor = default_detector.get_extractor(
+                    Path(file_path), content
+                )
+                if file_extractor is None:
+                    file_extractor = _registry_get_extractor(suffix)
+
+            if file_extractor is None:
+                self.logger.warning("no_extractor_found", file_path=file_path)
+                return
+
+            # Parse file
+            entities, relationships = file_extractor.parse_file(file_path, content)
+
+            # Add to graph
+            for entity in entities:
+                graph.add_entity(entity)
+            for rel in relationships:
+                graph.add_relationship(rel)
+
+            self.logger.debug(
+                "added_entities_for_file",
+                file_path=file_path,
+                entity_count=len(entities),
+            )
+
+        except Exception as exc:
+            self.logger.warning(
+                "file_parse_failed", file_path=file_path, error=str(exc)
+            )
+
+    def validate_graph_consistency(self, graph: InMemoryGraph) -> bool:
+        """
+        Check for broken relationships after updates.
+
+        Verifies that all relationship source and target IDs exist in the entities.
+        Also checks for orphaned relationships and invalid entity references.
+
+        Args:
+            graph: The InMemoryGraph to validate
+
+        Returns:
+            True if graph is consistent, False otherwise
+        """
+        entity_ids = set(graph.entities.keys())
+        broken_relationships = []
+
+        for rel in graph.relationships:
+            if rel.source_id not in entity_ids or rel.target_id not in entity_ids:
+                broken_relationships.append(rel)
+
+        if broken_relationships:
+            self.logger.warning(
+                "graph_inconsistency_detected",
+                broken_relationship_count=len(broken_relationships),
+                total_relationships=len(graph.relationships),
+            )
+            return False
+
+        # Check for relationships with unresolved targets that are now resolvable
+        # This is a basic consistency check - full resolution would require more context
+        unresolved_count = sum(
+            1 for rel in graph.relationships if rel.target_id.startswith("unresolved:")
+        )
+        if unresolved_count > 0:
+            self.logger.debug("unresolved_relationships_found", count=unresolved_count)
+
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +470,9 @@ class CodeGraphIndexer:
         )
     """
 
-    def __init__(self, cache_path: str = ".ctn/file_cache.json", root: str | None = None) -> None:
+    def __init__(
+        self, cache_path: str = ".ctn/file_cache.json", root: str | None = None
+    ) -> None:
         self.logger = get_logger(__name__, operation="index")
         root_path = Path(root).resolve() if root else None
         self._cache = _FileStateCache(Path(cache_path), root=root_path)
@@ -326,7 +519,9 @@ class CodeGraphIndexer:
         root_path = Path(root).resolve()
         cfg = get_config_cached()
         configured_max_file_size_kb = (
-            max_file_size_kb if max_file_size_kb is not None else cfg["indexer"]["max_file_size_kb"]
+            max_file_size_kb
+            if max_file_size_kb is not None
+            else cfg["indexer"]["max_file_size_kb"]
         )
         configured_max_workers = (
             max_workers if max_workers > 0 else cfg["indexer"].get("max_workers", 0)
@@ -406,7 +601,9 @@ class CodeGraphIndexer:
             except OSError:
                 return None
             if size > configured_max_file_size_kb * 1024:
-                self.logger.debug("skipping_large_file", filepath=filepath, size_kb=size // 1024)
+                self.logger.debug(
+                    "skipping_large_file", filepath=filepath, size_kb=size // 1024
+                )
                 return None
 
             content = _read_file_content(filepath, configured_max_file_size_kb)
@@ -420,8 +617,9 @@ class CodeGraphIndexer:
             from .languages.registry import get_extractor as _registry_get_extractor
 
             suffix = file_path.suffix.lower()
+            file_extractor: ASTExtractor | object | None
             if extractor is not None:
-                file_extractor: ASTExtractor | None = extractor
+                file_extractor = extractor
             else:
                 file_extractor = default_detector.get_extractor(
                     file_path, content
@@ -430,10 +628,14 @@ class CodeGraphIndexer:
                 return None
 
             try:
+                if not isinstance(file_extractor, ASTExtractor):
+                    return None
                 entities, relationships = file_extractor.parse_file(filepath, content)
             except Exception as exc:
                 errors += 1
-                self.logger.warning("file_parse_failed", filepath=filepath, error=str(exc))
+                self.logger.warning(
+                    "file_parse_failed", filepath=filepath, error=str(exc)
+                )
                 return None
 
             try:
@@ -474,7 +676,9 @@ class CodeGraphIndexer:
         graph = self._resolve_imports(graph)
 
         elapsed = (
-            (os.times().elapsed if hasattr(os, "times") else 0.0) - start_ts if start_ts else None
+            (os.times().elapsed if hasattr(os, "times") else 0.0) - start_ts
+            if start_ts
+            else None
         )
         self.stats = {
             "files_candidates": len(candidates),
@@ -593,7 +797,9 @@ class CodeGraphIndexer:
                 stem = Path(ent.file).stem
                 name_to_id[stem] = ent.id
 
-        unresolved = [r for r in graph.relationships if r.target_id.startswith("unresolved:")]
+        unresolved = [
+            r for r in graph.relationships if r.target_id.startswith("unresolved:")
+        ]
         resolved = []
 
         for rel in unresolved:
@@ -615,7 +821,9 @@ class CodeGraphIndexer:
             )
 
         # Rebuild relationships: drop unresolved stubs, add resolved ones
-        clean_rels = [r for r in graph.relationships if not r.target_id.startswith("unresolved:")]
+        clean_rels = [
+            r for r in graph.relationships if not r.target_id.startswith("unresolved:")
+        ]
         clean_rels.extend(resolved)
         graph.relationships = clean_rels
 

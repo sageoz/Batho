@@ -9,7 +9,7 @@ import shutil
 
 import pytest
 
-from batho import main
+from batho_core.batho import main
 
 
 @pytest.mark.integration
