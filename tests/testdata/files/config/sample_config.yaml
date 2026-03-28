@@ -1,0 +1,77 @@
+# Sample YAML configuration file
+
+# Application settings
+app:
+  name: "Sample Application"
+  version: "1.0.0"
+  debug: true
+  port: 8080
+
+# Database configuration
+database:
+  host: "localhost"
+  port: 5432
+  name: "sample_db"
+  user: "admin"
+  password: "secret"
+  ssl_enabled: true
+  pool_size: 10
+
+# Redis configuration
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  timeout: 5000
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  handlers:
+    - type: "console"
+      level: "INFO"
+    - type: "file"
+      level: "DEBUG"
+      filename: "app.log"
+      max_size: "10MB"
+      backup_count: 5
+
+# Feature flags
+features:
+  - name: "new_ui"
+    enabled: true
+    description: "Enable new user interface"
+  - name: "beta_api"
+    enabled: false
+    description: "Enable beta API endpoints"
+
+# Server configuration
+server:
+  host: "0.0.0.0"
+  workers: 4
+  max_connections: 1000
+  timeout: 30
+
+# Security settings
+security:
+  jwt_secret: "your-secret-key-here"
+  jwt_expiration: 3600
+  cors_origins:
+    - "http://localhost:3000"
+    - "https://example.com"
+  rate_limit:
+    requests_per_minute: 60
+    burst_size: 10
+
+# Cache configuration
+cache:
+  type: "redis"
+  ttl: 3600
+  max_size: 1000
+
+# Monitoring
+monitoring:
+  metrics_enabled: true
+  health_check_endpoint: "/health"
+  prometheus_port: 9090

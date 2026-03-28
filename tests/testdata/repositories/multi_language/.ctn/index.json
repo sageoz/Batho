@@ -1,0 +1,1651 @@
+{
+  "current_index_id": "batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z",
+  "indexes": {
+    "batho_541c4045ecb942e19ed20f670ffb2a38_20260322T075619Z": {
+      "id": "batho_541c4045ecb942e19ed20f670ffb2a38_20260322T075619Z",
+      "timestamp": "2026-03-22T07:56:19.763064+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 1.0,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_541c4045ecb942e19ed20f670ffb2a38_20260322T075619Z/graph.json",
+        "repomap_json": ".ctn/batho_541c4045ecb942e19ed20f670ffb2a38_20260322T075619Z/repomap.json",
+        "architecture_md": ".ctn/batho_541c4045ecb942e19ed20f670ffb2a38_20260322T075619Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 0,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.039999961853027344
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_e0fc080b7c0d475682d348fab4c20ef4_20260322T075627Z": {
+      "id": "batho_e0fc080b7c0d475682d348fab4c20ef4_20260322T075627Z",
+      "timestamp": "2026-03-22T07:56:27.432238+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_e0fc080b7c0d475682d348fab4c20ef4_20260322T075627Z/graph.json",
+        "repomap_json": ".ctn/batho_e0fc080b7c0d475682d348fab4c20ef4_20260322T075627Z/repomap.json",
+        "architecture_md": ".ctn/batho_e0fc080b7c0d475682d348fab4c20ef4_20260322T075627Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.05000019073486328
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_3096d2d7a48a4a47806c4e9aea73fc54_20260322T075726Z": {
+      "id": "batho_3096d2d7a48a4a47806c4e9aea73fc54_20260322T075726Z",
+      "timestamp": "2026-03-22T07:57:26.968386+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_3096d2d7a48a4a47806c4e9aea73fc54_20260322T075726Z/graph.json",
+        "repomap_json": ".ctn/batho_3096d2d7a48a4a47806c4e9aea73fc54_20260322T075726Z/repomap.json",
+        "architecture_md": ".ctn/batho_3096d2d7a48a4a47806c4e9aea73fc54_20260322T075726Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_aec99c457c7b42baa45d9adf4fec3268_20260322T075736Z": {
+      "id": "batho_aec99c457c7b42baa45d9adf4fec3268_20260322T075736Z",
+      "timestamp": "2026-03-22T07:57:36.266323+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_aec99c457c7b42baa45d9adf4fec3268_20260322T075736Z/graph.json",
+        "repomap_json": ".ctn/batho_aec99c457c7b42baa45d9adf4fec3268_20260322T075736Z/repomap.json",
+        "architecture_md": ".ctn/batho_aec99c457c7b42baa45d9adf4fec3268_20260322T075736Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_b103ec5c74bc4a65a8f201e12dcd4c1e_20260322T080538Z": {
+      "id": "batho_b103ec5c74bc4a65a8f201e12dcd4c1e_20260322T080538Z",
+      "timestamp": "2026-03-22T08:05:38.872989+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.401,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_b103ec5c74bc4a65a8f201e12dcd4c1e_20260322T080538Z/graph.json",
+        "repomap_json": ".ctn/batho_b103ec5c74bc4a65a8f201e12dcd4c1e_20260322T080538Z/repomap.json",
+        "architecture_md": ".ctn/batho_b103ec5c74bc4a65a8f201e12dcd4c1e_20260322T080538Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.039999961853027344
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_7ec5d02ac0834955940e2366bd8962cf_20260322T081810Z": {
+      "id": "batho_7ec5d02ac0834955940e2366bd8962cf_20260322T081810Z",
+      "timestamp": "2026-03-22T08:18:10.753338+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.401,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_7ec5d02ac0834955940e2366bd8962cf_20260322T081810Z/graph.json",
+        "repomap_json": ".ctn/batho_7ec5d02ac0834955940e2366bd8962cf_20260322T081810Z/repomap.json",
+        "architecture_md": ".ctn/batho_7ec5d02ac0834955940e2366bd8962cf_20260322T081810Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_f360008a5efc402b9ec301d129fdc081_20260322T084405Z": {
+      "id": "batho_f360008a5efc402b9ec301d129fdc081_20260322T084405Z",
+      "timestamp": "2026-03-22T08:44:05.292701+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.402,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_f360008a5efc402b9ec301d129fdc081_20260322T084405Z/graph.json",
+        "repomap_json": ".ctn/batho_f360008a5efc402b9ec301d129fdc081_20260322T084405Z/repomap.json",
+        "architecture_md": ".ctn/batho_f360008a5efc402b9ec301d129fdc081_20260322T084405Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_c4d08cde2a0e47e7a531ac7d81b5d182_20260322T084451Z": {
+      "id": "batho_c4d08cde2a0e47e7a531ac7d81b5d182_20260322T084451Z",
+      "timestamp": "2026-03-22T08:44:51.306603+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_c4d08cde2a0e47e7a531ac7d81b5d182_20260322T084451Z/graph.json",
+        "repomap_json": ".ctn/batho_c4d08cde2a0e47e7a531ac7d81b5d182_20260322T084451Z/repomap.json",
+        "architecture_md": ".ctn/batho_c4d08cde2a0e47e7a531ac7d81b5d182_20260322T084451Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_967034d41e4740669331d77d99c87e78_20260322T084535Z": {
+      "id": "batho_967034d41e4740669331d77d99c87e78_20260322T084535Z",
+      "timestamp": "2026-03-22T08:45:35.944784+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_967034d41e4740669331d77d99c87e78_20260322T084535Z/graph.json",
+        "repomap_json": ".ctn/batho_967034d41e4740669331d77d99c87e78_20260322T084535Z/repomap.json",
+        "architecture_md": ".ctn/batho_967034d41e4740669331d77d99c87e78_20260322T084535Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_7f466826ba844a929dfe9508c6d7b5a4_20260322T084854Z": {
+      "id": "batho_7f466826ba844a929dfe9508c6d7b5a4_20260322T084854Z",
+      "timestamp": "2026-03-22T08:48:54.778614+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_7f466826ba844a929dfe9508c6d7b5a4_20260322T084854Z/graph.json",
+        "repomap_json": ".ctn/batho_7f466826ba844a929dfe9508c6d7b5a4_20260322T084854Z/repomap.json",
+        "architecture_md": ".ctn/batho_7f466826ba844a929dfe9508c6d7b5a4_20260322T084854Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_0bc91231c34942c9ad906ef1c6d0f21a_20260322T085531Z": {
+      "id": "batho_0bc91231c34942c9ad906ef1c6d0f21a_20260322T085531Z",
+      "timestamp": "2026-03-22T08:55:31.692569+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_0bc91231c34942c9ad906ef1c6d0f21a_20260322T085531Z/graph.json",
+        "repomap_json": ".ctn/batho_0bc91231c34942c9ad906ef1c6d0f21a_20260322T085531Z/repomap.json",
+        "architecture_md": ".ctn/batho_0bc91231c34942c9ad906ef1c6d0f21a_20260322T085531Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.06000018119812012
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_b05de64bfd6b4eecae12f2cc60a1182c_20260322T085703Z": {
+      "id": "batho_b05de64bfd6b4eecae12f2cc60a1182c_20260322T085703Z",
+      "timestamp": "2026-03-22T08:57:03.543614+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_b05de64bfd6b4eecae12f2cc60a1182c_20260322T085703Z/graph.json",
+        "repomap_json": ".ctn/batho_b05de64bfd6b4eecae12f2cc60a1182c_20260322T085703Z/repomap.json",
+        "architecture_md": ".ctn/batho_b05de64bfd6b4eecae12f2cc60a1182c_20260322T085703Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_2789731514264269a872358a193471ed_20260322T091730Z": {
+      "id": "batho_2789731514264269a872358a193471ed_20260322T091730Z",
+      "timestamp": "2026-03-22T09:17:30.123432+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.401,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_2789731514264269a872358a193471ed_20260322T091730Z/graph.json",
+        "repomap_json": ".ctn/batho_2789731514264269a872358a193471ed_20260322T091730Z/repomap.json",
+        "architecture_md": ".ctn/batho_2789731514264269a872358a193471ed_20260322T091730Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_eebff58e9e544e44b53ea890d4cb19f0_20260322T092256Z": {
+      "id": "batho_eebff58e9e544e44b53ea890d4cb19f0_20260322T092256Z",
+      "timestamp": "2026-03-22T09:22:56.170448+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_eebff58e9e544e44b53ea890d4cb19f0_20260322T092256Z/graph.json",
+        "repomap_json": ".ctn/batho_eebff58e9e544e44b53ea890d4cb19f0_20260322T092256Z/repomap.json",
+        "architecture_md": ".ctn/batho_eebff58e9e544e44b53ea890d4cb19f0_20260322T092256Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.06000018119812012
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_46555327b0114f0c99c72d31097a277e_20260322T092547Z": {
+      "id": "batho_46555327b0114f0c99c72d31097a277e_20260322T092547Z",
+      "timestamp": "2026-03-22T09:25:47.217344+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_46555327b0114f0c99c72d31097a277e_20260322T092547Z/graph.json",
+        "repomap_json": ".ctn/batho_46555327b0114f0c99c72d31097a277e_20260322T092547Z/repomap.json",
+        "architecture_md": ".ctn/batho_46555327b0114f0c99c72d31097a277e_20260322T092547Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_fd908f12f5504e2c9535ed2f3c2848fe_20260322T092901Z": {
+      "id": "batho_fd908f12f5504e2c9535ed2f3c2848fe_20260322T092901Z",
+      "timestamp": "2026-03-22T09:29:01.630218+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_fd908f12f5504e2c9535ed2f3c2848fe_20260322T092901Z/graph.json",
+        "repomap_json": ".ctn/batho_fd908f12f5504e2c9535ed2f3c2848fe_20260322T092901Z/repomap.json",
+        "architecture_md": ".ctn/batho_fd908f12f5504e2c9535ed2f3c2848fe_20260322T092901Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_871df84bba45453f84c3046e1c97356f_20260322T093238Z": {
+      "id": "batho_871df84bba45453f84c3046e1c97356f_20260322T093238Z",
+      "timestamp": "2026-03-22T09:32:38.083368+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_871df84bba45453f84c3046e1c97356f_20260322T093238Z/graph.json",
+        "repomap_json": ".ctn/batho_871df84bba45453f84c3046e1c97356f_20260322T093238Z/repomap.json",
+        "architecture_md": ".ctn/batho_871df84bba45453f84c3046e1c97356f_20260322T093238Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_e3e3cfac60dc4f8fb481de81715c8773_20260322T093725Z": {
+      "id": "batho_e3e3cfac60dc4f8fb481de81715c8773_20260322T093725Z",
+      "timestamp": "2026-03-22T09:37:25.712229+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_e3e3cfac60dc4f8fb481de81715c8773_20260322T093725Z/graph.json",
+        "repomap_json": ".ctn/batho_e3e3cfac60dc4f8fb481de81715c8773_20260322T093725Z/repomap.json",
+        "architecture_md": ".ctn/batho_e3e3cfac60dc4f8fb481de81715c8773_20260322T093725Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_74cd79b5ace84ad48d1af21214a1d47d_20260322T093952Z": {
+      "id": "batho_74cd79b5ace84ad48d1af21214a1d47d_20260322T093952Z",
+      "timestamp": "2026-03-22T09:39:52.182057+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_74cd79b5ace84ad48d1af21214a1d47d_20260322T093952Z/graph.json",
+        "repomap_json": ".ctn/batho_74cd79b5ace84ad48d1af21214a1d47d_20260322T093952Z/repomap.json",
+        "architecture_md": ".ctn/batho_74cd79b5ace84ad48d1af21214a1d47d_20260322T093952Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.05000019073486328
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_33c42d0bebde4cfc9afb004fb0aa32c5_20260322T094247Z": {
+      "id": "batho_33c42d0bebde4cfc9afb004fb0aa32c5_20260322T094247Z",
+      "timestamp": "2026-03-22T09:42:47.581121+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_33c42d0bebde4cfc9afb004fb0aa32c5_20260322T094247Z/graph.json",
+        "repomap_json": ".ctn/batho_33c42d0bebde4cfc9afb004fb0aa32c5_20260322T094247Z/repomap.json",
+        "architecture_md": ".ctn/batho_33c42d0bebde4cfc9afb004fb0aa32c5_20260322T094247Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_b337024987cd4db1ac730f4ecce17f59_20260322T094457Z": {
+      "id": "batho_b337024987cd4db1ac730f4ecce17f59_20260322T094457Z",
+      "timestamp": "2026-03-22T09:44:57.875262+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 33,
+      "relationship_count": 24,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_b337024987cd4db1ac730f4ecce17f59_20260322T094457Z/graph.json",
+        "repomap_json": ".ctn/batho_b337024987cd4db1ac730f4ecce17f59_20260322T094457Z/repomap.json",
+        "architecture_md": ".ctn/batho_b337024987cd4db1ac730f4ecce17f59_20260322T094457Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 33,
+        "relationship_count": 24,
+        "elapsed_seconds": 0.04999995231628418
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_892b8d0b12184e41a49298d4667c75eb_20260322T105136Z": {
+      "id": "batho_892b8d0b12184e41a49298d4667c75eb_20260322T105136Z",
+      "timestamp": "2026-03-22T10:51:36.985782+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 26,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.405,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_892b8d0b12184e41a49298d4667c75eb_20260322T105136Z/graph.json",
+        "repomap_json": ".ctn/batho_892b8d0b12184e41a49298d4667c75eb_20260322T105136Z/repomap.json",
+        "architecture_md": ".ctn/batho_892b8d0b12184e41a49298d4667c75eb_20260322T105136Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 26,
+        "elapsed_seconds": 0.04999995231628418,
+        "cache_valid": true,
+        "workers_used": 4
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_0847f371420a4730ae4f1e56bd7af218_20260322T105202Z": {
+      "id": "batho_0847f371420a4730ae4f1e56bd7af218_20260322T105202Z",
+      "timestamp": "2026-03-22T10:52:02.823366+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 26,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_0847f371420a4730ae4f1e56bd7af218_20260322T105202Z/graph.json",
+        "repomap_json": ".ctn/batho_0847f371420a4730ae4f1e56bd7af218_20260322T105202Z/repomap.json",
+        "architecture_md": ".ctn/batho_0847f371420a4730ae4f1e56bd7af218_20260322T105202Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 26,
+        "elapsed_seconds": 0.04999995231628418,
+        "cache_valid": true,
+        "workers_used": 4
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_580e142f98b0423aa7575b7f07336c0e_20260322T105319Z": {
+      "id": "batho_580e142f98b0423aa7575b7f07336c0e_20260322T105319Z",
+      "timestamp": "2026-03-22T10:53:19.255973+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 26,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_580e142f98b0423aa7575b7f07336c0e_20260322T105319Z/graph.json",
+        "repomap_json": ".ctn/batho_580e142f98b0423aa7575b7f07336c0e_20260322T105319Z/repomap.json",
+        "architecture_md": ".ctn/batho_580e142f98b0423aa7575b7f07336c0e_20260322T105319Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 26,
+        "elapsed_seconds": 0.04999995231628418,
+        "cache_valid": true,
+        "workers_used": 4
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_2ef0952a6d104745b0f517dc8c32382f_20260322T105447Z": {
+      "id": "batho_2ef0952a6d104745b0f517dc8c32382f_20260322T105447Z",
+      "timestamp": "2026-03-22T10:54:47.821074+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 26,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_2ef0952a6d104745b0f517dc8c32382f_20260322T105447Z/graph.json",
+        "repomap_json": ".ctn/batho_2ef0952a6d104745b0f517dc8c32382f_20260322T105447Z/repomap.json",
+        "architecture_md": ".ctn/batho_2ef0952a6d104745b0f517dc8c32382f_20260322T105447Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 26,
+        "elapsed_seconds": 0.04999995231628418,
+        "cache_valid": true,
+        "workers_used": 4
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_e196bf4293e948a586e0cd97f491e8a6_20260322T105542Z": {
+      "id": "batho_e196bf4293e948a586e0cd97f491e8a6_20260322T105542Z",
+      "timestamp": "2026-03-22T10:55:42.900433+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 26,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_e196bf4293e948a586e0cd97f491e8a6_20260322T105542Z/graph.json",
+        "repomap_json": ".ctn/batho_e196bf4293e948a586e0cd97f491e8a6_20260322T105542Z/repomap.json",
+        "architecture_md": ".ctn/batho_e196bf4293e948a586e0cd97f491e8a6_20260322T105542Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 26,
+        "elapsed_seconds": 0.05000019073486328,
+        "cache_valid": true,
+        "workers_used": 4
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_af61961b1ee64f3181f39aac77a97454_20260322T105614Z": {
+      "id": "batho_af61961b1ee64f3181f39aac77a97454_20260322T105614Z",
+      "timestamp": "2026-03-22T10:56:14.227832+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 26,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_af61961b1ee64f3181f39aac77a97454_20260322T105614Z/graph.json",
+        "repomap_json": ".ctn/batho_af61961b1ee64f3181f39aac77a97454_20260322T105614Z/repomap.json",
+        "architecture_md": ".ctn/batho_af61961b1ee64f3181f39aac77a97454_20260322T105614Z/architecture.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 26,
+        "elapsed_seconds": 0.059999942779541016,
+        "cache_valid": true,
+        "workers_used": 4
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_e564bc0450e0473cb33b93b1dff4f448_20260324T161211Z": {
+      "id": "batho_e564bc0450e0473cb33b93b1dff4f448_20260324T161211Z",
+      "timestamp": "2026-03-24T16:12:11.729179+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 26,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.5,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_e564bc0450e0473cb33b93b1dff4f448_20260324T161211Z/graph.json",
+        "repomap_json": ".ctn/batho_e564bc0450e0473cb33b93b1dff4f448_20260324T161211Z/repomap.json",
+        "overview_md": ".ctn/batho_e564bc0450e0473cb33b93b1dff4f448_20260324T161211Z/context/overview.md",
+        "architecture_md": ".ctn/batho_e564bc0450e0473cb33b93b1dff4f448_20260324T161211Z/context/architecture.md",
+        "tests_md": ".ctn/batho_e564bc0450e0473cb33b93b1dff4f448_20260324T161211Z/context/tests.md",
+        "docs_md": ".ctn/batho_e564bc0450e0473cb33b93b1dff4f448_20260324T161211Z/context/docs.md",
+        "config_md": ".ctn/batho_e564bc0450e0473cb33b93b1dff4f448_20260324T161211Z/context/config.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 26,
+        "elapsed_seconds": 0.04999995231628418,
+        "cache_valid": true,
+        "workers_used": 4,
+        "loc_total": 113,
+        "repo_size_bytes": 2087,
+        "file_count_total": 8,
+        "text_files_count": 8,
+        "skipped_files_count": 0
+      },
+      "metrics": {
+        "file_count_total": 8,
+        "repo_size_bytes": 2087,
+        "loc_total": 113,
+        "text_files_count": 8,
+        "skipped_files_count": 0,
+        "token_input_estimate": 403,
+        "cache_hit_rate": 1.0
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_c241f6995420487d811e94ee1a05617b_20260325T125714Z": {
+      "id": "batho_c241f6995420487d811e94ee1a05617b_20260325T125714Z",
+      "timestamp": "2026-03-25T12:57:14.886727+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 26,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.486,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_c241f6995420487d811e94ee1a05617b_20260325T125714Z/graph.json",
+        "repomap_json": ".ctn/batho_c241f6995420487d811e94ee1a05617b_20260325T125714Z/repomap.json",
+        "overview_md": ".ctn/batho_c241f6995420487d811e94ee1a05617b_20260325T125714Z/context/overview.md",
+        "architecture_md": ".ctn/batho_c241f6995420487d811e94ee1a05617b_20260325T125714Z/context/architecture.md",
+        "tests_md": ".ctn/batho_c241f6995420487d811e94ee1a05617b_20260325T125714Z/context/tests.md",
+        "docs_md": ".ctn/batho_c241f6995420487d811e94ee1a05617b_20260325T125714Z/context/docs.md",
+        "config_md": ".ctn/batho_c241f6995420487d811e94ee1a05617b_20260325T125714Z/context/config.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 26,
+        "elapsed_seconds": 0.04999995231628418,
+        "cache_valid": true,
+        "workers_used": 4,
+        "loc_total": 113,
+        "repo_size_bytes": 2087,
+        "file_count_total": 8,
+        "text_files_count": 8,
+        "skipped_files_count": 0
+      },
+      "metrics": {
+        "file_count_total": 8,
+        "repo_size_bytes": 2087,
+        "loc_total": 113,
+        "text_files_count": 8,
+        "skipped_files_count": 0,
+        "token_input_estimate": 403,
+        "cache_hit_rate": 1.0
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_62fadc96db37400d87460954b8d27a2a_20260325T125740Z": {
+      "id": "batho_62fadc96db37400d87460954b8d27a2a_20260325T125740Z",
+      "timestamp": "2026-03-25T12:57:40.931163+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 26,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_62fadc96db37400d87460954b8d27a2a_20260325T125740Z/graph.json",
+        "repomap_json": ".ctn/batho_62fadc96db37400d87460954b8d27a2a_20260325T125740Z/repomap.json",
+        "overview_md": ".ctn/batho_62fadc96db37400d87460954b8d27a2a_20260325T125740Z/context/overview.md",
+        "architecture_md": ".ctn/batho_62fadc96db37400d87460954b8d27a2a_20260325T125740Z/context/architecture.md",
+        "tests_md": ".ctn/batho_62fadc96db37400d87460954b8d27a2a_20260325T125740Z/context/tests.md",
+        "docs_md": ".ctn/batho_62fadc96db37400d87460954b8d27a2a_20260325T125740Z/context/docs.md",
+        "config_md": ".ctn/batho_62fadc96db37400d87460954b8d27a2a_20260325T125740Z/context/config.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 26,
+        "elapsed_seconds": 0.05000019073486328,
+        "cache_valid": true,
+        "workers_used": 4,
+        "loc_total": 113,
+        "repo_size_bytes": 2087,
+        "file_count_total": 8,
+        "text_files_count": 8,
+        "skipped_files_count": 0
+      },
+      "metrics": {
+        "file_count_total": 8,
+        "repo_size_bytes": 2087,
+        "loc_total": 113,
+        "text_files_count": 8,
+        "skipped_files_count": 0,
+        "token_input_estimate": 403,
+        "cache_hit_rate": 1.0
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    },
+    "batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z": {
+      "id": "batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z",
+      "timestamp": "2026-03-25T15:05:42.986437+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 26,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.409,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z/graph.json",
+        "repomap_json": ".ctn/batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z/repomap.json",
+        "overview_md": ".ctn/batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z/context/overview.md",
+        "architecture_md": ".ctn/batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z/context/architecture.md",
+        "tests_md": ".ctn/batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z/context/tests.md",
+        "docs_md": ".ctn/batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z/context/docs.md",
+        "config_md": ".ctn/batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z/context/config.md",
+        "c4_model": ".ctn/batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z/c4-model.json",
+        "c4_model_json": ".ctn/batho_7222e9a8272e448eb6189ccdf7a2577a_20260325T150542Z/c4-model.json"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 26,
+        "elapsed_seconds": 0.04999995231628418,
+        "cache_valid": true,
+        "workers_used": 4,
+        "loc_total": 113,
+        "repo_size_bytes": 2087,
+        "file_count_total": 8,
+        "text_files_count": 8,
+        "skipped_files_count": 0
+      },
+      "metrics": {
+        "file_count_total": 8,
+        "repo_size_bytes": 2087,
+        "loc_total": 113,
+        "text_files_count": 8,
+        "skipped_files_count": 0,
+        "token_input_estimate": 403,
+        "cache_hit_rate": 1.0
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
+    }
+  },
+  "schema_version": "index-metadata.v1",
+  "_checksum": "4d69d1f6cd8180a8dfcd9cc01fd74b5d26d7496ba0fbb22d5ecac597e2170482"
+}

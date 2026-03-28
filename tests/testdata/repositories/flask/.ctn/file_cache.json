@@ -1,0 +1,130 @@
+{
+  "schema_version": "file-cache.v1",
+  "files": {
+    ".devcontainer/devcontainer.json": {
+      "mtime": 1774168392.7389553,
+      "sha256": "b8fdd479fae20d10e0563d343d4a8e3fa728a88288ef8b24e9e9c761f1e00dc6"
+    },
+    "repository_metadata.json": {
+      "mtime": 1774168434.4772675,
+      "sha256": "3eb4602c6d2b3b06766624dc64a8a95a790ef7909965d025c0718a27faad1a82"
+    },
+    "docs/conf.py": {
+      "mtime": 1774168392.74255,
+      "sha256": "46859ff27d0e416563dab19969c7a69009655fc11e73a8a00c8f901441efaa7e"
+    },
+    "src/flask/globals.py": {
+      "mtime": 1774168392.7572346,
+      "sha256": "294cd5bd23e1f2fdbc9146ac5438bf690281f612368d9498407a9a0d4d8fe35e"
+    },
+    "src/flask/ctx.py": {
+      "mtime": 1774168392.7569582,
+      "sha256": "c76906cd45ed3f35728b66122ab53f3d5d40bedc539a1da245dae22514d23c63"
+    },
+    "metadata.py": {
+      "mtime": 1774168403.8256562,
+      "sha256": "d85bd42f377bbc3042f4926f4eb712c782f284003dcf7abeac137c6aef9b6a78"
+    },
+    "src/flask/app.py": {
+      "mtime": 1774168392.7564347,
+      "sha256": "86ddd0c7d53dcf4235a947cba12edb62125cb9b76993e8b9e1e1eadfb2c394df"
+    },
+    "CODE_OF_CONDUCT.md": {
+      "mtime": 1774168392.7404404,
+      "sha256": "3b3eee7b9db5c0c0a27b60a60883dd706dc954b5dcb25264ff1611ef87426c79"
+    },
+    "src/flask/debughelpers.py": {
+      "mtime": 1774168392.757077,
+      "sha256": "051d3191dfac03216e156d3b0fa35faea370499c64d48ae41b99fccde9bedecc"
+    },
+    "src/flask/helpers.py": {
+      "mtime": 1774168392.7573256,
+      "sha256": "b9584cc2185fc208c1b7c6fefb32194e391f0512b6f323e998d86057384fe38e"
+    },
+    "src/flask/config.py": {
+      "mtime": 1774168392.756798,
+      "sha256": "619499fb1a458f5896d41d4a8f5883869739b3ba479dc9688912ea5e1b14ec7b"
+    },
+    "src/flask/json/tag.py": {
+      "mtime": 1774168392.7576907,
+      "sha256": "8a16fb416acd12bd180b7283e13a2565b7ed8123c2b8b93b140bcae3d86e602d"
+    },
+    "src/flask/json/__init__.py": {
+      "mtime": 1774168392.7574768,
+      "sha256": "a5db69a0ad9bd1bd6eed2c5bc777de33b55686c236d25d72180bdb616c5ac6f7"
+    },
+    "src/flask/cli.py": {
+      "mtime": 1774168392.7566493,
+      "sha256": "3c3c1909f3da822e465336fe0fa74437bcb6d205a25408377a3467c4128d1cf0"
+    },
+    "src/flask/__main__.py": {
+      "mtime": 1774168392.756172,
+      "sha256": "6d8b7d7846a845059d7a3107143f11131f63c5511d669b44085b15ec5e3d2279"
+    },
+    "src/flask/__init__.py": {
+      "mtime": 1774168392.7560391,
+      "sha256": "c6ad3d5cd28ff98f9f76fe817861fb46515a634d3ab54037a3f96519c97e767a"
+    },
+    "src/flask/blueprints.py": {
+      "mtime": 1774168392.7565424,
+      "sha256": "66956bc1af1463e627543b17ff52b5d174230f0094a7b427da198a967e627044"
+    },
+    "src/flask/json/provider.py": {
+      "mtime": 1774168392.757587,
+      "sha256": "3acd1fadbf2819fc9628bf930f16f4532f8c63a80384f749911694979c403972"
+    },
+    "src/flask/logging.py": {
+      "mtime": 1774168392.757758,
+      "sha256": "940af1d81abda13b5427e0e764bf6df3cc54db3cadce9e1459233d05def63434"
+    },
+    "src/flask/templating.py": {
+      "mtime": 1774168392.7582073,
+      "sha256": "5dd3f684c16767914264e1bb1d468b8c2d950be6f8b874969438f0bffd69dea7"
+    },
+    "src/flask/scaffold.py": {
+      "mtime": 1774168392.7578955,
+      "sha256": "00b1872dccb6a926c9ec435dd47f1d3a7ab9543807e57485b0e9037a570e295f"
+    },
+    "src/flask/typing.py": {
+      "mtime": 1774168392.7583692,
+      "sha256": "e0b8fe613c54a18bcf6287c2f462aefb5a341edf25ca3a7dcf7237dfa275dffa"
+    },
+    "src/flask/wrappers.py": {
+      "mtime": 1774168392.7585857,
+      "sha256": "3e1329ded78add29c4988768839f5c3bf0c7899f41b67d2a2351227eb4ddc0ff"
+    },
+    "src/flask/testing.py": {
+      "mtime": 1774168392.7583103,
+      "sha256": "87b0229e082b3201b32a50cdeba55f074263596e19d54fce0fa1728ea04d8983"
+    },
+    "src/flask/views.py": {
+      "mtime": 1774168392.7584763,
+      "sha256": "57984e1992f1d019fdf5019c33a9a1e71fee33e332a554f4f91cac10553ce237"
+    },
+    "src/flask/signals.py": {
+      "mtime": 1774168392.758097,
+      "sha256": "b351f8c8a8dfddce5d815af8d55eac26913d74b26f99324c62e2b4ae4ab1decc"
+    },
+    "src/flask/sessions.py": {
+      "mtime": 1774168392.7580373,
+      "sha256": "ac51f640a5c6db87446b390a1b1007a94a40521ff7d210c7add761558800718d"
+    },
+    ".readthedocs.yaml": {
+      "mtime": 1774168392.740219,
+      "sha256": "dd47a46c7c3027f89216b0a9c2f2ea91275cc7dd2717f6a271a661a29beb2b1a"
+    },
+    "pyproject.toml": {
+      "mtime": 1774168392.7538614,
+      "sha256": "09cd53cb0c1dbd80af863dc1bd76aeeabb952ad8281b6759ae3130aba9939822"
+    },
+    ".pre-commit-config.yaml": {
+      "mtime": 1774168392.7400765,
+      "sha256": "af0369858e952d72687da160237e713cbdf84690466f4e82844dcb7caf60170f"
+    },
+    ".devcontainer/on-create-command.sh": {
+      "mtime": 1774168392.7390258,
+      "sha256": "6785abbdaf0a3d2cc68d5ba322eb8eb48b0b0bf421e69b57ab736e9399df9a27"
+    }
+  },
+  "_checksum": "f4cfceb59df606c43b178dfe4fdd293bbda6027db5f23da90d1fdac9639dfe1f"
+}

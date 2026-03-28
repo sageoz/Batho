@@ -1,0 +1,76 @@
+[run]
+# Source code to measure coverage for
+source = batho_core, batho
+
+# Branch coverage
+branch = True
+
+# Include patterns
+include = 
+    */batho_core/*
+    */batho.py
+
+# Exclude patterns
+omit = 
+    */tests/*
+    */test_*
+    */__pycache__/*
+    */venv/*
+    */.venv/*
+    */site-packages/*
+    */dist/*
+    */build/*
+    */migrations/*
+    */conftest.py
+    */test.py
+
+# Plugin configuration
+plugins =
+
+[report]
+# Report format
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self.debug:
+    if settings.DEBUG
+    raise AssertionError
+    raise NotImplementedError
+    if 0:
+    if __name__ == .__main__.:
+    class .*\bProtocol\):
+    @(abc\.)?abstractmethod
+
+# Precision
+precision = 2
+
+# Show missing lines
+show_missing = True
+
+# Skip covered files
+skip_covered = False
+
+# Skip empty files
+skip_empty = True
+
+[html]
+# HTML report directory
+directory = htmlcov
+
+# Skip empty files
+skip_empty = True
+
+[xml]
+# XML output format
+output = coverage.xml
+
+[paths]
+# Source path mapping for combining coverage from different environments
+source = 
+    .
+    */site-packages
+
+[json]
+# JSON output format
+output = coverage.json
+pretty_print = True

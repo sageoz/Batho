@@ -1,0 +1,19 @@
+/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/README.md:
+  document (document)
+  header_1_Simple Python (element)
+/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/calculator.py:
+  add (function)
+  subtract (function)
+  multiply (function)
+  divide (function)
+  Calculator (class)
+  __init__ (method)
+  calculate (method)
+  last_result (method)
+/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/src/utils.py:
+  double (function)
+  create_calculator (function)
+/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python/tests/test_calculator.py:
+  test_add (function)
+  test_subtract (function)
+  test_calculator_history (function)

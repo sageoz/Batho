@@ -1,0 +1,18 @@
+/* Basic CSS test file */
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: #ffffff;
+}
+
+.header {
+    background-color: #333333;
+    color: white;
+    padding: 10px;
+}
+
+.content {
+    max-width: 1200px;
+    margin: 0 auto;
+}

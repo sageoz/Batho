@@ -1,0 +1,39 @@
+{
+  "ref": "refs/heads/main",
+  "before": "invalid_sha_length",
+  "after": "not_a_sha_hash",
+  "repository": {
+    "id": "not_a_number",
+    "name": null,
+    "full_name": 12345,
+    "private": "not_boolean",
+    "owner": {
+      "login": "",
+      "id": -1,
+      "type": "InvalidType"
+    },
+    "html_url": "not_a_url",
+    "description": {},
+    "default_branch": [],
+    "language": null
+  },
+  "pusher": {
+    "name": "",
+    "email": "not_an_email"
+  },
+  "commits": [
+    {
+      "id": 12345,
+      "message": null,
+      "timestamp": "invalid_timestamp",
+      "url": {},
+      "author": {
+        "name": "",
+        "email": null
+      },
+      "added": "not_an_array",
+      "removed": [],
+      "modified": {}
+    }
+  ]
+}

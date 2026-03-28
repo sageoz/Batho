@@ -1,0 +1,77 @@
+{
+  "ref": "refs/heads/main",
+  "before": "a1b2c3d4e5f6789012345678901234567890abcd",
+  "after": "b2c3d4e5f6789012345678901234567890abcdef1",
+  "repository": {
+    "id": 123456789,
+    "name": "example-repo",
+    "full_name": "user/example-repo",
+    "private": false,
+    "owner": {
+      "login": "user",
+      "id": 987654321,
+      "type": "User"
+    },
+    "html_url": "https://github.com/user/example-repo",
+    "description": "An example repository for testing",
+    "default_branch": "main",
+    "language": "Python"
+  },
+  "pusher": {
+    "name": "Test User",
+    "email": "test@example.com"
+  },
+  "sender": {
+    "login": "user",
+    "id": 987654321,
+    "type": "User"
+  },
+  "commits": [
+    {
+      "id": "b2c3d4e5f6789012345678901234567890abcdef1",
+      "message": "Add new feature module",
+      "timestamp": "2026-03-22T14:20:00Z",
+      "url": "https://github.com/user/example-repo/commit/b2c3d4e5f6789012345678901234567890abcdef1",
+      "author": {
+        "name": "Test User",
+        "email": "test@example.com"
+      },
+      "committer": {
+        "name": "Test User",
+        "email": "test@example.com"
+      },
+      "added": [
+        "src/new_feature.py",
+        "tests/test_new_feature.py"
+      ],
+      "removed": [],
+      "modified": [
+        "README.md",
+        "requirements.txt"
+      ]
+    }
+  ],
+  "head_commit": {
+    "id": "b2c3d4e5f6789012345678901234567890abcdef1",
+    "message": "Add new feature module",
+    "timestamp": "2026-03-22T14:20:00Z",
+    "url": "https://github.com/user/example-repo/commit/b2c3d4e5f6789012345678901234567890abcdef1",
+    "author": {
+      "name": "Test User",
+      "email": "test@example.com"
+    },
+    "committer": {
+      "name": "Test User",
+      "email": "test@example.com"
+    },
+    "added": [
+      "src/new_feature.py",
+      "tests/test_new_feature.py"
+    ],
+    "removed": [],
+    "modified": [
+      "README.md",
+      "requirements.txt"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "action": "opened",
+  "number": 42,
+  "pull_request": {
+    "id": 123456789,
+    "title": "Add new authentication feature"
+  },
+  "repository": {
+    "id": 123456789,
+    "name": "example-repo"
+  }
+}

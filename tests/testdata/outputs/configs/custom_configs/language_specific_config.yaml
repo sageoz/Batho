@@ -1,0 +1,18 @@
+logging:
+  level: DEBUG
+  json_format: false
+
+paths:
+  ctn_dir: .ctn
+
+indexer:
+  max_file_size_kb: 250
+  max_indexed_files: 50000
+  max_workers: 4
+  max_files: 5000
+  fail_on_warning: true
+  strict: true
+
+flags:
+  fail_on_warning: true
+  strict: true

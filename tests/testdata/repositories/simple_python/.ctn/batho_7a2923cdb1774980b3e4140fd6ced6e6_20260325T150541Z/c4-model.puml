@@ -1,0 +1,24 @@
+@startuml
+!include C4_Context
+!include C4_Container
+!include C4_Component
+!include sprites/aws
+!include sprites/azure
+!include sprites/gcp
+title C4 Architecture Diagram
+
+!define SYSTEMS
+System(system, "simple_python", "Command-line tool: simple_python")
+
+!define CONTAINERS
+Container(system, container-1, "Python Web App", "Web Application container" [Python, WSGI, ASGI])
+Container(system, container-2, "Python CLI", "CLI Application container" [Python, Command Line])
+Container(system, container-3, "CLI Tool", "CLI Application container" [Command Line, Terminal])
+Container(system, container-4, "Test Suite", "Test Suite container" [Testing, Automation, TDD])
+
+!define RELATIONSHIPS
+Rel(user, container-1, "Uses")
+Rel(user, container-2, "Uses")
+Rel(user, container-3, "Uses")
+Rel(user, container-4, "Uses")
+@enduml

@@ -1,0 +1,27 @@
+@startuml
+!include C4_Context
+!include C4_Container
+!include C4_Component
+!include C4_Dark
+!include sprites/aws
+!include sprites/azure
+!include sprites/gcp
+title C4 Architecture Diagram
+
+!define SYSTEMS
+System(system, "flask", "Command-line tool: flask")
+
+!define CONTAINERS
+Container(system, container-1, "Python Web App", "Web Application container" [Python, WSGI, ASGI])
+Container(system, container-2, "Python CLI", "CLI Application container" [Python, Command Line])
+Container(system, container-3, "CLI Tool", "CLI Application container" [Command Line, Terminal])
+Container(system, container-4, "Static Assets", "Static Assets container" [CSS, JavaScript, Images, Fonts])
+Container(system, container-5, "Documentation", "Documentation container" [Markdown, HTML, Sphinx])
+
+!define RELATIONSHIPS
+Rel(user, container-1, "Uses")
+Rel(user, container-2, "Uses")
+Rel(user, container-3, "Uses")
+Rel(user, container-4, "Uses")
+Rel(user, container-5, "Uses")
+@enduml
