@@ -27,10 +27,6 @@ DEFAULT_CTN_DIR = ".ctn"
 DEFAULT_MAX_FILE_SIZE_KB = 500
 DEFAULT_MAX_INDEXED_FILES = 200000  # allow large repos
 DEFAULT_INDEX_WORKERS = 0  # auto
-DEFAULT_REPOMAP_BUDGET_TOKENS = 12000
-DEFAULT_REPOMAP_BUDGET_RATIO = 0.8
-DEFAULT_REPOMAP_BUDGET_MIN_TOKENS = 4000
-DEFAULT_REPOMAP_BUDGET_MAX_TOKENS = 40000
 DEFAULT_IGNORE_FILES: list[str] | None = None
 DEFAULT_METRICS_OUTPUT: str | None = ".ctn/metrics.json"
 DEFAULT_CONFIG_FILE_ENV = "BATHO_CONFIG_FILE"
@@ -74,16 +70,6 @@ class IndexerConfig(BaseModel):
     max_workers: int = Field(default=DEFAULT_INDEX_WORKERS, ge=0)
     max_files: Optional[int] = Field(
         default=None, ge=1, description="Hard cap on files processed in a run"
-    )
-    repomap_budget_tokens: int = Field(default=DEFAULT_REPOMAP_BUDGET_TOKENS, ge=0)
-    repomap_budget_ratio: float = Field(
-        default=DEFAULT_REPOMAP_BUDGET_RATIO, ge=0.0, le=1.0
-    )
-    repomap_budget_min_tokens: int = Field(
-        default=DEFAULT_REPOMAP_BUDGET_MIN_TOKENS, ge=0
-    )
-    repomap_budget_max_tokens: int = Field(
-        default=DEFAULT_REPOMAP_BUDGET_MAX_TOKENS, ge=0
     )
     ignore_patterns: list[str] = Field(
         default_factory=list, description="Extra ignore patterns"
@@ -203,10 +189,6 @@ def get_config(config_file: str | None = None) -> Dict[str, Any]:
             "max_indexed_files": DEFAULT_MAX_INDEXED_FILES,
             "max_workers": DEFAULT_INDEX_WORKERS,
             "max_files": None,
-            "repomap_budget_tokens": DEFAULT_REPOMAP_BUDGET_TOKENS,
-            "repomap_budget_ratio": DEFAULT_REPOMAP_BUDGET_RATIO,
-            "repomap_budget_min_tokens": DEFAULT_REPOMAP_BUDGET_MIN_TOKENS,
-            "repomap_budget_max_tokens": DEFAULT_REPOMAP_BUDGET_MAX_TOKENS,
             "ignore_patterns": [],  # Will be merged with actual patterns in ignore.py
             "ignore_files": DEFAULT_IGNORE_FILES,
             "metrics_output": DEFAULT_METRICS_OUTPUT,
@@ -260,20 +242,6 @@ def get_config(config_file: str | None = None) -> Dict[str, Any]:
     )
     base_cfg["indexer"]["max_workers"] = _env_int(
         "BATHO_INDEX_WORKERS", base_cfg["indexer"]["max_workers"]
-    )
-    base_cfg["indexer"]["repomap_budget_tokens"] = _env_int(
-        "BATHO_REPOMAP_BUDGET_TOKENS", base_cfg["indexer"]["repomap_budget_tokens"]
-    )
-    base_cfg["indexer"]["repomap_budget_ratio"] = _env_float(
-        "BATHO_REPOMAP_BUDGET_RATIO", base_cfg["indexer"]["repomap_budget_ratio"]
-    )
-    base_cfg["indexer"]["repomap_budget_min_tokens"] = _env_int(
-        "BATHO_REPOMAP_BUDGET_MIN_TOKENS",
-        base_cfg["indexer"]["repomap_budget_min_tokens"],
-    )
-    base_cfg["indexer"]["repomap_budget_max_tokens"] = _env_int(
-        "BATHO_REPOMAP_BUDGET_MAX_TOKENS",
-        base_cfg["indexer"]["repomap_budget_max_tokens"],
     )
     env_ignore_patterns = _env_list("BATHO_IGNORE_PATTERNS")
     if env_ignore_patterns is not None:

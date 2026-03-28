@@ -1133,6 +1133,73 @@ def cmd_invalidate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_repomap(args: argparse.Namespace) -> int:
+    """Render RepoMap in various formats."""
+    root = Path(args.root).resolve()
+    if not root.exists() or not root.is_dir():
+        print(f"❌ Root does not exist or is not a directory: {root}")
+        return 1
+
+    ctn_dir = _ensure_ctn_dir(root)
+    metadata = _load_index_metadata(ctn_dir)
+    current_id = metadata.get("current_index_id")
+    
+    if not current_id:
+        print("❌ No index found. Run 'batho index' first.")
+        return 1
+
+    graph = _load_current_graph(ctn_dir, current_id)
+    if graph is None:
+        print("❌ Current graph.json missing or invalid")
+        return 1
+
+    repomap = RepoMap.build(graph, root=str(root))
+
+    # Render based on mode
+    try:
+        versioned_dir = ctn_dir / current_id
+        
+        if args.mode == "compressed":
+            output, stats = repomap.render_compressed(budget=args.budget, fail_on_overflow=False)
+            # Save compressed output with stats as JSON
+            compressed_data = {
+                "compressed_text": output,
+                "stats": stats
+            }
+            output_path = versioned_dir / "repomap_compressed.json"
+            _write_json(output_path, compressed_data)
+            print(f"✅ Compressed repomap written to {output_path.relative_to(root)}")
+            print(f"   Tokens used: {stats['tokens_used']}/{stats['budget']}")
+            if stats['truncated_files'] > 0:
+                print(f"   Truncated files: {stats['truncated_files']}")
+        elif args.mode == "full":
+            output = repomap.render_full()
+            # Save full mode as JSON with text content
+            full_data = {
+                "full_text": output
+            }
+            output_path = versioned_dir / "repomap_full.json"
+            _write_json(output_path, full_data)
+            print(f"✅ Full repomap written to {output_path.relative_to(root)}")
+        elif args.mode == "hierarchical":
+            output = repomap.render_hierarchical()
+            # Save hierarchical mode as JSON with text content
+            hierarchical_data = {
+                "hierarchical_text": output
+            }
+            output_path = versioned_dir / "repomap_hierarchical.json"
+            _write_json(output_path, hierarchical_data)
+            print(f"✅ Hierarchical repomap written to {output_path.relative_to(root)}")
+        else:
+            print(f"❌ Unknown mode: {args.mode}")
+            return 1
+    except Exception as e:
+        print(f"❌ Error rendering repomap: {e}")
+        return 1
+
+    return 0
+
+
 def cmd_c4(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     if not root.exists() or not root.is_dir():
@@ -1549,6 +1616,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Component threshold for diagram splitting (PlantUML only)",
     )
     c4.set_defaults(func=cmd_c4)
+
+    # RepoMap command
+    repomap = sub.add_parser("repomap", help="Render RepoMap in various formats")
+    repomap.add_argument("--root", required=True, help="Path to repo root")
+    repomap.add_argument(
+        "--mode",
+        choices=["compressed", "full", "hierarchical"],
+        default="compressed",
+        help="Rendering mode (default: compressed)",
+    )
+    repomap.add_argument(
+        "--budget",
+        type=int,
+        default=12000,
+        help="Token budget for compressed mode (default: 12000)",
+    )
+    repomap.set_defaults(func=cmd_repomap)
 
     return parser
 
