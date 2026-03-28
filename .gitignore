@@ -1,10 +1,42 @@
-# Python-generated files
+# Python cache and build artifacts
 __pycache__/
-*.py[oc]
-build/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
 dist/
+build/
 wheels/
-*.egg-info
-supabase/
+.eggs/
+
 # Virtual environments
-.venv
+.venv/
+venv/
+env/
+.env/
+
+# Test, coverage, and output
+.coverage
+.pytest_cache/
+htmlcov/
+coverage.xml
+test-results.xml
+test_output.puml
+
+# Supabase and .ctn artifacts
+supabase/
+.ctn/
+
+# Editor/OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.bak
+*.tmp
+~$*
+
+# IDE/project files
+.vscode/
+.idea/
+*.iml
