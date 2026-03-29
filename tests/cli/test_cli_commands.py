@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from batho_core.batho import cmd_index, cmd_invalidate, cmd_stats, cmd_webhook
+from batho import cmd_index, cmd_invalidate, cmd_stats, cmd_webhook
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 {
-  "current_index_id": "batho_9b920cbc098f461898ae0b507779191a_20260328T141807Z",
+  "current_index_id": "batho_6beb4660f8f546fea13e3de763db756e_20260329T053036Z",
   "indexes": {
     "batho_541c4045ecb942e19ed20f670ffb2a38_20260322T075619Z": {
       "id": "batho_541c4045ecb942e19ed20f670ffb2a38_20260322T075619Z",
@@ -1999,8 +1999,78 @@
         "build": ""
       },
       "schemas": {}
+    },
+    "batho_6beb4660f8f546fea13e3de763db756e_20260329T053036Z": {
+      "id": "batho_6beb4660f8f546fea13e3de763db756e_20260329T053036Z",
+      "timestamp": "2026-03-29T05:30:37.001287+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 26,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.463,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_6beb4660f8f546fea13e3de763db756e_20260329T053036Z/graph.json",
+        "repomap_json": ".ctn/batho_6beb4660f8f546fea13e3de763db756e_20260329T053036Z/repomap.json",
+        "overview_md": ".ctn/batho_6beb4660f8f546fea13e3de763db756e_20260329T053036Z/context/overview.md",
+        "architecture_md": ".ctn/batho_6beb4660f8f546fea13e3de763db756e_20260329T053036Z/context/architecture.md",
+        "tests_md": ".ctn/batho_6beb4660f8f546fea13e3de763db756e_20260329T053036Z/context/tests.md",
+        "docs_md": ".ctn/batho_6beb4660f8f546fea13e3de763db756e_20260329T053036Z/context/docs.md",
+        "config_md": ".ctn/batho_6beb4660f8f546fea13e3de763db756e_20260329T053036Z/context/config.md",
+        "c4_model": ".ctn/batho_6beb4660f8f546fea13e3de763db756e_20260329T053036Z/c4-model.json"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 0,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 26,
+        "elapsed_seconds": 0.5600001811981201,
+        "workers_used": 4,
+        "loc_total": 113,
+        "repo_size_bytes": 2087,
+        "file_count_total": 8,
+        "text_files_count": 8,
+        "skipped_files_count": 0
+      },
+      "metrics": {
+        "file_count_total": 8,
+        "repo_size_bytes": 2087,
+        "loc_total": 113,
+        "text_files_count": 8,
+        "skipped_files_count": 0,
+        "token_input_estimate": 403,
+        "cache_hit_rate": 0.0
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {}
     }
   },
   "schema_version": "index-metadata.v1",
-  "_checksum": "7304afcfe3c62ef596cb909c45ca934ba6bff785fb97d21fd1a54ccbf0efa698"
+  "_checksum": "73ab64f2c104e25edb28323bfecccaa6a512b5b6bb4a702756cc80a59a2c3fe5"
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from batho_core.batho import build_parser
+from batho import build_parser
 
 
 # ---------------------------------------------------------------------------
