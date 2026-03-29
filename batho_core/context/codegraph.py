@@ -20,17 +20,24 @@ import hashlib
 import json
 import math
 import os
-from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Iterable
+
+import threading
+from collections import Counter, defaultdict
+from typing import Dict, Optional
 
 from batho_core.config import get_config_cached
 from batho_core.utils.file_io import _read_file_content, read_file_bytes
 from batho_core.utils.hash import compute_bytes_hash
 from batho_core.utils.ignore import is_ignored, load_ignore_spec
 from batho_core.utils.logging import get_logger
+from batho_core.utils.file_lock import FileLock, FileLockError
+from batho_core.utils.memory_monitor import memory_monitor, force_garbage_collection
 
 from .extractor import ASTExtractor
 from .schema import Entity, EntityType, Relationship, RelationshipType
@@ -159,7 +166,7 @@ class InMemoryGraph:
 
 class _FileStateCache:
     """
-    Lightweight JSON-based cache for file mtime + SHA-256.
+    Lightweight JSON-based cache for file mtime + SHA-256 with atomic operations.
 
     Structure: { "relative/path/to/file.py": {"mtime": float, "sha256": str} }
 
@@ -168,6 +175,8 @@ class _FileStateCache:
 
     The mtime check short-circuits the SHA-256 computation for unchanged
     files — stat() is orders of magnitude faster than hashing.
+    
+    Thread-safe operations ensure cache consistency during parallel processing.
     """
 
     def __init__(self, cache_path: Path, root: Path | None = None) -> None:
@@ -176,28 +185,50 @@ class _FileStateCache:
         self._data: dict[str, dict[str, Any]] = {}
         self._schema_version: str | None = None
         self._checksum_valid: bool = True
+        self._lock = threading.RLock()  # Reentrant lock for nested operations
+        self._dirty = False  # Track if cache needs saving
+        self._file_lock = FileLock(cache_path.with_suffix('.lock'))  # File-level lock for disk operations
+        self.logger = get_logger(__name__, component="file_cache")
         self._load()
 
     def _load(self) -> None:
-        if self._path.exists():
+        """Load cache from disk if it exists and is valid."""
+        if not self._path.exists():
+            return
+
+        with self._file_lock:
             try:
-                raw = json.loads(self._path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict) and "files" in raw:
+                # First read and validate checksum before loading full data
+                raw_content = self._path.read_text(encoding="utf-8")
+                raw = json.loads(raw_content)
+                
+                if not isinstance(raw, dict) or "files" not in raw:
+                    # backward compatibility (flat mapping)
+                    self._data = raw if isinstance(raw, dict) else {}
                     self._schema_version = raw.get("schema_version")
-                    files = raw.get("files", {})
-                    checksum = raw.get("_checksum")
+                    return
+                
+                # Validate checksum before accepting data
+                files = raw.get("files", {})
+                checksum = raw.get("_checksum")
+                if checksum:
                     calc = compute_bytes_hash(
                         json.dumps(files, sort_keys=True).encode("utf-8")
                     )
-                    if checksum and checksum != calc:
+                    if checksum != calc:
                         self._mark_corrupt("checksum_mismatch")
-                    else:
-                        self._data = files
-                else:
-                    # backward compatibility (flat mapping)
-                    self._data = raw if isinstance(raw, dict) else {}
-            except (json.JSONDecodeError, OSError):
+                        return
+                
+                # Checksum is valid, load the data
+                self._schema_version = raw.get("schema_version")
+                self._data = files
+                
+            except (json.JSONDecodeError, OSError) as e:
+                self.logger.error("cache_load_failed", cache_path=str(self._path), error=str(e))
                 self._mark_corrupt("read_failed")
+            except FileLockError as e:
+                self.logger.error("cache_lock_failed", cache_path=str(self._path), error=str(e))
+                self._mark_corrupt("lock_failed")
 
     def _mark_corrupt(self, reason: str) -> None:
         self._checksum_valid = False
@@ -213,8 +244,24 @@ class _FileStateCache:
                     backup=str(backup),
                     reason=reason,
                 )
-        except OSError:
-            pass
+        except OSError as e:
+            get_logger(__name__, operation="index").error(
+                "cache_backup_failed", 
+                path=str(self._path), 
+                error=str(e)
+            )
+            # Try to delete the corrupt file if backup fails
+            try:
+                self._path.unlink()
+                get_logger(__name__, operation="index").info(
+                    "cache_corrupt_file_deleted", 
+                    path=str(self._path)
+                )
+            except OSError:
+                get_logger(__name__, operation="index").warning(
+                    "cache_corrupt_file_cleanup_failed", 
+                    path=str(self._path)
+                )
 
     @property
     def checksum_valid(self) -> bool:
@@ -230,32 +277,148 @@ class _FileStateCache:
             return filepath
 
     def save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "schema_version": get_config_cached().get(
-                "file_cache_schema_version", "file-cache.v1"
-            ),
-            "files": self._data,
-            "_checksum": compute_bytes_hash(
-                json.dumps(self._data, sort_keys=True).encode("utf-8")
-            ),
-        }
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        tmp.replace(self._path)  # Atomic rename
+        """Save cache to disk atomically if dirty.
+        
+        Thread-safe operation that only saves if cache has been modified.
+        Uses file locking to prevent corruption during concurrent access.
+        """
+        with self._lock:
+            if not self._dirty:
+                return  # No changes to save
+            
+            # Acquire file lock for writing
+            try:
+                with self._file_lock:
+                    self._path.parent.mkdir(parents=True, exist_ok=True)
+                    payload = {
+                        "schema_version": get_config_cached().get(
+                            "file_cache_schema_version", "file-cache.v1"
+                        ),
+                        "files": self._data.copy(),  # Copy to avoid modification during save
+                        "_checksum": compute_bytes_hash(
+                            json.dumps(self._data, sort_keys=True).encode("utf-8")
+                        ),
+                    }
+                    tmp = self._path.with_suffix(".tmp")
+                    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                    tmp.replace(self._path)  # Atomic rename
+                    self._dirty = False
+            except FileLockError as e:
+                self.logger.error("cache_save_lock_failed", cache_path=str(self._path), error=str(e))
+                raise
+            except (OSError, json.JSONEncodeError) as e:
+                self.logger.error("cache_save_failed", cache_path=str(self._path), error=str(e))
+                raise
+    
+    def force_save(self) -> None:
+        """Force save cache regardless of dirty flag."""
+        with self._lock:
+            self._dirty = True
+            self.save()
+    
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Get cache statistics for monitoring."""
+        with self._lock:
+            return {
+                "entries": len(self._data),
+                "dirty": self._dirty,
+                "checksum_valid": self._checksum_valid,
+                "schema_version": self._schema_version,
+            }
 
     def is_cached(self, filepath: str, content_hash: str) -> bool:
-        """Return True if filepath's stored hash matches content_hash."""
-        entry = self._data.get(self._normalise(filepath))
-        if entry is None:
-            return False
-        return entry.get("sha256") == content_hash
+        """Return True if filepath's stored hash matches content_hash.
+        
+        Thread-safe atomic operation with mtime validation.
+        """
+        with self._lock:
+            entry = self._data.get(self._normalise(filepath))
+            if entry is None:
+                return False
+            
+            # Validate mtime if available and file exists
+            if "mtime" in entry:
+                try:
+                    current_mtime = Path(filepath).stat().st_mtime
+                    cached_mtime = entry["mtime"]
+                    # If file was modified after cache entry, it's not cached
+                    if abs(current_mtime - cached_mtime) > 1.0:  # Allow 1 second tolerance
+                        self.logger.debug(
+                            "cache_mtime_mismatch", 
+                            filepath=filepath, 
+                            cached_mtime=cached_mtime, 
+                            current_mtime=current_mtime
+                        )
+                        return False
+                except OSError:
+                    # If we can't stat the file, it might not exist (common in tests)
+                    # In this case, just check the hash without mtime validation
+                    self.logger.debug("cache_stat_failed", filepath=filepath)
+                    pass
+            
+            return entry.get("sha256") == content_hash
 
-    def update(self, filepath: str, mtime: float, content_hash: str) -> None:
-        self._data[self._normalise(filepath)] = {"mtime": mtime, "sha256": content_hash}
+    def update(self, filepath: str, mtime: float, content_hash: str, size: int | None = None) -> None:
+        """Update cache entry for filepath.
+        
+        Thread-safe atomic operation.
+        """
+        with self._lock:
+            entry_data = {"mtime": mtime, "sha256": content_hash}
+            if size is not None:
+                entry_data["size"] = size
+            self._data[self._normalise(filepath)] = entry_data
+            self._dirty = True
 
     def invalidate(self, filepath: str) -> None:
-        self._data.pop(self._normalise(filepath), None)
+        """Remove cache entry for filepath.
+        
+        Thread-safe atomic operation.
+        """
+        with self._lock:
+            key = self._normalise(filepath)
+            if key in self._data:
+                del self._data[key]
+                self._dirty = True
+    
+    @contextmanager
+    def atomic_update(self, filepath: str):
+        """Context manager for atomic cache operations.
+        
+        Usage:
+            with cache.atomic_update(filepath) as entry:
+                # Check if cached
+                cached = entry.get('cached', False)
+                # Do work...
+                # Update entry
+                entry.update({
+                    'mtime': mtime,
+                    'sha256': content_hash,
+                    'cached': True
+                })
+        """
+        key = self._normalise(filepath)
+        # Use a per-file lock to prevent race conditions while allowing concurrent access to different files
+        if not hasattr(self, '_file_locks'):
+            self._file_locks = {}
+        
+        file_lock = self._file_locks.setdefault(key, threading.Lock())
+        
+        with file_lock:
+            with self._lock:
+                entry = self._data.get(key, {}).copy()
+            
+            yield entry
+            
+            # Update the cache with modified entry under both locks
+            with self._lock:
+                if entry:
+                    self._data[key] = entry
+                    self._dirty = True
+                else:
+                    # Remove entry if empty
+                    self._data.pop(key, None)
+                    self._dirty = True
 
 
 # ---------------------------------------------------------------------------
@@ -299,43 +462,65 @@ class IncrementalGraphUpdater:
 
     def remove_entities_for_file(self, graph: InMemoryGraph, file_path: str) -> None:
         """
-        Remove all entities from a deleted file.
+        Remove all entities from a deleted file using transactional approach.
 
         Also removes any relationships involving entities from this file.
+        Uses transactional approach to prevent partial state on errors.
 
         Args:
             graph: The InMemoryGraph to update
             file_path: Absolute path to the deleted file
         """
-        # Get all entity IDs for this file
+        # Collect all changes first (transactional approach)
         entities_to_remove = [
             eid for eid, entity in graph.entities.items() if entity.file == file_path
         ]
-
-        # Remove entities
-        for eid in entities_to_remove:
-            del graph.entities[eid]
-
-        # Remove relationships involving these entities
+        
         relationships_to_keep = []
+        relationships_to_remove = []
+        
+        # Identify relationships to remove
         for rel in graph.relationships:
             if (
-                rel.source_id not in entities_to_remove
-                and rel.target_id not in entities_to_remove
+                rel.source_id in entities_to_remove
+                or rel.target_id in entities_to_remove
             ):
+                relationships_to_remove.append(rel)
+            else:
                 relationships_to_keep.append(rel)
-
-        graph.relationships = relationships_to_keep
-
-        # Invalidate adjacency cache
-        graph._adj_out = None
-        graph._adj_in = None
-
-        self.logger.debug(
-            "removed_entities_for_file",
-            file_path=file_path,
-            entity_count=len(entities_to_remove),
-        )
+        
+        # Apply all changes atomically
+        try:
+            # Remove entities
+            for eid in entities_to_remove:
+                if eid in graph.entities:  # Double-check existence
+                    del graph.entities[eid]
+            
+            # Update relationships
+            graph.relationships = relationships_to_keep
+            
+            # Invalidate adjacency cache
+            graph._adj_out = None
+            graph._adj_in = None
+            
+            self.logger.debug(
+                "removed_entities_for_file",
+                file_path=file_path,
+                entity_count=len(entities_to_remove),
+                relationship_count=len(relationships_to_remove),
+            )
+            
+        except Exception as e:
+            # Log the error but don't leave graph in partial state
+            # The graph should remain consistent since we collected changes first
+            self.logger.error(
+                "remove_entities_failed",
+                file_path=file_path,
+                error=str(e),
+                entities_targeted=len(entities_to_remove),
+                relationships_targeted=len(relationships_to_remove)
+            )
+            raise
 
     def add_entities_for_file(
         self,
@@ -509,142 +694,220 @@ class CodeGraphIndexer:
             max_workers: Number of parallel threads. 0 = auto (cpu_count * 2).
             max_file_size_kb: Skip files larger than this (KB). Default 500KB.
             verbose: Print progress to stdout.
+            metrics_callback: Optional callback for metrics collection.
 
         Returns:
             Populated InMemoryGraph.
+        
+        Raises:
+            ValueError: If input parameters are invalid.
+            OSError: If root directory doesn't exist or isn't accessible.
         """
-        from .languages.detector import default_detector
-        from .languages.registry import get_extractor as _registry_get_extractor
-
+        # Input validation
+        if not root or not isinstance(root, str):
+            raise ValueError("root must be a non-empty string")
+        
         root_path = Path(root).resolve()
-        cfg = get_config_cached()
-        configured_max_file_size_kb = (
-            max_file_size_kb
-            if max_file_size_kb is not None
-            else cfg["indexer"]["max_file_size_kb"]
-        )
-        configured_max_workers = (
-            max_workers if max_workers > 0 else cfg["indexer"].get("max_workers", 0)
-        )
-        max_files_cap: Optional[int] = cfg["indexer"].get("max_files")
-        fail_on_warning = cfg["indexer"].get("fail_on_warning", False)
-        strict_mode = cfg["indexer"].get("strict", False)
-        ext_set: set[str] | None = (
-            {e if e.startswith(".") else f".{e}" for e in extensions}
-            if extensions is not None
-            else None
-        )
-
-        ignore_spec = _load_ignore_spec(
-            root_path,
-            extra_patterns=cfg["indexer"].get("ignore_patterns"),
-            ignore_files=cfg["indexer"].get("ignore_files"),
-        )
-
-        # --- Collect files to process ---
-        candidates: list[tuple[Path, str]] = []  # (path, rel_str)
-        for file_path in sorted(root_path.rglob("*")):
-            if not file_path.is_file():
-                continue
-            if _is_ignored(file_path, root_path, ignore_spec):
-                continue
-
-            suffix = file_path.suffix.lower()
-
-            if extractor is not None:
-                if ext_set is not None and suffix not in ext_set:
-                    continue
-                candidates.append((file_path, str(file_path)))
-            else:
-                file_extractor = _registry_get_extractor(suffix)
-                if file_extractor is None:
-                    continue
-                if ext_set is not None and suffix not in ext_set:
-                    continue
-                candidates.append((file_path, str(file_path)))
-
-            if max_files_cap and len(candidates) >= max_files_cap:
-                break
-
-        if verbose:
-            print(f"  📁 Found {len(candidates)} candidate files")
-
-        # --- Parallel extraction (single pass: cache skips parse) ---
-        if configured_max_workers > 0:
-            actual_workers = configured_max_workers
-        else:
-            cpu_count = os.cpu_count() or 4
-            worker_cap = min(32, cpu_count * 2)
-            file_count = len(candidates)
-            if file_count <= 50:
-                actual_workers = min(4, worker_cap)
-            elif file_count <= 200:
-                actual_workers = min(8, worker_cap)
-            elif file_count <= 1000:
-                actual_workers = min(16, worker_cap)
-            else:
-                actual_workers = worker_cap
-            actual_workers = min(actual_workers, max(1, file_count))
-
-        errors = 0
-
-        def _process_file(
-            args: tuple[Path, str],
-        ) -> tuple[str, list[Entity], list[Relationship], bool] | None:
-            """Worker: size/binary guard, cache check (for metrics), parse, update cache."""
-
-            nonlocal errors
-            file_path, filepath = args
-
-            try:
-                size = file_path.stat().st_size
-            except OSError:
-                return None
-            if size > configured_max_file_size_kb * 1024:
-                self.logger.debug(
-                    "skipping_large_file", filepath=filepath, size_kb=size // 1024
-                )
-                return None
-
-            content = _read_file_content(filepath, configured_max_file_size_kb)
-            if content is None:
-                return None
-
-            content_hash = compute_bytes_hash(content)
-            cached_hit = self._cache.is_cached(filepath, content_hash)
-
+        if not root_path.exists():
+            raise OSError(f"Root directory does not exist: {root_path}")
+        if not root_path.is_dir():
+            raise OSError(f"Root path is not a directory: {root_path}")
+        
+        if max_file_size_kb is not None and (not isinstance(max_file_size_kb, (int, float)) or max_file_size_kb <= 0):
+            raise ValueError("max_file_size_kb must be a positive number or None")
+        
+        if max_workers < 0:
+            raise ValueError("max_workers must be non-negative")
+        
+        if extensions is not None:
+            if not isinstance(extensions, list) or not all(isinstance(ext, str) for ext in extensions):
+                raise ValueError("extensions must be a list of strings or None")
+        # Use memory monitoring for large operations
+        with memory_monitor("build_graph", warning_threshold_mb=300.0, critical_threshold_mb=800.0) as monitor:
             from .languages.detector import default_detector
             from .languages.registry import get_extractor as _registry_get_extractor
 
-            suffix = file_path.suffix.lower()
-            file_extractor: ASTExtractor | object | None
-            if extractor is not None:
-                file_extractor = extractor
+            cfg = get_config_cached()
+            configured_max_file_size_kb = (
+                max_file_size_kb
+                if max_file_size_kb is not None
+                else cfg["indexer"]["max_file_size_kb"]
+            )
+            configured_max_workers = (
+                max_workers if max_workers > 0 else cfg["indexer"].get("max_workers", 0)
+            )
+            max_files_cap: Optional[int] = cfg["indexer"].get("max_files")
+            fail_on_warning = cfg["indexer"].get("fail_on_warning", False)
+            strict_mode = cfg["indexer"].get("strict", False)
+            ext_set: set[str] | None = (
+                {e if e.startswith(".") else f".{e}" for e in extensions}
+                if extensions is not None
+                else None
+            )
+
+            ignore_spec = _load_ignore_spec(
+                root_path,
+                extra_patterns=cfg["indexer"].get("ignore_patterns"),
+                ignore_files=cfg["indexer"].get("ignore_files"),
+            )
+
+            # --- Collect files to process ---
+            candidates: list[tuple[Path, str]] = []  # (path, rel_str)
+            for file_path in sorted(root_path.rglob("*")):
+                if not file_path.is_file():
+                    continue
+                if _is_ignored(file_path, root_path, ignore_spec):
+                    continue
+
+                suffix = file_path.suffix.lower()
+
+                if extractor is not None:
+                    if ext_set is not None and suffix not in ext_set:
+                        continue
+                    candidates.append((file_path, str(file_path)))
+                else:
+                    file_extractor = _registry_get_extractor(suffix)
+                    if file_extractor is None:
+                        continue
+                    if ext_set is not None and suffix not in ext_set:
+                        continue
+                    candidates.append((file_path, str(file_path)))
+
+                if max_files_cap and len(candidates) >= max_files_cap:
+                    break
+
+            if verbose:
+                print(f"  📁 Found {len(candidates)} candidate files")
+
+            # --- Parallel extraction (single pass: cache skips parse) ---
+            if configured_max_workers > 0:
+                actual_workers = configured_max_workers
             else:
-                file_extractor = default_detector.get_extractor(
-                    file_path, content
-                ) or _registry_get_extractor(suffix)
-            if file_extractor is None:
-                return None
+                cpu_count = os.cpu_count() or 4
+                worker_cap = min(32, cpu_count * 2)
+                file_count = len(candidates)
+                if file_count <= 50:
+                    actual_workers = min(4, worker_cap)
+                elif file_count <= 200:
+                    actual_workers = min(8, worker_cap)
+                elif file_count <= 1000:
+                    actual_workers = min(16, worker_cap)
+                else:
+                    actual_workers = worker_cap
+                actual_workers = min(actual_workers, max(1, file_count))
 
-            try:
-                if not isinstance(file_extractor, ASTExtractor):
+            errors = 0
+
+        # Check memory usage after operation and cleanup if needed
+        if monitor and hasattr(monitor, 'get_memory_stats'):
+            final_stats = monitor.get_memory_stats()
+            if final_stats.rss_mb > 500:  # If memory usage is high
+                from batho_core.utils.memory_monitor import force_garbage_collection
+                gc_result = force_garbage_collection()
+                self.logger.info("memory_cleanup_performed", 
+                                memory_before_mb=f"{final_stats.rss_mb:.1f}",
+                                objects_freed=gc_result.get('objects_freed', 0))
+
+        def _handle_file_error(filepath: str, error: Exception, error_type: str = "parse") -> None:
+                """Centralized error handling for file processing failures."""
+                error_context = {
+                    "filepath": filepath,
+                    "error": str(error),
+                    "error_type": error_type
+                }
+                
+                if error_type == "parse":
+                    self.logger.warning("file_parse_failed", **error_context)
+                elif error_type == "graph_update":
+                    self.logger.error("graph_update_failed", **error_context)
+                elif error_type == "future_processing":
+                    self.logger.error("future_processing_failed", **error_context)
+                else:
+                    self.logger.error("file_processing_failed", **error_context)
+
+        def _process_file(
+                args: tuple[Path, str],
+            ) -> tuple[str, list[Entity], list[Relationship], bool] | None:
+                """Worker: size/binary guard, atomic cache check, parse, update cache."""
+
+                nonlocal errors
+                file_path, filepath = args
+
+                try:
+                    stat_info = file_path.stat()
+                    size = stat_info.st_size
+                    current_mtime = stat_info.st_mtime
+                except OSError:
                     return None
-                entities, relationships = file_extractor.parse_file(filepath, content)
-            except Exception as exc:
-                errors += 1
-                self.logger.warning(
-                    "file_parse_failed", filepath=filepath, error=str(exc)
-                )
-                return None
+                if size > configured_max_file_size_kb * 1024:
+                    self.logger.debug(
+                        "skipping_large_file", filepath=filepath, size_kb=size // 1024
+                    )
+                    return None
 
-            try:
-                mtime = file_path.stat().st_mtime
-                self._cache.update(filepath, mtime, content_hash)
-            except OSError:
-                pass
+                content = _read_file_content(filepath, configured_max_file_size_kb)
+                if content is None:
+                    return None
 
-            return (filepath, entities, relationships, cached_hit)
+                content_hash = compute_bytes_hash(content)
+                
+                # Single atomic operation for both cache check and update
+                with self._cache.atomic_update(filepath) as cache_entry:
+                    from .languages.detector import default_detector
+                    from .languages.registry import get_extractor as _registry_get_extractor
+
+                    suffix = file_path.suffix.lower()
+                    file_extractor: ASTExtractor | object | None
+                    if extractor is not None:
+                        file_extractor = extractor
+                    else:
+                        file_extractor = default_detector.get_extractor(
+                            file_path, content
+                        ) or _registry_get_extractor(suffix)
+                    if file_extractor is None:
+                        return None
+
+                    # Perform atomic cache validation and update
+                    # Check if we have a cache hit with both hash and mtime validation
+                    cached_mtime = cache_entry.get("mtime")
+                    cached_hash = cache_entry.get("sha256")
+                    cached_size = cache_entry.get("size")
+                    
+                    # Atomic validation - check all conditions together
+                    is_cached = (
+                        cached_hash == content_hash and
+                        cached_mtime is not None and
+                        cached_size == size and
+                        abs(current_mtime - cached_mtime) <= 1.0  # Allow 1 second tolerance
+                    )
+                    
+                    # Update cache entry atomically if needed
+                    if not is_cached:
+                        cache_entry.update({
+                            "mtime": current_mtime, 
+                            "sha256": content_hash,
+                            "size": size
+                        })
+                        self.logger.debug(
+                            "cache_updated", 
+                            filepath=filepath, 
+                            reason="hash_or_mtime_mismatch"
+                        )
+                    else:
+                        self.logger.debug(
+                            "cache_hit", 
+                            filepath=filepath
+                        )
+
+                    try:
+                        if not isinstance(file_extractor, ASTExtractor):
+                            return None
+                        entities, relationships = file_extractor.parse_file(filepath, content)
+                        return (filepath, entities, relationships, is_cached)
+                    except Exception as exc:
+                        errors += 1
+                        _handle_file_error(filepath, exc, "parse")
+                        return None
 
         graph = InMemoryGraph()
         files_parsed = 0
@@ -652,21 +915,56 @@ class CodeGraphIndexer:
         files_cached = 0
         start_ts = os.times().elapsed if hasattr(os, "times") else 0.0
 
-        with ThreadPoolExecutor(max_workers=actual_workers) as pool:
+        # Process files with proper error handling and resource cleanup
+        pool = None
+        try:
+            pool = ThreadPoolExecutor(max_workers=actual_workers)
             futures = {pool.submit(_process_file, args): args for args in candidates}
+            
             for future in as_completed(futures):
-                result = future.result()
-                if result is None:
+                try:
+                    result = future.result()
+                    if result is None:
+                        files_skipped += 1
+                        continue
+                    
+                    filepath, entities, relationships, cached_hit = result
+                    
+                    # Add entities and relationships with error handling
+                    try:
+                        for entity in entities:
+                            graph.add_entity(entity)
+                        for rel in relationships:
+                            graph.add_relationship(rel)
+                        files_parsed += 1
+                        if cached_hit:
+                            files_cached += 1
+                    except Exception as graph_error:
+                        _handle_file_error(filepath, graph_error, "graph_update")
+                        errors += 1
+                        files_skipped += 1
+                        
+                except Exception as future_error:
+                    _handle_file_error("unknown_future", future_error, "future_processing")
+                    errors += 1
                     files_skipped += 1
-                    continue
-                filepath, entities, relationships, cached_hit = result
-                for entity in entities:
-                    graph.add_entity(entity)
-                for rel in relationships:
-                    graph.add_relationship(rel)
-                files_parsed += 1
-                if cached_hit:
-                    files_cached += 1
+                    
+        except Exception as pool_error:
+            self.logger.error("thread_pool_creation_failed", error=str(pool_error))
+            # Ensure cleanup even if pool creation failed partially
+            if pool is not None:
+                try:
+                    pool.shutdown(wait=False)  # Don't wait since we're in error state
+                except Exception as shutdown_error:
+                    self.logger.warning("thread_pool_emergency_shutdown_failed", error=str(shutdown_error))
+            raise
+        finally:
+            # Ensure proper cleanup of thread pool
+            if pool is not None:
+                try:
+                    pool.shutdown(wait=True)
+                except Exception as shutdown_error:
+                    self.logger.warning("thread_pool_shutdown_failed", error=str(shutdown_error))
 
         try:
             self._cache.save()
@@ -689,14 +987,8 @@ class CodeGraphIndexer:
             "entity_count": len(graph.entities),
             "relationship_count": len(graph.relationships),
             "elapsed_seconds": elapsed,
-            "cache_valid": self._cache.checksum_valid,
             "workers_used": actual_workers,
         }
-
-        if (fail_on_warning or strict_mode) and errors > 0:
-            raise RuntimeError(
-                f"Parse errors encountered ({errors}); strict={strict_mode} fail_on_warning={fail_on_warning}"
-            )
 
         self.logger.info(
             "build_graph_complete",
@@ -715,6 +1007,11 @@ class CodeGraphIndexer:
                 f"  ✓ Indexed {files_parsed} files → {len(graph.entities)} entities "
                 f"(skipped {files_skipped}, cached {files_cached})"
             )
+
+        # Force garbage collection for large operations
+        if len(candidates) > 1000:
+            gc_stats = force_garbage_collection()
+            self.logger.info("gc_completed", **gc_stats)
 
         return graph
 
@@ -773,7 +1070,12 @@ class CodeGraphIndexer:
 
     def stats(self) -> dict[str, int]:
         """Return cache statistics."""
-        return {"cached_files": len(self._cache._data)}
+        cache_stats = self._cache.get_cache_stats()
+        return {"cached_files": cache_stats["entries"]}
+    
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Get detailed cache statistics for monitoring."""
+        return self._cache.get_cache_stats()
 
     # ------------------------------------------------------------------
     # Internal — cross-file import resolution

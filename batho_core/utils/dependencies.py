@@ -28,7 +28,7 @@ try:
 
     tomli = _tomli
 except ImportError:
-    pass
+    pass  # tomli is optional - will use tomllib on Python 3.11+
 
 # ---------------------------------------------------------------------------
 # Package name extraction utilities

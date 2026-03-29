@@ -10,7 +10,7 @@ from typing import Dict, Any
 
 import pytest
 
-from batho_core.batho import main
+from batho import main
 
 
 @pytest.mark.slow
@@ -190,7 +190,12 @@ class Class_{i}:
             
             # Measure indexing time
             def index_repo():
-                indexer = CodeGraphIndexer(str(test_repo))
+                # Ensure the directory still exists
+                assert test_repo.exists(), f"Test repo directory should exist: {test_repo}"
+                assert test_repo.is_dir(), f"Test repo should be a directory: {test_repo}"
+                cache_path = test_repo / ".ctn" / "file_cache.json"
+                cache_path.parent.mkdir(exist_ok=True)
+                indexer = CodeGraphIndexer(str(cache_path), str(test_repo))
                 return indexer.build_graph(str(test_repo))
             
             _, exec_time = self.measure_execution_time(index_repo)

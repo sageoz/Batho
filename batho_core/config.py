@@ -94,6 +94,9 @@ class FlagsConfig(BaseModel):
     audit_log_enabled: bool = Field(
         default=True, description="Enable patch operation audit logging"
     )
+    enable_llm: bool = Field(
+        default=False, description="Enable experimental LLM features (placeholder implementations)"
+    )
 
 
 class Config(BaseModel):

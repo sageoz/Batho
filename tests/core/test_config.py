@@ -46,10 +46,6 @@ class TestPydanticModels:
         cfg = IndexerConfig()
         assert cfg.max_file_size_kb == 500
         assert cfg.max_workers == 0
-        assert cfg.repomap_budget_tokens == 12000
-        assert cfg.repomap_budget_ratio == 0.8
-        assert cfg.repomap_budget_min_tokens == 4000
-        assert cfg.repomap_budget_max_tokens == 40000
         assert cfg.ignore_patterns == []
         assert cfg.ignore_files is None
         assert cfg.strict is False

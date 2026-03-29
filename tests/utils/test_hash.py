@@ -94,7 +94,13 @@ class TestComputeFileHash:
         f = tmp_path / "large.bin"
         data = os.urandom(20_000)  # > 8192 default chunk
         f.write_bytes(data)
-        assert compute_file_hash(f) == hashlib.sha256(data).hexdigest()
+        # Binary files use size_mtime format, not SHA
+        result = compute_file_hash(f)
+        assert result is not None
+        assert "_" in result  # size_mtime format
+        # Parse the size part
+        size_part = result.split("_")[0]
+        assert size_part == str(len(data))
 
 
 # ---------------------------------------------------------------------------

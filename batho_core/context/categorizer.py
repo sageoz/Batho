@@ -41,7 +41,7 @@ class FileCategorizer:
     5. Uncategorized - Everything else
     """
 
-    # Test patterns
+    # Test patterns (removed testdata, fixtures, mocks to treat as uncategorized)
     TEST_PATH_PATTERNS: Set[str] = {
         "tests",
         "test",
@@ -49,11 +49,6 @@ class FileCategorizer:
         "spec",
         "specs",
         ".pytest_cache",
-        "fixtures",
-        "mocks",
-        "testdata",
-        "test_data",
-        "mock_data",
         "__pycache__",
     }
 
@@ -137,6 +132,20 @@ class FileCategorizer:
         ".circleci",
         ".travis",
         "jenkins",
+    }
+
+    # Cache patterns to exclude from indexing
+    CACHE_PATH_PATTERNS: Set[str] = {
+        ".cache",
+        "cache",
+        "__pycache__",
+        ".pytest_cache",
+        "node_modules",
+        ".npm",
+        ".gradle",
+        "target",
+        "build",
+        "dist",
     }
 
     CONFIG_FILE_PATTERNS: Set[str] = {
@@ -292,7 +301,7 @@ class FileCategorizer:
         """Initialize the categorizer."""
         pass
 
-    def categorize(self, file_path: str) -> FileCategory:
+    def categorize(self, file_path: str) -> str:
         """
         Categorize a file based on its path and name.
 
@@ -300,7 +309,7 @@ class FileCategorizer:
             file_path: Relative or absolute file path
 
         Returns:
-            FileCategory enum value
+            Category string (enum value or folder name for uncategorized files)
         """
         # Normalize to PurePosixPath for consistent handling
         path = PurePosixPath(file_path)
@@ -309,24 +318,32 @@ class FileCategorizer:
         suffix = path.suffix.lower()
         parts = [p.lower() for p in path.parts]
 
+        # Priority 0: Cache exclusion
+        if self._is_cache_file(parts):
+            return "cache"
+
+        # Priority 0.5: Test data folders (before general test pattern)
+        if self._is_test_data_file(parts):
+            return self._get_folder_category(path, parts)
+
         # Priority 1: Tests
         if self._is_test_file(parts, filename, stem, suffix):
-            return FileCategory.TESTS
+            return str(FileCategory.TESTS)
 
         # Priority 2: Documentation
         if self._is_doc_file(parts, filename, stem, suffix):
-            return FileCategory.DOCS
+            return str(FileCategory.DOCS)
 
         # Priority 3: Configuration
         if self._is_config_file(parts, filename, stem, suffix):
-            return FileCategory.CONFIG
+            return str(FileCategory.CONFIG)
 
         # Priority 4: Source code
         if self._is_source_file(parts, filename, suffix):
-            return FileCategory.SOURCE
+            return str(FileCategory.SOURCE)
 
-        # Default: Uncategorized
-        return FileCategory.UNCATEGORIZED
+        # Default: Folder-based categorization for uncategorized files
+        return self._get_folder_category(path, parts)
 
     def _is_test_file(self, parts: list[str], filename: str, stem: str, suffix: str) -> bool:
         """Check if file is a test file."""
@@ -401,12 +418,31 @@ class FileCategorizer:
         # If it's a source extension and not already categorized, it's source code
         return True
 
+    def _is_cache_file(self, parts: list[str]) -> bool:
+        """Check if file is in a cache directory."""
+        for part in parts:
+            if part in self.CACHE_PATH_PATTERNS:
+                return True
+        return False
+
+    def _is_test_data_file(self, parts: list[str]) -> bool:
+        """Check if file is in test data subdirectories."""
+        test_data_patterns = {"testdata", "test_data", "fixtures", "mock_data"}
+        return any(part in test_data_patterns for part in parts)
+
+    def _get_folder_category(self, path: PurePosixPath, parts: list[str]) -> str:
+        """Get folder-based category for uncategorized files."""
+        # Return the immediate parent folder name (not the filename)
+        if len(parts) > 1:
+            return parts[-2]  # Second to last part is the folder containing the file
+        return "root"  # File is in root directory
+
 
 # Global categorizer instance
 _categorizer = FileCategorizer()
 
 
-def categorize_file(file_path: str) -> FileCategory:
+def categorize_file(file_path: str) -> str:
     """
     Categorize a file using the global categorizer instance.
 
@@ -414,6 +450,6 @@ def categorize_file(file_path: str) -> FileCategory:
         file_path: Relative or absolute file path
 
     Returns:
-        FileCategory enum value
+        Category string (enum value or folder name for uncategorized files)
     """
     return _categorizer.categorize(file_path)

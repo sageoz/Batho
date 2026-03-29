@@ -76,7 +76,7 @@ class RepoMap:
 
     def patch(self, changes: list["FileChange"], graph: "InMemoryGraph") -> None:
         """
-        Update the repomap for changed files without full rebuild.
+        Update the repomap for changed files with true incremental updates.
 
         Applies incremental changes to the symbol index based on file changes.
         Removes entities for deleted files, updates entities for modified files,
@@ -88,8 +88,6 @@ class RepoMap:
         """
         from batho_core.time_machine import FileChangeType
 
-        # Rebuild from updated graph - for now this is a full rebuild
-        # TODO: Implement true incremental updates
         root_path = Path(self._root)
 
         def _rel(p: str) -> str:
@@ -99,45 +97,70 @@ class RepoMap:
             except ValueError:
                 return p  # already relative or outside root
 
-        by_file: dict[str, list[Entity]] = defaultdict(list)
-        for entity in graph.entities.values():
-            by_file[_rel(entity.file)].append(entity)
+        # Process changes incrementally
+        files_to_remove = set()
+        files_to_update = set()
+        
+        for change in changes:
+            rel_path = _rel(str(change.path))
+            
+            if change.change_type == FileChangeType.DELETED:
+                files_to_remove.add(rel_path)
+            elif change.change_type in (FileChangeType.ADDED, FileChangeType.MODIFIED):
+                files_to_update.add(rel_path)
 
-        dependencies: dict[str, set[str]] = defaultdict(set)
-        from .schema import RelationshipType
+        # Remove deleted files
+        for file_path in files_to_remove:
+            if file_path in self._by_file:
+                del self._by_file[file_path]
+            if file_path in self._dependencies:
+                del self._dependencies[file_path]
 
-        for rel in graph.relationships:
-            if rel.type.name in ("IMPORTS", "CALLS", "USES"):
-                source_ent = graph.get_entity(rel.source_id)
-                target_ent = graph.get_entity(rel.target_id)
+        # Update/add changed files
+        if files_to_update:
+            # Build new entries for updated files only
+            updated_by_file: dict[str, list[Entity]] = defaultdict(list)
+            updated_dependencies: dict[str, set[str]] = defaultdict(set)
+            
+            for entity in graph.entities.values():
+                rel_entity_path = _rel(entity.file)
+                if rel_entity_path in files_to_update:
+                    updated_by_file[rel_entity_path].append(entity)
 
-                if source_ent:
-                    source_file = _rel(source_ent.file)
-                    # target_file: normalise if it looks like an absolute path,
-                    # else keep as module name (e.g. "os", "pathlib")
-                    raw_target = target_ent.file if target_ent else rel.target_id
-                    target_file = (
-                        _rel(raw_target) if raw_target.startswith("/") else raw_target
-                    )
-                    if source_file != target_file:
-                        dependencies[source_file].add(target_file)
+            # Process relationships for updated files
+            from .schema import RelationshipType
+            
+            for rel in graph.relationships:
+                if rel.type.name in ("IMPORTS", "CALLS", "USES"):
+                    source_ent = graph.get_entity(rel.source_id)
+                    target_ent = graph.get_entity(rel.target_id)
 
-        sorted_map: dict[str, list[Entity]] = {
-            path: sorted(entities, key=lambda e: e.start_line)
-            for path, entities in sorted(by_file.items())
-        }
-        sorted_deps: dict[str, list[str]] = {
-            path: sorted(list(deps)) for path, deps in dependencies.items()
-        }
+                    if source_ent:
+                        source_file = _rel(source_ent.file)
+                        if source_file in files_to_update:
+                            # target_file: normalise if it looks like an absolute path,
+                            # else keep as module name (e.g. "os", "pathlib")
+                            raw_target = target_ent.file if target_ent else rel.target_id
+                            target_file = (
+                                _rel(raw_target) if raw_target.startswith("/") else raw_target
+                            )
+                            if source_file != target_file:
+                                updated_dependencies[source_file].add(target_file)
 
-        self._by_file = sorted_map
-        self._dependencies = sorted_deps
+            # Update the main structures with new data
+            for file_path, entities in updated_by_file.items():
+                self._by_file[file_path] = sorted(entities, key=lambda e: e.start_line)
+            
+            for file_path, deps in updated_dependencies.items():
+                self._dependencies[file_path] = sorted(list(deps))
 
         self._logger.debug(
-            "repomap_patched",
+            "repomap_incrementally_patched",
             change_count=len(changes),
-            file_count=len(sorted_map),
-            entity_count=sum(len(v) for v in sorted_map.values()),
+            files_removed=len(files_to_remove),
+            files_updated=len(files_to_update),
+            total_files=len(self._by_file),
+            entity_count=sum(len(v) for v in self._by_file.values()),
         )
 
     # ------------------------------------------------------------------
@@ -427,10 +450,12 @@ class RepoMap:
         """Group files by their directory path."""
         grouped: dict[str, list[tuple[str, list[Entity]]]] = defaultdict(list)
         for file_path, entities in self._by_file.items():
-            # Use PurePosixPath for cross-platform consistency
-            p = PurePosixPath(file_path)
-            dir_path = str(p.parent) if p.parent != PurePosixPath(".") else ""
-            grouped[dir_path].append((p.name, entities))
+            # Use string operations for better performance
+            if '/' in file_path:
+                dir_path, file_name = file_path.rsplit('/', 1)
+            else:
+                dir_path, file_name = "", file_path
+            grouped[dir_path].append((file_name, entities))
         for dir_path in grouped:
             grouped[dir_path].sort(key=lambda x: x[0])
         return dict(sorted(grouped.items()))
@@ -495,38 +520,34 @@ class RepoMap:
     # File categorization
     # ------------------------------------------------------------------
 
-    def categorize_files(self) -> dict[FileCategory, dict[str, list[Entity]]]:
+    def categorize_files(self) -> dict[str, dict[str, list[Entity]]]:
         """
-        Categorize all files by type (tests, docs, config, source).
+        Categorize all files by type (tests, docs, config, source, and folder-based).
 
         Returns:
-            Dict mapping FileCategory to dict of file_path -> entities
+            Dict mapping category string to dict of file_path -> entities
         """
         categorizer = FileCategorizer()
-        categorized: dict[FileCategory, dict[str, list[Entity]]] = {
-            FileCategory.TESTS: {},
-            FileCategory.DOCS: {},
-            FileCategory.CONFIG: {},
-            FileCategory.SOURCE: {},
-            FileCategory.UNCATEGORIZED: {},
-        }
+        categorized: dict[str, dict[str, list[Entity]]] = {}
 
         for file_path, entities in self._by_file.items():
             category = categorizer.categorize(file_path)
+            if category not in categorized:
+                categorized[category] = {}
             categorized[category][file_path] = entities
 
         return categorized
 
     def render_category(
         self,
-        category: FileCategory,
+        category: str,
         include_full_entities: bool = False,
     ) -> str:
         """
         Render a specific category of files.
 
         Args:
-            category: The FileCategory to render
+            category: The category string to render
             include_full_entities: If True, include full entity details with signatures
 
         Returns:
@@ -558,16 +579,32 @@ class RepoMap:
             for file_name, entities in files:
                 file_path = f"{dir_path}/{file_name}" if dir_path else file_name
                 if include_full_entities:
-                    lines.append(f"  📄 {file_name}")
+                    entity_count = len(entities)
+                    entity_types = self._summarize_entity_types(entities)
+                    lines.append(f"  📄 {file_name} ({entity_count} entities: {entity_types})")
+                    
+                    # Group entities by type for compact display
+                    entities_by_type = {}
                     for entity in entities:
-                        sig = entity.signature or entity.name
-                        type_label = str(entity.type)
-                        lines.append(
-                            f"    - {sig} ({type_label}) [L{entity.start_line}-{entity.end_line}]"
-                        )
+                        entity_type = str(entity.type)
+                        if entity_type not in entities_by_type:
+                            entities_by_type[entity_type] = []
+                        entities_by_type[entity_type].append(entity)
+                    
+                    # Display entities compactly, grouped by type
+                    for entity_type, type_entities in entities_by_type.items():
+                        for entity in type_entities:
+                            sig = entity.signature or entity.name
+                            # Remove type label since we're grouping by type
+                            lines.append(f"    {sig} [L{entity.start_line}-{entity.end_line}]")
+                    
+                    # Compact dependencies on single line
                     deps = self._dependencies.get(file_path, [])
                     if deps:
-                        lines.append(f"    deps: {', '.join(deps)}")
+                        deps_str = ', '.join(deps[:5])  # Show first 5 deps
+                        if len(deps) > 5:
+                            deps_str += f" (+{len(deps)-5} more)"
+                        lines.append(f"    deps: {deps_str}")
                 else:
                     entity_count = len(entities)
                     entity_types = self._summarize_entity_types(entities)
@@ -575,8 +612,94 @@ class RepoMap:
                         f"  📄 {file_name} ({entity_count} entities: {entity_types})"
                     )
 
-            lines.append("")
+        return "\n".join(lines)
 
+    def render_uncategorized_categories(self, include_full_entities: bool = False) -> str:
+        """
+        Render all uncategorized/folder-based categories grouped by folder name.
+
+        Args:
+            include_full_entities: If True, include full entity details
+
+        Returns:
+            Formatted markdown string for uncategorized categories
+        """
+        categorized = self.categorize_files()
+        
+        # Standard categories to exclude
+        standard_categories = {"source", "tests", "docs", "config"}
+        
+        # Get only non-standard categories
+        uncategorized = {
+            cat: files for cat, files in categorized.items() 
+            if cat not in standard_categories and files
+        }
+        
+        if not uncategorized:
+            return ""
+        
+        lines: list[str] = []
+        total_files = sum(len(files) for files in uncategorized.values())
+        total_entities = sum(len(entities) for files in uncategorized.values() for entities in files.values())
+        
+        lines.append("## Uncategorized Files by Category")
+        lines.append("")
+        lines.append(f"- Total uncategorized files: {total_files}")
+        lines.append(f"- Total entities: {total_entities}")
+        lines.append("")
+        
+        # Sort categories by entity count (descending)
+        sorted_categories = sorted(
+            uncategorized.items(), 
+            key=lambda x: sum(len(entities) for entities in x[1].values()), 
+            reverse=True
+        )
+        
+        for category_name, files_data in sorted_categories:
+            cat_entity_count = sum(len(entities) for entities in files_data.values())
+            cat_file_count = len(files_data)
+            
+            lines.append(f"### {category_name.capitalize()}")
+            lines.append(f"- Total files: {cat_file_count}")
+            lines.append(f"- Total entities: {cat_entity_count}")
+            lines.append("")
+            
+            grouped = self._group_by_directory_for_files(files_data)
+            
+            for dir_path, files in grouped.items():
+                display_path = dir_path if dir_path else "(root)"
+                dir_header = f"📁 {display_path}/"
+                lines.append(dir_header)
+                
+                for file_name, entities in files:
+                    file_path = f"{dir_path}/{file_name}" if dir_path else file_name
+                    if include_full_entities:
+                        entity_count = len(entities)
+                        entity_types = self._summarize_entity_types(entities)
+                        lines.append(f"  📄 {file_name} ({entity_count} entities: {entity_types})")
+                        
+                        # Group entities by type for compact display
+                        entities_by_type = {}
+                        for entity in entities:
+                            entity_type = str(entity.type)
+                            if entity_type not in entities_by_type:
+                                entities_by_type[entity_type] = []
+                            entities_by_type[entity_type].append(entity)
+                        
+                        # Display entities compactly, grouped by type
+                        for entity_type, type_entities in entities_by_type.items():
+                            for entity in type_entities:
+                                sig = entity.signature or entity.name
+                                lines.append(f"    {sig} [L{entity.start_line}-{entity.end_line}]")
+                    else:
+                        entity_count = len(entities)
+                        entity_types = self._summarize_entity_types(entities)
+                        lines.append(
+                            f"  📄 {file_name} ({entity_count} entities: {entity_types})"
+                        )
+                
+                lines.append("")
+            
         return "\n".join(lines)
 
     def _group_by_directory_for_files(
@@ -598,9 +721,16 @@ class RepoMap:
         type_counts: dict[str, int] = defaultdict(int)
         for ent in entities:
             type_counts[str(ent.type)] += 1
-        return ", ".join(
-            f"{count} {name}" for name, count in sorted(type_counts.items())
-        )
+        # Use abbreviations for common types to save space
+        abbreviations = {
+            "function": "func", "method": "meth", "class": "cls", 
+            "document": "doc", "section": "sec", "setting": "set"
+        }
+        result = []
+        for name, count in sorted(type_counts.items()):
+            abbrev = abbreviations.get(name, name)
+            result.append(f"{count} {abbrev}")
+        return ", ".join(result)
 
     # ------------------------------------------------------------------
     # Overview generator
@@ -658,20 +788,22 @@ class RepoMap:
             for cat, files in categorized.items()
         }
 
-        for cat in [
-            FileCategory.SOURCE,
-            FileCategory.TESTS,
-            FileCategory.DOCS,
-            FileCategory.CONFIG,
-            FileCategory.UNCATEGORIZED,
-        ]:
-            count = cat_counts.get(cat, 0)
-            entities = cat_entities.get(cat, 0)
-            pct = (count / total_files * 100) if total_files > 0 else 0
-            bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
-            lines.append(
-                f"- **{cat.name}**: {count} files ({pct:.1f}%) | {entities} entities"
-            )
+        # Sort categories by file count, but prioritize main categories first
+        main_categories = ["source", "tests", "docs", "config"]
+        other_categories = sorted([cat for cat in categorized.keys() if cat not in main_categories])
+        ordered_categories = main_categories + [cat for cat in other_categories if cat in categorized]
+        
+        for cat in ordered_categories:
+            if cat in categorized:  # Only show categories that have files
+                count = cat_counts.get(cat, 0)
+                entities = cat_entities.get(cat, 0)
+                pct = (count / total_files * 100) if total_files > 0 else 0
+                bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
+                # Capitalize first letter for display
+                display_name = cat.capitalize() if cat != "docs" else "Docs"
+                lines.append(
+                    f"- **{display_name}**: {count} files ({pct:.1f}%) | {entities} entities"
+                )
         lines.append("")
 
         lines.append("## Language Breakdown")

@@ -180,8 +180,12 @@ def load_ignore_spec(
                     line = line.strip()
                     if line and not line.startswith("#"):
                         patterns.append(line)
-            except OSError:
-                pass
+            except OSError as read_exc:
+                # Log at debug level - ignore file is optional
+                logger.debug("ignore_file_read_failed", 
+                           ignore_file=str(ignore_file), 
+                           error=str(read_exc))
+                pass  # Continue without this ignore file
 
     try:
         import pathspec  # type: ignore[import-untyped]

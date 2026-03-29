@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from batho_core.config import get_build_info, get_config_cached
-from batho_core.context.categorizer import FileCategory
 from batho_core.context.codegraph import CodeGraphIndexer, InMemoryGraph
 from batho_core.context.languages.detector import default_detector
 from batho_core.context.languages.registry import (
@@ -310,20 +309,137 @@ def _reindex_files(
 
 
 def _files_from_diff(diff_path: Path, root: Path) -> list[Path]:
+    """
+    Extract file paths from a git diff with comprehensive security validation.
+    
+    Args:
+        diff_path: Path to the git diff file
+        root: Root directory of the repository
+        
+    Returns:
+        List of sanitized file paths
+        
+    Raises:
+        PathSecurityError: If any path in the diff is malicious
+    """
+    from batho_core.utils.path_sanitizer import sanitize_diff_path, PathSecurityError
+    
     paths: set[Path] = set()
     try:
         text = diff_path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
+    except OSError as e:
+        LOGGER.error("failed_to_read_diff", diff_path=str(diff_path), error=str(e))
         return []
-    for line in text.splitlines():
-        if line.startswith("+++ b/") or line.startswith("--- a/"):
-            parts = line.split()
-            if len(parts) < 2:
+    
+    # Track seen paths to detect duplicates and potential attacks
+    seen_paths: set[str] = set()
+    
+    for line_num, line in enumerate(text.splitlines(), 1):
+        try:
+            line = line.strip()
+            if not line:
                 continue
-            p = parts[1].replace("b/", "").replace("a/", "")
-            if p == "/dev/null":
+                
+            # Handle multiple git diff formats more comprehensively
+            diff_path_str = None
+            
+            # Standard git diff formats
+            if line.startswith("+++ b/") or line.startswith("--- a/"):
+                parts = line.split(maxsplit=2)  # Limit splits to handle paths with spaces
+                if len(parts) >= 2:
+                    diff_path_str = parts[1]
+            # Handle renamed files (old mode 100644 -> new mode 100644)
+            elif line.startswith("rename from "):
+                diff_path_str = line[12:]  # Remove "rename from " prefix
+            elif line.startswith("rename to "):
+                diff_path_str = line[10:]   # Remove "rename to " prefix
+            # Handle similarity index lines
+            elif line.startswith("similarity index ") or line.startswith("dissimilarity index "):
+                continue  # Skip these lines
+            # Handle binary file diffs
+            elif "Binary files" in line and "differ" in line:
+                # Extract paths from binary diff lines like "Binary files a/file and b/file differ"
+                parts = line.split()
+                if len(parts) >= 5 and parts[1].startswith("a/") and parts[3].startswith("b/"):
+                    for i in [1, 3]:  # Both old and new paths
+                        binary_path = parts[i][2:]  # Remove "a/" or "b/" prefix
+                        if binary_path != "/dev/null":
+                            try:
+                                safe_path = sanitize_diff_path(binary_path, root)
+                                if str(safe_path) not in seen_paths:
+                                    paths.add(safe_path)
+                                    seen_paths.add(str(safe_path))
+                            except PathSecurityError:
+                                LOGGER.warning("unsafe_binary_path_in_diff", diff_path=str(diff_path), line=line_num, path=binary_path)
                 continue
-            paths.add(root / p)
+            
+            # Skip if we didn't find a valid path format
+            if diff_path_str is None:
+                continue
+                
+            # Additional validation
+            if not diff_path_str or len(diff_path_str) > 1000:  # Reasonable length limit
+                LOGGER.warning("invalid_diff_path_length", diff_path=str(diff_path), line=line_num, path=diff_path_str)
+                continue
+            
+            # Skip /dev/null which represents deleted files
+            if diff_path_str == "/dev/null" or diff_path_str == "dev/null":
+                continue
+            
+            # Check for suspicious patterns before sanitization
+            dangerous_patterns = [
+                "..",  # Path traversal attempt
+                "\0",  # Null bytes
+                "~",   # Home directory expansion
+                "$",   # Environment variable expansion
+                "`",   # Command substitution
+                "${",  # Environment variable expansion
+                "$( ", # Command substitution
+            ]
+            
+            if any(pattern in diff_path_str for pattern in dangerous_patterns):
+                LOGGER.warning("dangerous_pattern_in_diff", diff_path=str(diff_path), line=line_num, path=diff_path_str)
+                continue
+            
+            # Skip if we've already processed this path (prevents duplicate processing)
+            if diff_path_str in seen_paths:
+                continue
+            
+            try:
+                # Use secure path sanitization
+                safe_path = sanitize_diff_path(diff_path_str, root)
+                final_path_str = str(safe_path)
+                
+                # Final safety check - ensure the path is within the root
+                try:
+                    safe_path.relative_to(root)
+                except ValueError:
+                    LOGGER.warning("path_outside_root", diff_path=str(diff_path), line=line_num, path=diff_path_str)
+                    continue
+                
+                # Check for extremely long paths after resolution
+                if len(final_path_str) > 4096:  # Reasonable maximum path length
+                    LOGGER.warning("path_too_long", diff_path=str(diff_path), line=line_num, path=final_path_str)
+                    continue
+                
+                paths.add(safe_path)
+                seen_paths.add(diff_path_str)
+                
+            except PathSecurityError as e:
+                LOGGER.warning(
+                    "unsafe_path_in_diff", 
+                    diff_path=str(diff_path), 
+                    line=line_num, 
+                    path=diff_path_str,
+                    error=str(e)
+                )
+                # Skip unsafe paths but continue processing others
+                continue
+                    
+        except Exception as e:
+            LOGGER.error("error_processing_diff_line", diff_path=str(diff_path), line=line_num, error=str(e))
+            continue
+    
     return sorted(paths)
 
 
@@ -399,25 +515,36 @@ def cmd_index(args: argparse.Namespace) -> int:
 
         # architecture.md - Main codebase only (full entities)
         arch_content = repomap.render_category(
-            FileCategory.SOURCE, include_full_entities=True
+            "source", include_full_entities=True
         )
         _write_text(context_dir / "architecture.md", arch_content)
 
         # tests.md - Test files (summary format)
         tests_content = repomap.render_category(
-            FileCategory.TESTS, include_full_entities=False
+            "tests", include_full_entities=False
         )
         _write_text(context_dir / "tests.md", tests_content)
 
-        # docs.md - Documentation files (summary format)
-        docs_content = repomap.render_category(
-            FileCategory.DOCS, include_full_entities=False
+        # docs.md - Uncategorized categories + Documentation files (summary format)
+        uncategorized_content = repomap.render_uncategorized_categories(
+            include_full_entities=False
         )
-        _write_text(context_dir / "docs.md", docs_content)
+        docs_content = repomap.render_category(
+            "docs", include_full_entities=False
+        )
+        
+        # Combine uncategorized categories with docs
+        combined_docs = uncategorized_content
+        if combined_docs and docs_content.strip():
+            combined_docs += "\n" + docs_content
+        elif docs_content.strip():
+            combined_docs = docs_content
+            
+        _write_text(context_dir / "docs.md", combined_docs)
 
         # config.md - Configuration files (summary format)
         config_content = repomap.render_category(
-            FileCategory.CONFIG, include_full_entities=False
+            "config", include_full_entities=False
         )
         _write_text(context_dir / "config.md", config_content)
 
@@ -432,8 +559,9 @@ def cmd_index(args: argparse.Namespace) -> int:
         cache_hit_rate = 0.0
         parsed = int(stats.get("files_parsed", 0))
         cached = int(stats.get("files_cached", 0))
-        if parsed > 0:
-            cache_hit_rate = round(cached / parsed, 4)
+        total_processed = parsed + cached
+        if total_processed > 0:
+            cache_hit_rate = round(cached / total_processed, 4)
         repo_metrics = _collect_repo_metrics(root, args.max_file_size_kb)
         stats.update(
             {
@@ -895,25 +1023,36 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
 
         # architecture.md - Main codebase only
         arch_content = repomap.render_category(
-            FileCategory.SOURCE, include_full_entities=True
+            "source", include_full_entities=True
         )
         _write_text(context_dir / "architecture.md", arch_content)
 
         # tests.md
         tests_content = repomap.render_category(
-            FileCategory.TESTS, include_full_entities=False
+            "tests", include_full_entities=False
         )
         _write_text(context_dir / "tests.md", tests_content)
 
-        # docs.md
-        docs_content = repomap.render_category(
-            FileCategory.DOCS, include_full_entities=False
+        # docs.md - Uncategorized categories + Documentation files
+        uncategorized_content = repomap.render_uncategorized_categories(
+            include_full_entities=False
         )
-        _write_text(context_dir / "docs.md", docs_content)
+        docs_content = repomap.render_category(
+            "docs", include_full_entities=False
+        )
+        
+        # Combine uncategorized categories with docs
+        combined_docs = uncategorized_content
+        if combined_docs and docs_content.strip():
+            combined_docs += "\n" + docs_content
+        elif docs_content.strip():
+            combined_docs = docs_content
+            
+        _write_text(context_dir / "docs.md", combined_docs)
 
         # config.md
         config_content = repomap.render_category(
-            FileCategory.CONFIG, include_full_entities=False
+            "config", include_full_entities=False
         )
         _write_text(context_dir / "config.md", config_content)
 
@@ -1064,6 +1203,11 @@ def _cmd_patch_snapshot_based(
     result = incremental_patch(ctn_dir, args.base_snapshot, changes)
 
     if not result["success"]:
+        error_msg = result.get("error", "Unknown error")
+        LOGGER.error("incremental_patch_failed", 
+                    error=error_msg, 
+                    operation_id=result.get("operation_id"),
+                    changes_count=len(changes))
         print(
             json.dumps(
                 {"error": result["error"], "operation_id": result.get("operation_id")},
