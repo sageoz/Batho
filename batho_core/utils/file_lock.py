@@ -18,7 +18,7 @@ logger = get_logger(__name__, component="file_lock")
 
 class FileLockError(Exception):
     """Raised when file locking fails."""
-    pass
+    pass  # Required for exception class definition
 
 
 class FileLock:

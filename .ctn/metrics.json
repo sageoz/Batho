@@ -1,7 +1,7 @@
 {
-  "index_id": "batho_a4dc7cf3a95f41898b3e06d3185a6c38_20260329T115903Z",
-  "timestamp": "2026-03-29T11:59:03.785503+00:00",
-  "root": "/private/var/folders/vq/s2ys6fm135j3fn4p4zz56btc0000gn/T/pytest-of-rishirajsharma/pytest-31/test_performance_benchmarks_an0/flask_benchmark",
+  "index_id": "batho_85fd3916373e4ce5bc5bb4266326fa86_20260329T124814Z",
+  "timestamp": "2026-03-29T12:48:14.996265+00:00",
+  "root": "/private/var/folders/vq/s2ys6fm135j3fn4p4zz56btc0000gn/T/pytest-of-rishirajsharma/pytest-36/test_performance_benchmarks_an0/flask_benchmark",
   "stats": {
     "files_candidates": 31,
     "files_parsed": 31,
@@ -10,7 +10,7 @@
     "errors": 0,
     "entity_count": 696,
     "relationship_count": 869,
-    "elapsed_seconds": 0.5099999904632568,
+    "elapsed_seconds": 0.5499999523162842,
     "workers_used": 4,
     "loc_total": 26751,
     "repo_size_bytes": 1254778,
@@ -41,7 +41,7 @@
     "loc_total": 26751,
     "text_files_count": 137,
     "skipped_files_count": 0,
-    "token_input_estimate": 11181,
+    "token_input_estimate": 11168,
     "cache_hit_rate": 0.5
   }
 }

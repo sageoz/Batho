@@ -14,7 +14,7 @@ logger = get_logger(__name__, component="path_sanitizer")
 
 class PathSecurityError(Exception):
     """Raised when a path is determined to be unsafe."""
-    pass
+    pass  # Required for exception class definition
 
 
 def sanitize_path(

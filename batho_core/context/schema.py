@@ -149,6 +149,8 @@ class Entity(BaseModel):
         return hash(self.id)
 
     def __eq__(self, other: object) -> bool:
+        # Return NotImplemented for type mismatch - this is correct Python protocol
+        # It allows Python to try the reflected operation on the other object
         if not isinstance(other, Entity):
             return NotImplemented
         return self.id == other.id
@@ -209,6 +211,8 @@ class Relationship(BaseModel):
         return hash(self.id)
 
     def __eq__(self, other: object) -> bool:
+        # Return NotImplemented for type mismatch - this is correct Python protocol
+        # It allows Python to try the reflected operation on the other object
         if not isinstance(other, Relationship):
             return NotImplemented
         return self.id == other.id

@@ -11,15 +11,29 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, List, Set, Tuple
 from pathlib import Path
 
+from batho_core.config import get_config_cached
+from batho_core.utils.logging import get_logger
+
 
 class LLMExtensionGenerator:
     """Generates LLM-friendly extensions for C4 models."""
     
     def __init__(self, graph: Dict[str, Any], repomap: Dict[str, Any], 
-                 index_metadata: Dict[str, Any]):
+                 index_metadata: Dict[str, Any], enable_llm: bool | None = None):
         self.graph = graph
         self.repomap = repomap
         self.index_metadata = index_metadata
+        
+        # Get LLM flag from config if not explicitly provided
+        if enable_llm is None:
+            enable_llm = get_config_cached().get("flags", {}).get("enable_llm", False)
+        
+        self.enable_llm = enable_llm
+        self.logger = get_logger(__name__, component="llm_extensions")
+        
+        if not self.enable_llm:
+            self.logger.info("llm_extensions_disabled", 
+                           reason="enable_llm flag is False")
         
         # Caches for analysis
         self._entity_clusters: Dict[str, List[str]] | None = None
@@ -1234,6 +1248,14 @@ class LLMExtensionGenerator:
     
     def _identify_domain_experts(self) -> Dict[str, str]:
         """Identify domain experts (placeholder)."""
+        if not self.enable_llm:
+            self.logger.debug("skipping_domain_expert_identification", 
+                            reason="LLM extensions disabled")
+            return {}
+        
+        # Placeholder implementation - will be implemented when LLM features are enabled
+        self.logger.debug("domain_experts_placeholder", 
+                        reason="Implementation pending")
         return {
             "Architecture": "Senior developer/tech lead",
             "Business Logic": "Product owner/Business analyst",
@@ -1243,17 +1265,38 @@ class LLMExtensionGenerator:
     
     def _find_database_in_loops(self) -> List[str]:
         """Find database queries inside loops."""
-        # Placeholder implementation
+        if not self.enable_llm:
+            self.logger.debug("skipping_database_in_loops_analysis", 
+                            reason="LLM extensions disabled")
+            return []
+        
+        # Placeholder implementation - will be implemented when LLM features are enabled
+        self.logger.debug("database_in_loops_placeholder", 
+                        reason="Implementation pending")
         return []
     
     def _find_large_file_processing(self) -> List[str]:
         """Find large file processing patterns."""
-        # Placeholder implementation
+        if not self.enable_llm:
+            self.logger.debug("skipping_large_file_processing_analysis", 
+                            reason="LLM extensions disabled")
+            return []
+        
+        # Placeholder implementation - will be implemented when LLM features are enabled
+        self.logger.debug("large_file_processing_placeholder", 
+                        reason="Implementation pending")
         return []
     
     def _find_synchronous_io(self) -> List[str]:
         """Find synchronous I/O operations."""
-        # Placeholder implementation
+        if not self.enable_llm:
+            self.logger.debug("skipping_synchronous_io_analysis", 
+                            reason="LLM extensions disabled")
+            return []
+        
+        # Placeholder implementation - will be implemented when LLM features are enabled
+        self.logger.debug("synchronous_io_placeholder", 
+                        reason="Implementation pending")
         return []
     
     def _assess_integration_criticality(self, target: str) -> str:

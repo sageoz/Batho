@@ -180,8 +180,12 @@ def write_atomically(
             tmp_path = path.with_suffix(path.suffix + ".tmp")
             if tmp_path.exists():
                 tmp_path.unlink()
-        except OSError:
-            pass
+        except OSError as cleanup_exc:
+            # Log cleanup failure at debug level - file write already failed
+            LOGGER.debug("temp_file_cleanup_failed", 
+                        temp_path=str(tmp_path), 
+                        error=str(cleanup_exc))
+            pass  # Continue - original error is more important
         return False
 
 

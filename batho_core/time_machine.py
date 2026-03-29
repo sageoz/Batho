@@ -1306,17 +1306,121 @@ def parse_unified_diff(diff_content: str) -> list[FileChange]:
     return changes
 
 
-def validate_patch_compatibility(patch_data: dict[str, Any], base_snapshot_id: str) -> bool:
-    """Validate that a patch can be applied to a base snapshot."""
-    # For now, basic validation - check if patch has required fields
+def validate_patch_compatibility(patch_data: dict[str, Any], base_snapshot_id: str, ctn_dir: Path) -> bool:
+    """Validate that a patch can be applied to a base snapshot.
+    
+    Performs sophisticated validation including:
+    - Required fields check
+    - File existence in base snapshot
+    - Patch consistency checks
+    - Dependency validation
+    
+    Args:
+        patch_data: Patch operation data to validate
+        base_snapshot_id: ID of the base snapshot
+        ctn_dir: Path to .ctn directory containing snapshots
+        
+    Returns:
+        True if patch is compatible, False otherwise
+    """
+    logger = get_logger(__name__, component="patch_validation")
+    
+    # Basic validation - check required fields
     required_fields = ['changes_applied', 'operation_type']
     for field in required_fields:
         if field not in patch_data:
+            logger.error("patch_missing_required_field", field=field)
             return False
     
-    # TODO: Add more sophisticated validation
-    # - Check if files in patch exist in base snapshot
-    # - Check if patch conflicts with base snapshot state
+    # Load base snapshot for validation
+    base_snapshot = load_snapshot(ctn_dir, base_snapshot_id)
+    if base_snapshot is None:
+        logger.error("patch_validation_base_snapshot_not_found", snapshot_id=base_snapshot_id)
+        return False
+    
+    # Extract file paths from base snapshot
+    base_files = set()
+    if 'graph' in base_snapshot and 'entities' in base_snapshot['graph']:
+        for entity in base_snapshot['graph']['entities']:
+            if 'file_path' in entity:
+                base_files.add(entity['file_path'])
+    
+    # Validate each change in the patch
+    changes_applied = patch_data.get('changes_applied', [])
+    for change in changes_applied:
+        if isinstance(change, dict):
+            change_path = change.get('path')
+            change_type = change.get('change_type')
+        else:
+            # Handle FileChange objects
+            change_path = getattr(change, 'path', None)
+            change_type = getattr(change, 'change_type', None)
+        
+        if not change_path or not change_type:
+            logger.error("patch_invalid_change", change=change)
+            return False
+        
+        # Validate file operations based on change type
+        if change_type in ['MODIFIED', 'DELETED']:
+            # For modifications and deletions, file must exist in base snapshot
+            if change_path not in base_files:
+                logger.error("patch_file_not_in_base", 
+                           path=change_path, 
+                           change_type=change_type,
+                           available_files=list(base_files)[:10])  # Log first 10 for debugging
+                return False
+        
+        elif change_type == 'ADDED':
+            # For additions, file should not exist in base snapshot (unless it's a re-add)
+            if change_path in base_files:
+                logger.warning("patch_adding_existing_file", path=change_path)
+                # This is not necessarily an error - could be a re-add after deletion
+    
+    # Check for patch dependencies if specified
+    if 'dependencies' in patch_data:
+        dependencies = patch_data['dependencies']
+        if not _validate_patch_dependencies(dependencies, base_snapshot_id, ctn_dir):
+            logger.error("patch_dependencies_not_satisfied", dependencies=dependencies)
+            return False
+    
+    logger.info("patch_validation_success", 
+               changes_count=len(changes_applied),
+               base_snapshot=base_snapshot_id)
+    return True
+
+
+def _validate_patch_dependencies(dependencies: list[str], base_snapshot_id: str, ctn_dir: Path) -> bool:
+    """Validate that all patch dependencies are satisfied.
+    
+    Args:
+        dependencies: List of patch IDs that this patch depends on
+        base_snapshot_id: Base snapshot ID
+        ctn_dir: .ctn directory path
+        
+    Returns:
+        True if all dependencies are satisfied, False otherwise
+    """
+    logger = get_logger(__name__, component="patch_validation")
+    
+    for dep_patch_id in dependencies:
+        # Check if dependency patch exists
+        dep_patch_path = ctn_dir / "patches" / f"{dep_patch_id}.json"
+        if not dep_patch_path.exists():
+            logger.error("patch_dependency_not_found", dependency=dep_patch_id)
+            return False
+        
+        # Load and validate dependency patch
+        try:
+            dep_data = json.loads(dep_patch_path.read_text(encoding='utf-8'))
+            if not dep_data.get('success', True):
+                logger.error("patch_dependency_failed", dependency=dep_patch_id)
+                return False
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error("patch_dependency_invalid", 
+                        dependency=dep_patch_id, 
+                        error=str(e))
+            return False
+    
     return True
 
 
@@ -1334,6 +1438,13 @@ def extract_patch_deltas(operation: PatchOperation) -> dict[str, Any]:
 def apply_deltas_to_snapshot(ctn_dir: Path, base_snapshot_id: str, deltas: dict[str, Any]) -> str | None:
     """Apply patch deltas to a base snapshot and return new snapshot ID."""
     try:
+        # Validate patch compatibility before applying
+        if not validate_patch_compatibility(deltas, base_snapshot_id, ctn_dir):
+            logger.error("patch_delta_validation_failed", 
+                        base_snapshot=base_snapshot_id,
+                        operation_id=deltas.get('operation_id'))
+            return None
+        
         # Load base snapshot
         base_snapshot = load_snapshot(ctn_dir, base_snapshot_id)
         if not base_snapshot:
