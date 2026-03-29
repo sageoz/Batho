@@ -1,48 +1,47 @@
 {
-  "index_id": "batho_95ff1876c9e44219a080ddc6c237cbf7_20260329T053144Z",
-  "timestamp": "2026-03-29T05:31:45.046634+00:00",
-  "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/simple_python",
+  "index_id": "batho_a4dc7cf3a95f41898b3e06d3185a6c38_20260329T115903Z",
+  "timestamp": "2026-03-29T11:59:03.785503+00:00",
+  "root": "/private/var/folders/vq/s2ys6fm135j3fn4p4zz56btc0000gn/T/pytest-of-rishirajsharma/pytest-31/test_performance_benchmarks_an0/flask_benchmark",
   "stats": {
-    "files_candidates": 6,
-    "files_parsed": 6,
+    "files_candidates": 31,
+    "files_parsed": 31,
     "files_skipped": 0,
-    "files_cached": 0,
+    "files_cached": 31,
     "errors": 0,
-    "entity_count": 15,
-    "relationship_count": 7,
-    "elapsed_seconds": 0.08999991416931152,
+    "entity_count": 696,
+    "relationship_count": 869,
+    "elapsed_seconds": 0.5099999904632568,
     "workers_used": 4,
-    "loc_total": 109,
-    "repo_size_bytes": 2342,
-    "file_count_total": 8,
-    "text_files_count": 8,
+    "loc_total": 26751,
+    "repo_size_bytes": 1254778,
+    "file_count_total": 137,
+    "text_files_count": 137,
     "skipped_files_count": 0
   },
   "stack": {
     "languages": [
-      "Python 3.10"
+      "Python 3.8"
     ],
     "frameworks": [
       "Click",
-      "Pydantic",
-      "Requests"
+      "Jinja2",
+      "python-dotenv"
     ],
     "build_tools": [
-      "Setuptools"
+      "Flit"
     ],
     "package_managers": [
-      "pip",
-      "setuptools"
+      "poetry/pdm/setuptools"
     ],
     "infra": []
   },
   "metrics": {
-    "file_count_total": 8,
-    "repo_size_bytes": 2342,
-    "loc_total": 109,
-    "text_files_count": 8,
+    "file_count_total": 137,
+    "repo_size_bytes": 1254778,
+    "loc_total": 26751,
+    "text_files_count": 137,
     "skipped_files_count": 0,
-    "token_input_estimate": 192,
-    "cache_hit_rate": 0.0
+    "token_input_estimate": 11181,
+    "cache_hit_rate": 0.5
   }
 }

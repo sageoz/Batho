@@ -122,17 +122,31 @@ class TestPatchOperation:
         """Test PatchOperation construction."""
         timestamp = datetime.now(timezone.utc)
         changes = [
-            FileChange("test.py", FileChangeType.ADDED, None, "hash1"),
+            FileChange(
+                path="test.py",
+                change_type=FileChangeType.ADDED,
+                old_hash=None,
+                new_hash="hash1",
+                file_size=100,
+                mtime=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                permissions=0o644,
+            ),
         ]
         op = PatchOperation(
             operation_id="op_123",
             base_snapshot_id="base_123",
+            new_snapshot_id="new_123",
             changes_applied=changes,
             timestamp=timestamp,
             checksum="checksum_value",
+            patch_chain=["base_123"],
+            operation_type="incremental_patch",
+            user_info={"source": "test"},
+            metrics={"changes": 1},
         )
         assert op.operation_id == "op_123"
         assert op.base_snapshot_id == "base_123"
+        assert op.new_snapshot_id == "new_123"
         assert op.changes_applied == changes
         assert op.timestamp == timestamp
         assert op.checksum == "checksum_value"
@@ -145,9 +159,14 @@ class TestPatchOperation:
         op = PatchOperation(
             operation_id="op_123",
             base_snapshot_id="base_123",
+            new_snapshot_id="new_123",
             changes_applied=changes,
             timestamp=datetime.now(timezone.utc),
             checksum="",  # Will be computed
+            patch_chain=["base_123"],
+            operation_type="incremental_patch",
+            user_info={"source": "test"},
+            metrics={"changes": 1},
         )
         data = op.serialize()
         data_without_checksum = {k: v for k, v in data.items() if k != "checksum"}
@@ -177,14 +196,20 @@ class TestPatchOperation:
         op = PatchOperation(
             operation_id="op_123",
             base_snapshot_id="base_123",
+            new_snapshot_id="new_123",
             changes_applied=changes,
             timestamp=datetime(2023, 2, 1, tzinfo=timezone.utc),
             checksum="checksum_value",
+            patch_chain=["base_123"],
+            operation_type="incremental_patch",
+            user_info={"source": "test"},
+            metrics={"changes": 1},
         )
         data = op.serialize()
         expected_data = {
             "operation_id": "op_123",
             "base_snapshot_id": "base_123",
+            "new_snapshot_id": "new_123",
             "changes_applied": [
                 {
                     "path": "test.py",
@@ -200,6 +225,10 @@ class TestPatchOperation:
             ],
             "timestamp": "2023-02-01T00:00:00+00:00",
             "checksum": "checksum_value",
+            "patch_chain": ["base_123"],
+            "operation_type": "incremental_patch",
+            "user_info": {"source": "test"},
+            "metrics": {"changes": 1},
         }
         assert data == expected_data
 
