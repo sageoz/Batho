@@ -1,0 +1,13 @@
+{
+  "language": "python",
+  "repo": "/Users/rishirajsharma/Sageoz/batho/tests/benchmark/fixtures/python",
+  "commit": "dummy",
+  "run_count": 10,
+  "hashes": [],
+  "durations_ms": [],
+  "deterministic": false,
+  "error_runs": 10,
+  "p50_ms": 0,
+  "p95_ms": 0,
+  "p99_ms": 0
+}
