@@ -1,0 +1,171 @@
+"""Main webhook processing logic."""
+
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+from typing import Optional
+
+from batho_core.time_machine import incremental_patch
+from batho_core.utils.logging import get_logger
+from .config import WebhookConfig
+from .parser import WebhookEvent, parse_webhook_event
+from .queue import QueueItem, WebhookQueue
+
+logger = get_logger(__name__, component="webhook_processor")
+
+
+class WebhookProcessor:
+    """Processes webhook events and updates Batho graph."""
+    
+    def __init__(self, config: WebhookConfig, repo_path: Path):
+        self.config = config
+        self.repo_path = repo_path
+        self.queue = WebhookQueue()
+        self._ctn_dir = repo_path / ".ctn"
+        self._latest_snapshot_id: Optional[str] = None
+    
+    def process_webhook(self, payload: dict[str, str], headers: dict[str, str]) -> dict[str, str]:
+        """Process incoming webhook.
+        
+        Args:
+            payload: Webhook payload
+            headers: HTTP headers
+            
+        Returns:
+            Response dict with status
+        """
+        try:
+            # Parse event
+            event = parse_webhook_event(payload, headers)
+            
+            # Validate repository
+            if self.config.repository and event.repository != self.config.repository.name:
+                return {
+                    "status": "error",
+                    "message": f"Repository mismatch: expected {self.config.repository.name}, got {event.repository}"
+                }
+            
+            # Validate branch
+            if self.config.repository and event.branch not in self.config.repository.branches:
+                return {
+                    "status": "ignored",
+                    "message": f"Branch {event.branch} not in watched branches"
+                }
+            
+            # Queue for processing
+            event_id = str(uuid.uuid4())
+            queue_item = QueueItem(
+                event_id=event_id,
+                event={"payload": payload, "headers": headers}
+            )
+            
+            if not self.queue.put(queue_item):
+                return {
+                    "status": "error",
+                    "message": "Queue full, please try again"
+                }
+            
+            logger.info(
+                "webhook_queued",
+                event_id=event_id,
+                platform=event.platform.value,
+                event_type=event.event_type.value,
+                repository=event.repository,
+                branch=event.branch
+            )
+            
+            return {
+                "status": "queued",
+                "event_id": event_id,
+                "message": "Webhook queued for processing"
+            }
+            
+        except Exception as e:
+            logger.error("webhook_processing_error", error=str(e))
+            return {
+                "status": "error",
+                "message": f"Processing error: {str(e)}"
+            }
+    
+    def start(self) -> None:
+        """Start background processing."""
+        self.queue.start_processing(self._handle_queue_item)
+        logger.info("webhook_processor_started")
+    
+    def stop(self) -> None:
+        """Stop background processing."""
+        self.queue.stop_processing()
+        logger.info("webhook_processor_stopped")
+    
+    def _handle_queue_item(self, item: QueueItem) -> bool:
+        """Handle a queue item.
+        
+        Returns:
+            True if successful, False for retry
+        """
+        try:
+            event_data = item.event
+            event = parse_webhook_event(event_data["payload"], event_data["headers"])
+            
+            logger.info(
+                "processing_webhook",
+                event_id=item.event_id,
+                platform=event.platform.value,
+                event_type=event.event_type.value
+            )
+            
+            # Get latest snapshot if not cached
+            if not self._latest_snapshot_id:
+                self._latest_snapshot_id = self._find_latest_snapshot()
+            
+            # Process changes
+            if event.changes:
+                result = incremental_patch(
+                    self._ctn_dir,
+                    self._latest_snapshot_id or "",
+                    event.changes
+                )
+                
+                if result.get("success"):
+                    self._latest_snapshot_id = result.get("new_snapshot_id")
+                    logger.info(
+                        "webhook_processed",
+                        event_id=item.event_id,
+                        new_snapshot_id=self._latest_snapshot_id,
+                        changes_count=len(event.changes)
+                    )
+                    return True
+                else:
+                    logger.error(
+                        "incremental_patch_failed",
+                        event_id=item.event_id,
+                        error=result.get("error")
+                    )
+                    return False
+            else:
+                # No changes to process
+                logger.info(
+                    "webhook_no_changes",
+                    event_id=item.event_id
+                )
+                return True
+                
+        except Exception as e:
+            logger.error(
+                "queue_item_processing_error",
+                event_id=item.event_id,
+                error=str(e)
+            )
+            return False
+    
+    def _find_latest_snapshot(self) -> Optional[str]:
+        """Find the latest snapshot ID."""
+        from batho_core.time_machine import list_snapshots
+        
+        snapshots = list_snapshots(self._ctn_dir)
+        if snapshots:
+            # Return the most recent snapshot
+            latest = max(snapshots, key=lambda s: s.get("created_at", ""))
+            return latest.get("snapshot_id")
+        return None

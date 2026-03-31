@@ -1,8 +1,9 @@
-"""Batho Core CLI (indexing, stats, invalidate).
+"""Batho Core CLI (indexing, stats, invalidate, webhook).
 
 - Index: builds code graph, repomap, writes JSON/MD outputs without LLM or UniversalMemory.
 - Stats: show current index metadata.
 - Invalidate: clear file cache to force next full parse.
+- Webhook Server: receive and process GitHub/GitLab webhook events.
 
 Outputs (default):
 - .ctn/<index_id>/graph.json       — Entities + relationships
@@ -35,8 +36,10 @@ from batho_core.context.c4_generator import C4Generator
 from batho_core.context.c4_structurizr import StructurizrFormatter
 from batho_core.context.stack_detector import detect_stack
 from batho_core.time_machine import (
-    compute_staleness,
+    generate_snapshot_id,
     create_snapshot,
+    list_snapshots,
+    load_snapshot,
     diff_snapshots,
     incremental_patch,
     list_snapshots,
@@ -49,6 +52,7 @@ from batho_core.time_machine import (
     FileTrackingConfig,
     PatchOperation,
 )
+from batho_core.webhook import WebhookServer, WebhookConfig
 from batho_core.utils.file_io import read_file_bytes, write_atomically, _is_binary
 from batho_core.utils.hash import compute_bytes_hash, compute_file_hash
 from batho_core.utils.ignore import is_ignored, load_ignore_spec
@@ -1265,6 +1269,51 @@ def cmd_webhook(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_webhook_server(args: argparse.Namespace) -> int:
+    """Start webhook server for continuous processing."""
+    # Load configuration
+    config_path = Path(args.config)
+    if not config_path.exists():
+        print(f"❌ Config file not found: {config_path}")
+        return 1
+    
+    try:
+        config = WebhookConfig.from_file(config_path)
+    except Exception as e:
+        print(f"❌ Failed to load config: {e}")
+        return 1
+    
+    # Validate repository configuration
+    if not config.repository:
+        print("❌ Repository not configured")
+        return 1
+    
+    # Get repository path
+    repo_path = Path(args.root or ".").resolve()
+    if not repo_path.exists():
+        print(f"❌ Repository path does not exist: {repo_path}")
+        return 1
+    
+    print(f"🚀 Starting webhook server for {config.repository.name}")
+    print(f"   Platform: {config.repository.platform}")
+    print(f"   Endpoint: http://{config.server.host}:{config.server.port}/webhook")
+    print(f"   Health: http://{config.server.host}:{config.server.port}/health")
+    print(f"   Repository: {repo_path}")
+    print()
+    
+    # Start server
+    server = WebhookServer(config, repo_path)
+    
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down webhook server...")
+        server.stop()
+        print("✅ Server stopped")
+    
+    return 0
+
+
 def cmd_invalidate(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
@@ -1777,6 +1826,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Token budget for compressed mode (default: 12000)",
     )
     repomap.set_defaults(func=cmd_repomap)
+
+    ws = sub.add_parser("webhook-server", help="Start webhook server for continuous processing")
+    ws.add_argument("--config", required=True, help="Path to webhook configuration file")
+    ws.add_argument("--root", help="Path to repository root (default: current directory)")
+    ws.set_defaults(func=cmd_webhook_server)
 
     return parser
 

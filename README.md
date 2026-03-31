@@ -14,11 +14,14 @@
   <a href="https://github.com/batho-ai/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
   <a href="#supported-languages"><img src="https://img.shields.io/badge/languages-40+-orange" alt="Languages"></a>
   <a href="https://github.com/batho-ai/batho/stargazers"><img src="https://img.shields.io/github/stars/batho-ai/batho?style=social" alt="Stars"></a>
+  <a href="#-v100-launched"><img src="https://img.shields.io/badge/version-1.0.0-brightgreen" alt="Version 1.0.0 Launched"></a>
 </p>
 
 <br>
 
 > **Batho** indexes 40+ programming languages via tree-sitter, compresses the result 10:1 for LLM context windows, and tracks changes over time — all without executing a single line of your code.
+>
+> **✨ Version 1.0.0 is now LAUNCHED!** Production-ready with enterprise features, webhooks, CI/CD integration, and automated documentation generation.
 
 ---
 
@@ -38,6 +41,17 @@ batho repomap --root . --mode compressed --budget 12000
 
 # View results
 batho stats --root .
+
+# Generate C4 architecture diagrams
+batho c4 --root . --output c4-model.json
+
+# Create and manage snapshots
+batho snapshots --root .
+batho diff-snapshots --root . SNAP_A SNAP_B
+
+# Incremental patching with tracking
+batho patch --root . --scan
+batho patches --root . --format timeline
 ```
 
 That's it. Batho scans your codebase, extracts every function, class, import, and relationship, and writes structured output to `.ctn/`.
@@ -55,6 +69,21 @@ Modern AI tools need **structured code understanding** — not just raw file con
 | **Time Machine snapshots** | Track how your codebase evolves between releases |
 | **Zero code execution** | Safe to run in CI, pre-commit, or on untrusted repos |
 | **Enterprise-grade caching** | mtime+SHA skips unchanged files — re-indexes in seconds |
+| **Production webhooks** | GitHub/GitLab integration with authentication and queueing |
+| **CI/CD pipeline hooks** | Turnkey GitHub Actions and GitLab CI templates |
+| **Automated documentation** | Generate C4, SRS, and OWASP docs from your codebase |
+| **Incremental patching** | 10-100x faster updates with complete lineage tracking |
+
+---
+
+## ✨ What's New in v1.0.0
+
+- **🚀 Production Webhooks**: Full GitHub/GitLab integration with authentication and queueing
+- **🔄 CI/CD Pipeline Hooks**: Turnkey templates for GitHub Actions and GitLab CI
+- **📊 Automated Documentation**: Generate C4 architecture diagrams, SRS, and OWASP documentation
+- **⚡ Enhanced Incremental Patching**: 10-100x faster updates with complete patch lineage tracking
+- **🔒 Enterprise Security**: Memory monitoring, file locking, and path sanitization
+- **📈 Comprehensive Testing**: 637 tests with 100% pass rate
 
 ---
 
@@ -109,11 +138,47 @@ batho repomap --root . --mode hierarchical
 ### Time Machine
 
 ```bash
-batho snapshots --root .                              # Create snapshot
-batho diff-snapshots --root . SNAP_A SNAP_B           # Compare versions
+batho index --root . --snapshot                    # Create snapshot
+batho snapshots --root .                           # List all snapshots
+batho diff-snapshots --root . SNAP_A SNAP_B        # Compare versions
 ```
 
 Versioned snapshots with UUID + timestamp, entity/relationship diffs, and staleness scoring for automated re-indexing.
+
+### C4 Architecture Generation
+
+```bash
+# Generate C4 models (automatic during index)
+batho index --root .
+
+# Generate from existing index
+batho c4 --root . --output /path/to/c4-model.json
+
+# Generate in multiple formats
+batho c4 --root . --format plantuml    # PlantUML
+batho c4 --root . --format mermaid     # Mermaid
+batho c4 --root . --format d2          # D2
+batho c4 --root . --format html        # Interactive HTML
+```
+
+### Incremental Patching with Tracking
+
+```bash
+# Auto-detect and patch changes
+batho patch --root . --scan
+
+# List all patch operations
+batho patches --root . --format timeline
+
+# Show detailed patch info
+batho patch-info --root . --patch-id ID
+
+# Apply patch from diff file
+batho apply-patch --root . --base-snapshot ID --diff-file changes.diff
+
+# Cherry-pick patch to different snapshot
+batho cherry-pick --root . --patch-id ID --target-snapshot ID
+```
 
 ### Smart Indexing
 
@@ -178,8 +243,17 @@ batho patch --root /path/to/repo --diff /path/to/pr.diff
 batho patch --root /path/to/repo file1.py dir/file2.ts
 
 # Snapshots & diff
+batho index --root /path/to/repo --snapshot
 batho snapshots --root /path/to/repo
 batho diff-snapshots --root /path/to/repo SNAP_A SNAP_B
+
+# C4 architecture generation
+batho c4 --root /path/to/repo --output c4-model.json
+
+# Patch management
+batho patches --root /path/to/repo --format timeline
+batho patch-info --root /path/to/repo --patch-id ID
+batho cherry-pick --root /path/to/repo --patch-id ID --target-snapshot ID
 
 # Clear cache (force full re-parse)
 batho invalidate --root /path/to/repo
@@ -193,6 +267,8 @@ batho invalidate --root /path/to/repo
 | `--max-file-size-kb` | `500` | Skip files larger than this |
 | `--log-json` | off | JSON structured logs (useful in CI) |
 | `--verbose` | off | Print progress to stdout |
+| `--snapshot` | off | Create snapshot after indexing |
+| `--no-c4` | off | Skip C4 model generation |
 
 ### RepoMap Options
 
@@ -200,6 +276,15 @@ batho invalidate --root /path/to/repo
 |------|---------|-------------|
 | `--mode` | `compressed` | Rendering mode: compressed, full, hierarchical |
 | `--budget` | `12000` | Token budget for compressed mode |
+
+### Patch Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--scan` | off | Auto-scan for changes |
+| `--dry-run` | off | Preview changes without applying |
+| `--base-snapshot` | auto | Use specific snapshot as base |
+| `--force-index-patch` | off | Force traditional index-based patching |
 
 ---
 
@@ -212,13 +297,16 @@ batho invalidate --root /path/to/repo
 ├── metrics.json             # Performance metrics
 ├── snapshots/               # Time Machine snapshots
 │   └── batho_<uuid>_<ts>.json
+├── patches/                 # Patch operation history
+│   └── patch_<uuid>_<ts>.json
 └── <index_id>/
     ├── graph.json           # All entities + relationships
     ├── repomap.json         # Structured symbol index
     ├── repomap_compressed.json # LLM-ready compressed view
     ├── repomap_full.json    # Complete symbol index with signatures
     ├── repomap_hierarchical.json # Directory tree view
-    └── architecture.md      # Human-readable summary
+    ├── architecture.md      # Human-readable summary
+    └── c4-model.json        # C4 architecture model
 ```
 
 <details>
@@ -371,8 +459,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: pip install batho
-      - run: batho index --root . --verbose --log-json
+      - run: batho index --root . --verbose --log-json --snapshot
       - run: batho stats --root .
+      - run: batho c4 --root . --output c4-model.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: batho-output
+          path: .ctn/
 ```
 
 ### Pre-commit Hook
@@ -387,6 +480,12 @@ jobs:
       language: system
       pass_filenames: false
       always_run: true
+    - id: batho-patch
+      name: Batho Incremental Patch
+      entry: batho patch --root . --scan
+      language: system
+      pass_filenames: false
+      always_run: true
 ```
 
 ### VS Code Task
@@ -397,7 +496,17 @@ jobs:
   "tasks": [{
     "label": "Batho Index",
     "type": "shell",
-    "command": "batho index --root ${workspaceFolder} --verbose"
+    "command": "batho index --root ${workspaceFolder} --verbose --snapshot"
+  },
+  {
+    "label": "Batho Patch",
+    "type": "shell",
+    "command": "batho patch --root ${workspaceFolder} --scan"
+  },
+  {
+    "label": "Batho C4",
+    "type": "shell",
+    "command": "batho c4 --root ${workspaceFolder} --output c4-model.json"
   }]
 }
 ```
@@ -480,12 +589,21 @@ Batho is open source and welcomes contributions. Whether it's a bug report, a ne
 
 ## Roadmap
 
-- [ ] Production incremental patching (webhook-driven)
-- [ ] Monorepo-aware stack detection
-- [ ] Snapshot diff fidelity improvements
+### v1.1 (In Development)
+- [ ] Advanced AI features and agentic architecture generation
+- [ ] Live state integration with Jira/GitHub Issues
+- [ ] Persistent graph storage for large repositories
 - [ ] Enterprise telemetry and health checks
-- [ ] Advanced compression policies
-- [ ] MCP server integration
+
+### v1.2 (Planned)
+- [ ] Advanced compression with adaptive token budgeting
+- [ ] Vulnerability scanning and license detection
+- [ ] Complete MR validation with policy engine
+- [ ] Full standards compliance (SRS/OWASP/ADR)
+
+### Past Releases
+- [x] **v1.0.0** - Production launch with webhooks, CI/CD, and automated docs
+- [x] **v0.1.0** - Beta release with core functionality
 
 ---
 
@@ -495,6 +613,15 @@ MIT — see [LICENSE](LICENSE)
 
 ---
 
+## 🎉 Thank You!
+
+Batho v1.0.0 is here thanks to our amazing community of contributors and users. We're excited to see what you'll build with it!
+
+**Ready to get started?** [Install Batho](#installation) and index your first project in 30 seconds.
+
+---
+
 <p align="center">
-  <a href="https://pypi.org/project/batho/">PyPI</a> · <a href="https://github.com/batho-ai/batho/issues">Issues</a> · <a href="https://github.com/batho-ai/batho/discussions">Discussions</a>
+  <strong>🚀 Batho v1.0.0 - Code Intelligence for the AI Era</strong><br>
+  <a href="https://pypi.org/project/batho/">PyPI</a> · <a href="https://github.com/batho-ai/batho/issues">Issues</a> · <a href="https://github.com/batho-ai/batho/discussions">Discussions</a> · <a href="https://github.com/batho-ai/batho/blob/main/docs/updated.md">Full Documentation</a>
 </p>

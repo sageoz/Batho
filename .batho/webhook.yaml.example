@@ -1,0 +1,28 @@
+# Webhook configuration for Batho
+# Copy to webhook.yaml and update values
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  workers: 4
+
+repository:
+  name: "user/repo"  # GitHub: user/repo, GitLab: group/repo
+  platform: "github"  # or "gitlab"
+  secret: "${WEBHOOK_SECRET}"  # Set environment variable
+  branches: ["main", "develop"]
+  # path: "/path/to/repo"  # Optional, defaults to current directory
+
+processing:
+  queue_backend: "memory"  # or "redis"
+  # redis_url: "${REDIS_URL}"  # Required if using redis
+  batch_size: 100
+  timeout_seconds: 300
+
+rate_limit:
+  requests_per_minute: 60
+  burst_size: 10
+
+logging:
+  level: "INFO"
+  file: "webhook.log"  # Optional, logs to console if not set
