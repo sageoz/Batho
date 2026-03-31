@@ -51,6 +51,7 @@ from batho_core.time_machine import (
     FileChangeSummary,
     FileTrackingConfig,
     PatchOperation,
+    compute_staleness,
 )
 from batho_core.webhook import WebhookServer, WebhookConfig
 from batho_core.utils.file_io import read_file_bytes, write_atomically, _is_binary
@@ -621,6 +622,11 @@ def cmd_index(args: argparse.Namespace) -> int:
             "indexer", {}
         ).get("metrics_output")
         if metrics_path:
+            # Resolve relative paths against the indexed repo root
+            metrics_path_obj = Path(metrics_path)
+            if not metrics_path_obj.is_absolute():
+                metrics_path_obj = root / metrics_path
+            
             metrics_payload = {
                 "index_id": index_id,
                 "timestamp": entry["timestamp"],
@@ -630,7 +636,7 @@ def cmd_index(args: argparse.Namespace) -> int:
                 "metrics": metrics,
             }
             try:
-                _write_metrics(Path(metrics_path), metrics_payload)
+                _write_metrics(metrics_path_obj, metrics_payload)
             except OSError as exc:
                 LOGGER.warning(
                     "metrics_write_failed", path=metrics_path, error=str(exc)
