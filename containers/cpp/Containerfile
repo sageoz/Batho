@@ -1,0 +1,20 @@
+# Hermetic C++ LSP container for Batho benchmark testing
+FROM alpine:3.19
+
+# Install clang17 and clang-extra-tools (contains clangd)
+RUN apk add --no-cache clang17-extra-tools
+
+# Create unprivileged user
+RUN addgroup -S batho && adduser -S batho -G batho
+
+# Set up workspace
+WORKDIR /workspace
+RUN chown batho:batho /workspace
+
+USER batho
+
+# Verify installation
+RUN clangd --version || true
+
+# LSP runs in stdio mode
+ENTRYPOINT ["clangd", "--log=verbose"]

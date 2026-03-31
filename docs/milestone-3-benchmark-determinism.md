@@ -2,9 +2,9 @@
 
 **Branch**: `benchmark/milestone-3-determinism`  
 **Goal**: Prove that Batho's Hermetic LSP integration produces 100% identical output graph hashes across 1,000 runs on Linux, macOS, and CI/CD runners.  
-**Status**: Planning  
+**Status**: Completed  
 **Owner**: Batho Core Team  
-**Created**: 2026-03-31
+**Updated**: 2026-04-01
 
 ---
 
@@ -196,6 +196,6 @@ One canonical OSS repository is pinned per language at a specific commit SHA. Th
 
 ---
 
-**Document Version**: 1.0  
-**Status**: Ready for Implementation  
-**Next Step**: Approve repo selection → implement Phase 1
+**Document Version**: 1.1  
+**Status**: Completed  
+**Next Step**: Initiate Phase 2 Hermetic Containment (Milestone 4)

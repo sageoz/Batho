@@ -53,7 +53,8 @@ class BenchmarkRunner:
         graph = indexer.build_graph(self.fixture_path, max_workers=2)
         
         adapter = get_adapter(self.language)
-        spec = self.registry.get_latest_version(self.language)
+        latest_version = self.registry.get_latest_version(self.language)
+        spec = self.registry.get_version_spec(self.language, latest_version)
         
         client = LSPClient(
             language=self.language,
@@ -65,7 +66,7 @@ class BenchmarkRunner:
         # (Assumes client methods are mocked appropriately in tests)
         async with client:
             merger = LSPASTMerger(client)
-            for file_path in set(e.file for e in graph.entities.values()):
+            for file_path in sorted(set(e.file for e in graph.entities.values())):
                 await merger.merge_async(graph, file_path)
                 
         duration_ms = int((time.perf_counter() - start) * 1000)

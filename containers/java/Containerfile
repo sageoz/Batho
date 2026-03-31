@@ -1,0 +1,28 @@
+# Hermetic Java LSP container for Batho benchmark testing
+FROM eclipse-temurin:17
+
+ARG JDTLS_VERSION=1.31.0
+ARG JDTLS_TAR=jdt-language-server-${JDTLS_VERSION}-202401111506.tar.gz
+
+RUN apt-get update && apt-get install -y curl tar bash && rm -rf /var/lib/apt/lists/*
+
+# Install JDTLS
+RUN mkdir -p /opt/jdtls && \
+    curl -L "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz" -o /tmp/jdtls.tar.gz && \
+    tar --no-same-owner -xzf /tmp/jdtls.tar.gz -C /opt/jdtls && \
+    rm /tmp/jdtls.tar.gz
+
+# Find the exact launcher jar version dynamically
+RUN ln -s /opt/jdtls/plugins/org.eclipse.equinox.launcher_*.jar /opt/jdtls/launcher.jar
+
+# Create unprivileged user
+RUN groupadd -r batho && useradd -r -g batho batho
+
+# Set up workspace and data directory
+WORKDIR /workspace
+RUN chown -R batho:batho /workspace /opt/jdtls
+
+USER batho
+
+# LSP runs in stdio mode
+ENTRYPOINT ["java", "-Declipse.application=org.eclipse.jdt.ls.core.id1", "-Dosgi.bundles.defaultStartLevel=4", "-Declipse.product=org.eclipse.jdt.ls.core.product", "-Dlog.level=ALL", "-noverify", "-Xmx1G", "-jar", "/opt/jdtls/launcher.jar", "-configuration", "/opt/jdtls/config_linux", "-data", "/workspace/.metadata"]

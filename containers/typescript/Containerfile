@@ -1,0 +1,23 @@
+# Hermetic TypeScript LSP container for Batho benchmark testing
+FROM node:20-alpine
+
+ARG TS_LSP_VERSION=4.3.3
+ARG TS_VERSION=5.3.3
+
+# Install typescript-language-server and typescript
+RUN npm install -g typescript-language-server@${TS_LSP_VERSION} typescript@${TS_VERSION} --ignore-scripts
+
+# Create unprivileged user
+RUN addgroup -S batho && adduser -S batho -G batho
+
+# Set up workspace
+WORKDIR /workspace
+RUN chown batho:batho /workspace
+
+USER batho
+
+# Verify installation
+RUN typescript-language-server --version || true
+
+# LSP runs in stdio mode
+ENTRYPOINT ["typescript-language-server", "--stdio"]

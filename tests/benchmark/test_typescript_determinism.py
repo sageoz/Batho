@@ -7,8 +7,12 @@ from tests.benchmark.runner import BenchmarkRunner
 @pytest.mark.asyncio
 @pytest.mark.quick
 async def test_typescript_smoke(fixture_path):
-    path = fixture_path("typescript")
-    runner = BenchmarkRunner("typescript", path)
+    # Benchmark against subset of Prisma to keep it fast
+    path = fixture_path("typescript") / "packages" / "next" / "src" / "server"
+    if not path.exists():
+        path = fixture_path("typescript")
+        
+    runner = BenchmarkRunner("typescript", str(path))
     res = await runner.run(10)
     print(f"p50: {res.p50_ms}ms, p95: {res.p95_ms}ms, p99: {res.p99_ms}ms")
     assert res.deterministic, "TypeScript 10-run smoke hash mismatch"

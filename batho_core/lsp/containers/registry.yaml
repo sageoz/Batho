@@ -8,7 +8,7 @@ languages:
     versions:
       "1.1.350":
         container:
-          base_image: "batho-lsp/base:node20-alpine"
+          base_image: "node:20-alpine"
           lsp_binary:
             source: "npm"
             package: "pyright"

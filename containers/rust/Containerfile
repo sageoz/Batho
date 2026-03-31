@@ -1,0 +1,23 @@
+# Hermetic Rust LSP container for Batho benchmark testing
+FROM rust:1.76-alpine
+
+# Install dependencies required to download prebuilt binary
+RUN apk add --no-cache curl gzip tar
+
+# Download rust-analyzer binary via rustup instead to ensure multiarch compatibility
+RUN rustup component add rust-analyzer && cp /usr/local/cargo/bin/rust-analyzer /usr/local/bin/rust-analyzer
+
+# Create unprivileged user
+RUN addgroup -S batho && adduser -S batho -G batho
+
+# Set up workspace
+WORKDIR /workspace
+RUN chown batho:batho /workspace
+
+USER batho
+
+# Verify installation
+RUN rust-analyzer --version || true
+
+# LSP runs in stdio mode
+ENTRYPOINT ["rust-analyzer"]
