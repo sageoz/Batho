@@ -44,6 +44,7 @@ from .detector import (
     strict_detector,
 )
 from .erlang import ErlangExtractor
+from .objectivec import ObjectiveCExtractor
 
 # Factory module for creating extractors without subclassing
 from .factory import (
@@ -110,6 +111,7 @@ __all__ = [
     "KotlinExtractor",
     "LuaExtractor",
     "OCamlExtractor",
+    "ObjectiveCExtractor",
     "PerlExtractor",
     "PHPExtractor",
     "PythonExtractor",

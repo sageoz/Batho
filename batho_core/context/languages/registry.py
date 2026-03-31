@@ -134,7 +134,7 @@ _EXT_TO_LANG: dict[str, str] = {
     ".fish": "bash",
     ".ksh": "bash",
     ".dash": "bash",
-    # Objective-C (conflict with .h for C - handled by order)
+    # Objective-C uses Objective-C extractor
     ".m": "objectivec",
     ".mm": "objectivec",
     # Agda
@@ -202,7 +202,8 @@ _TREE_SITTER_LANGUAGES: dict[str, str] = {
     "verilog": "verilog",
     "zig": "zig",
     "bash": "bash",
-    "objectivec": "objective-c",
+    "objectivec": "objc",
+    "objective-c": "objc",
     "agda": "agda",
     "hack": "hack",
     # Markup/Config languages
@@ -306,6 +307,7 @@ def _build_class_map() -> None:
     from .markdown import MarkdownExtractor
     from .ocaml import OCamlExtractor
     from .perl import PerlExtractor
+    from .objectivec import ObjectiveCExtractor
 
     # NEW: High-priority programming languages
     from .php import PHPExtractor
@@ -340,6 +342,7 @@ def _build_class_map() -> None:
             "scala": ScalaExtractor,
             "dart": DartExtractor,
             # NEW: Additional programming languages
+            "objectivec": ObjectiveCExtractor,
             "bash": BashExtractor,
             "lua": LuaExtractor,
             "r": RExtractor,
@@ -447,6 +450,7 @@ def _discover_language_modules() -> None:
         "scala": ("ScalaExtractor", "scala"),
         "dart": ("DartExtractor", "dart"),
         # Additional programming languages
+        "objectivec": ("ObjectiveCExtractor", "objectivec"),
         "bash": ("BashExtractor", "bash"),
         "lua": ("LuaExtractor", "lua"),
         "r": ("RExtractor", "r"),
@@ -471,7 +475,9 @@ def _discover_language_modules() -> None:
     for module_name, (class_name, lang_name) in _MODULE_CLASS_MAP.items():
         try:
             # Try to import the module dynamically
-            module = importlib.import_module(f"batho_core.context.languages.{module_name}")
+            module = importlib.import_module(
+                f"batho_core.context.languages.{module_name}"
+            )
 
             # Get the extractor class from the module
             extractor_class = getattr(module, class_name, None)
