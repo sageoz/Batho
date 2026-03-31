@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal
+from typing import Any
 
 from batho_core.time_machine import FileChange, FileChangeType
 
@@ -52,29 +51,47 @@ def parse_webhook_event(payload: dict[str, Any], headers: dict[str, str]) -> Web
     Returns:
         Parsed WebhookEvent
     """
-    # Detect platform
-    if "X-GitHub-Event" in headers:
-        return _parse_github_event(payload, headers["X-GitHub-Event"])
-    elif "X-Gitlab-Event" in headers:
-        return _parse_gitlab_event(payload, headers["X-Gitlab-Event"])
-    else:
-        raise ValueError("Unable to detect webhook platform")
+    github_event = _header(headers, "X-GitHub-Event")
+    if github_event:
+        return _parse_github_event(payload, github_event)
+
+    gitlab_event = _header(headers, "X-Gitlab-Event")
+    if gitlab_event:
+        return _parse_gitlab_event(payload, gitlab_event)
+
+    raise ValueError("Unable to detect webhook platform")
+
+
+def _header(headers: dict[str, str], name: str) -> str | None:
+    target = name.lower()
+    for key, value in headers.items():
+        if key.lower() == target:
+            return value
+    return None
+
+
+def _require(payload: dict[str, Any], key: str) -> Any:
+    if key not in payload:
+        raise ValueError(f"Missing required field: {key}")
+    return payload[key]
 
 
 def _parse_github_event(payload: dict[str, Any], event: str) -> WebhookEvent:
     """Parse GitHub webhook event."""
-    repo_info = payload["repository"]
-    repo_name = repo_info["full_name"]
+    repo_info = _require(payload, "repository")
+    repo_name = repo_info.get("full_name")
+    if not repo_name:
+        raise ValueError("Missing repository.full_name")
     
     if event == "push":
         # Extract branch from ref
-        ref = payload["ref"]
+        ref = _require(payload, "ref")
         if not ref.startswith("refs/heads/"):
             raise ValueError(f"Unsupported ref type: {ref}")
         branch = ref[11:]  # Remove 'refs/heads/'
         
         # Get commit hash
-        commit_hash = payload["after"]
+        commit_hash = _require(payload, "after")
         
         # Extract file changes from commits
         changes = []
@@ -115,8 +132,8 @@ def _parse_github_event(payload: dict[str, Any], event: str) -> WebhookEvent:
         )
     
     elif event == "pull_request":
-        pr = payload["pull_request"]
-        action = payload["action"]
+        pr = _require(payload, "pull_request")
+        action = _require(payload, "action")
         
         # Map action to event type
         event_map = {
@@ -152,18 +169,20 @@ def _parse_github_event(payload: dict[str, Any], event: str) -> WebhookEvent:
 
 def _parse_gitlab_event(payload: dict[str, Any], event: str) -> WebhookEvent:
     """Parse GitLab webhook event."""
-    project = payload["project"]
-    repo_name = project["path_with_namespace"]
+    project = _require(payload, "project")
+    repo_name = project.get("path_with_namespace") or project.get("name")
+    if not repo_name:
+        raise ValueError("Missing project.path_with_namespace")
     
     if event == "Push Hook":
         # Extract branch from ref
-        ref = payload["ref"]
+        ref = _require(payload, "ref")
         if not ref.startswith("refs/heads/"):
             raise ValueError(f"Unsupported ref type: {ref}")
         branch = ref[11:]  # Remove 'refs/heads/'
         
         # Get commit hash
-        commit_hash = payload["after"]
+        commit_hash = _require(payload, "after")
         
         # Extract file changes from commits
         changes = []
@@ -204,8 +223,36 @@ def _parse_gitlab_event(payload: dict[str, Any], event: str) -> WebhookEvent:
         )
     
     elif event == "Merge Request Hook":
-        # TODO: Implement GitLab MR parsing
-        raise NotImplementedError("GitLab MR parsing not yet implemented")
+        attrs = _require(payload, "object_attributes")
+        action = attrs.get("action") or attrs.get("state")
+
+        event_map = {
+            "open": WebhookEventType.GITLAB_MR_OPENED,
+            "opened": WebhookEventType.GITLAB_MR_OPENED,
+            "update": WebhookEventType.GITLAB_MR_UPDATED,
+            "updated": WebhookEventType.GITLAB_MR_UPDATED,
+            "close": WebhookEventType.GITLAB_MR_CLOSED,
+            "closed": WebhookEventType.GITLAB_MR_CLOSED,
+            "merge": WebhookEventType.GITLAB_MR_CLOSED,
+            "merged": WebhookEventType.GITLAB_MR_CLOSED,
+        }
+
+        if action not in event_map:
+            raise ValueError(f"Unsupported GitLab MR action: {action}")
+
+        branch = attrs.get("source_branch") or attrs.get("target_branch") or ""
+        last_commit = attrs.get("last_commit") or {}
+        commit_hash = last_commit.get("id") or payload.get("checkout_sha") or ""
+
+        return WebhookEvent(
+            platform=WebhookPlatform.GITLAB,
+            event_type=event_map[action],
+            repository=repo_name,
+            branch=branch,
+            commit_hash=commit_hash,
+            changes=[],
+            raw_payload=payload,
+        )
     
     else:
         raise ValueError(f"Unsupported GitLab event: {event}")

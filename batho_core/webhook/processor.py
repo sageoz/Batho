@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from batho_core.time_machine import incremental_patch
 from batho_core.utils.logging import get_logger
@@ -21,11 +21,15 @@ class WebhookProcessor:
     def __init__(self, config: WebhookConfig, repo_path: Path):
         self.config = config
         self.repo_path = repo_path
-        self.queue = WebhookQueue()
+        self.queue = WebhookQueue(config=self.config.processing)
         self._ctn_dir = repo_path / ".ctn"
         self._latest_snapshot_id: Optional[str] = None
     
-    def process_webhook(self, payload: dict[str, str], headers: dict[str, str]) -> dict[str, str]:
+    def process_webhook(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
         """Process incoming webhook.
         
         Args:
@@ -39,53 +43,60 @@ class WebhookProcessor:
             # Parse event
             event = parse_webhook_event(payload, headers)
             
-            # Validate repository
-            if self.config.repository and event.repository != self.config.repository.name:
+            validation = self._validate_event(event)
+            if validation:
                 return {
-                    "status": "error",
-                    "message": f"Repository mismatch: expected {self.config.repository.name}, got {event.repository}"
+                    "status": validation["status"],
+                    "message": validation["message"],
                 }
-            
-            # Validate branch
-            if self.config.repository and event.branch not in self.config.repository.branches:
-                return {
-                    "status": "ignored",
-                    "message": f"Branch {event.branch} not in watched branches"
-                }
-            
+
             # Queue for processing
             event_id = str(uuid.uuid4())
             queue_item = QueueItem(
                 event_id=event_id,
-                event={"payload": payload, "headers": headers}
+                event={"payload": payload, "headers": headers},
+                priority=self._event_priority(event),
+                max_attempts=max(1, self.config.processing.retry_attempts),
             )
-            
+
             if not self.queue.put(queue_item):
+                logger.warning(
+                    "queue_unavailable_fallback_sync",
+                    event_id=event_id,
+                    repository=event.repository,
+                )
+                success = self._handle_queue_item(queue_item)
+                if not success:
+                    return {
+                        "status": "error",
+                        "message": "Queue unavailable and synchronous processing failed",
+                    }
                 return {
-                    "status": "error",
-                    "message": "Queue full, please try again"
+                    "status": "processed",
+                    "event_id": event_id,
+                    "message": "Webhook processed synchronously",
                 }
-            
+
             logger.info(
                 "webhook_queued",
                 event_id=event_id,
                 platform=event.platform.value,
                 event_type=event.event_type.value,
                 repository=event.repository,
-                branch=event.branch
+                branch=event.branch,
             )
-            
+
             return {
                 "status": "queued",
                 "event_id": event_id,
-                "message": "Webhook queued for processing"
+                "message": "Webhook queued for processing",
             }
-            
+
         except Exception as e:
             logger.error("webhook_processing_error", error=str(e))
             return {
                 "status": "error",
-                "message": f"Processing error: {str(e)}"
+                "message": f"Processing error: {str(e)}",
             }
     
     def start(self) -> None:
@@ -112,50 +123,55 @@ class WebhookProcessor:
                 "processing_webhook",
                 event_id=item.event_id,
                 platform=event.platform.value,
-                event_type=event.event_type.value
+                event_type=event.event_type.value,
             )
-            
+
             # Get latest snapshot if not cached
             if not self._latest_snapshot_id:
                 self._latest_snapshot_id = self._find_latest_snapshot()
-            
+
+            if not self._latest_snapshot_id:
+                logger.error(
+                    "webhook_processing_no_snapshot",
+                    event_id=item.event_id,
+                    ctn_dir=str(self._ctn_dir),
+                )
+                return False
+
             # Process changes
             if event.changes:
                 result = incremental_patch(
                     self._ctn_dir,
                     self._latest_snapshot_id or "",
-                    event.changes
+                    event.changes,
                 )
-                
+
                 if result.get("success"):
                     self._latest_snapshot_id = result.get("new_snapshot_id")
                     logger.info(
                         "webhook_processed",
                         event_id=item.event_id,
                         new_snapshot_id=self._latest_snapshot_id,
-                        changes_count=len(event.changes)
+                        changes_count=len(event.changes),
                     )
                     return True
                 else:
                     logger.error(
                         "incremental_patch_failed",
                         event_id=item.event_id,
-                        error=result.get("error")
+                        error=result.get("error"),
                     )
                     return False
             else:
                 # No changes to process
-                logger.info(
-                    "webhook_no_changes",
-                    event_id=item.event_id
-                )
+                logger.info("webhook_no_changes", event_id=item.event_id)
                 return True
                 
         except Exception as e:
             logger.error(
                 "queue_item_processing_error",
                 event_id=item.event_id,
-                error=str(e)
+                error=str(e),
             )
             return False
     
@@ -169,3 +185,35 @@ class WebhookProcessor:
             latest = max(snapshots, key=lambda s: s.get("created_at", ""))
             return latest.get("snapshot_id")
         return None
+
+    def _validate_event(self, event: WebhookEvent) -> dict[str, str] | None:
+        if self.config.repository and event.repository != self.config.repository.name:
+            return {
+                "status": "error",
+                "message": (
+                    f"Repository mismatch: expected {self.config.repository.name}, "
+                    f"got {event.repository}"
+                ),
+            }
+
+        if self.config.repository and event.branch:
+            if event.branch not in self.config.repository.branches:
+                return {
+                    "status": "ignored",
+                    "message": f"Branch {event.branch} not in watched branches",
+                }
+
+        return None
+
+    @staticmethod
+    def _event_priority(event: WebhookEvent) -> int:
+        priority_map = {
+            "pull_request_opened": 100,
+            "pull_request_synchronized": 100,
+            "pull_request_closed": 90,
+            "merge_request_opened": 100,
+            "merge_request_updated": 100,
+            "merge_request_closed": 90,
+            "push": 50,
+        }
+        return priority_map.get(event.event_type.value, 50)

@@ -31,7 +31,7 @@ class TestWebhookConfig:
                 "branches": ["main"]
             },
             "processing": {
-                "queue_backend": "memory"
+                "queue_backend": "sync"
             }
         }
         
@@ -47,7 +47,7 @@ class TestWebhookConfig:
         assert config.repository.platform == "github"
         assert config.repository.secret == "test-secret"
         assert config.repository.branches == ["main"]
-        assert config.processing.queue_backend == "memory"
+        assert config.processing.queue_backend == "sync"
 
 
 class TestWebhookAuth:
@@ -150,3 +150,29 @@ class TestWebhookParser:
         assert event.branch == "main"
         assert event.commit_hash == "def456"
         assert len(event.changes) == 3
+
+    def test_parse_gitlab_merge_request_event(self):
+        """Test parsing GitLab merge request event."""
+        payload = {
+            "project": {
+                "path_with_namespace": "group/repo"
+            },
+            "object_attributes": {
+                "action": "update",
+                "source_branch": "feature/auth",
+                "target_branch": "main",
+                "last_commit": {
+                    "id": "789abc"
+                }
+            }
+        }
+
+        headers = {"X-Gitlab-Event": "Merge Request Hook"}
+        event = parse_webhook_event(payload, headers)
+
+        assert event.platform.value == "gitlab"
+        assert event.event_type.value == "merge_request_updated"
+        assert event.repository == "group/repo"
+        assert event.branch == "feature/auth"
+        assert event.commit_hash == "789abc"
+        assert event.changes == []

@@ -12,20 +12,21 @@ The Batho webhook server receives GitHub and GitLab webhook events and automatic
 
 Copy the example configuration:
 ```bash
-cp .batho/webhook.yaml.example .batho/webhook.yaml
+cp batho.yaml.example batho.yaml
 ```
 
-Edit `.batho/webhook.yaml`:
+Edit `./batho.yaml`:
 ```yaml
-server:
-  host: "0.0.0.0"
-  port: 8080
-
-repository:
-  name: "your-username/your-repo"
-  platform: "github"
-  secret: "${WEBHOOK_SECRET}"  # Set as environment variable
-  branches: ["main", "develop"]
+webhook:
+  enabled: true
+  server:
+    host: "0.0.0.0"
+    port: 8080
+  repository:
+    name: "your-username/your-repo"
+    platform: "github"
+    secret: "${WEBHOOK_SECRET}"  # Set as environment variable
+    branches: ["main", "develop"]
 ```
 
 ### 2. Set Environment Variables
@@ -37,7 +38,7 @@ export WEBHOOK_SECRET="your-secret-key"
 ### 3. Start Webhook Server
 
 ```bash
-batho webhook-server --config .batho/webhook.yaml --root /path/to/repo
+batho webhook-server --root /path/to/repo
 ```
 
 The server will start and listen for webhook events at:
@@ -70,47 +71,55 @@ The server will start and listen for webhook events at:
 ### Server Configuration
 
 ```yaml
-server:
-  host: "0.0.0.0"        # Server bind address
-  port: 8080             # Server port
-  workers: 4             # Number of worker threads
+webhook:
+  server:
+    host: "0.0.0.0"        # Server bind address
+    port: 8080             # Server port
+    workers: 4             # Number of worker threads
 ```
 
 ### Repository Configuration
 
 ```yaml
-repository:
-  name: "user/repo"      # Repository name
-  platform: "github"     # "github" or "gitlab"
-  secret: "${SECRET}"    # Webhook secret (use env var)
-  branches: ["main"]     # Branches to watch
-  path: "/path/to/repo"  # Optional repo path
+webhook:
+  repository:
+    name: "user/repo"      # Repository name
+    platform: "github"     # "github" or "gitlab"
+    secret: "${SECRET}"    # Webhook secret (use env var)
+    branches: ["main"]     # Branches to watch
+    path: "/path/to/repo"  # Optional repo path
 ```
 
 ### Processing Configuration
 
 ```yaml
-processing:
-  queue_backend: "memory"        # "memory" or "redis"
-  redis_url: "${REDIS_URL}"      # Required if using redis
-  batch_size: 100                # Batch size for processing
-  timeout_seconds: 300           # Processing timeout
+webhook:
+  processing:
+    queue_backend: "celery"              # "celery" or "sync"
+    celery_broker_url: "memory://"       # Default local broker
+    celery_result_backend: "cache+memory://"
+    task_always_eager: true               # Local execution mode
+    batch_size: 100                # Batch size for processing
+    timeout_seconds: 300           # Processing timeout
+    retry_attempts: 3
 ```
 
 ### Rate Limiting
 
 ```yaml
-rate_limit:
-  requests_per_minute: 60        # Rate limit per IP
-  burst_size: 10                 # Burst capacity
+webhook:
+  rate_limit:
+    requests_per_hour: 100         # Global baseline limit
+    burst_size: 10                 # Burst capacity
 ```
 
 ### Logging
 
 ```yaml
-logging:
-  level: "INFO"           # Log level
-  file: "webhook.log"     # Optional log file
+webhook:
+  logging:
+    level: "INFO"           # Log level
+    file: "webhook.log"     # Optional log file
 ```
 
 ## How It Works
@@ -177,24 +186,27 @@ The server logs all webhook processing:
 
 ### High Memory Usage
 
-1. Switch to Redis backend: `queue_backend: "redis"`
+1. Switch to sync mode if async queueing is unnecessary: `queue_backend: "sync"`
 2. Adjust batch size downward
 3. Monitor queue size and processing rate
 
 ## Advanced Usage
 
-### Using Redis Queue
+### Using Celery Queue
 
-Install Redis:
+Install optional dependencies:
 ```bash
-pip install redis
+pip install "batho[webhooks]"
 ```
 
 Configure:
 ```yaml
-processing:
-  queue_backend: "redis"
-  redis_url: "redis://localhost:6379"
+webhook:
+  processing:
+    queue_backend: "celery"
+    celery_broker_url: "memory://"
+    celery_result_backend: "cache+memory://"
+    task_always_eager: true
 ```
 
 ### Multiple Repositories
@@ -209,7 +221,7 @@ COPY . /app
 WORKDIR /app
 RUN pip install -e .
 EXPOSE 8080
-CMD ["batho", "webhook-server", "--config", ".batho/webhook.yaml"]
+CMD ["batho", "webhook-server"]
 ```
 
 ## Integration with CI/CD
