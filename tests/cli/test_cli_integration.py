@@ -66,5 +66,12 @@ class TestCLIIntegration:
         assert rc == 0
 
     def test_webhook_via_main(self):
-        rc = main(["webhook", "--payload", '{"event":"push"}'])
+        rc = main([
+            "webhook",
+            "--payload",
+            (
+                '{"event":"push","ref":"refs/heads/main","after":"abc123",'
+                '"repository":{"full_name":"u/r"},"commits":[]}'
+            ),
+        ])
         assert rc == 0

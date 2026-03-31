@@ -1,8 +1,9 @@
-"""Batho Core CLI (indexing, stats, invalidate).
+"""Batho Core CLI (indexing, stats, invalidate, webhook).
 
 - Index: builds code graph, repomap, writes JSON/MD outputs without LLM or UniversalMemory.
 - Stats: show current index metadata.
 - Invalidate: clear file cache to force next full parse.
+- Webhook Server: receive and process GitHub/GitLab webhook events.
 
 Outputs (default):
 - .ctn/<index_id>/graph.json       — Entities + relationships
@@ -24,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from batho_core.config import get_build_info, get_config_cached
+from batho_core.config import get_build_info, get_config_cached, reload_config
 from batho_core.context.codegraph import CodeGraphIndexer, InMemoryGraph
 from batho_core.context.languages.detector import default_detector
 from batho_core.context.languages.registry import (
@@ -35,8 +36,10 @@ from batho_core.context.c4_generator import C4Generator
 from batho_core.context.c4_structurizr import StructurizrFormatter
 from batho_core.context.stack_detector import detect_stack
 from batho_core.time_machine import (
-    compute_staleness,
+    generate_snapshot_id,
     create_snapshot,
+    list_snapshots,
+    load_snapshot,
     diff_snapshots,
     incremental_patch,
     list_snapshots,
@@ -48,7 +51,9 @@ from batho_core.time_machine import (
     FileChangeSummary,
     FileTrackingConfig,
     PatchOperation,
+    compute_staleness,
 )
+from batho_core.webhook import WebhookServer, WebhookConfig
 from batho_core.utils.file_io import read_file_bytes, write_atomically, _is_binary
 from batho_core.utils.hash import compute_bytes_hash, compute_file_hash
 from batho_core.utils.ignore import is_ignored, load_ignore_spec
@@ -617,6 +622,11 @@ def cmd_index(args: argparse.Namespace) -> int:
             "indexer", {}
         ).get("metrics_output")
         if metrics_path:
+            # Resolve relative paths against the indexed repo root
+            metrics_path_obj = Path(metrics_path)
+            if not metrics_path_obj.is_absolute():
+                metrics_path_obj = root / metrics_path
+            
             metrics_payload = {
                 "index_id": index_id,
                 "timestamp": entry["timestamp"],
@@ -626,7 +636,7 @@ def cmd_index(args: argparse.Namespace) -> int:
                 "metrics": metrics,
             }
             try:
-                _write_metrics(Path(metrics_path), metrics_payload)
+                _write_metrics(metrics_path_obj, metrics_payload)
             except OSError as exc:
                 LOGGER.warning(
                     "metrics_write_failed", path=metrics_path, error=str(exc)
@@ -1260,8 +1270,66 @@ def cmd_webhook(args: argparse.Namespace) -> int:
     except json.JSONDecodeError:
         print("❌ Invalid JSON payload")
         return 1
-    result = webhook_stub(payload)
+
+    try:
+        headers = json.loads(getattr(args, "headers", "{}") or "{}")
+        if not isinstance(headers, dict):
+            raise ValueError("headers must be a JSON object")
+    except Exception:
+        print("❌ Invalid headers JSON")
+        return 1
+
+    result = webhook_stub(payload, headers=headers)
     print(json.dumps(result, indent=2))
+    return 0 if result.get("status") != "error" else 1
+
+
+def cmd_webhook_server(args: argparse.Namespace) -> int:
+    """Start webhook server for continuous processing."""
+    config_path = Path("batho.yaml")
+    if not config_path.exists():
+        print("❌ Root config file not found: ./batho.yaml")
+        return 1
+
+    try:
+        full_config = reload_config()
+        config = WebhookConfig.from_dict(full_config.get("webhook") or {})
+    except Exception as e:
+        print(f"❌ Failed to load webhook config from ./batho.yaml: {e}")
+        return 1
+    
+    # Validate repository configuration
+    if not config.repository:
+        print("❌ Repository not configured")
+        return 1
+    
+    # Get repository path
+    repo_path = Path(args.root or ".").resolve()
+    if not repo_path.exists():
+        print(f"❌ Repository path does not exist: {repo_path}")
+        return 1
+    
+    print(f"🚀 Starting webhook server for {config.repository.name}")
+    print(f"   Platform: {config.repository.platform}")
+    print(
+        f"   Endpoint: http://{config.server.host}:{config.server.port}{config.server.endpoint}"
+    )
+    print(
+        f"   Health: http://{config.server.host}:{config.server.port}{config.server.health_endpoint}"
+    )
+    print(f"   Repository: {repo_path}")
+    print()
+    
+    # Start server
+    server = WebhookServer(config, repo_path)
+    
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down webhook server...")
+        server.stop()
+        print("✅ Server stopped")
+    
     return 0
 
 
@@ -1682,8 +1750,13 @@ def build_parser() -> argparse.ArgumentParser:
     cherry_pick.add_argument("--dry-run", action="store_true", help="Preview without applying")
     cherry_pick.set_defaults(func=cmd_cherry_pick)
 
-    wh = sub.add_parser("webhook", help="Webhook stub for push/PR events")
+    wh = sub.add_parser("webhook", help="Validate webhook payload parsing")
     wh.add_argument("--payload", required=True, help="JSON payload string")
+    wh.add_argument(
+        "--headers",
+        default="{}",
+        help="Optional JSON headers (e.g. {'X-GitHub-Event':'push'})",
+    )
     wh.set_defaults(func=cmd_webhook)
 
     inv = sub.add_parser("invalidate", help="Clear file cache")
@@ -1777,6 +1850,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Token budget for compressed mode (default: 12000)",
     )
     repomap.set_defaults(func=cmd_repomap)
+
+    ws = sub.add_parser("webhook-server", help="Start webhook server using ./batho.yaml")
+    ws.add_argument("--root", help="Path to repository root (default: current directory)")
+    ws.set_defaults(func=cmd_webhook_server)
 
     return parser
 

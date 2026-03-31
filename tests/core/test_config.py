@@ -1,9 +1,7 @@
 """Tests for batho_core.config module."""
 from __future__ import annotations
 
-import json
 import logging
-import os
 from pathlib import Path
 
 import pytest
@@ -128,34 +126,35 @@ class TestGetConfig:
 
 class TestConfigFileLoading:
 
-    def test_json_config(self, tmp_path: Path):
-        cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({"logging": {"level": "WARNING"}}))
-        cfg = get_config(config_file=str(cfg_file))
-        assert cfg["logging"]["level"] == logging.WARNING
-
-    def test_yaml_config(self, tmp_path: Path):
-        cfg_file = tmp_path / "config.yaml"
+    def test_root_yaml_config(self, tmp_path: Path, monkeypatch):
+        cfg_file = tmp_path / "batho.yaml"
         cfg_file.write_text("logging:\n  level: ERROR\n")
-        cfg = get_config(config_file=str(cfg_file))
+        monkeypatch.chdir(tmp_path)
+
+        get_config_cached.cache_clear()
+        cfg = get_config()
         assert cfg["logging"]["level"] == logging.ERROR
 
-    def test_toml_config(self, tmp_path: Path):
-        cfg_file = tmp_path / "config.toml"
-        cfg_file.write_text('[logging]\nlevel = "DEBUG"\n')
-        cfg = get_config(config_file=str(cfg_file))
-        assert cfg["logging"]["level"] == logging.DEBUG
+    def test_missing_root_config_uses_defaults(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
 
-    def test_invalid_config_file_falls_back(self, tmp_path: Path):
-        cfg_file = tmp_path / "bad.json"
-        cfg_file.write_text("not valid json{{{")
-        cfg = get_config(config_file=str(cfg_file))
-        # Should fall back to defaults
+        get_config_cached.cache_clear()
+        cfg = get_config()
+        assert isinstance(cfg, dict)
+        assert "logging" in cfg
+
+    def test_invalid_root_config_falls_back(self, tmp_path: Path, monkeypatch):
+        cfg_file = tmp_path / "batho.yaml"
+        cfg_file.write_text("not valid yaml{{{")
+        monkeypatch.chdir(tmp_path)
+
+        get_config_cached.cache_clear()
+        cfg = get_config()
         assert isinstance(cfg, dict)
         assert "logging" in cfg
 
     def test_unsupported_format(self, tmp_path: Path):
-        cfg_file = tmp_path / "config.ini"
+        cfg_file = tmp_path / "config.json"
         cfg_file.write_text("[section]\nkey=val\n")
         with pytest.raises(ValueError, match="Unsupported"):
             _load_config_file(cfg_file)

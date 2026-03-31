@@ -203,7 +203,6 @@ _TREE_SITTER_LANGUAGES: dict[str, str] = {
     "zig": "zig",
     "bash": "bash",
     "objectivec": "objc",
-    "objective-c": "objc",
     "agda": "agda",
     "hack": "hack",
     # Markup/Config languages
@@ -462,6 +461,7 @@ def _discover_language_modules() -> None:
         "hack": ("HackExtractor", "hack"),
         "zig": ("ZigExtractor", "zig"),
         "verilog": ("VerilogExtractor", "verilog"),
+        "objectivec": ("ObjectiveCExtractor", "objectivec"),
         # Markup/Config languages
         "json": ("JSONExtractor", "json"),
         "yaml": ("YAMLExtractor", "yaml"),

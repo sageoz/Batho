@@ -2,14 +2,14 @@
 context/languages/objectivec.py — Objective-C ASTExtractor subclass.
 
 Capture coverage:
-  - class interfaces (@interface) with inheritance
-  - class implementations (@implementation)
-  - protocol declarations (@protocol)
-  - method declarations (in @interface)
-  - method definitions (in @implementation)
-  - property declarations (@property)
-  - function definitions (C-style)
-  - import statements (#import #include)
+  - interface declarations (with superclass, protocols)
+  - implementation definitions
+  - protocol declarations
+  - method declarations (instance and class methods)
+  - property declarations
+  - category definitions
+  - class extensions
+  - import statements
   - function/method calls
 """
 
@@ -22,60 +22,84 @@ class ObjectiveCExtractor(ASTExtractor):
     """Tree-sitter based extractor for Objective-C source files."""
 
     def __init__(self) -> None:
-        super().__init__("objc")  # Make sure your registry uses "objc"
+        super().__init__("objc")
 
     def _query_source(self) -> str:
         return r"""
-; ── Class interfaces ─────────────────────────────────────────────────────
+; ── Class interface declarations ───────────────────────────────────────────────
 (class_interface
-  name: (identifier) @def.class.name)
+  !category
+  "@interface"
+  (identifier) @def.class.name
+  (":" (identifier) @def.class.extends)?
+  (parameterized_arguments
+    (type_name
+      (type_identifier) @def.class.implements))?)
+
+; ── Inheritance / protocol relationships ──────────────────────────────────────
+(class_interface
+  ":" (identifier) @ref.inherit)
 
 (class_interface
-  superclass: (identifier) @def.class.extends)
+  (parameterized_arguments
+    (type_name
+      (type_identifier) @ref.implement)))
 
-; ── Class implementations ────────────────────────────────────────────────
-(class_implementation
-  name: (identifier) @def.class.name)
+; ── Categories and class extensions ────────────────────────────────────────────
+(class_interface
+  "@interface"
+  (identifier) @def.interface.extends
+  "(" category: (identifier) @def.interface.name ")")
 
-; ── Protocol declarations ────────────────────────────────────────────────
+(class_interface
+  "@interface"
+  (identifier) @def.interface.name
+  "(" ")")
+
+; ── Protocol declarations ───────────────────────────────────────────────────────
 (protocol_declaration
-  name: (identifier) @def.protocol.name)
+  (identifier) @def.protocol.name
+  (protocol_reference_list
+    (identifier) @def.protocol.implements)?)
 
-; ── Property declarations ────────────────────────────────────────────────
-(property_declaration
-  (identifier) @def.property.name)
+(protocol_declaration
+  (protocol_reference_list
+    (identifier) @ref.implement))
 
-(property_declaration
-  type: (type_identifier) @def.property.type)
-
-; ── Method declarations (in @interface) ──────────────────────────────────
+; ── Method declarations / definitions ─────────────────────────────────────────
 (method_declaration
-  selector: (selector) @def.method.name)
+  ["-" "+"] @def.method.receiver
+  (method_type) @def.method.return_type
+  (identifier) @def.method.name
+  (method_parameter)? @def.method.params)
 
-; ── Method definitions (in @implementation) ──────────────────────────────
 (method_definition
-  selector: (selector) @def.method.name)
+  ["-" "+"] @def.method.receiver
+  (method_type) @def.method.return_type
+  (identifier) @def.method.name
+  (method_parameter)? @def.method.params)
 
-; ── Function definitions (C-style) ───────────────────────────────────────
-(function_definition
-  declarator: (function_declarator
-    declarator: (identifier) @def.function.name))
+; ── Property declarations ─────────────────────────────────────────────────────
+(property_declaration
+  (property_attributes_declaration)? @def.field.visibility
+  (struct_declaration
+    [(type_identifier) (primitive_type)] @def.field.type
+    (struct_declarator
+      [
+        (identifier) @def.field.name
+        (pointer_declarator
+          (identifier) @def.field.name)
+      ])))
 
-; ── Import statements ────────────────────────────────────────────────────
-(preproc_include
-  path: (system_lib_string) @ref.import)
+; ── Class implementation ────────────────────────────────────────────────────────
+(class_implementation (identifier) @def.class.name)
 
-(preproc_include
-  path: (string_literal) @ref.import)
+; ── Import statements (#import) ────────────────────────────────────────────────
+(preproc_include (system_lib_string) @ref.import)
+(preproc_include (string_literal) @ref.import)
 
-; ── Calls ───────────────────────────────────────────────────────────────
-(call_expression
-  function: (identifier) @ref.call)
-
-(call_expression
-  function: (member_expression
-    property: (identifier) @ref.call))
-
+; ── Message sends (selector calls) ─────────────────────────────────────────────
 (message_expression
-  selector: (selector) @ref.call)
+  (identifier)
+  (identifier) @ref.call)
 """

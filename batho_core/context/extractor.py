@@ -61,6 +61,7 @@ _CAPTURE_ENTITY_MAP: dict[str, EntityType] = {
     "def.module": EntityType.MODULE,
     "def.struct": EntityType.STRUCT,
     "def.interface": EntityType.INTERFACE,
+    "def.protocol": EntityType.INTERFACE,
     "def.field": EntityType.FIELD,
     "def.enum": EntityType.ENUM,
     "def.trait": EntityType.TRAIT,

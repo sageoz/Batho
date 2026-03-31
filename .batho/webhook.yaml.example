@@ -1,0 +1,13 @@
+# Deprecated: webhook-only config has been replaced by unified root config.
+# Use ./batho.yaml and ./batho.yaml.example at repo root instead.
+#
+# Example:
+# webhook:
+#   enabled: true
+#   server:
+#     host: 0.0.0.0
+#     port: 8080
+#   repository:
+#     name: your-org/your-repo
+#     platform: github
+#     secret: ${WEBHOOK_SECRET}

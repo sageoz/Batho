@@ -1,0 +1,97 @@
+# Batho unified root configuration
+# Copy this file to ./batho.yaml and edit values for your environment.
+
+logging:
+  level: INFO               # DEBUG | INFO | WARNING | ERROR | CRITICAL
+  json_format: null         # true = JSON logs, false = console logs, null = auto
+
+paths:
+  ctn_dir: .ctn             # Output/index directory
+
+indexer:
+  max_file_size_kb: 500
+  max_indexed_files: 200000
+  max_workers: 0            # 0 = auto
+  max_files: null           # Optional hard cap for files processed
+  ignore_patterns: []       # Extra glob patterns
+  ignore_files: null        # null uses defaults; or provide list of ignore filenames
+  metrics_output: .ctn/metrics.json
+  fail_on_warning: false
+  strict: false
+
+patch:
+  timeout_seconds: 300
+  max_changes: 10000
+  audit_log_path: .ctn/patch_audit.log
+  history_days: 90
+  max_count: 1000
+  cleanup_on_startup: false
+
+flags:
+  fail_on_warning: false
+  strict: false
+  audit_log_enabled: true
+  enable_llm: false
+
+schemas:
+  graph: graph.v1
+  repomap: repomap.v1
+  snapshot: snapshot.v1
+  index_metadata: index-metadata.v1
+  file_cache: file-cache.v1
+
+webhook:
+  enabled: false            # Safer default; set true to activate webhook processing
+
+  server:
+    host: 0.0.0.0
+    port: 8080
+    workers: 4
+    endpoint: /webhook
+    health_endpoint: /health
+
+  # REQUIRED when webhook.enabled=true
+  # Example GitHub:
+  # repository:
+  #   name: your-org/your-repo
+  #   platform: github
+  #   secret: ${WEBHOOK_SECRET}
+  #   branches: [main, develop]
+  # Example GitLab:
+  # repository:
+  #   name: your-group/your-repo
+  #   platform: gitlab
+  #   secret: ${WEBHOOK_SECRET}
+  #   branches: [main]
+  repository:
+    name: your-org/your-repo
+    platform: github        # github | gitlab
+    secret: ${WEBHOOK_SECRET}
+    github_secret: null     # Optional provider-specific override
+    gitlab_token: null      # Optional provider-specific override
+    branches: [main, develop]
+    path: null              # Optional repo path override
+    allowed_ips: []         # Optional repository-level allowlist (IPs/CIDRs)
+    rate_limit_per_hour: 100
+
+  processing:
+    queue_backend: celery   # celery | sync
+    celery_broker_url: memory://
+    celery_result_backend: cache+memory://
+    task_always_eager: true
+    task_store_eager_result: false
+    batch_size: 100
+    timeout_seconds: 300
+    retry_attempts: 3
+
+  rate_limit:
+    requests_per_hour: 100  # Global fallback limit
+    burst_size: 10
+
+  logging:
+    level: INFO
+    file: null              # e.g. .ctn/webhook.log
+
+  github_secret: null       # Optional top-level secret override
+  gitlab_token: null        # Optional top-level token override
+  allowed_ips: []           # Optional global allowlist (IPs/CIDRs)

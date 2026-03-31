@@ -1473,16 +1473,59 @@ def apply_deltas_to_snapshot(ctn_dir: Path, base_snapshot_id: str, deltas: dict[
         return None
 
 
-def webhook_stub(event_payload: dict[str, Any]) -> dict[str, Any]:
-    """Placeholder webhook handler for GitHub push/PR events."""
-    # NOTE: Commented placeholder logic; keep minimal stub return to avoid accidental use.
-    # event_type = event_payload.get("event") or "unknown"
-    # repo = event_payload.get("repository", {}).get("full_name")
-    # logger.info("webhook_stub", event=event_type, repo=repo)
-    logger.info("webhook_stub", status="not_implemented")
-    return {
-        "event": event_payload.get("event") or "unknown",
-        "repo": event_payload.get("repository", {}).get("full_name"),
-        "status": "not_implemented",
-        "note": "webhook handling deferred to v2",
-    }
+def webhook_stub(
+    event_payload: dict[str, Any],
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Compatibility shim for lightweight webhook payload validation.
+
+    This helper is retained for CLI compatibility. Production webhook serving is
+    implemented in `batho_core.webhook`.
+    """
+    from batho_core.webhook.parser import parse_webhook_event
+
+    incoming_headers = dict(headers or {})
+
+    if not incoming_headers:
+        if "repository" in event_payload:
+            github_event = event_payload.get("event")
+            if not github_event:
+                github_event = "pull_request" if "pull_request" in event_payload else "push"
+            incoming_headers["X-GitHub-Event"] = github_event
+        elif "project" in event_payload:
+            gitlab_event = event_payload.get("event")
+            if not gitlab_event:
+                gitlab_event = "Merge Request Hook" if "object_attributes" in event_payload else "Push Hook"
+            incoming_headers["X-Gitlab-Event"] = gitlab_event
+
+    repo = (
+        event_payload.get("repository", {}).get("full_name")
+        or event_payload.get("project", {}).get("path_with_namespace")
+        or event_payload.get("project", {}).get("name")
+    )
+
+    try:
+        parsed = parse_webhook_event(event_payload, incoming_headers)
+        logger.info(
+            "webhook_stub_parsed",
+            event_type=parsed.event_type.value,
+            repository=parsed.repository,
+            changes=len(parsed.changes),
+        )
+        return {
+            "event": parsed.event_type.value,
+            "repo": parsed.repository,
+            "status": "parsed",
+            "platform": parsed.platform.value,
+            "branch": parsed.branch,
+            "commit": parsed.commit_hash,
+            "changes": len(parsed.changes),
+        }
+    except Exception as exc:
+        logger.warning("webhook_stub_parse_failed", error=str(exc))
+        return {
+            "event": event_payload.get("event") or "unknown",
+            "repo": repo,
+            "status": "error",
+            "message": str(exc),
+        }

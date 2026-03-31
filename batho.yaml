@@ -1,0 +1,66 @@
+logging:
+  level: INFO
+  json_format: null
+
+paths:
+  ctn_dir: .ctn
+
+indexer:
+  max_file_size_kb: 500
+  max_indexed_files: 200000
+  max_workers: 0
+  max_files: null
+  ignore_patterns: []
+  ignore_files: null
+  metrics_output: .ctn/metrics.json
+  fail_on_warning: false
+  strict: false
+
+patch:
+  timeout_seconds: 300
+  max_changes: 10000
+  audit_log_path: .ctn/patch_audit.log
+  history_days: 90
+  max_count: 1000
+  cleanup_on_startup: false
+
+flags:
+  fail_on_warning: false
+  strict: false
+  audit_log_enabled: true
+  enable_llm: false
+
+schemas:
+  graph: graph.v1
+  repomap: repomap.v1
+  snapshot: snapshot.v1
+  index_metadata: index-metadata.v1
+  file_cache: file-cache.v1
+
+webhook:
+  enabled: false
+  server:
+    host: 0.0.0.0
+    port: 8080
+    workers: 4
+    endpoint: /webhook
+    health_endpoint: /health
+  repository: null
+  processing:
+    queue_backend: celery
+    celery_broker_url: memory://
+    celery_result_backend: cache+memory://
+    task_always_eager: true
+    task_store_eager_result: false
+    batch_size: 100
+    timeout_seconds: 300
+    retry_attempts: 3
+  rate_limit:
+    requests_per_hour: 100
+    burst_size: 10
+  logging:
+    level: INFO
+    file: null
+  github_secret: null
+  gitlab_token: null
+  allowed_ips: []

@@ -3,7 +3,7 @@ Typed configuration and build info helpers for Batho core.
 
 Features
 - Pydantic-validated config with sane defaults.
-- Optional config file override (JSON/YAML/TOML) via ``BATHO_CONFIG_FILE``.
+- Single root config file ``./batho.yaml`` as the source of truth.
 - Env-variable overrides kept for compatibility.
 - Strict/fail-on-warning flags for regulated environments.
 - Schema identifiers for persisted artifacts.
@@ -14,7 +14,6 @@ from __future__ import annotations
 import importlib.metadata
 import logging
 import os
-import tomllib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -29,7 +28,7 @@ DEFAULT_MAX_INDEXED_FILES = 200000  # allow large repos
 DEFAULT_INDEX_WORKERS = 0  # auto
 DEFAULT_IGNORE_FILES: list[str] | None = None
 DEFAULT_METRICS_OUTPUT: str | None = ".ctn/metrics.json"
-DEFAULT_CONFIG_FILE_ENV = "BATHO_CONFIG_FILE"
+DEFAULT_ROOT_CONFIG_FILE = "batho.yaml"
 DEFAULT_PATCH_TIMEOUT_SECONDS = 300  # 5 minutes
 DEFAULT_MAX_PATCH_CHANGES = 10000  # Max changes in a single patch
 DEFAULT_PATCH_HISTORY_DAYS = 90  # Retention policy for patches
@@ -105,6 +104,8 @@ class Config(BaseModel):
     indexer: IndexerConfig = Field(default_factory=IndexerConfig)
     patch: dict = Field(default_factory=dict)
     flags: FlagsConfig = Field(default_factory=FlagsConfig)
+    schemas: dict = Field(default_factory=dict)
+    webhook: dict = Field(default_factory=dict)
 
     @field_validator("logging")
     @classmethod
@@ -147,12 +148,6 @@ def _load_config_file(path: Path) -> dict[str, Any]:
         raise FileNotFoundError(path)
     if path.suffix.lower() in {".yaml", ".yml"}:
         return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if path.suffix.lower() == ".json":
-        import json
-
-        return json.loads(path.read_text(encoding="utf-8"))
-    if path.suffix.lower() == ".toml":
-        return tomllib.loads(path.read_text(encoding="utf-8"))
     raise ValueError(f"Unsupported config file format: {path.suffix}")
 
 
@@ -181,8 +176,8 @@ def get_build_info() -> dict[str, str]:
     return {"version": version, "build": build}
 
 
-def get_config(config_file: str | None = None) -> Dict[str, Any]:
-    """Return validated config as a plain dict (backward compatible)."""
+def get_config() -> Dict[str, Any]:
+    """Return validated config as a plain dict sourced from ./batho.yaml."""
 
     base_cfg: Dict[str, Any] = {
         "logging": {"level": DEFAULT_LOG_LEVEL, "json_format": None},
@@ -214,13 +209,42 @@ def get_config(config_file: str | None = None) -> Dict[str, Any]:
             "index_metadata": INDEX_METADATA_SCHEMA_VERSION,
             "file_cache": FILE_CACHE_SCHEMA_VERSION,
         },
+        "webhook": {
+            "enabled": False,
+            "server": {
+                "host": "0.0.0.0",
+                "port": 8080,
+                "workers": 4,
+                "endpoint": "/webhook",
+                "health_endpoint": "/health",
+            },
+            "repository": None,
+            "processing": {
+                "queue_backend": "celery",
+                "celery_broker_url": "memory://",
+                "celery_result_backend": "cache+memory://",
+                "task_always_eager": True,
+                "task_store_eager_result": False,
+                "batch_size": 100,
+                "timeout_seconds": 300,
+                "retry_attempts": 3,
+            },
+            "rate_limit": {
+                "requests_per_hour": 100,
+                "burst_size": 10,
+            },
+            "logging": {
+                "level": "INFO",
+                "file": None,
+            },
+            "github_secret": None,
+            "gitlab_token": None,
+            "allowed_ips": [],
+        },
     }
 
-    # Config file override
-    cfg_path_env = _env(DEFAULT_CONFIG_FILE_ENV)
-    cfg_path = (
-        Path(config_file or cfg_path_env) if (config_file or cfg_path_env) else None
-    )
+    # Root config override from ./batho.yaml only
+    cfg_path = Path(DEFAULT_ROOT_CONFIG_FILE)
     if cfg_path:
         try:
             file_cfg = _load_config_file(cfg_path)
@@ -317,10 +341,10 @@ def get_config(config_file: str | None = None) -> Dict[str, Any]:
 
 
 @lru_cache(maxsize=None)
-def get_config_cached(config_file: str | None = None) -> Dict[str, Any]:
-    return get_config(config_file=config_file)
+def get_config_cached() -> Dict[str, Any]:
+    return get_config()
 
 
-def reload_config(config_file: str | None = None) -> Dict[str, Any]:
+def reload_config() -> Dict[str, Any]:
     get_config_cached.cache_clear()
-    return get_config_cached(config_file=config_file)
+    return get_config_cached()
