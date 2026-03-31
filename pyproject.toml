@@ -42,6 +42,11 @@ test = [
     "pytest-xdist>=3.0.0",
     "pytest-timeout>=2.3.0",
 ]
+webhooks = [
+    "celery>=5.3.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.30.0",
+]
 
 [project.scripts]
 batho = "batho:main"

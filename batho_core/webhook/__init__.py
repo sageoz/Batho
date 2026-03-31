@@ -7,6 +7,7 @@ from .server import WebhookServer
 from .auth import verify_github_signature, verify_gitlab_token
 from .parser import WebhookEvent, parse_webhook_event
 from .processor import WebhookProcessor
+from .handler import WebhookHandler, WebhookResult
 from .config import WebhookConfig
 
 __all__ = [
@@ -16,5 +17,7 @@ __all__ = [
     "WebhookEvent",
     "parse_webhook_event",
     "WebhookProcessor",
+    "WebhookHandler",
+    "WebhookResult",
     "WebhookConfig",
 ]

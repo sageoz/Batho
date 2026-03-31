@@ -182,7 +182,12 @@ class TestCmdInvalidate:
 class TestCmdWebhook:
 
     def test_valid_payload(self, capsys):
-        args = argparse.Namespace(payload='{"event":"push","repository":{"full_name":"u/r"}}')
+        args = argparse.Namespace(
+            payload=(
+                '{"event":"push","ref":"refs/heads/main","after":"abc123",'
+                '"repository":{"full_name":"u/r"},"commits":[]}'
+            )
+        )
         result = cmd_webhook(args)
         assert result == 0
 
@@ -199,6 +204,7 @@ class TestCmdWebhook:
             json_text = '\n'.join(lines[json_start:])
             data = json.loads(json_text)
             assert data["event"] == "push"
+            assert data["status"] == "parsed"
 
     def test_invalid_payload(self):
         args = argparse.Namespace(payload="not json{{{")

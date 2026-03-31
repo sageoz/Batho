@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from typing import Optional
 
 
-def verify_github_signature(payload: bytes, signature: str, secret: str) -> bool:
+def verify_github_signature(payload: bytes, signature: str, secret: str | None) -> bool:
     """Verify GitHub webhook signature.
     
     Args:
@@ -18,7 +17,9 @@ def verify_github_signature(payload: bytes, signature: str, secret: str) -> bool
     Returns:
         True if signature is valid
     """
-    if not signature.startswith("sha256="):
+    if not signature or not signature.startswith("sha256="):
+        return False
+    if not secret:
         return False
     
     # Compute expected signature
@@ -33,7 +34,7 @@ def verify_github_signature(payload: bytes, signature: str, secret: str) -> bool
     return hmac.compare_digest(signature, expected_sig)
 
 
-def verify_gitlab_token(token: str, secret: str) -> bool:
+def verify_gitlab_token(token: str, secret: str | None) -> bool:
     """Verify GitLab webhook token.
     
     Args:
@@ -43,4 +44,6 @@ def verify_gitlab_token(token: str, secret: str) -> bool:
     Returns:
         True if token matches
     """
+    if not token or not secret:
+        return False
     return hmac.compare_digest(token, secret)

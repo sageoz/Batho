@@ -349,7 +349,7 @@ batho invalidate --root /path/to/repo
 
 ## Configuration
 
-Batho works out of the box with zero config. For advanced use, configure via environment variables or a config file.
+Batho works out of the box with zero config. For advanced use, configure via environment variables and the unified root config file `./batho.yaml`.
 
 ### Environment Variables
 
@@ -360,12 +360,11 @@ Batho works out of the box with zero config. For advanced use, configure via env
 | `BATHO_MAX_FILE_SIZE_KB` | `500` | Max file size to parse |
 | `BATHO_MAX_INDEXED_FILES` | `200000` | Hard cap on indexed files |
 | `BATHO_INDEX_WORKERS` | `0` | Worker threads (0 = auto) |
-| `BATHO_CONFIG_FILE` | — | Path to config file (JSON/YAML/TOML) |
 
 ### Config File
 
 ```yaml
-# batho.yaml
+# ./batho.yaml
 logging:
   level: DEBUG
   json_format: true
@@ -380,6 +379,9 @@ indexer:
 flags:
   strict: true
   fail_on_warning: true
+
+webhook:
+  enabled: false
 ```
 
 ---

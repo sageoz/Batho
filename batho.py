@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from batho_core.config import get_build_info, get_config_cached
+from batho_core.config import get_build_info, get_config_cached, reload_config
 from batho_core.context.codegraph import CodeGraphIndexer, InMemoryGraph
 from batho_core.context.languages.detector import default_detector
 from batho_core.context.languages.registry import (
@@ -1270,23 +1270,32 @@ def cmd_webhook(args: argparse.Namespace) -> int:
     except json.JSONDecodeError:
         print("❌ Invalid JSON payload")
         return 1
-    result = webhook_stub(payload)
+
+    try:
+        headers = json.loads(getattr(args, "headers", "{}") or "{}")
+        if not isinstance(headers, dict):
+            raise ValueError("headers must be a JSON object")
+    except Exception:
+        print("❌ Invalid headers JSON")
+        return 1
+
+    result = webhook_stub(payload, headers=headers)
     print(json.dumps(result, indent=2))
-    return 0
+    return 0 if result.get("status") != "error" else 1
 
 
 def cmd_webhook_server(args: argparse.Namespace) -> int:
     """Start webhook server for continuous processing."""
-    # Load configuration
-    config_path = Path(args.config)
+    config_path = Path("batho.yaml")
     if not config_path.exists():
-        print(f"❌ Config file not found: {config_path}")
+        print("❌ Root config file not found: ./batho.yaml")
         return 1
-    
+
     try:
-        config = WebhookConfig.from_file(config_path)
+        full_config = reload_config()
+        config = WebhookConfig.from_dict(full_config.get("webhook") or {})
     except Exception as e:
-        print(f"❌ Failed to load config: {e}")
+        print(f"❌ Failed to load webhook config from ./batho.yaml: {e}")
         return 1
     
     # Validate repository configuration
@@ -1302,8 +1311,12 @@ def cmd_webhook_server(args: argparse.Namespace) -> int:
     
     print(f"🚀 Starting webhook server for {config.repository.name}")
     print(f"   Platform: {config.repository.platform}")
-    print(f"   Endpoint: http://{config.server.host}:{config.server.port}/webhook")
-    print(f"   Health: http://{config.server.host}:{config.server.port}/health")
+    print(
+        f"   Endpoint: http://{config.server.host}:{config.server.port}{config.server.endpoint}"
+    )
+    print(
+        f"   Health: http://{config.server.host}:{config.server.port}{config.server.health_endpoint}"
+    )
     print(f"   Repository: {repo_path}")
     print()
     
@@ -1737,8 +1750,13 @@ def build_parser() -> argparse.ArgumentParser:
     cherry_pick.add_argument("--dry-run", action="store_true", help="Preview without applying")
     cherry_pick.set_defaults(func=cmd_cherry_pick)
 
-    wh = sub.add_parser("webhook", help="Webhook stub for push/PR events")
+    wh = sub.add_parser("webhook", help="Validate webhook payload parsing")
     wh.add_argument("--payload", required=True, help="JSON payload string")
+    wh.add_argument(
+        "--headers",
+        default="{}",
+        help="Optional JSON headers (e.g. {'X-GitHub-Event':'push'})",
+    )
     wh.set_defaults(func=cmd_webhook)
 
     inv = sub.add_parser("invalidate", help="Clear file cache")
@@ -1833,8 +1851,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     repomap.set_defaults(func=cmd_repomap)
 
-    ws = sub.add_parser("webhook-server", help="Start webhook server for continuous processing")
-    ws.add_argument("--config", required=True, help="Path to webhook configuration file")
+    ws = sub.add_parser("webhook-server", help="Start webhook server using ./batho.yaml")
     ws.add_argument("--root", help="Path to repository root (default: current directory)")
     ws.set_defaults(func=cmd_webhook_server)
 

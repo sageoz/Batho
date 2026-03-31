@@ -15,6 +15,8 @@ class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 8080
     workers: int = 4
+    endpoint: str = "/webhook"
+    health_endpoint: str = "/health"
 
 
 @dataclass
@@ -22,24 +24,32 @@ class RepositoryConfig:
     """Repository configuration."""
     name: str
     platform: Literal["github", "gitlab"]
-    secret: str
+    secret: Optional[str] = None
+    github_secret: Optional[str] = None
+    gitlab_token: Optional[str] = None
     branches: list[str] = field(default_factory=lambda: ["main", "develop"])
     path: Optional[Path] = None
+    allowed_ips: list[str] = field(default_factory=list)
+    rate_limit_per_hour: int = 100
 
 
 @dataclass
 class ProcessingConfig:
     """Processing configuration."""
-    queue_backend: Literal["memory", "redis"] = "memory"
-    redis_url: Optional[str] = None
+    queue_backend: Literal["celery", "sync"] = "celery"
+    celery_broker_url: str = "memory://"
+    celery_result_backend: str = "cache+memory://"
+    task_always_eager: bool = True
+    task_store_eager_result: bool = False
     batch_size: int = 100
     timeout_seconds: int = 300
+    retry_attempts: int = 3
 
 
 @dataclass
 class RateLimitConfig:
     """Rate limiting configuration."""
-    requests_per_minute: int = 60
+    requests_per_hour: int = 100
     burst_size: int = 10
 
 
@@ -53,28 +63,70 @@ class LoggingConfig:
 @dataclass
 class WebhookConfig:
     """Complete webhook configuration."""
+    enabled: bool = True
     server: ServerConfig = field(default_factory=ServerConfig)
     repository: Optional[RepositoryConfig] = None
     processing: ProcessingConfig = field(default_factory=ProcessingConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    github_secret: Optional[str] = None
+    gitlab_token: Optional[str] = None
+    allowed_ips: list[str] = field(default_factory=list)
+
+    def get_github_secret(self) -> Optional[str]:
+        if self.github_secret:
+            return self.github_secret
+        if self.repository:
+            return self.repository.github_secret or self.repository.secret
+        return None
+
+    def get_gitlab_token(self) -> Optional[str]:
+        if self.gitlab_token:
+            return self.gitlab_token
+        if self.repository:
+            return self.repository.gitlab_token or self.repository.secret
+        return None
+
+    def get_allowed_ips(self) -> list[str]:
+        merged = list(self.allowed_ips)
+        if self.repository:
+            merged.extend(self.repository.allowed_ips)
+        return [ip for ip in merged if ip]
+
+    def get_repo_rate_limit_per_hour(self) -> int:
+        if self.repository and self.repository.rate_limit_per_hour > 0:
+            return self.repository.rate_limit_per_hour
+        return max(1, self.rate_limit.requests_per_hour)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> WebhookConfig:
+        """Build webhook configuration from a dict section."""
+        payload = cls._expand_env_vars(data or {})
+        processing_data = payload.get("processing") or {}
+        rate_limit_data = payload.get("rate_limit") or {}
+
+        return cls(
+            enabled=bool(payload.get("enabled", True)),
+            server=ServerConfig(**(payload.get("server") or {})),
+            repository=(
+                RepositoryConfig(**payload["repository"])
+                if payload.get("repository")
+                else None
+            ),
+            processing=ProcessingConfig(**processing_data),
+            rate_limit=RateLimitConfig(**rate_limit_data),
+            logging=LoggingConfig(**(payload.get("logging") or {})),
+            github_secret=payload.get("github_secret"),
+            gitlab_token=payload.get("gitlab_token"),
+            allowed_ips=payload.get("allowed_ips") or [],
+        )
 
     @classmethod
     def from_file(cls, path: Path) -> WebhookConfig:
-        """Load configuration from YAML file."""
-        with open(path, "r") as f:
+        """Load webhook configuration from a YAML file."""
+        with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        
-        # Expand environment variables
-        data = cls._expand_env_vars(data)
-        
-        return cls(
-            server=ServerConfig(**data.get("server", {})),
-            repository=RepositoryConfig(**data["repository"]) if "repository" in data else None,
-            processing=ProcessingConfig(**data.get("processing", {})),
-            rate_limit=RateLimitConfig(**data.get("rate_limit", {})),
-            logging=LoggingConfig(**data.get("logging", {})),
-        )
+        return cls.from_dict(data or {})
     
     @staticmethod
     def _expand_env_vars(data: dict) -> dict:

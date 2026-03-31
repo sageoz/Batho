@@ -167,15 +167,22 @@ class TestComputeStaleness:
 class TestWebhookStub:
     def test_returns_expected_keys(self):
         result = webhook_stub(
-            {"event": "push", "repository": {"full_name": "user/repo"}}
+            {
+                "event": "push",
+                "ref": "refs/heads/main",
+                "after": "abc123",
+                "repository": {"full_name": "user/repo"},
+                "commits": [],
+            }
         )
         assert result["event"] == "push"
         assert result["repo"] == "user/repo"
-        assert result["status"] == "not_implemented"
+        assert result["status"] == "parsed"
 
     def test_missing_event(self):
         result = webhook_stub({})
         assert result["event"] == "unknown"
+        assert result["status"] == "error"
 
 
 # ---------------------------------------------------------------------------
