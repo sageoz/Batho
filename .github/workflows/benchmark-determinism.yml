@@ -1,0 +1,60 @@
+name: Benchmark Determinism
+
+on:
+  push:
+    branches:
+      - 'benchmark/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: 'Number of runs for full suite'
+        required: false
+        default: '1000'
+  schedule:
+    - cron: '0 0 * * 0' # Weekly
+
+jobs:
+  benchmark:
+    name: Benchmark ${{ matrix.language }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        language: [python, typescript, go, rust, java, cpp]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v2
+        
+      - name: Install dependencies
+        run: uv sync
+        
+      - name: Run Smoke Test
+        run: uv run pytest tests/benchmark/test_${{ matrix.language }}_determinism.py -v -m quick
+        
+      - name: Run Full Determinism Suite
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+        run: |
+          RUNS=${{ inputs.runs || '1000' }}
+          uv run python -m tests.benchmark.cli --language ${{ matrix.language }} --runs $RUNS --output results-${{ matrix.language }}-${{ matrix.os }}.json
+          
+      - name: Upload Artifacts
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ matrix.language }}-${{ matrix.os }}
+          path: results-*.json

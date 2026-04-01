@@ -1,0 +1,18 @@
+[submodule "tests/benchmark/fixtures/python"]
+	path = tests/benchmark/fixtures/python
+	url = https://github.com/tiangolo/fastapi.git
+[submodule "tests/benchmark/fixtures/typescript"]
+	path = tests/benchmark/fixtures/typescript
+	url = https://github.com/vercel/next.js.git
+[submodule "tests/benchmark/fixtures/go"]
+	path = tests/benchmark/fixtures/go
+	url = https://github.com/kubernetes/kubernetes.git
+[submodule "tests/benchmark/fixtures/rust"]
+	path = tests/benchmark/fixtures/rust
+	url = https://github.com/tokio-rs/tokio.git
+[submodule "tests/benchmark/fixtures/java"]
+	path = tests/benchmark/fixtures/java
+	url = https://github.com/spring-projects/spring-boot.git
+[submodule "tests/benchmark/fixtures/cpp"]
+	path = tests/benchmark/fixtures/cpp
+	url = https://github.com/llvm/llvm-project.git

@@ -802,7 +802,6 @@ class CodeGraphIndexer:
         if monitor and hasattr(monitor, 'get_memory_stats'):
             final_stats = monitor.get_memory_stats()
             if final_stats.rss_mb > 500:  # If memory usage is high
-                from batho_core.utils.memory_monitor import force_garbage_collection
                 gc_result = force_garbage_collection()
                 self.logger.info("memory_cleanup_performed", 
                                 memory_before_mb=f"{final_stats.rss_mb:.1f}",
@@ -1090,8 +1089,10 @@ class CodeGraphIndexer:
         module name strings for visualization purposes.
         """
         # Build name lookup: entity name → entity ID
+        # Sort by ID for determinism: when multiple entities share a name,
+        # the one with the lexicographically smallest ID always wins.
         name_to_id: dict[str, str] = {}
-        for ent in graph.entities.values():
+        for ent in sorted(graph.entities.values(), key=lambda e: e.id):
             name_to_id[ent.name] = ent.id
             if "." in ent.name:
                 name_to_id[ent.name.split(".")[-1]] = ent.id

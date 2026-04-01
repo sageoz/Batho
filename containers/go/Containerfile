@@ -1,0 +1,23 @@
+# Hermetic Go LSP container for Batho benchmark testing
+FROM golang:1.22-alpine
+
+ARG GOPLS_VERSION=v0.15.3
+
+# Install gopls
+RUN go install golang.org/x/tools/gopls@${GOPLS_VERSION}
+RUN cp /go/bin/gopls /usr/local/bin/gopls
+
+# Create unprivileged user
+RUN addgroup -S batho && adduser -S batho -G batho
+
+# Set up workspace
+WORKDIR /workspace
+RUN chown batho:batho /workspace
+
+USER batho
+
+# Verify installation
+RUN gopls version || true
+
+# LSP runs in stdio mode
+ENTRYPOINT ["gopls", "-mode=stdio"]

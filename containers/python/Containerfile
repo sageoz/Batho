@@ -1,0 +1,26 @@
+# Hermetic Pyright LSP container for Batho benchmark testing
+# Base: node:20-alpine (public, no custom base needed)
+FROM node:20-alpine
+
+ARG PYRIGHT_VERSION=1.1.350
+
+# Install Python (needed by Pyright for analysis)
+RUN apk add --no-cache python3 py3-pip
+
+# Install Pyright at pinned version
+RUN npm install -g pyright@${PYRIGHT_VERSION} --ignore-scripts
+
+# Create unprivileged user
+RUN addgroup -S batho && adduser -S batho -G batho
+
+# Set up workspace
+WORKDIR /workspace
+RUN chown batho:batho /workspace
+
+USER batho
+
+# Verify Pyright is installed
+RUN pyright-langserver --version || true
+
+# LSP runs in stdio mode — caller connects to stdin/stdout
+ENTRYPOINT ["pyright-langserver", "--stdio"]
