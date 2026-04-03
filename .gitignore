@@ -43,3 +43,7 @@ Thumbs.db
 docs/specs-batho-tui.md
 docs/plan-batho-tui-implementation.md
 docs/partially-implemented-features.md
+.windsurf/workflows/batho-market-intel-daily.md
+docs/market-intel/batho-market-intelligence-prompt.md
+docs/market-intel/batho-product-brief.md
+docs/market-intel/daily-run-template.md
