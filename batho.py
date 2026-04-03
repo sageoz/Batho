@@ -1,13 +1,13 @@
 """Batho Core CLI (indexing, stats, invalidate, webhook).
 
-- Index: builds code graph, repomap, writes JSON/MD outputs without LLM or UniversalMemory.
+- Index: builds code graph and bsg, writes JSON/MD outputs without LLM or UniversalMemory.
 - Stats: show current index metadata.
 - Invalidate: clear file cache to force next full parse.
 - Webhook Server: receive and process GitHub/GitLab webhook events.
 
 Outputs (default):
 - .ctn/<index_id>/graph.json       — Entities + relationships
-- .ctn/<index_id>/repomap.json     — RepoMap structured data
+- .ctn/<index_id>/bsg.json         — BSG structured data
 - .ctn/<index_id>/architecture.md  — Hierarchical summary (optionally compressed)
 - .ctn/index.json                  — Index metadata (current and history)
 """
@@ -31,7 +31,7 @@ from batho_core.context.languages.detector import default_detector
 from batho_core.context.languages.registry import (
     get_extractor as registry_get_extractor,
 )
-from batho_core.context.repomap import RepoMap
+from batho_core.context.bsg_map import BSGMap
 from batho_core.context.stack_detector import detect_stack
 from batho_core.time_machine import (
     generate_snapshot_id,
@@ -481,9 +481,9 @@ def cmd_index(args: argparse.Namespace) -> int:
         print("⚠️  No entities extracted. Check source files and ignore patterns.")
         return 1
 
-    repomap = RepoMap.build(graph, root=str(root))
+    bsg_map = BSGMap.build(graph, root=str(root))
     stack_info = detect_stack(root)
-    token_input_estimate = repomap.estimate_tokens()
+    token_input_estimate = bsg_map.estimate_tokens()
 
     index_id = _generate_index_id()
     versioned_dir = ctn_dir / index_id
@@ -497,19 +497,19 @@ def cmd_index(args: argparse.Namespace) -> int:
         graph_path = (
             Path(args.output_json) if args.output_json else versioned_dir / "graph.json"
         )
-        repomap_path = versioned_dir / "repomap.json"
+        bsg_path = versioned_dir / "bsg.json"
 
         _write_json(graph_path, graph.to_dict())
-        repomap_json = repomap.render_json()
-        repomap_json["stack"] = stack_info
-        _write_json(repomap_path, repomap_json)
+        bsg_json = bsg_map.render_json()
+        bsg_json["stack"] = stack_info
+        _write_json(bsg_path, bsg_json)
 
         # Generate categorized markdown outputs
         timestamp = datetime.now(timezone.utc).isoformat()
         repo_name = root.name
 
         # overview.md - Full repository overview
-        overview_content = repomap.render_overview(
+        overview_content = bsg_map.render_overview(
             stack_info=stack_info,
             repo_name=repo_name,
             timestamp=timestamp,
@@ -517,22 +517,22 @@ def cmd_index(args: argparse.Namespace) -> int:
         _write_text(context_dir / "overview.md", overview_content)
 
         # architecture.md - Main codebase only (full entities)
-        arch_content = repomap.render_category(
+        arch_content = bsg_map.render_category(
             "source", include_full_entities=True
         )
         _write_text(context_dir / "architecture.md", arch_content)
 
         # tests.md - Test files (summary format)
-        tests_content = repomap.render_category(
+        tests_content = bsg_map.render_category(
             "tests", include_full_entities=False
         )
         _write_text(context_dir / "tests.md", tests_content)
 
         # docs.md - Uncategorized categories + Documentation files (summary format)
-        uncategorized_content = repomap.render_uncategorized_categories(
+        uncategorized_content = bsg_map.render_uncategorized_categories(
             include_full_entities=False
         )
-        docs_content = repomap.render_category(
+        docs_content = bsg_map.render_category(
             "docs", include_full_entities=False
         )
         
@@ -546,7 +546,7 @@ def cmd_index(args: argparse.Namespace) -> int:
         _write_text(context_dir / "docs.md", combined_docs)
 
         # config.md - Configuration files (summary format)
-        config_content = repomap.render_category(
+        config_content = bsg_map.render_category(
             "config", include_full_entities=False
         )
         _write_text(context_dir / "config.md", config_content)
@@ -584,15 +584,15 @@ def cmd_index(args: argparse.Namespace) -> int:
             "id": index_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "root": str(root),
-            "file_count": len(repomap._by_file),
-            "entity_count": repomap.entity_count,
+            "file_count": len(bsg_map._by_file),
+            "entity_count": bsg_map.entity_count,
             "relationship_count": len(graph.relationships),
             "repo_hash": repo_hash,
             "staleness_score": compute_staleness(prev_entry, repo_hash, stats),
             "stack": stack_info,
             "outputs": {
                 "graph_json": str(graph_path.relative_to(root)),
-                "repomap_json": str(repomap_path.relative_to(root)),
+                "bsg_json": str(bsg_path.relative_to(root)),
                 "overview_md": str((context_dir / "overview.md").relative_to(root)),
                 "architecture_md": str(
                     (context_dir / "architecture.md").relative_to(root)
@@ -609,7 +609,7 @@ def cmd_index(args: argparse.Namespace) -> int:
         snapshot_id = None
         if args.snapshot:
             snapshot_id = create_snapshot(
-                ctn_dir, root, graph, repomap, label=args.snapshot_label
+                ctn_dir, root, graph, bsg_map, label=args.snapshot_label
             )
             entry["snapshot_id"] = snapshot_id
         metadata.setdefault("indexes", {})[index_id] = entry
@@ -936,10 +936,10 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
     patch_start = time.perf_counter()
     _reindex_files(root, files, indexer, graph)
 
-    repomap = RepoMap.build(graph, root=str(root))
+    bsg_map = BSGMap.build(graph, root=str(root))
     versioned_dir = ctn_dir / current_id
     graph_path = versioned_dir / "graph.json"
-    repomap_path = versioned_dir / "repomap.json"
+    bsg_path = versioned_dir / "bsg.json"
 
     context_dir = versioned_dir / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
@@ -950,15 +950,15 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         entry = metadata.get("indexes", {}).get(current_id, {})
 
         _write_json(graph_path, graph.to_dict())
-        repomap_json = repomap.render_json()
-        _write_json(repomap_path, repomap_json)
+        bsg_json = bsg_map.render_json()
+        _write_json(bsg_path, bsg_json)
 
         # Generate categorized markdown outputs
         timestamp = datetime.now(timezone.utc).isoformat()
         repo_name = root.name
 
         # overview.md
-        overview_content = repomap.render_overview(
+        overview_content = bsg_map.render_overview(
             stack_info=entry.get("stack"),
             repo_name=repo_name,
             timestamp=timestamp,
@@ -966,22 +966,22 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         _write_text(context_dir / "overview.md", overview_content)
 
         # architecture.md - Main codebase only
-        arch_content = repomap.render_category(
+        arch_content = bsg_map.render_category(
             "source", include_full_entities=True
         )
         _write_text(context_dir / "architecture.md", arch_content)
 
         # tests.md
-        tests_content = repomap.render_category(
+        tests_content = bsg_map.render_category(
             "tests", include_full_entities=False
         )
         _write_text(context_dir / "tests.md", tests_content)
 
         # docs.md - Uncategorized categories + Documentation files
-        uncategorized_content = repomap.render_uncategorized_categories(
+        uncategorized_content = bsg_map.render_uncategorized_categories(
             include_full_entities=False
         )
-        docs_content = repomap.render_category(
+        docs_content = bsg_map.render_category(
             "docs", include_full_entities=False
         )
         
@@ -995,7 +995,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         _write_text(context_dir / "docs.md", combined_docs)
 
         # config.md
-        config_content = repomap.render_category(
+        config_content = bsg_map.render_category(
             "config", include_full_entities=False
         )
         _write_text(context_dir / "config.md", config_content)
@@ -1004,7 +1004,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         entry = metadata.get("indexes", {}).get(current_id, {})
         prev_stats = entry.get("stats", {}) if isinstance(entry, dict) else {}
         repo_hash = _compute_repo_hash(root)
-        token_input_estimate = repomap.estimate_tokens()
+        token_input_estimate = bsg_map.estimate_tokens()
         patch_elapsed = round(time.perf_counter() - patch_start, 4)
         patch_metrics = {
             "last_patch_latency_seconds": patch_elapsed,
@@ -1026,7 +1026,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
                 merged_stats[key] = prev_stats[key]
         entry.update(
             {
-                "entity_count": repomap.entity_count,
+                "entity_count": bsg_map.entity_count,
                 "relationship_count": len(graph.relationships),
                 "repo_hash": repo_hash,
                 "staleness_score": compute_staleness(entry, repo_hash, indexer.stats),
@@ -1034,28 +1034,28 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
                 "metrics": metrics,
             }
         )
-        entry.setdefault("outputs", {})["overview_md"] = str(
-            (context_dir / "overview.md").relative_to(root)
-        )
-        entry.setdefault("outputs", {})["architecture_md"] = str(
+        outputs = entry.setdefault("outputs", {})
+        outputs["bsg_json"] = str(bsg_path.relative_to(root))
+        for stale_key in tuple(outputs.keys()):
+            if stale_key.endswith("_json") and stale_key not in {
+                "graph_json",
+                "bsg_json",
+            }:
+                outputs.pop(stale_key, None)
+        outputs["overview_md"] = str((context_dir / "overview.md").relative_to(root))
+        outputs["architecture_md"] = str(
             (context_dir / "architecture.md").relative_to(root)
         )
-        entry.setdefault("outputs", {})["tests_md"] = str(
-            (context_dir / "tests.md").relative_to(root)
-        )
-        entry.setdefault("outputs", {})["docs_md"] = str(
-            (context_dir / "docs.md").relative_to(root)
-        )
-        entry.setdefault("outputs", {})["config_md"] = str(
-            (context_dir / "config.md").relative_to(root)
-        )
-        entry.setdefault("schemas", get_config_cached().get("schemas", {}))
+        outputs["tests_md"] = str((context_dir / "tests.md").relative_to(root))
+        outputs["docs_md"] = str((context_dir / "docs.md").relative_to(root))
+        outputs["config_md"] = str((context_dir / "config.md").relative_to(root))
+        entry["schemas"] = dict(get_config_cached().get("schemas", {}))
         metadata.setdefault("indexes", {})[current_id] = entry
         _save_index_metadata(ctn_dir, metadata)
 
         snapshot_id = None
         if args.snapshot:
-            snapshot_id = create_snapshot(ctn_dir, root, graph, repomap)
+            snapshot_id = create_snapshot(ctn_dir, root, graph, bsg_map)
             entry["snapshot_id"] = snapshot_id
             metadata["indexes"][current_id] = entry
             _save_index_metadata(ctn_dir, metadata)
@@ -1170,7 +1170,7 @@ def _cmd_patch_snapshot_based(
                 ctn_dir,
                 root,
                 InMemoryGraph.from_dict(base_snapshot["graph"]),
-                RepoMap.from_dict(base_snapshot["repomap"]),
+                BSGMap.from_dict(base_snapshot["bsg"]),
                 label="Post-patch snapshot",
             )
 
@@ -1279,8 +1279,8 @@ def cmd_invalidate(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_repomap(args: argparse.Namespace) -> int:
-    """Render RepoMap in various formats."""
+def cmd_bsg(args: argparse.Namespace) -> int:
+    """Render BSG in various formats."""
     root = Path(args.root).resolve()
     if not root.exists() or not root.is_dir():
         print(f"❌ Root does not exist or is not a directory: {root}")
@@ -1299,48 +1299,48 @@ def cmd_repomap(args: argparse.Namespace) -> int:
         print("❌ Current graph.json missing or invalid")
         return 1
 
-    repomap = RepoMap.build(graph, root=str(root))
+    bsg_map = BSGMap.build(graph, root=str(root))
 
     # Render based on mode
     try:
         versioned_dir = ctn_dir / current_id
         
         if args.mode == "compressed":
-            output, stats = repomap.render_compressed(budget=args.budget, fail_on_overflow=False)
+            output, stats = bsg_map.render_compressed(budget=args.budget, fail_on_overflow=False)
             # Save compressed output with stats as JSON
             compressed_data = {
                 "compressed_text": output,
                 "stats": stats
             }
-            output_path = versioned_dir / "repomap_compressed.json"
+            output_path = versioned_dir / "bsg_compressed.json"
             _write_json(output_path, compressed_data)
-            print(f"✅ Compressed repomap written to {output_path.relative_to(root)}")
+            print(f"✅ Compressed bsg written to {output_path.relative_to(root)}")
             print(f"   Tokens used: {stats['tokens_used']}/{stats['budget']}")
             if stats['truncated_files'] > 0:
                 print(f"   Truncated files: {stats['truncated_files']}")
         elif args.mode == "full":
-            output = repomap.render_full()
+            output = bsg_map.render_full()
             # Save full mode as JSON with text content
             full_data = {
                 "full_text": output
             }
-            output_path = versioned_dir / "repomap_full.json"
+            output_path = versioned_dir / "bsg_full.json"
             _write_json(output_path, full_data)
-            print(f"✅ Full repomap written to {output_path.relative_to(root)}")
+            print(f"✅ Full bsg written to {output_path.relative_to(root)}")
         elif args.mode == "hierarchical":
-            output = repomap.render_hierarchical()
+            output = bsg_map.render_hierarchical()
             # Save hierarchical mode as JSON with text content
             hierarchical_data = {
                 "hierarchical_text": output
             }
-            output_path = versioned_dir / "repomap_hierarchical.json"
+            output_path = versioned_dir / "bsg_hierarchical.json"
             _write_json(output_path, hierarchical_data)
-            print(f"✅ Hierarchical repomap written to {output_path.relative_to(root)}")
+            print(f"✅ Hierarchical bsg written to {output_path.relative_to(root)}")
         else:
             print(f"❌ Unknown mode: {args.mode}")
             return 1
     except Exception as e:
-        print(f"❌ Error rendering repomap: {e}")
+        print(f"❌ Error rendering bsg: {e}")
         return 1
 
     return 0
@@ -1482,22 +1482,22 @@ def build_parser() -> argparse.ArgumentParser:
     inv.add_argument("--root", required=True, help="Path to repo root")
     inv.set_defaults(func=cmd_invalidate)
 
-    # RepoMap command
-    repomap = sub.add_parser("repomap", help="Render RepoMap in various formats")
-    repomap.add_argument("--root", required=True, help="Path to repo root")
-    repomap.add_argument(
+    # BSG command
+    bsg = sub.add_parser("bsg", help="Render BSG in various formats")
+    bsg.add_argument("--root", required=True, help="Path to repo root")
+    bsg.add_argument(
         "--mode",
         choices=["compressed", "full", "hierarchical"],
         default="compressed",
         help="Rendering mode (default: compressed)",
     )
-    repomap.add_argument(
+    bsg.add_argument(
         "--budget",
         type=int,
         default=12000,
         help="Token budget for compressed mode (default: 12000)",
     )
-    repomap.set_defaults(func=cmd_repomap)
+    bsg.set_defaults(func=cmd_bsg)
 
     ws = sub.add_parser("webhook-server", help="Start webhook server using ./batho.yaml")
     ws.add_argument("--root", help="Path to repository root (default: current directory)")

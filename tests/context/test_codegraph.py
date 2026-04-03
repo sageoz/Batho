@@ -335,3 +335,37 @@ class TestCodeGraphIndexer:
         indexer._cache.save()
         indexer.invalidate("test.py")
         assert not indexer._cache.is_cached("test.py", "hash1")
+
+    def test_build_graph_applies_bsg_rules_from_config(
+        self, simple_python_repo: Path, tmp_path: Path, monkeypatch
+    ):
+        cfg_file = tmp_path / "batho.yaml"
+        cfg_file.write_text(
+            """
+rules:
+  enabled: true
+  builtin_plugins: []
+  custom_rules_inline:
+    - name: mark-python-files
+      file_patterns: ["**/*.py"]
+      metadata:
+        bsg.test_marker: enabled
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(tmp_path)
+
+        cache_path = tmp_path / "cache.json"
+        indexer = CodeGraphIndexer(
+            cache_path=str(cache_path), root=str(simple_python_repo)
+        )
+        graph = indexer.build_graph(root=str(simple_python_repo), extensions=[".py"])
+
+        assert any(
+            entity.metadata.get("bsg.test_marker") == "enabled"
+            for entity in graph.entities.values()
+        )
+        assert indexer.stats.get("rules_enabled") is True
+        assert indexer.stats.get("entities_rule_tagged", 0) >= 1

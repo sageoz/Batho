@@ -997,6 +997,29 @@ class CodeGraphIndexer:
 
         graph = self._resolve_imports(graph)
 
+        rule_stats: dict[str, Any] = {
+            "enabled": False,
+            "rules_loaded": 0,
+            "rules_applied": 0,
+            "entities_updated": 0,
+            "errors": [],
+        }
+        rules_cfg = cfg.get("rules", {}) if isinstance(cfg, dict) else {}
+        try:
+            from batho_core.bsg import apply_rule_plugins
+
+            rule_stats = apply_rule_plugins(
+                graph=graph,
+                root_path=root_path,
+                rules_config=rules_cfg,
+                logger=self.logger,
+            )
+        except Exception as exc:
+            if rules_cfg.get("fail_on_rule_error", False):
+                raise
+            self.logger.warning("bsg_rules_stage_failed", error=str(exc))
+            rule_stats["errors"] = [str(exc)]
+
         elapsed = (
             (os.times().elapsed if hasattr(os, "times") else 0.0) - start_ts
             if start_ts
@@ -1012,6 +1035,11 @@ class CodeGraphIndexer:
             "relationship_count": len(graph.relationships),
             "elapsed_seconds": elapsed,
             "workers_used": actual_workers,
+            "rules_enabled": bool(rule_stats.get("enabled", False)),
+            "rules_loaded": int(rule_stats.get("rules_loaded", 0)),
+            "rules_applied": int(rule_stats.get("rules_applied", 0)),
+            "entities_rule_tagged": int(rule_stats.get("entities_updated", 0)),
+            "rules": rule_stats,
         }
 
         self.logger.info(

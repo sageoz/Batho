@@ -66,6 +66,10 @@ class RelationshipType(Enum):
     CONTAINS = auto()
     REFERENCES = auto()
     DEFINES = auto()
+    CALLED_BY = auto()
+    IMPORTED_BY = auto()
+    OVERRIDES = auto()
+    STACK_BOUNDARY = auto()
     # Markup / Config
     HAS_ATTRIBUTE = auto()
     LINKS_TO = auto()

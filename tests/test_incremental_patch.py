@@ -458,10 +458,19 @@ class TestDiffUtilities:
 
     def test_diff_snapshots(self):
         """Test diff_snapshots function."""
-        snap_a = {"repomap": {"files": {"file1.py": "hash1", "file2.py": "hash2"}}}
-        snap_b = {"repomap": {"files": {"file1.py": "hash1", "file3.py": "hash3"}}}
+        snap_a = {
+            "bsg": {
+                "indexes": {"nodes_by_file": {"file1.py": "hash1", "file2.py": "hash2"}}
+            }
+        }
+        snap_b = {
+            "bsg": {
+                "indexes": {"nodes_by_file": {"file1.py": "hash1", "file3.py": "hash3"}}
+            }
+        }
         changes = compare_file_lists(
-            snap_a["repomap"]["files"], snap_b["repomap"]["files"]
+            snap_a["bsg"]["indexes"]["nodes_by_file"],
+            snap_b["bsg"]["indexes"]["nodes_by_file"],
         )
         assert len(changes) == 2  # Deleted file2, added file3
 
@@ -524,7 +533,7 @@ class TestIncrementalPatchFunction:
             "root": str(temp_ctn_dir.parent),
             "label": "test",
             "graph": {"entities": {}, "relationships": []},
-            "repomap": {"files": {}},
+            "bsg": {"schema_version": "bsg.v1", "nodes": [], "edges": [], "indexes": {"nodes_by_file": {}}},
             "stats": {"entity_count": 0, "relationship_count": 0, "file_count": 0},
             "_checksum": "dummy",
         }
@@ -672,7 +681,7 @@ class TestIncrementalPatchExceptionHandling:
             "root": str(temp_ctn_dir.parent),
             "label": "test",
             "graph": {"entities": {}, "relationships": []},
-            "repomap": {"files": {}},
+            "bsg": {"schema_version": "bsg.v1", "nodes": [], "edges": [], "indexes": {"nodes_by_file": {}}},
             "stats": {"entity_count": 0, "relationship_count": 0, "file_count": 0},
             "_checksum": "dummy",
         }

@@ -30,7 +30,7 @@ batho index --root /path/to/repo --verbose
 ```
 - **Validation**:
   - [ ] `.ctn/` directory is created
-  - [ ] `graph.json`, `repomap.json`, and `architecture.md` are populated
+  - [ ] `graph.json`, `bsg.json`, and `architecture.md` are populated
   - [ ] Completes without crashing
   - [ ] AST generation gracefully skips unsupported files without halting
 - **Success Metric**: Process exits with code 0 (success) or 2 (partial success with parse errors)
@@ -161,7 +161,7 @@ time batho index --root /path/to/repo --verbose 2>&1 | grep "parsed"
   - **Action**: Run Batho on Rust compiler source
   - **Validation**:
     - [ ] Tree-sitter failures are caught gracefully
-    - [ ] Unresolved macros are marked as "unresolved" in `repomap.json`
+    - [ ] Unresolved macros are marked as "unresolved" in `bsg.json`
     - [ ] Process continues without crashing on complex macros
   - **Success Metric**: Parser completes with macro complexity noted but not blocking
 

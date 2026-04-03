@@ -87,16 +87,25 @@ class TestRenderJson:
         repomap = RepoMap.build(mock_graph, root="/fake/root")
         data = repomap.render_json()
         assert "schema_version" in data
-        assert "files" in data
-        assert "total_files" in data
-        assert "total_entities" in data
+        assert data["schema_version"] == "bsg.v1"
+        assert "nodes" in data
+        assert "edges" in data
+        assert "indexes" in data
+        assert "stats" in data
 
     def test_files_have_entries(self, mock_graph):
         repomap = RepoMap.build(mock_graph, root="/fake/root")
         data = repomap.render_json()
-        assert data["total_files"] > 0
-        for entries in data["files"].values():
-            assert isinstance(entries, list)
+        assert data["stats"]["total_files"] > 0
+        for node_ids in data["indexes"]["nodes_by_file"].values():
+            assert isinstance(node_ids, list)
+
+    def test_inverse_edges_are_present(self, mock_graph):
+        repomap = RepoMap.build(mock_graph, root="/fake/root")
+        data = repomap.render_json()
+        edge_types = {edge["type"] for edge in data["edges"]}
+        assert "CALLS" in edge_types
+        assert "CALLED_BY" in edge_types
 
 
 class TestRenderHierarchical:

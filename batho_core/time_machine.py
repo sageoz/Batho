@@ -23,7 +23,7 @@ from typing import Any, Iterable
 
 from batho_core.config import SNAPSHOT_SCHEMA_VERSION, get_config_cached
 from batho_core.context.codegraph import InMemoryGraph, IncrementalGraphUpdater
-from batho_core.context.repomap import RepoMap
+from batho_core.context.bsg_map import BSGMap
 from batho_core.utils.hash import compute_bytes_hash, compute_file_hash
 from batho_core.utils.ignore import is_ignored, load_ignore_spec
 from batho_core.utils.logging import get_logger
@@ -451,10 +451,10 @@ def create_snapshot(
     ctn_dir: Path,
     root: Path,
     graph: InMemoryGraph,
-    repomap: RepoMap,
+    bsg_map: BSGMap,
     label: str | None = None,
 ) -> str:
-    """Persist a snapshot of the current graph/repomap to JSON."""
+    """Persist a snapshot of the current graph/bsg to JSON."""
     snapshot_id = generate_snapshot_id()
     snap_path = _snapshot_dir(ctn_dir) / f"{snapshot_id}.json"
 
@@ -465,11 +465,11 @@ def create_snapshot(
         "root": str(root),
         "label": label or "",
         "graph": graph.to_dict(),
-        "repomap": repomap.render_json(),
+        "bsg": bsg_map.render_json(),
         "stats": {
             "entity_count": len(graph.entities),
             "relationship_count": len(graph.relationships),
-            "file_count": len(repomap._by_file),
+            "file_count": len(bsg_map._by_file),
         },
     }
     data["_checksum"] = compute_bytes_hash(
@@ -531,10 +531,28 @@ def diff_snapshots(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     relationship_delta = stats_b.get("relationship_count", 0) - stats_a.get(
         "relationship_count", 0
     )
-    files_a = a.get("repomap", {}).get("files", {})
-    files_b = b.get("repomap", {}).get("files", {})
-    added_files = [path for path in files_b if path not in files_a]
-    removed_files = [path for path in files_a if path not in files_b]
+    bsg_a = a.get("bsg", {}) if isinstance(a.get("bsg"), dict) else {}
+    bsg_b = b.get("bsg", {}) if isinstance(b.get("bsg"), dict) else {}
+
+    files_a = set((bsg_a.get("indexes", {}) or {}).get("nodes_by_file", {}).keys())
+    files_b = set((bsg_b.get("indexes", {}) or {}).get("nodes_by_file", {}).keys())
+
+    # Fallback for malformed payloads without indexes
+    if not files_a and isinstance(bsg_a.get("nodes"), list):
+        files_a = {
+            str(node.get("file", ""))
+            for node in bsg_a.get("nodes", [])
+            if isinstance(node, dict) and node.get("file")
+        }
+    if not files_b and isinstance(bsg_b.get("nodes"), list):
+        files_b = {
+            str(node.get("file", ""))
+            for node in bsg_b.get("nodes", [])
+            if isinstance(node, dict) and node.get("file")
+        }
+
+    added_files = sorted(path for path in files_b if path not in files_a)
+    removed_files = sorted(path for path in files_a if path not in files_b)
     return {
         "entity_delta": entity_delta,
         "relationship_delta": relationship_delta,
@@ -670,7 +688,7 @@ def incremental_patch(
     Apply incremental updates to a base snapshot with enhanced error handling, logging, and limits.
 
     Loads the base snapshot, applies changes using IncrementalGraphUpdater,
-    updates repomap, and creates a new snapshot. Includes rollback mechanism
+    updates bsg, and creates a new snapshot. Includes rollback mechanism
     on failure, timeout handling, size limits, and detailed progress logging.
 
     Args:
@@ -726,10 +744,10 @@ def incremental_patch(
                     f"Base snapshot {base_snapshot_id} not found", base_snapshot_id
                 )
 
-            # Reconstruct base graph and repomap
+            # Reconstruct base graph and bsg map
             base_graph = InMemoryGraph.from_dict(base_snapshot["graph"])
-            base_repomap = RepoMap.from_dict(base_snapshot["repomap"])
-            base_repomap._root = base_snapshot["root"]  # Set the root path
+            base_bsg = BSGMap.from_dict(base_snapshot["bsg"])
+            base_bsg._root = base_snapshot["root"]  # Set the root path
 
             # Initialize updater
             updater = IncrementalGraphUpdater()
@@ -839,15 +857,15 @@ def incremental_patch(
                     f"Graph consistency check failed after applying {len(applied_changes)} changes"
                 )
 
-            # Update repomap
-            base_repomap.patch(changes, base_graph)
+            # Update bsg map
+            base_bsg.patch(changes, base_graph)
 
             # Create new snapshot
             new_snapshot_id = create_snapshot(
                 ctn_dir,
                 root_path,
                 base_graph,
-                base_repomap,
+                base_bsg,
                 label=f"Incremental patch of {base_snapshot_id}",
             )
 

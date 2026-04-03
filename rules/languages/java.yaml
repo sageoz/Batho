@@ -1,0 +1,471 @@
+# Java-specific C4 Generation Rules
+
+language: "java"
+description: "Rules for Java applications including Spring, JPA, and common enterprise frameworks"
+file_extensions: [".java", ".kt", ".scala"]
+
+# Java-specific external system rules
+external_systems:
+  - name: "Java Database Detection"
+    description: "Detect Java database systems and JPA implementations"
+    priority: 110
+    patterns:
+      # JPA Implementations
+      - "javax.persistence"
+      - "jakarta.persistence"
+      - "org.hibernate"
+      - "org.eclipse.persistence"
+      - "org.apache.openjpa"
+      # Spring Data
+      - "org.springframework.data"
+      - "spring-data-jpa"
+      - "spring-data-jdbc"
+      # Database Drivers
+      - "mysql-connector-java"
+      - "postgresql"
+      - "ojdbc"  # Oracle
+      - "sqljdbc"  # SQL Server
+      - "h2database"
+      - "hsqldb"
+      - "derby"
+      # NoSQL
+      - "spring-data-mongodb"
+      - "spring-data-redis"
+      - "spring-data-cassandra"
+      - "spring-data-elasticsearch"
+    system_type: "Database"
+    actor_name: "Database"
+    actor_description: "Java database system"
+
+  - name: "Java Spring Framework Detection"
+    description: "Detect Spring framework usage"
+    priority: 108
+    patterns:
+      # Spring Core
+      - "org.springframework"
+      - "spring-core"
+      - "spring-context"
+      - "spring-beans"
+      # Spring Boot
+      - "org.springframework.boot"
+      - "spring-boot"
+      - "spring-boot-starter"
+      # Spring Web
+      - "spring-web"
+      - "spring-webmvc"
+      - "spring-webflux"
+      # Spring Security
+      - "spring-security"
+      - "spring-security-core"
+      # Spring Cloud
+      - "org.springframework.cloud"
+      - "spring-cloud"
+    system_type: "Framework"
+    actor_name: "Spring Framework"
+    actor_description: "Java Spring application framework"
+
+  - name: "Java Message Queue Detection"
+    description: "Detect Java messaging systems"
+    priority: 105
+    patterns:
+      # JMS
+      - "javax.jms"
+      - "jakarta.jms"
+      # Spring Messaging
+      - "spring-jms"
+      - "spring-kafka"
+      - "spring-rabbit"
+      - "spring-integration"
+      # Messaging Clients
+      - "kafka-clients"
+      - "amqp-client"  # RabbitMQ
+      - "activemq-client"
+      - "pulsar-client"
+    system_type: "MessageQueue"
+    actor_name: "Message Broker"
+    actor_description: "Java messaging system"
+
+  - name: "Java Testing Framework Detection"
+    description: "Detect Java testing frameworks"
+    priority: 95
+    patterns:
+      # Testing Frameworks
+      - "junit"
+      - "org.junit"
+      - "testng"
+      - "org.testng"
+      # Mocking
+      - "org.mockito"
+      - "mockito-core"
+      - "easymock"
+      - "powermock"
+      # Spring Test
+      - "spring-test"
+      - "spring-boot-test"
+      # Test Containers
+      - "org.testcontainers"
+    system_type: "Testing"
+    actor_name: "Test Framework"
+    actor_description: "Java testing framework"
+
+  - name: "Java Build Tool Detection"
+    description: "Detect Java build and dependency management"
+    priority: 100
+    patterns:
+      # Build Tools
+      - "org.apache.maven"
+      - "maven"
+      - "gradle"
+      - "org.gradle"
+      # Dependency Management
+      - "pom.xml"
+      - "build.gradle"
+      - "gradle.properties"
+      - "settings.gradle"
+    system_type: "BuildTool"
+    actor_name: "Build Tool"
+    actor_description: "Java build and dependency management"
+
+  - name: "Java Microservice Framework Detection"
+    description: "Detect Java microservice frameworks"
+    priority: 102
+    patterns:
+      # Microservice Frameworks
+      - "spring-cloud"
+      - "microprofile"
+      - "quarkus"
+      - "io.quarkus"
+      - "micronaut"
+      - "io.micronaut"
+      - "helidon"
+      - "io.helidon"
+      # Service Discovery
+      - "eureka-client"
+      - "consul-client"
+      - "spring-cloud-consul"
+    system_type: "MicroserviceFramework"
+    actor_name: "Microservice Framework"
+    actor_description: "Java microservice framework"
+
+  - name: "Java API Detection"
+    description: "Detect Java API and REST frameworks"
+    priority: 103
+    patterns:
+      # JAX-RS
+      - "javax.ws.rs"
+      - "jakarta.ws.rs"
+      - "jersey"
+      - "resteasy"
+      # Spring REST
+      - "spring-web"
+      - "spring-webmvc"
+      - "spring-webflux"
+      # GraphQL
+      - "graphql-java"
+      - "spring-graphql"
+      # gRPC
+      - "grpc-java"
+      - "spring-grpc"
+    system_type: "APIFramework"
+    actor_name: "API Framework"
+    actor_description: "Java API framework"
+
+# Java-specific container rules
+containers:
+  - name: "Java Spring Boot Application"
+    description: "Detect Spring Boot application containers"
+    priority: 110
+    framework_patterns:
+      - "Spring Boot"
+      - "spring-boot"
+      - "org.springframework.boot"
+    directory_patterns:
+      - "src/main/java"
+      - "src/main/resources"
+      - "boot"
+      - "application"
+    file_patterns:
+      - "Application.java"
+      - "*Application.java"
+      - "SpringBootApplication.java"
+      - "bootstrap.properties"
+      - "application.properties"
+      - "application.yml"
+      - "pom.xml"
+      - "build.gradle"
+    container_type: "Web Application"
+    container_name: "Spring Boot App"
+    technology: ["Java", "Spring Boot", "Maven/Gradle"]
+
+  - name: "Java Web Application Container"
+    description: "Detect Java web application containers"
+    priority: 105
+    framework_patterns:
+      - "Spring MVC"
+      - "Spring Web"
+      - "Jakarta EE"
+      - "JavaServer Faces"
+      - "Vaadin"
+    directory_patterns:
+      - "src/main/java"
+      - "src/main/webapp"
+      - "webapp"
+      - "WEB-INF"
+    file_patterns:
+      - "web.xml"
+      - "faces-config.xml"
+      - "applicationContext.xml"
+      - "dispatcher-servlet.xml"
+    container_type: "Web Application"
+    container_name: "Java Web App"
+    technology: ["Java", "Servlet", "JSP/JSF"]
+
+  - name: "Java API Service Container"
+    description: "Detect Java API service containers"
+    priority: 108
+    framework_patterns:
+      - "Spring Web"
+      - "Spring WebFlux"
+      - "JAX-RS"
+      - "Jersey"
+      - "RESTEasy"
+      - "MicroProfile"
+    directory_patterns:
+      - "api"
+      - "rest"
+      - "resource"
+      - "endpoint"
+    file_patterns:
+      - "*Resource.java"
+      - "*Controller.java"
+      - "*Endpoint.java"
+      - "*Resource.kt"
+    container_type: "API Service"
+    container_name: "Java API"
+    technology: ["Java", "REST", "JAX-RS"]
+
+  - name: "Java Microservice Container"
+    description: "Detect Java microservice containers"
+    priority: 106
+    framework_patterns:
+      - "Spring Cloud"
+      - "Quarkus"
+      - "Micronaut"
+      - "Helidon"
+      - "MicroProfile"
+    directory_patterns:
+      - "service"
+      - "microservice"
+      - "cloud"
+    file_patterns:
+      - "*Service.java"
+      - "*Microservice.java"
+      - "application.yml"
+      - "bootstrap.yml"
+    container_type: "Microservice"
+    container_name: "Java Microservice"
+    technology: ["Java", "Spring Cloud", "Docker"]
+
+  - name: "Java Batch Processing Container"
+    description: "Detect Java batch processing containers"
+    priority: 90
+    framework_patterns:
+      - "Spring Batch"
+      - "javax.batch"
+      - "jakarta.batch"
+    directory_patterns:
+      - "batch"
+      - "job"
+      - "etl"
+      - "processing"
+    file_patterns:
+      - "*Job.java"
+      - "*Step.java"
+      - "*Batch.java"
+      - "job-config.xml"
+    container_type: "Batch Processor"
+    container_name: "Batch Processor"
+    technology: ["Java", "Spring Batch"]
+
+  - name: "Java Message Driven Container"
+    description: "Detect Java message-driven containers"
+    priority: 95
+    framework_patterns:
+      - "Spring JMS"
+      - "Spring Kafka"
+      - "Spring Integration"
+      - "Jakarta EE"
+    directory_patterns:
+      - "messaging"
+      - "listener"
+      - "consumer"
+      - "producer"
+    file_patterns:
+      - "*Listener.java"
+      - "*Consumer.java"
+      - "*Producer.java"
+      - "*Message.java"
+    container_type: "Message Processor"
+    container_name: "Message Processor"
+    technology: ["Java", "JMS", "Kafka"]
+
+# Java-specific component rules
+components:
+  - name: "Java Spring Controllers"
+    description: "Identify Spring MVC controller components"
+    priority: 110
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.6
+    max_per_file: 5
+    component_type: "Controller"
+    name_patterns:
+      - "*Controller"
+      - "*RestController"
+      - "*ControllerAdvice"
+    file_patterns:
+      - "controller/"
+      - "controllers/"
+      - "rest/"
+      - "api/"
+
+  - name: "Java Spring Services"
+    description: "Identify Spring service components"
+    priority: 108
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.5
+    max_per_file: 3
+    component_type: "Service"
+    name_patterns:
+      - "*Service"
+      - "*ServiceImpl"
+      - "*BusinessService"
+    file_patterns:
+      - "service/"
+      - "services/"
+      - "business/"
+
+  - name: "Java JPA Entities"
+    description: "Identify JPA entity components"
+    priority: 105
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.4
+    max_per_file: 10
+    component_type: "Entity"
+    name_patterns:
+      - "*Entity"
+      - "*Model"
+      - "*DTO"
+      - "*VO"
+      - "*Projection"
+    file_patterns:
+      - "entity/"
+      - "entities/"
+      - "model/"
+      - "models/"
+      - "domain/"
+
+  - name: "Java Spring Repositories"
+    description: "Identify Spring Data repository components"
+    priority: 106
+    entity_types: ["interface", "class"]
+    importance_threshold: 0.4
+    max_per_file: 5
+    component_type: "Repository"
+    name_patterns:
+      - "*Repository"
+      - "*Dao"
+      - "*JpaRepository"
+      - "*CrudRepository"
+    file_patterns:
+      - "repository/"
+      - "repositories/"
+      - "dao/"
+      - "persistence/"
+
+  - name: "Java Spring Components"
+    description: "Identify generic Spring components"
+    priority: 100
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.3
+    max_per_file: 5
+    component_type: "Component"
+    name_patterns:
+      - "*Component"
+      - "*Configuration"
+      - "*Bean"
+      - "*Helper"
+      - "*Util"
+    file_patterns:
+      - "config/"
+      - "configuration/"
+      - "component/"
+      - "util/"
+
+  - name: "Java JAX-RS Resources"
+    description: "Identify JAX-RS resource components"
+    priority: 102
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.5
+    max_per_file: 5
+    component_type: "Resource"
+    name_patterns:
+      - "*Resource"
+      - "*Endpoint"
+      - "*Path"
+    file_patterns:
+      - "resource/"
+      - "resources/"
+      - "rest/"
+
+  - name: "Java Message Listeners"
+    description: "Identify JMS/message listener components"
+    priority: 95
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.5
+    max_per_file: 5
+    component_type: "Message Listener"
+    name_patterns:
+      - "*Listener"
+      - "*Consumer"
+      - "*Subscriber"
+      - "*Receiver"
+    file_patterns:
+      - "listener/"
+      - "consumer/"
+      - "messaging/"
+
+  - name: "Java Batch Jobs"
+    description: "Identify Spring Batch job components"
+    priority: 90
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.5
+    max_per_file: 3
+    component_type: "Batch Job"
+    name_patterns:
+      - "*Job"
+      - "*Step"
+      - "*Tasklet"
+      - "*Reader"
+      - "*Writer"
+      - "*Processor"
+    file_patterns:
+      - "batch/"
+      - "job/"
+      - "step/"
+
+  - name: "Java Configuration Classes"
+    description: "Identify Java configuration components"
+    priority: 85
+    entity_types: ["class", "interface"]
+    importance_threshold: 0.3
+    max_per_file: 3
+    component_type: "Configuration"
+    name_patterns:
+      - "*Config"
+      - "*Configuration"
+      - "*Properties"
+      - "*Settings"
+    file_patterns:
+      - "config/"
+      - "configuration/"
+      - "properties/"

@@ -31,7 +31,7 @@ flags:
 
 schemas:
   graph: graph.v1
-  repomap: repomap.v1
+  bsg: bsg.v1
   snapshot: snapshot.v1
   index_metadata: index-metadata.v1
   file_cache: file-cache.v1

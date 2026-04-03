@@ -29,13 +29,16 @@ DEFAULT_INDEX_WORKERS = 0  # auto
 DEFAULT_IGNORE_FILES: list[str] | None = None
 DEFAULT_METRICS_OUTPUT: str | None = ".ctn/metrics.json"
 DEFAULT_ROOT_CONFIG_FILE = "batho.yaml"
+DEFAULT_RULES_ENABLED = False
+DEFAULT_RULES_BUILTIN_PLUGINS = ("bsg_core",)
+DEFAULT_RULES_CACHE_TTL = 3600
 DEFAULT_PATCH_TIMEOUT_SECONDS = 300  # 5 minutes
 DEFAULT_MAX_PATCH_CHANGES = 10000  # Max changes in a single patch
 DEFAULT_PATCH_HISTORY_DAYS = 90  # Retention policy for patches
 DEFAULT_PATCH_COUNT = 1000  # Alternative retention limit
 
 GRAPH_SCHEMA_VERSION = "graph.v1"
-REPOMAP_SCHEMA_VERSION = "repomap.v1"
+BSG_SCHEMA_VERSION = "bsg.v1"
 SNAPSHOT_SCHEMA_VERSION = "snapshot.v1"
 INDEX_METADATA_SCHEMA_VERSION = "index-metadata.v1"
 FILE_CACHE_SCHEMA_VERSION = "file-cache.v1"
@@ -95,12 +98,26 @@ class FlagsConfig(BaseModel):
     )
 
 
+class RulesConfig(BaseModel):
+    enabled: bool = Field(default=DEFAULT_RULES_ENABLED)
+    builtin_plugins: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_RULES_BUILTIN_PLUGINS)
+    )
+    disabled_rules: list[str] = Field(default_factory=list)
+    custom_rules_path: str | None = Field(default=None)
+    custom_rules_inline: list[dict[str, Any]] = Field(default_factory=list)
+    strict_validation: bool = Field(default=False)
+    cache_ttl: int = Field(default=DEFAULT_RULES_CACHE_TTL, ge=0)
+    fail_on_rule_error: bool = Field(default=False)
+
+
 class Config(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     indexer: IndexerConfig = Field(default_factory=IndexerConfig)
     patch: dict = Field(default_factory=dict)
     flags: FlagsConfig = Field(default_factory=FlagsConfig)
+    rules: RulesConfig = Field(default_factory=RulesConfig)
     schemas: dict = Field(default_factory=dict)
     webhook: dict = Field(default_factory=dict)
 
@@ -128,6 +145,13 @@ def _env_float(name: str, default: float) -> float:
         return float(os.getenv(name, str(default)))
     except (ValueError, TypeError):
         return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on"}
 
 
 def _env_list(name: str) -> list[str] | None:
@@ -199,9 +223,19 @@ def get_config() -> Dict[str, Any]:
             "cleanup_on_startup": False,
         },
         "flags": {"fail_on_warning": False, "strict": False, "audit_log_enabled": True},
+        "rules": {
+            "enabled": DEFAULT_RULES_ENABLED,
+            "builtin_plugins": list(DEFAULT_RULES_BUILTIN_PLUGINS),
+            "disabled_rules": [],
+            "custom_rules_path": None,
+            "custom_rules_inline": [],
+            "strict_validation": False,
+            "cache_ttl": DEFAULT_RULES_CACHE_TTL,
+            "fail_on_rule_error": False,
+        },
         "schemas": {
             "graph": GRAPH_SCHEMA_VERSION,
-            "repomap": REPOMAP_SCHEMA_VERSION,
+            "bsg": BSG_SCHEMA_VERSION,
             "snapshot": SNAPSHOT_SCHEMA_VERSION,
             "index_metadata": INDEX_METADATA_SCHEMA_VERSION,
             "file_cache": FILE_CACHE_SCHEMA_VERSION,
@@ -277,6 +311,29 @@ def get_config() -> Dict[str, Any]:
     if env_metrics_output is not None:
         base_cfg["indexer"]["metrics_output"] = env_metrics_output
 
+    # Rules overrides
+    base_cfg["rules"]["enabled"] = _env_bool(
+        "BATHO_RULES_ENABLED", base_cfg["rules"]["enabled"]
+    )
+    env_builtin_plugins = _env_list("BATHO_RULES_BUILTIN_PLUGINS")
+    if env_builtin_plugins is not None:
+        base_cfg["rules"]["builtin_plugins"] = env_builtin_plugins
+    env_disabled_rules = _env_list("BATHO_RULES_DISABLED_RULES")
+    if env_disabled_rules is not None:
+        base_cfg["rules"]["disabled_rules"] = env_disabled_rules
+    env_custom_rules_path = _env("BATHO_RULES_CUSTOM_RULES_PATH")
+    if env_custom_rules_path is not None:
+        base_cfg["rules"]["custom_rules_path"] = env_custom_rules_path
+    base_cfg["rules"]["strict_validation"] = _env_bool(
+        "BATHO_RULES_STRICT_VALIDATION", base_cfg["rules"]["strict_validation"]
+    )
+    base_cfg["rules"]["fail_on_rule_error"] = _env_bool(
+        "BATHO_RULES_FAIL_ON_RULE_ERROR", base_cfg["rules"]["fail_on_rule_error"]
+    )
+    base_cfg["rules"]["cache_ttl"] = _env_int(
+        "BATHO_RULES_CACHE_TTL", base_cfg["rules"]["cache_ttl"]
+    )
+
     # Strict/fail-on-warning flags can be set at either indexer.* or flags.* (keep compatibility)
     env_fail_on_warning = os.getenv("BATHO_FAIL_ON_WARNING")
     env_strict = os.getenv("BATHO_STRICT")
@@ -324,7 +381,7 @@ def get_config() -> Dict[str, Any]:
     # Provide flat schema helpers for legacy callers
     schemas = cfg_dict.get("schemas", {})
     cfg_dict["graph_schema_version"] = schemas.get("graph", GRAPH_SCHEMA_VERSION)
-    cfg_dict["repomap_schema_version"] = schemas.get("repomap", REPOMAP_SCHEMA_VERSION)
+    cfg_dict["bsg_schema_version"] = schemas.get("bsg", BSG_SCHEMA_VERSION)
     cfg_dict["snapshot_schema_version"] = schemas.get(
         "snapshot", SNAPSHOT_SCHEMA_VERSION
     )

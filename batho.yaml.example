@@ -32,9 +32,31 @@ flags:
   strict: false
   audit_log_enabled: true
 
+rules:
+  enabled: false            # Enable BSG rule plugins during indexing
+  builtin_plugins: [bsg_core]
+  disabled_rules: []
+  custom_rules_path: null   # Optional path to YAML file with custom rules
+  custom_rules_inline: []   # Optional inline rules (same schema as file-based rules)
+  strict_validation: false  # True = fail on invalid plugin/custom rules
+  cache_ttl: 3600
+  fail_on_rule_error: false
+
+  # Example custom rules
+  # custom_rules_inline:
+  #   - name: mark-test-files
+  #     file_patterns: ["tests/**", "**/*_test.py"]
+  #     metadata:
+  #       bsg.category: TEST
+  #   - name: payment-cluster
+  #     entity_types: ["function", "method"]
+  #     name_patterns: ["*payment*", "*invoice*"]
+  #     metadata:
+  #       bsg.cluster_hint: billing
+
 schemas:
   graph: graph.v1
-  repomap: repomap.v1
+  bsg: bsg.v1
   snapshot: snapshot.v1
   index_metadata: index-metadata.v1
   file_cache: file-cache.v1

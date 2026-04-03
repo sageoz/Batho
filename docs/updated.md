@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-Batho is an **enterprise-ready, high-speed, multi-language code indexer** with RepoMap compression and Time Machine snapshots/diffs — no LLM required. It transforms any codebase into structured knowledge that AI tools, agents, and developers can actually use.
+Batho is an **enterprise-ready, high-speed, multi-language code indexer** with BSG structural output and Time Machine snapshots/diffs — no LLM required. It transforms any codebase into structured knowledge that AI tools, agents, and developers can actually use.
 
 ### Core Problem Solved
 - **Codebase Opacity**: Large-scale codebases become increasingly difficult to understand
@@ -22,9 +22,9 @@ Transform Batho into a **living, self-updating architectural memory system** tha
 ### ✅ Fully Implemented Features
 
 #### Core Functionality
-- **CLI Commands**: Complete command suite (`index`, `stats`, `patch`, `patches`, `patch-info`, `patch-chain`, `apply-patch`, `cherry-pick`, `snapshots`, `diff-snapshots`, `invalidate`, `webhook`, `repomap`)
+- **CLI Commands**: Complete command suite (`index`, `stats`, `patch`, `patches`, `patch-info`, `patch-chain`, `apply-patch`, `cherry-pick`, `snapshots`, `diff-snapshots`, `invalidate`, `webhook`, `bsg`)
 - **Code Graph Indexing**: Feature-complete with caching, binary/size guards, ignore support, parallel extraction
-- **RepoMap Rendering**: Multiple formats (full, hierarchical, compressed) with dependency mapping
+- **BSG Rendering**: Multiple formats (full, hierarchical, compressed) with dependency mapping
 - **Time Machine**: Snapshot creation, listing, loading, and diffing with staleness scoring
 - **Configuration**: Validated config system with environment variable overrides
 - **Multi-Language Support**: 40+ languages via tree-sitter with runtime grammar availability checks
@@ -68,7 +68,7 @@ Transform Batho into a **living, self-updating architectural memory system** tha
 
 ### Data Flow
 ```
-Repository Files → CodeGraphIndexer → InMemoryGraph → RepoMap → Multiple Outputs
+Repository Files → CodeGraphIndexer → InMemoryGraph → BSG Renderer → Multiple Outputs
                       ↓                    ↓              ↓
                  Caching Layer    Time Machine   Multi-Format
                       ↓                    ↓              ↓
@@ -80,17 +80,17 @@ Repository Files → CodeGraphIndexer → InMemoryGraph → RepoMap → Multiple
 #### CLI (`batho.py`)
 - **Purpose**: Main entry point orchestrating all commands
 - **Features**: Rich argument parsing, progress reporting, error handling
-- **Commands**: index, stats, patch, snapshots, diff-snapshots, invalidate, webhook (stub), repomap (NEW), patches, patch-info, patch-chain, apply-patch, cherry-pick
+- **Commands**: index, stats, patch, snapshots, diff-snapshots, invalidate, webhook (stub), bsg, patches, patch-info, patch-chain, apply-patch, cherry-pick
 
 #### CodeGraphIndexer (`batho_core/context/codegraph.py`)
 - **Purpose**: Walks repository, extracts AST entities and relationships
 - **Features**: Parallel extraction, caching, binary guards, import resolution
 - **Output**: InMemoryGraph with entities and relationships
 
-#### RepoMap (`batho_core/context/repomap.py`)
-- **Purpose**: Compresses code graph into LLM-friendly formats
+#### BSG Renderer (`batho_core/context/bsg_map.py`)
+- **Purpose**: Builds canonical BSG output and rendering views
 - **Features**: Multiple rendering modes, dependency mapping, token budgeting
-- **Outputs**: JSON, Markdown (architecture.md), hierarchical views
+- **Outputs**: `bsg.json`, Markdown summaries, hierarchical views
 
 #### Time Machine (`batho_core/time_machine.py`)
 - **Purpose**: Historical analysis and change tracking
@@ -102,7 +102,7 @@ Repository Files → CodeGraphIndexer → InMemoryGraph → RepoMap → Multiple
 | Feature Category | Implemented | Status | Notes |
 |------------------|-------------|---------|-------|
 | **Core Indexing** | ✅ | Complete | Multi-language, parallel, cached |
-| **RepoMap Compression** | ✅ | Complete | Multiple formats, token budgeting |
+| **BSG Rendering** | ✅ | Complete | Multiple formats, token budgeting |
 | **Time Machine** | ✅ | Complete | Snapshots, diffing, staleness |
 | **CLI Interface** | ✅ | Complete | Full command suite + patch management |
 | **Stack Detection** | ✅ | Complete | 10+ technology stacks |
@@ -112,7 +112,7 @@ Repository Files → CodeGraphIndexer → InMemoryGraph → RepoMap → Multiple
 | **Memory Monitoring** | ✅ | Complete | Real-time tracking, leak detection |
 | **File Locking** | ✅ | Complete | Cross-platform, atomic operations |
 | **Path Security** | ✅ | Complete | Sanitization, traversal prevention |
-| **RepoMap CLI** | ✅ | Complete | Standalone repomap command |
+| **BSG CLI** | ✅ | Complete | Standalone bsg command |
 | **Webhook Handling** | ✅ | Complete | GitHub/GitLab integration, auth, queueing |
 | **CI/CD Pipeline** | ✅ | Complete | GitHub Actions, GitLab CI templates |
 | **Analyze Pipeline** | ✅ | Complete | SRS and OWASP generation |
@@ -226,16 +226,16 @@ batho diff-snapshots --root /path/to/repo SNAP_A SNAP_B
 batho index --root /path/to/repo --snapshot
 ```
 
-#### RepoMap Command (NEW)
+#### BSG Command
 ```bash
-# Generate compressed repomap for LLM context
-batho repomap --root /path/to/repo --mode compressed --budget 12000
+# Generate compressed BSG view for LLM context
+batho bsg --root /path/to/repo --mode compressed --budget 12000
 
-# Generate full repomap with all signatures
-batho repomap --root /path/to/repo --mode full
+# Generate full BSG with all signatures
+batho bsg --root /path/to/repo --mode full
 
 # Generate hierarchical directory view
-batho repomap --root /path/to/repo --mode hierarchical
+batho bsg --root /path/to/repo --mode hierarchical
 ```
 
 ### Output Structure
@@ -248,8 +248,13 @@ batho repomap --root /path/to/repo --mode hierarchical
 │   └── batho_<uuid>_<ts>.json
 └── <index_id>/
     ├── graph.json                # All entities + relationships
-    ├── repomap.json              # Structured symbol index
-  └── architecture.md           # Human-readable summary
+    ├── bsg.json                  # Canonical structured symbol index
+    └── context/
+        ├── overview.md           # Human-readable repository summary
+        ├── architecture.md       # Source-focused summary
+        ├── tests.md              # Test-focused summary
+        ├── docs.md               # Documentation-focused summary
+        └── config.md             # Configuration-focused summary
 ```
 
 ## Testing & Validation
@@ -272,7 +277,7 @@ uv run pytest tests/ -v --cov=batho_core
 - **Total Tests**: 637
 - **Passing**: 637 (100%)
 - **Failing**: 0
-- **Coverage Areas**: CLI, indexing, repomap, incremental patching, memory monitoring, file locking, path security
+- **Coverage Areas**: CLI, indexing, bsg renderer, incremental patching, memory monitoring, file locking, path security
 
 ### Known Test Issues
 None - All tests are currently passing with 100% success rate.
@@ -360,7 +365,7 @@ logging:
 indexer:
   max_file_size_kb: 500
   max_workers: 0  # Auto-detect
-  repomap_budget_tokens: 12000
+  bsg_budget_tokens: 12000
   ignore_patterns:
     - "**/vendor/**"
     - "**/dist/**"

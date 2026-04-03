@@ -36,8 +36,8 @@ pip install batho
 # Index your project
 batho index --root . --verbose
 
-# Generate RepoMap in various formats
-batho repomap --root . --mode compressed --budget 12000
+# Generate BSG in various formats
+batho bsg --root . --mode compressed --budget 12000
 
 # View results
 batho stats --root .
@@ -87,12 +87,12 @@ Modern AI tools need **structured code understanding** — not just raw file con
 ## How It Works
 
 ```
-Your Code → [tree-sitter AST] → Code Graph → RepoMap → LLM / Agent / IDE
+Your Code → [tree-sitter AST] → Code Graph → BSG → LLM / Agent / IDE
 ```
 
 1. **Parse** — tree-sitter extracts functions, classes, variables, imports with full signatures
 2. **Graph** — Entities and relationships (IMPORTS, CALLS, USES, DEFINES) form a code graph
-3. **Compress** — RepoMap renders the graph in multiple formats: compressed, full, JSON, hierarchical
+3. **Compress** — BSG renders the graph in multiple formats: compressed, full, JSON, hierarchical
 4. **Track** — Time Machine snapshots let you diff code intelligence over time
 
 ---
@@ -111,26 +111,26 @@ Batho uses [tree-sitter](https://tree-sitter.github.io/tree-sitter/) for precise
 
 Relationships captured: `IMPORTS` · `CALLS` · `USES` · `DEFINES`
 
-### RepoMap Compression
+### BSG Compression
 
 Transforms full code graphs into compact representations via CLI:
 
 ```bash
-# Generate compressed repomap for LLM injection
-batho repomap --root . --mode compressed --budget 12000
+# Generate compressed bsg for LLM injection
+batho bsg --root . --mode compressed --budget 12000
 
-# Generate full repomap with signatures
-batho repomap --root . --mode full
+# Generate full bsg with signatures
+batho bsg --root . --mode full
 
 # Generate hierarchical directory view
-batho repomap --root . --mode hierarchical
+batho bsg --root . --mode hierarchical
 ```
 
 | Mode | Best for | Output File |
 |------|----------|-------------|
-| **Compressed** | LLM prompt injection (4K–40K tokens) | `repomap_compressed.json` |
-| **Full** | Developer reference with signatures + line numbers | `repomap_full.json` |
-| **Hierarchical** | Directory-tree overviews | `repomap_hierarchical.json` |
+| **Compressed** | LLM prompt injection (4K–40K tokens) | `bsg_compressed.json` |
+| **Full** | Developer reference with signatures + line numbers | `bsg_full.json` |
+| **Hierarchical** | Directory-tree overviews | `bsg_hierarchical.json` |
 
 ### Time Machine
 
@@ -209,10 +209,10 @@ pip install -e .           # development (editable)
 # Index a repository
 batho index --root /path/to/repo --verbose
 
-# Generate RepoMap in various formats
-batho repomap --root /path/to/repo --mode compressed --budget 12000
-batho repomap --root /path/to/repo --mode full
-batho repomap --root /path/to/repo --mode hierarchical
+# Generate BSG in various formats
+batho bsg --root /path/to/repo --mode compressed --budget 12000
+batho bsg --root /path/to/repo --mode full
+batho bsg --root /path/to/repo --mode hierarchical
 
 # View index stats
 batho stats --root /path/to/repo
@@ -247,7 +247,7 @@ batho invalidate --root /path/to/repo
 | `--verbose` | off | Print progress to stdout |
 | `--snapshot` | off | Create snapshot after indexing |
 
-### RepoMap Options
+### BSG Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -278,10 +278,10 @@ batho invalidate --root /path/to/repo
 │   └── patch_<uuid>_<ts>.json
 └── <index_id>/
     ├── graph.json           # All entities + relationships
-    ├── repomap.json         # Structured symbol index
-    ├── repomap_compressed.json # LLM-ready compressed view
-    ├── repomap_full.json    # Complete symbol index with signatures
-    ├── repomap_hierarchical.json # Directory tree view
+    ├── bsg.json             # Structured symbol index
+    ├── bsg_compressed.json  # LLM-ready compressed view
+    ├── bsg_full.json        # Complete symbol index with signatures
+    ├── bsg_hierarchical.json # Directory tree view
     └── architecture.md      # Human-readable summary
 ```
 
@@ -303,18 +303,26 @@ batho invalidate --root /path/to/repo
 </details>
 
 <details>
-<summary><strong>repomap.json example</strong></summary>
+<summary><strong>bsg.json example</strong></summary>
 
 ```json
 {
-  "schema_version": "repomap.v1",
-  "files": {
-    "src/auth.py": [
-      {"name": "login", "type": "function", "lines": [10, 25], "signature": "(username, password) -> bool"}
-    ]
-  },
-  "dependencies": {
-    "src/auth.py": ["os", "pathlib", "src/models.py"]
+  "schema_version": "bsg.v1",
+  "nodes": [
+    {
+      "id": "e1",
+      "type": "FUNCTION",
+      "name": "login",
+      "file": "src/auth.py",
+      "start_line": 10,
+      "end_line": 25
+    }
+  ],
+  "edges": [],
+  "indexes": {
+    "nodes_by_file": {
+      "src/auth.py": ["e1"]
+    }
   }
 }
 ```
@@ -336,6 +344,10 @@ Batho works out of the box with zero config. For advanced use, configure via env
 | `BATHO_MAX_FILE_SIZE_KB` | `500` | Max file size to parse |
 | `BATHO_MAX_INDEXED_FILES` | `200000` | Hard cap on indexed files |
 | `BATHO_INDEX_WORKERS` | `0` | Worker threads (0 = auto) |
+| `BATHO_RULES_ENABLED` | `false` | Enable BSG rule plugin stage |
+| `BATHO_RULES_CUSTOM_RULES_PATH` | unset | YAML file containing custom BSG rules |
+| `BATHO_RULES_BUILTIN_PLUGINS` | `bsg_core` | Comma-separated built-in plugin names |
+| `BATHO_RULES_DISABLED_RULES` | unset | Comma-separated rule names to disable |
 
 ### Config File
 
@@ -358,6 +370,46 @@ flags:
 
 webhook:
   enabled: false
+
+rules:
+  enabled: true
+  builtin_plugins: [bsg_core]
+  disabled_rules: []
+  custom_rules_path: ./bsg-rules.yaml
+  custom_rules_inline:
+    - name: payment-cluster
+      entity_types: ["function", "method"]
+      name_patterns: ["*payment*", "*invoice*"]
+      metadata:
+        bsg.cluster_hint: billing
+
+  # Validation controls
+  strict_validation: false
+  fail_on_rule_error: false
+```
+
+### BSG Rule Plugins
+
+Batho now applies BSG rules through internal plugin modules, not the root rules folder.
+
+- Built-in rules are loaded from packaged plugins (default: `bsg_core`).
+- Custom rules can be defined inline in `batho.yaml` via `rules.custom_rules_inline`.
+- Custom rules can also be loaded from `rules.custom_rules_path` YAML files.
+- Rule actions currently focus on deterministic metadata enrichment for graph entities (for example `bsg.category`, `bsg.scope_tier`, `bsg.service_tag`).
+
+Custom rules YAML accepts either a top-level list or a `rules:` list.
+
+```yaml
+rules:
+  - name: mark-test-files
+    file_patterns: ["tests/**", "**/*_test.py"]
+    metadata:
+      bsg.category: TEST
+
+  - name: derive-service-tag
+    file_patterns: ["services/*/**"]
+    actions:
+      derive_service_tag: true
 ```
 
 ---
@@ -369,9 +421,9 @@ Batho is built to power AI-assisted development. Here are common patterns:
 ### Feed LLM Context
 
 ```bash
-# Generate compressed repomap for LLM injection
-batho repomap --root . --mode compressed --budget 12000
-# → Output saved to .ctn/{index_id}/repomap_compressed.json
+# Generate compressed bsg for LLM injection
+batho bsg --root . --mode compressed --budget 12000
+# → Output saved to .ctn/{index_id}/bsg_compressed.json
 # → Load and inject into your LLM prompt as codebase context
 ```
 
@@ -381,8 +433,8 @@ Or programmatically:
 import json
 from pathlib import Path
 
-# Load compressed repomap generated by CLI
-with open('.ctn/{index_id}/repomap_compressed.json', 'r') as f:
+# Load compressed bsg generated by CLI
+with open('.ctn/{index_id}/bsg_compressed.json', 'r') as f:
     data = json.load(f)
     compressed_text = data['compressed_text']
     stats = data['stats']
@@ -414,8 +466,8 @@ for rel in graph.relationships:
 
 ```bash
 batho index --root /path/to/repo
-batho repomap --root /path/to/repo --mode compressed
-# → Embed .ctn/*/repomap_compressed.json chunks into your vector DB
+batho bsg --root /path/to/repo --mode compressed
+# → Embed .ctn/*/bsg_compressed.json chunks into your vector DB
 ```
 
 ### Agentic AI
@@ -537,7 +589,7 @@ batho/
     ├── time_machine.py           # Snapshots, diffs, staleness
     ├── context/
     │   ├── codegraph.py          # Parallel code graph indexer
-    │   ├── repomap.py            # Multi-format RepoMap renderer
+    │   ├── bsg_map.py            # Multi-format BSG renderer
     │   ├── stack_detector.py     # Tech stack detection
     │   └── languages/            # Per-language tree-sitter extractors
     └── utils/

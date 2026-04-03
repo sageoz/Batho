@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "batho"
 version = "0.1.0"
-description = "Enterprise-ready, high-speed, multi-language code indexer with RepoMap compression and Time Machine snapshots/diffs — no LLM required."
+description = "Enterprise-ready, high-speed, multi-language code indexer with BSG compression and Time Machine snapshots/diffs — no LLM required."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
 authors = [
     { name = "Batho", email = "hello@batho.dev" },
 ]
-keywords = ["code-indexer", "repomap", "ast", "tree-sitter", "code-graph", "static-analysis", "code-intelligence"]
+keywords = ["code-indexer", "bsg", "ast", "tree-sitter", "code-graph", "static-analysis", "code-intelligence"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
