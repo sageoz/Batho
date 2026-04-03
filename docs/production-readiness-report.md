@@ -26,19 +26,11 @@ Batho demonstrates strong engineering practices with comprehensive error handlin
 - Dependency validation
 - Proper error logging
 
-### 3. 🟡 ML Model Placeholder
-**Location**: `batho_core/context/c4/granularity/engine.py:47, 140-144`  
-**Issue**: ML model for granularity prediction is placeholder (`self.ml_model = None`)  
-**Status**: ⚠️ **Acknowledged** - Falls back to rule-based prediction (functional)  
-**Recommendation**: Document as v2 feature
-
-### 4. ✅ LLM Extension Placeholders - FIXED
-**Location**: `batho_core/context/c4_llm_extensions.py:1246-1257`  
-**Issue**: Multiple placeholder implementations for domain expert identification and pattern detection  
-**Status**: ✅ **RESOLVED** - Added `enable_llm` flag (default: false) that:
-- Disables placeholder methods when flag is false
-- Provides appropriate logging
-- Ready for future LLM implementation
+### 3. ✅ Architecture Modeling Subsystem Removed
+**Location**: Architecture-modeling modules and tests (removed in `no-c4-support`)  
+**Issue**: Legacy architecture-modeling subsystem increased maintenance scope  
+**Status**: ✅ **RESOLVED** - Architecture model generation code paths were removed from runtime, config, and tests  
+**Recommendation**: Keep this report for historical context only
 
 ## Security Assessment 
 
@@ -142,7 +134,7 @@ Batho demonstrates strong engineering practices with comprehensive error handlin
 2. ~~**Complete Patch Validation**: Implement the TODO for sophisticated patch validation~~ ✅ **COMPLETED**
 
 ### Short Term (v1.1)
-1. ~~**Implement LLM Extensions**: Complete placeholder implementations in C4 extensions~~ ✅ **FLAG ADDED**
+1. Revisit optional architecture modeling only if there is clear product demand
 2. Add more metrics for enhanced monitoring
 3. Performance tuning for very large repositories (>100K files)
 

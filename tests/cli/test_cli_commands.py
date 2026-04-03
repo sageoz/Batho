@@ -31,7 +31,6 @@ class TestCmdIndex:
             snapshot_label=None,
             verbose=False,
             log_json=False,
-            no_c4=False,
         )
         result = cmd_index(args)
         assert result == 0
@@ -76,7 +75,6 @@ class TestCmdIndex:
             snapshot_label=None,
             verbose=True,
             log_json=False,
-            no_c4=False,
         )
         result = cmd_index(args)
         assert result == 0
@@ -97,7 +95,6 @@ class TestCmdIndex:
             snapshot_label=None,
             verbose=False,
             log_json=False,
-            no_c4=False,
         )
         result = cmd_index(args)
         assert result == 0
@@ -129,7 +126,6 @@ class TestCmdStats:
             snapshot_label=None,
             verbose=False,
             log_json=False,
-            no_c4=False,
         )
         cmd_index(idx_args)
 

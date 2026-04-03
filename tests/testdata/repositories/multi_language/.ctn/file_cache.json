@@ -11,15 +11,15 @@
       "sha256": "4303ad036d93a520db3469dc8f3668fa409778b5a735b040b7e5d584631559bf",
       "size": 625
     },
-    "frontend/src/App.tsx": {
-      "mtime": 1774701800.5533757,
-      "sha256": "d79b135eda23c19f9432b18965c92f921458b7adda9db3a9597bd7c624efeecf",
-      "size": 287
-    },
     "backend/app.py": {
       "mtime": 1774701800.5528932,
       "sha256": "29cc1e607c91781becbe6f0cdef87dd6811a049b0e39e5b10bff283537b262ac",
       "size": 369
+    },
+    "frontend/src/App.tsx": {
+      "mtime": 1774701800.5533757,
+      "sha256": "d79b135eda23c19f9432b18965c92f921458b7adda9db3a9597bd7c624efeecf",
+      "size": 287
     },
     "frontend/src/utils.ts": {
       "mtime": 1774701800.5534773,

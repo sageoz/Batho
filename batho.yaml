@@ -28,7 +28,6 @@ flags:
   fail_on_warning: false
   strict: false
   audit_log_enabled: true
-  enable_llm: false
 
 schemas:
   graph: graph.v1

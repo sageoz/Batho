@@ -42,9 +42,6 @@ batho repomap --root . --mode compressed --budget 12000
 # View results
 batho stats --root .
 
-# Generate C4 architecture diagrams
-batho c4 --root . --output c4-model.json
-
 # Create and manage snapshots
 batho snapshots --root .
 batho diff-snapshots --root . SNAP_A SNAP_B
@@ -71,7 +68,7 @@ Modern AI tools need **structured code understanding** — not just raw file con
 | **Enterprise-grade caching** | mtime+SHA skips unchanged files — re-indexes in seconds |
 | **Production webhooks** | GitHub/GitLab integration with authentication and queueing |
 | **CI/CD pipeline hooks** | Turnkey GitHub Actions and GitLab CI templates |
-| **Automated documentation** | Generate C4, SRS, and OWASP docs from your codebase |
+| **Automated documentation** | Generate SRS and OWASP docs from your codebase |
 | **Incremental patching** | 10-100x faster updates with complete lineage tracking |
 
 ---
@@ -80,7 +77,7 @@ Modern AI tools need **structured code understanding** — not just raw file con
 
 - **🚀 Production Webhooks**: Full GitHub/GitLab integration with authentication and queueing
 - **🔄 CI/CD Pipeline Hooks**: Turnkey templates for GitHub Actions and GitLab CI
-- **📊 Automated Documentation**: Generate C4 architecture diagrams, SRS, and OWASP documentation
+- **📊 Automated Documentation**: Generate SRS and OWASP documentation
 - **⚡ Enhanced Incremental Patching**: 10-100x faster updates with complete patch lineage tracking
 - **🔒 Enterprise Security**: Memory monitoring, file locking, and path sanitization
 - **📈 Comprehensive Testing**: 637 tests with 100% pass rate
@@ -144,22 +141,6 @@ batho diff-snapshots --root . SNAP_A SNAP_B        # Compare versions
 ```
 
 Versioned snapshots with UUID + timestamp, entity/relationship diffs, and staleness scoring for automated re-indexing.
-
-### C4 Architecture Generation
-
-```bash
-# Generate C4 models (automatic during index)
-batho index --root .
-
-# Generate from existing index
-batho c4 --root . --output /path/to/c4-model.json
-
-# Generate in multiple formats
-batho c4 --root . --format plantuml    # PlantUML
-batho c4 --root . --format mermaid     # Mermaid
-batho c4 --root . --format d2          # D2
-batho c4 --root . --format html        # Interactive HTML
-```
 
 ### Incremental Patching with Tracking
 
@@ -247,9 +228,6 @@ batho index --root /path/to/repo --snapshot
 batho snapshots --root /path/to/repo
 batho diff-snapshots --root /path/to/repo SNAP_A SNAP_B
 
-# C4 architecture generation
-batho c4 --root /path/to/repo --output c4-model.json
-
 # Patch management
 batho patches --root /path/to/repo --format timeline
 batho patch-info --root /path/to/repo --patch-id ID
@@ -268,7 +246,6 @@ batho invalidate --root /path/to/repo
 | `--log-json` | off | JSON structured logs (useful in CI) |
 | `--verbose` | off | Print progress to stdout |
 | `--snapshot` | off | Create snapshot after indexing |
-| `--no-c4` | off | Skip C4 model generation |
 
 ### RepoMap Options
 
@@ -305,8 +282,7 @@ batho invalidate --root /path/to/repo
     ├── repomap_compressed.json # LLM-ready compressed view
     ├── repomap_full.json    # Complete symbol index with signatures
     ├── repomap_hierarchical.json # Directory tree view
-    ├── architecture.md      # Human-readable summary
-    └── c4-model.json        # C4 architecture model
+    └── architecture.md      # Human-readable summary
 ```
 
 <details>
@@ -463,7 +439,6 @@ jobs:
       - run: pip install batho
       - run: batho index --root . --verbose --log-json --snapshot
       - run: batho stats --root .
-      - run: batho c4 --root . --output c4-model.json
       - uses: actions/upload-artifact@v4
         with:
           name: batho-output
@@ -504,11 +479,6 @@ jobs:
     "label": "Batho Patch",
     "type": "shell",
     "command": "batho patch --root ${workspaceFolder} --scan"
-  },
-  {
-    "label": "Batho C4",
-    "type": "shell",
-    "command": "batho c4 --root ${workspaceFolder} --output c4-model.json"
   }]
 }
 ```

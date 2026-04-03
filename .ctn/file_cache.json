@@ -1,1078 +1,1061 @@
 {
   "schema_version": "file-cache.v1",
   "files": {
-    "batho_core/.github/workflows/ci.yml": {
-      "mtime": 1774701800.378336,
-      "sha256": "932fbe6000c8aa6db2f3aca4268b66127904897ee55659b8f4ceda2b096fb740"
-    },
-    "batho_core/config.py": {
-      "mtime": 1774725638.2776566,
-      "sha256": "f980e3384e4d4e4fcd2fb32160093e089914a37bc328f62efa63e91c9085d4e8"
+    "batho_core/context/categorizer.py": {
+      "mtime": 1774789144.2031062,
+      "sha256": "702c8556077bee98c12ad9a90e99f6d003789d99f5163a1db9269580c4633570",
+      "size": 11726
     },
     "README.md": {
-      "mtime": 1774725634.4297748,
-      "sha256": "abae1406905870749c717ae563bbd2671c7e213b967944b1de54683da933c8c1"
+      "mtime": 1775239998.4433599,
+      "sha256": "4a23ba85c5a5d7514b7c654172fcc3bb36268784f9a7c899b640fd3c265bb19d",
+      "size": 18213
     },
-    "Brownfield-Core-Engine-PDD.docx.md": {
-      "mtime": 1774179273.4609482,
-      "sha256": "5aa19a007e706f753e2cee67cce4051fae984fb3b2f029c002fdc47fe4c6fbd2"
+    "batho.yaml": {
+      "mtime": 1775239871.834209,
+      "sha256": "d85a1817a942722a320dd0544a45d28094cb41dbd85948c12d777ec776f32633",
+      "size": 1218
     },
     "batho.py": {
-      "mtime": 1774759362.0076253,
-      "sha256": "a2aa915ef978b2d23183e361eb2bc7680a06df1fe0fdfe2efdab185cd48bd1d5"
-    },
-    "batho_core/context/__init__.py": {
-      "mtime": 1774701800.3792775,
-      "sha256": "462da38e22760a4d27f92a5f81a0651b2e6d74bfa69259d5acaed12fbb3efe57"
-    },
-    "batho_core/context/codegraph.py": {
-      "mtime": 1774705837.9482358,
-      "sha256": "5fc1be41a0643f00c3f574c20979a73af1505f35a01f98b53a51d01045ad32a7"
-    },
-    "batho_core/context/languages/__init__.py": {
-      "mtime": 1774701800.3955975,
-      "sha256": "ebcda0b174ceafe011ebc26e30ebe32723b4a08ae39af04ec92f53fd96cc7284"
-    },
-    "batho_core/context/languages/bash.py": {
-      "mtime": 1774701800.3969157,
-      "sha256": "7ff5de2614cec2e86497f28eb68b0f2eeda581b6b6672a391807db54cb636dd6"
-    },
-    "batho_core/context/languages/_common.py": {
-      "mtime": 1774701800.3959563,
-      "sha256": "5861e35e8b9bbddecb9fc60c59536b58f02d84bf8f1b384a73f1231e5635eca4"
-    },
-    "batho_core/context/extractor.py": {
-      "mtime": 1774701800.3952754,
-      "sha256": "30ec29f989459a32c27de5208fe82a20e295a181fb019bc00ffe2dbfa29f7c61"
-    },
-    "batho_core/context/languages/css.py": {
-      "mtime": 1774701800.397681,
-      "sha256": "5662a31d1f74db8594eb9fe9af41bd25e13bdc20c1738e52b96114c93bd86c01"
-    },
-    "batho_core/context/languages/c.py": {
-      "mtime": 1774701800.397047,
-      "sha256": "7a369a6c120ed46d483b9a2be7eccf832afdf18848fe596908cf7ba3c3613069"
-    },
-    "batho_core/context/categorizer.py": {
-      "mtime": 1774758806.5141237,
-      "sha256": "702c8556077bee98c12ad9a90e99f6d003789d99f5163a1db9269580c4633570"
-    },
-    "batho_core/context/languages/cpp.py": {
-      "mtime": 1774701800.3971658,
-      "sha256": "d88bc5de9c54eff45f0bfa4fd9f621dd0325fe1e95341e7541ef063a820f61d6"
-    },
-    "batho_core/context/languages/dart.py": {
-      "mtime": 1774701800.3979273,
-      "sha256": "3c42fe8d9cec70da1851acb26cf21f7bebc0c365c4d5291abdb670f60cc89639"
-    },
-    "batho_core/context/languages/factory.py": {
-      "mtime": 1774701800.3995156,
-      "sha256": "e6114a3ef27144672c13f698a4830e77c7e5f7cbef23ecd851767fecc6c457df"
-    },
-    "batho_core/context/languages/go.py": {
-      "mtime": 1774701800.3996937,
-      "sha256": "9b607880a4d2bf607dd5d76b037ec4316f69edc5055540a471469afb383a2674"
-    },
-    "batho_core/context/languages/hack.py": {
-      "mtime": 1774701800.399973,
-      "sha256": "a13a9893541374d2d75fd8c25ef6c3f6383182821fc031296fdb15f1c4c4a36b"
-    },
-    "batho_core/context/languages/detector.py": {
-      "mtime": 1774701800.3992746,
-      "sha256": "4d0b2f8695bd8c6575bd941c4e44ba4ab9247a15f2cf604f51a8dd4ebbd48f8b"
-    },
-    "batho_core/context/languages/csharp.py": {
-      "mtime": 1774701800.3973773,
-      "sha256": "e0723f91c527cee505edaa2e3e78e463001e4c2f67daa82bba55a7dafa2c9471"
-    },
-    "batho_core/context/languages/haskell.py": {
-      "mtime": 1774701800.4007826,
-      "sha256": "d2b0805bab4ecb772edbf2981aacb3bf26f9a69aba153a1043f15b2d0545a21e"
-    },
-    "batho_core/context/languages/erlang.py": {
-      "mtime": 1774701800.399395,
-      "sha256": "f381a9183b6e93d7e7b63aff08381456a0c6a96baa5cf98f66a1b0570ffb70af"
-    },
-    "batho_core/context/languages/javascript.py": {
-      "mtime": 1774701800.4012673,
-      "sha256": "d6dacf0174b456a90566a195d57caac7b4f12cf15908e66bbb5bd3e297a2c3a3"
-    },
-    "batho_core/context/languages/html.py": {
-      "mtime": 1774701800.4010534,
-      "sha256": "0fab8eb53e672b07cddf3fe97c8e87b52408f120352d9d1f819ea649e6cbcdc2"
-    },
-    "batho_core/context/languages/julia.py": {
-      "mtime": 1774701800.4016254,
-      "sha256": "31eac7521072e67681ce76bf007ea253a89e32ab853bd3add20e7fa7409cc0e5"
-    },
-    "batho_core/context/languages/hcl.py": {
-      "mtime": 1774701800.4009106,
-      "sha256": "2dccb32b9ec83c4bd1296aff676a060908b5d10ca0c42b8d1c06347cf1d92e26"
-    },
-    "batho_core/context/languages/json.py": {
-      "mtime": 1774701800.4014435,
-      "sha256": "4235cf5e92ce7d740a9b7b03ad30a53dde9afbf80c24fae241f3b25e49e76598"
-    },
-    "batho_core/context/languages/java.py": {
-      "mtime": 1774701800.4011607,
-      "sha256": "41db39faa8d3c91d2d426959950a818355580d3924818a8b14d855ad502564f2"
-    },
-    "batho_core/context/languages/kotlin.py": {
-      "mtime": 1774701800.4018857,
-      "sha256": "8df797023e6d9641b70b84ae267c4364635d3386eca51c7f87ae80538b30c7e5"
-    },
-    "batho_core/context/languages/php.py": {
-      "mtime": 1774701800.4035058,
-      "sha256": "f1b4dd53a0b2014f77434f2fbd3d5f35df7e9815d395adbf728904cde4b44b30"
-    },
-    "batho_core/context/languages/ocaml.py": {
-      "mtime": 1774701800.403064,
-      "sha256": "6ce7820983483d1c8f522ba398da9e335fc7dc5153dcbcc677087bae7edee98e"
-    },
-    "batho_core/context/languages/perl.py": {
-      "mtime": 1774701800.403195,
-      "sha256": "f925aec9263a378ed43e0683be15b8cd3b0ce5e430af041bcf37c83e2e88a18b"
-    },
-    "batho_core/context/languages/r.py": {
-      "mtime": 1774701800.4047754,
-      "sha256": "62d71e50f11cc2e16e0e784b5daabbe1824966e2cadd190a24ea9b32769f596d"
-    },
-    "batho_core/context/languages/python.py": {
-      "mtime": 1774701800.403732,
-      "sha256": "0072c990ffc23f7ad3c44cc77d20c0384e8586fcc0e4e0dbe76c2c496cd364ab"
-    },
-    "batho_core/context/languages/lua.py": {
-      "mtime": 1774701800.4027956,
-      "sha256": "b77f07e4f7b9b7c04ec665c298a1bc20040bd3615c8b8d335ce23103545deaba"
-    },
-    "batho_core/context/languages/markdown.py": {
-      "mtime": 1774701800.4029334,
-      "sha256": "5c94f5a3cdc9f2ad28bc8c5604d9fe8e656f3cce043c928208b449a4800a1f3c"
-    },
-    "batho_core/context/languages/ruby.py": {
-      "mtime": 1774701800.4052064,
-      "sha256": "fa9feef0e5757914e7a67d0b896d8be9f37feb5c2af40e61fbf46ddaec7b9d53"
-    },
-    "batho_core/context/languages/toml.py": {
-      "mtime": 1774701800.405835,
-      "sha256": "270ad0239c723da279815200984efe555ed54bbf7dedf306caa9bea9c5cb73e0"
-    },
-    "batho_core/context/languages/registry.py": {
-      "mtime": 1774701800.4050593,
-      "sha256": "9965e8918a20fc3842029c829d56d9186b3a1f9fc900b118315dbfb70457d159"
-    },
-    "batho_core/context/languages/swift.py": {
-      "mtime": 1774701800.4055674,
-      "sha256": "2cf96d0c09a9c50179024a297bb8bce33239e6c4088050f44e396a06f8a71144"
-    },
-    "batho_core/context/languages/rust.py": {
-      "mtime": 1774701800.405331,
-      "sha256": "a6035c4a6f87e26d8504ed90f3d7627590cac256c181e018ed4335ad25ef328f"
-    },
-    "batho_core/context/languages/scala.py": {
-      "mtime": 1774701800.4054444,
-      "sha256": "49f63d2e2080dd3379a5d2d2935bc834a05aaf3e0271ae027eccb052b2196ba9"
-    },
-    "batho_core/context/languages/verilog.py": {
-      "mtime": 1774701800.407206,
-      "sha256": "20a02928395777bcf710e7abe54697f63785788b137d3b64540bf00f330615c1"
-    },
-    "batho_core/context/languages/zig.py": {
-      "mtime": 1774701800.4075615,
-      "sha256": "ee968264f757da43c2336f4d6df2e115617daf8863ecafa7210f9a7890bc4506"
-    },
-    "batho_core/context/schema.py": {
-      "mtime": 1774714539.7516015,
-      "sha256": "d9acf1781d0e5c55ddafe81152988ace6175aca83cf42401da70aeca37c0efa0"
-    },
-    "batho_core/context/stack_detector.py": {
-      "mtime": 1774701800.4090257,
-      "sha256": "164ee70f9d5dbfac69ffdfd99b7ca539dd8f3ae04681887a98787bcbd30d18da"
-    },
-    "batho_core/context/languages/yaml.py": {
-      "mtime": 1774701800.4073765,
-      "sha256": "9bfdbc0b135f815222a2e65e1d9fa744d61601472811695c91cab0aacd443d23"
-    },
-    "batho_core/time_machine.py": {
-      "mtime": 1774715589.6552246,
-      "sha256": "63872d0bf39b970ebbb44d12a42c6e2b800ae890cd02174e9b6f2bd3f369bb11"
-    },
-    "batho_core/context/repomap.py": {
-      "mtime": 1774760377.0486672,
-      "sha256": "a2f3b34cf4aac810cb637d77b04093189d3db2ee122d1aadacf99ced3fae3150"
-    },
-    "batho_core/context/languages/typescript.py": {
-      "mtime": 1774701800.4060779,
-      "sha256": "8ec2e4bf176c287500eeaf42d87d9eab72e6d1a9a8039ce18be8e97b103a79f2"
-    },
-    "batho_core/utils/hash.py": {
-      "mtime": 1774706536.6158612,
-      "sha256": "5f4f61e27dde36215b6da29fa863c40b191b4a58cbe2e532145a0a9dd7014816"
-    },
-    "batho_core/pyproject.toml": {
-      "mtime": 1774701800.4092875,
-      "sha256": "66dfccd58bd175574a51e5a3321197e365719c1d1a2156cbf61dfe4e7e0c2db0"
-    },
-    "batho_core/utils/logging.py": {
-      "mtime": 1774701800.4116564,
-      "sha256": "002dee0948ebb20a875e96a93e3e716fbbe1f117d4cd9c2b35c393bf7918e96c"
-    },
-    "batho_core/utils/encoding.py": {
-      "mtime": 1774701800.4110434,
-      "sha256": "35f47e9c5dc21d06a1102a2448c19aae7eb8ebb67e9525e42a0f4779dc0b8d25"
-    },
-    "batho_core/utils/__init__.py": {
-      "mtime": 1774706226.6145692,
-      "sha256": "65670c8a2176bf575f534e05030aaa22927ac5ac720ab218b1003cbf22fe307a"
-    },
-    "batho_core/utils/dependencies.py": {
-      "mtime": 1774701800.41084,
-      "sha256": "c6c65349c413438ddb429bf1aa3cccf45bd7ce8c5d8c5a7e9c8befe6d58730ea"
-    },
-    "docs/architecture-diagrams.md": {
-      "mtime": 1774159585.3860528,
-      "sha256": "773589492b2015f218873f18670248a3327d428fcf012067fdfcbb4aa9953bac"
-    },
-    "batho_core/utils/ignore.py": {
-      "mtime": 1774701800.4115422,
-      "sha256": "e597e534a25e3440b8af8f5472f13c48c18e281ec942a03d3a173b74583164f3"
-    },
-    "debug_html.py": {
-      "mtime": 1774172101.5037165,
-      "sha256": "52f28f1a44eb4ec9e6616b2299d81c2e40e0e6ff802e2db4e6a9452d31d41221"
-    },
-    "docs/batho-kt.md": {
-      "mtime": 1774159577.0283864,
-      "sha256": "6c263e8451387adf54cdb860241e33ba7b7e8f5c05895588db529b7049d91deb"
-    },
-    "docs/cleanup.md": {
-      "mtime": 1774177261.3254077,
-      "sha256": "1d92ebadcd19a7c15864532de8d606c185f1694910ec600325119d87053c4cb9"
-    },
-    "docs/v1-feature-checklist.md": {
-      "mtime": 1774177453.9983497,
-      "sha256": "c82ddae1470b9d46e0f936a676cf281b6870412b0d4012e22d0ba16ab85fa722"
-    },
-    "docs/sageoz-core-scope-validation.md": {
-      "mtime": 1774179748.0085492,
-      "sha256": "c679f4631e42ec359b635b299970fa9e479a34e1c140998cf15ea031bf7e15f2"
-    },
-    "debug_markdown.py": {
-      "mtime": 1774172326.4408042,
-      "sha256": "01144229fef2c391cc5315a75e419bb0af0f38700ed27035b22ed42f2df58ba7"
-    },
-    "pyproject.toml": {
-      "mtime": 1774725638.278115,
-      "sha256": "1be875afea80cf548224d2a00eeca661e34a08fee812ab3646931f302b1a00db"
-    },
-    "tasks.md": {
-      "mtime": 1774171869.945073,
-      "sha256": "b2fe0700d9819bc422740ab6a67777a9d3c20e0b0cb7679b0d365d2f8e5c1af0"
-    },
-    "tests/__init__.py": {
-      "mtime": 1774701800.4175785,
-      "sha256": "7e6409d9f150666c65da09e371d9c766677b993744cf263e8308967833cd85c1"
-    },
-    "docs/v2.md": {
-      "mtime": 1774177122.5558515,
-      "sha256": "05742b96269f7c956cae5bd313e89bdb04021ac85ca1329997cdbf3030827bc5"
-    },
-    "rulebased-c4-generation-plan.md": {
-      "mtime": 1774286056.3639643,
-      "sha256": "64d8a9907dfb8b476365477942cd8c94c39a867cb58be60e4e360ca4e4905fcd"
-    },
-    "tests/cli/__init__.py": {
-      "mtime": 1774701800.4176056,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    "tests/cli/test_cli_commands.py": {
-      "mtime": 1774703419.36733,
-      "sha256": "6c3be795dc00ad0685dbd892d8a015bd6254b036895aafbf095a0b393ad2ad5b"
-    },
-    "tests/cli/test_cli_parser.py": {
-      "mtime": 1774703419.3765647,
-      "sha256": "32b5650ff336e54d757294d3996c56ae53c616df257ff66f2f5d08e0b5a004f6"
-    },
-    "test.py": {
-      "mtime": 1774701800.4167666,
-      "sha256": "b895764c15100e78c66b0ce1ebd08e495c4d8365de87d3682202977b69ccb210"
-    },
-    "tests/context/__init__.py": {
-      "mtime": 1774701800.4183183,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    "tests/conftest.py": {
-      "mtime": 1774701800.41829,
-      "sha256": "90afc830a52535b731045721e33d31f6db96cece3e8775c52665efd5acda6610"
-    },
-    "tests/cli/test_cli_integration.py": {
-      "mtime": 1774703419.367306,
-      "sha256": "5bb4169d63c0f699540fc46917e518e16ddc1b7642573fe4e309bab7a4445d20"
-    },
-    "tests/context/test_codegraph.py": {
-      "mtime": 1774706718.1252763,
-      "sha256": "b89fa8a16b68edc75fad75aa8ce0f6e162c1ddbccd895417c9b9b1b25dba5d5f"
-    },
-    "tests/context/test_factory.py": {
-      "mtime": 1774701800.4215705,
-      "sha256": "e4aedc6b8bceb5622a95a80535fd98168391ca6a27837fec77e4f66f1f57c196"
-    },
-    "tests/context/test_hcl_extractor.py": {
-      "mtime": 1774701800.4220428,
-      "sha256": "f1f90ee40569ccf76264632db0dd364b403ea9e8ad5cff1de0040bcea0958584"
-    },
-    "tests/context/test_repomap.py": {
-      "mtime": 1774701800.423705,
-      "sha256": "ded7c75d6c1798c6ed31e9674e52978b5562bcbba76aaa7aadb2d028e5263d47"
-    },
-    "tests/context/test_html_extractor.py": {
-      "mtime": 1774701800.4223545,
-      "sha256": "01b0bad2c2c19a20e884701950a39694ea0fdab4f05c2446198fdd927ce6dd56"
-    },
-    "tests/context/test_language_detector_comprehensive.py": {
-      "mtime": 1774701800.4231374,
-      "sha256": "80856cc94a102397e23ec8dbd8294917b57c6231d21895ff67ee081df891a14b"
-    },
-    "tests/core/__init__.py": {
-      "mtime": 1774701800.4242327,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    "tests/core/test_config.py": {
-      "mtime": 1774701800.424486,
-      "sha256": "5991ed057b6d80133abfffba2fabfbdae4a2a80abed7eb0fc48ba2ce678d98c3"
-    },
-    "tests/context/test_css_extractor.py": {
-      "mtime": 1774701800.4194982,
-      "sha256": "a2d28a3bc07de5010595f9b3b274e48e77e19684aa4e76103bcf04d75a2ec845"
-    },
-    "tests/context/test_markdown_extractor.py": {
-      "mtime": 1774701800.4235196,
-      "sha256": "0b803cf41efccd71d1b6522afd21aa68fd7208cdbdf96e79aff8d4e9a03ac273"
-    },
-    "tests/context/test_yaml_extractor.py": {
-      "mtime": 1774701800.4242024,
-      "sha256": "5ae7600b8c0dcec90a142f95cc2974a3a228be0399afec7f98da69a030385b42"
-    },
-    "tests/integration/__init__.py": {
-      "mtime": 1774701800.4248958,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    "tests/context/test_stack_detector.py": {
-      "mtime": 1774701800.4240193,
-      "sha256": "dc3655961ecb4e0e6649e7a0d9fe153620b959c75d39ae79cda673048ffd3854"
-    },
-    "tests/context/test_languages.py": {
-      "mtime": 1774701800.423374,
-      "sha256": "715037cd0f3f3bc8612b95de64aa7669f156c29c2ae95fe5571ef4360db37cf9"
-    },
-    "tests/core/test_schema.py": {
-      "mtime": 1774701800.4248648,
-      "sha256": "b43f6779af0dac413c358ff2de1df7db232b60ec5805fc513dd9ae90bfdae9e8"
-    },
-    "tests/integration/test_cross_platform.py": {
-      "mtime": 1774703419.3673408,
-      "sha256": "e506cb91398adb4583b8ba7b6c591cea2eddfff78574f2fc1d151f75d297f861"
-    },
-    "tests/test_flask_fixture.py": {
-      "mtime": 1774701800.4258134,
-      "sha256": "c79b526b5983e8ea23906a57937fe8f1cf5f71dd29e007a0b22a7f7a4bf0b9ae"
-    },
-    "tests/integration/test_workflows.py": {
-      "mtime": 1774707474.8343427,
-      "sha256": "0255411da7be77d3a8ec7bf4979af511283e12f83f2c0f026c7e7b92c8fe6446"
-    },
-    "tests/performance/test_performance.py": {
-      "mtime": 1774703419.3675807,
-      "sha256": "a6232805222bb375702b797aec5c85a3b800fb21473b634e437eace43ceff515"
-    },
-    "tests/core/test_extractor.py": {
-      "mtime": 1774701800.4246657,
-      "sha256": "bd466d28e4c00edbd65f9ed01c7278465a8463eb206a022aceacfffe0b4ac1cc"
-    },
-    "tests/test_time_machine.py": {
-      "mtime": 1774707085.4023497,
-      "sha256": "8de523bb7d44ebf23ea2831a7bc5cd4176aa051733ac235251f9849f25668118"
-    },
-    "tests/testdata/PHASES1_5_COMPLETION_SUMMARY.md": {
-      "mtime": 1774701800.4264648,
-      "sha256": "bdb3c785458721c04a7555751f42c34b63cb6231aca801584d749023c9bfdb2f"
-    },
-    "tests/testdata/PHASE1_COMPLETION_SUMMARY.md": {
-      "mtime": 1774701800.4262483,
-      "sha256": "554d421c4dc3e20394dc0d60b26e6916625646d722fb63b37c85a20ad20f5381"
-    },
-    "tests/integration/test_error_handling.py": {
-      "mtime": 1774703419.3673646,
-      "sha256": "e0744a75471fbe188198e33d6b8b2133625f6da9a6a052ff460e1933f27175af"
-    },
-    "tests/testdata/files/config/sample_config.json": {
-      "mtime": 1774701800.42687,
-      "sha256": "9ce2c3dd04ef203f8bb286a37bc049a44a58576b47ce0d3aec172052c354f260"
-    },
-    "tests/testdata/files/config/sample_config.yaml": {
-      "mtime": 1774701800.4271164,
-      "sha256": "46cfb8239fd52890fb4abb5d90a9c5b538b9fc8371fd8a4c8aaf16fbf85f25bd"
-    },
-    "tests/testdata/files/config/sample_config.toml": {
-      "mtime": 1774701800.4269834,
-      "sha256": "5ff2c733f95d4fa317ea7f163dc91767c402f40275faae93d5344a008315e1dc"
-    },
-    "tests/testdata/files/css/basic.css": {
-      "mtime": 1774701800.4276052,
-      "sha256": "79eb3b29146c0ef44d4e9252a634cc74961005ddbad69e9f2bb8c78874ef2e3e"
-    },
-    "tests/testdata/files/css/advanced.css": {
-      "mtime": 1774701800.4275005,
-      "sha256": "c0da11e9df0cec32d4380677380fc2c3056cc6e2ed499756bc3ede6bceadacc4"
-    },
-    "tests/testdata/files/README.md": {
-      "mtime": 1774701800.4266107,
-      "sha256": "7525035bc41ac4fdd68c75ef9ee7e3be92da709190192c9da020e728817d4f72"
-    },
-    "tests/testdata/files/css/complex_selectors.css": {
-      "mtime": 1774701800.4277046,
-      "sha256": "ebdf64d1dd9c12bfa7c233c79c5245ad868f4e208f58e9833ecc949bb7ec28fd"
-    },
-    "tests/testdata/files/cpp/sample_cpp.cpp": {
-      "mtime": 1774701800.4273512,
-      "sha256": "b7ebfb14c82bd36c2b7e15d36493a7e9a9b78547f185c3aac2ade54afcb6e52f"
-    },
-    "tests/testdata/files/css/scss_style.scss": {
-      "mtime": 1774701800.4278162,
-      "sha256": "a3e25429f8536042e6a64ebe08999e4dded41609b38d33c715aa819abf3a876e"
-    },
-    "tests/testdata/files/hcl/basic.tf": {
-      "mtime": 1774701800.428133,
-      "sha256": "5ded2c82035f3e1cbd2bcea741ec7cccae6fcc9a5598e3c6aa6bd056a1a45e92"
-    },
-    "tests/testdata/files/java/SampleClass.java": {
-      "mtime": 1774701800.4284527,
-      "sha256": "bee00ea14ae10f5d7cb571f357ea88b1197fe7be1effb4a204371c1cc27d82aa"
-    },
-    "tests/testdata/files/go/sample_go.go": {
-      "mtime": 1774701800.4279633,
-      "sha256": "12d94360d11c1711aa927c61fef0fcd19f6de1b7f09c158aaedc38739148ada6"
-    },
-    "tests/testdata/files/javascript/sample_es6.js": {
-      "mtime": 1774701800.428609,
-      "sha256": "f02b675c39e069a40574aa52e0da7f0eff23753b28aa7e98b13b443a2f175843"
-    },
-    "tests/testdata/files/markup/sample_html.html": {
-      "mtime": 1774701800.4287834,
-      "sha256": "0afb7482d9434e7a0f563b6a518c336134b0987a97ba8912448135e01827d8a0"
-    },
-    "tests/testdata/files/yaml/basic.yaml": {
-      "mtime": 1774701800.4295337,
-      "sha256": "79e1cc989af36cb1dab9f5449b4b4c568a166b4983c7dac93cac4d8b86147e01"
-    },
-    "tests/testdata/files/markup/sample_markdown.md": {
-      "mtime": 1774701800.428911,
-      "sha256": "44547ab0c5594c579a3a0d9a8af24914a39edab20b325af47be410de46e5aec5"
-    },
-    "tests/testdata/files/hcl/complex.tf": {
-      "mtime": 1774701800.4282696,
-      "sha256": "c1b1d13da6bc2453b4ed8ed6ce6715f3975722dea2d23e56bbad6595ed92a65d"
-    },
-    "tests/testdata/files/rust/sample_rust.rs": {
-      "mtime": 1774701800.4293692,
-      "sha256": "b8c406b6e384969af1acabd4cf55aa1a93fe4d7c3c98d3040fa24a4f43a4315a"
-    },
-    "tests/testdata/files/yaml/complex.yaml": {
-      "mtime": 1774701800.4297364,
-      "sha256": "e3cb4049c481b4739b9195f55deca22e9057ed027eeb0bd194e40f6471739b99"
-    },
-    "tests/testdata/fixtures/README.md": {
-      "mtime": 1774701800.4299538,
-      "sha256": "09042a00ee9edf8bbf78cf6a441a68c972ff5403ae692d44fb2c5e2e1acc322f"
-    },
-    "tests/testdata/files/python/sample_functions.py": {
-      "mtime": 1774701800.4292126,
-      "sha256": "9ca7c65ac67e9bd52aefe473d644d41e94c87d354415bc47a8a4508c6feacfe3"
-    },
-    "tests/testdata/outputs/README.md": {
-      "mtime": 1774701800.4309413,
-      "sha256": "ee9d09e931524fbe44fc85647a9ca496adde19b3307546d7f4446600bdc5380e"
-    },
-    "tests/testdata/outputs/api_responses/index_success.json": {
-      "mtime": 1774701800.4317539,
-      "sha256": "f19a73a1260c554fa285ed986262f71e85b5982a7e8ed20715c797f5295bf01a"
-    },
-    "tests/testdata/outputs/PHASE7_COMPLETION_SUMMARY.md": {
-      "mtime": 1774701800.4307554,
-      "sha256": "d0899d5e1543f4f246b5a4b5d2a21e029acfd1fdce44843e13223ee4e0c2a197"
-    },
-    "tests/testdata/outputs/api_responses/error_response.json": {
-      "mtime": 1774701800.431623,
-      "sha256": "4e44754ece206f86768982c3142c89b0acea2bf1188c4d0ae25d0b70a86675b0"
-    },
-    "tests/testdata/outputs/configs/custom_configs/language_specific_config.yaml": {
-      "mtime": 1774701800.4320362,
-      "sha256": "36c2c873ba67b8e35e04edbe9dbcaa1cdeb88fb4f76ba35b432c361ffb4a90c8"
-    },
-    "tests/testdata/outputs/configs/custom_configs/performance_tuning_config.toml": {
-      "mtime": 1774701800.4322524,
-      "sha256": "56e54ffb027514325039ffd245b2840785937a541eab9c2c7cd3bb806ff4373f"
-    },
-    "tests/testdata/outputs/api_responses/stats_response.json": {
-      "mtime": 1774701800.4318702,
-      "sha256": "5e5f1f66d93598992f9ae7b8582db940815c9bb9e785fed958af850e8a67a782"
-    },
-    "tests/testdata/outputs/configs/invalid_configs/missing_fields.json": {
-      "mtime": 1774701800.4327607,
-      "sha256": "60e6bb5e3536fe15b5b37290670ba310e56ff3f7b370dd7293b1e51c516e28bd"
-    },
-    "tests/testdata/outputs/configs/custom_configs/large_repository_config.json": {
-      "mtime": 1774701800.4321468,
-      "sha256": "f1126d2e9f2c7d95fa254d51962dba21f610655d4fe80d8883b4e9e865a6e890"
-    },
-    "tests/testdata/outputs/configs/default_config.json": {
-      "mtime": 1774701800.4323554,
-      "sha256": "43d8323e9df25c6ece8827a0f6efc38ee882cb3914873cbcbb245a1eaf005dec"
-    },
-    "tests/testdata/outputs/configs/env_override_configs/override_example.json": {
-      "mtime": 1774701800.4325528,
-      "sha256": "932a325a8118b260522327eb78c67293bf3f0941ffcf141ee43d908978a4d298"
-    },
-    "tests/testdata/outputs/graphs/simple_python_graph.json": {
-      "mtime": 1774701800.4360676,
-      "sha256": "78aa8918689464876f05a830d5519d3657f456569556f4581a0830eb1ee4351a"
-    },
-    "tests/testdata/outputs/configs/invalid_configs/schema_violation.json": {
-      "mtime": 1774701800.4329484,
-      "sha256": "c63608aee5ecb84e8cef77eb020ba6bdb335f5121e904314512a5310bb0ae772"
-    },
-    "tests/testdata/outputs/configs/invalid_configs/type_errors.json": {
-      "mtime": 1774701800.4340746,
-      "sha256": "a6074366e2ab5289df38aad53a6aeb4b3d68d5509670e1c3eb048f3360d0d560"
-    },
-    "tests/testdata/outputs/graphs/multi_language_graph.json": {
-      "mtime": 1774701800.435917,
-      "sha256": "ef7df07e79f59bad12365ccbb6f4f003a957c37da99bf08b3ebfc4665ef3c8cf"
-    },
-    "tests/testdata/outputs/webhooks/github_pr_merged.json": {
-      "mtime": 1774701800.4408772,
-      "sha256": "aebbd787aa262a468118c0c696b9a228f82110a9bc73ad463cbcefbffdf87126"
-    },
-    "tests/testdata/outputs/repomaps/flask_sample_repomap.json": {
-      "mtime": 1774701800.436483,
-      "sha256": "bb1113f78ee7ea0bd2364da193fb6449994e20e0696f0c4b702c8f1c7405ef58"
-    },
-    "tests/testdata/outputs/repomaps/multi_language_repomap.json": {
-      "mtime": 1774701800.4385314,
-      "sha256": "19686c56e79b07543e8946bc75680cb096d3efb683e9778c45c8a959f95364cf"
-    },
-    "tests/testdata/outputs/repomaps/simple_python_repomap.json": {
-      "mtime": 1774701800.4402122,
-      "sha256": "d1839645bb454cf8d8686cbe32753760603c83cbb2f3f2c32e539a82bd7c3a34"
-    },
-    "tests/testdata/outputs/webhooks/github_push_main.json": {
-      "mtime": 1774701800.4411027,
-      "sha256": "a5b158fec318b40c476792437799a214f86688e7af0bec004a0331ec0aae2321"
-    },
-    "tests/testdata/outputs/webhooks/invalid_wrong_format.json": {
-      "mtime": 1774701800.441321,
-      "sha256": "43550e4ef99512239773d780ef93bdc2f067cc0bd27f2017d8d1b60450b9ad15"
-    },
-    "tests/testdata/outputs/webhooks/github_pr_opened.json": {
-      "mtime": 1774701800.4409943,
-      "sha256": "e078dbd49a49b64282e2b9d22b9447cc25720f0b3dff69e569e454f85bfc754c"
-    },
-    "tests/testdata/outputs/webhooks/invalid_missing_fields.json": {
-      "mtime": 1774701800.4412093,
-      "sha256": "ddcdb7cf9a2d51c441285bd79758b4f5a8f5559a4df7a0c7575c77ad5938cc3e"
-    },
-    "tests/testdata/repositories/edge_cases/deep/nested/path/to/file.py": {
-      "mtime": 1774701800.4417758,
-      "sha256": "c291f32a541dca0bb5bf3a2c63334dce740c079bab56e421b3222a5f6197e8e5"
-    },
-    "tests/testdata/repositories/edge_cases/empty_file.py": {
-      "mtime": 1774701800.4418015,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    "tests/testdata/repositories/flask/.devcontainer/on-create-command.sh": {
-      "mtime": 1774701800.498231,
-      "sha256": "6785abbdaf0a3d2cc68d5ba322eb8eb48b0b0bf421e69b57ab736e9399df9a27"
-    },
-    "tests/testdata/repositories/flask/.devcontainer/devcontainer.json": {
-      "mtime": 1774701800.497553,
-      "sha256": "b8fdd479fae20d10e0563d343d4a8e3fa728a88288ef8b24e9e9c761f1e00dc6"
-    },
-    "tests/testdata/repositories/edge_cases/latin1_file.py": {
-      "mtime": 1774701800.4424214,
-      "sha256": "d12d9c33b9781a29624977c617754d3ed76f8d07fdcec638cf735c7220abe0c4"
-    },
-    "tests/testdata/repositories/edge_cases/whitespace_only.py": {
-      "mtime": 1774701800.4426627,
-      "sha256": "9afccfcefeb8c670de1e0076249d2e41b702fb0dc2623770b5e001ff47a44784"
-    },
-    "tests/testdata/repositories/flask/.pre-commit-config.yaml": {
-      "mtime": 1774701800.4988678,
-      "sha256": "af0369858e952d72687da160237e713cbdf84690466f4e82844dcb7caf60170f"
-    },
-    "tests/testdata/repositories/flask/.readthedocs.yaml": {
-      "mtime": 1774701800.499013,
-      "sha256": "dd47a46c7c3027f89216b0a9c2f2ea91275cc7dd2717f6a271a661a29beb2b1a"
-    },
-    "tests/testdata/repositories/flask/CODE_OF_CONDUCT.md": {
-      "mtime": 1774701800.4995909,
-      "sha256": "3b3eee7b9db5c0c0a27b60a60883dd706dc954b5dcb25264ff1611ef87426c79"
-    },
-    "tests/testdata/repositories/flask/docs/conf.py": {
-      "mtime": 1774701800.5035014,
-      "sha256": "46859ff27d0e416563dab19969c7a69009655fc11e73a8a00c8f901441efaa7e"
-    },
-    "tests/testdata/repositories/flask/pyproject.toml": {
-      "mtime": 1774701800.5202203,
-      "sha256": "09cd53cb0c1dbd80af863dc1bd76aeeabb952ad8281b6759ae3130aba9939822"
-    },
-    "tests/testdata/repositories/flask/metadata.py": {
-      "mtime": 1774701800.5200305,
-      "sha256": "d85bd42f377bbc3042f4926f4eb712c782f284003dcf7abeac137c6aef9b6a78"
-    },
-    "tests/testdata/repositories/flask/src/flask/__main__.py": {
-      "mtime": 1774701800.523839,
-      "sha256": "6d8b7d7846a845059d7a3107143f11131f63c5511d669b44085b15ec5e3d2279"
-    },
-    "tests/testdata/repositories/flask/repository_metadata.json": {
-      "mtime": 1774701800.5212429,
-      "sha256": "3eb4602c6d2b3b06766624dc64a8a95a790ef7909965d025c0718a27faad1a82"
-    },
-    "tests/testdata/repositories/flask/src/flask/app.py": {
-      "mtime": 1774701800.5242348,
-      "sha256": "86ddd0c7d53dcf4235a947cba12edb62125cb9b76993e8b9e1e1eadfb2c394df"
-    },
-    "tests/testdata/repositories/flask/src/flask/__init__.py": {
-      "mtime": 1774701800.522857,
-      "sha256": "c6ad3d5cd28ff98f9f76fe817861fb46515a634d3ab54037a3f96519c97e767a"
-    },
-    "tests/testdata/repositories/flask/src/flask/cli.py": {
-      "mtime": 1774701800.5253258,
-      "sha256": "3c3c1909f3da822e465336fe0fa74437bcb6d205a25408377a3467c4128d1cf0"
-    },
-    "tests/testdata/repositories/flask/src/flask/config.py": {
-      "mtime": 1774701800.525576,
-      "sha256": "619499fb1a458f5896d41d4a8f5883869739b3ba479dc9688912ea5e1b14ec7b"
-    },
-    "tests/testdata/repositories/flask/src/flask/blueprints.py": {
-      "mtime": 1774701800.5249531,
-      "sha256": "66956bc1af1463e627543b17ff52b5d174230f0094a7b427da198a967e627044"
-    },
-    "tests/testdata/repositories/flask/src/flask/globals.py": {
-      "mtime": 1774701800.5260582,
-      "sha256": "294cd5bd23e1f2fdbc9146ac5438bf690281f612368d9498407a9a0d4d8fe35e"
-    },
-    "tests/testdata/repositories/flask/src/flask/debughelpers.py": {
-      "mtime": 1774701800.5259612,
-      "sha256": "051d3191dfac03216e156d3b0fa35faea370499c64d48ae41b99fccde9bedecc"
-    },
-    "tests/testdata/repositories/flask/src/flask/helpers.py": {
-      "mtime": 1774701800.526562,
-      "sha256": "b9584cc2185fc208c1b7c6fefb32194e391f0512b6f323e998d86057384fe38e"
-    },
-    "tests/testdata/repositories/flask/src/flask/ctx.py": {
-      "mtime": 1774701800.5257878,
-      "sha256": "c76906cd45ed3f35728b66122ab53f3d5d40bedc539a1da245dae22514d23c63"
-    },
-    "tests/testdata/repositories/flask/src/flask/json/tag.py": {
-      "mtime": 1774701800.5272834,
-      "sha256": "8a16fb416acd12bd180b7283e13a2565b7ed8123c2b8b93b140bcae3d86e602d"
-    },
-    "tests/testdata/repositories/flask/src/flask/json/__init__.py": {
-      "mtime": 1774701800.5268178,
-      "sha256": "a5db69a0ad9bd1bd6eed2c5bc777de33b55686c236d25d72180bdb616c5ac6f7"
-    },
-    "tests/testdata/repositories/flask/src/flask/templating.py": {
-      "mtime": 1774701800.5300193,
-      "sha256": "5dd3f684c16767914264e1bb1d468b8c2d950be6f8b874969438f0bffd69dea7"
-    },
-    "tests/testdata/repositories/flask/src/flask/json/provider.py": {
-      "mtime": 1774701800.5270774,
-      "sha256": "3acd1fadbf2819fc9628bf930f16f4532f8c63a80384f749911694979c403972"
-    },
-    "tests/testdata/repositories/flask/src/flask/logging.py": {
-      "mtime": 1774701800.5274796,
-      "sha256": "940af1d81abda13b5427e0e764bf6df3cc54db3cadce9e1459233d05def63434"
-    },
-    "tests/testdata/repositories/flask/src/flask/sessions.py": {
-      "mtime": 1774701800.5296087,
-      "sha256": "ac51f640a5c6db87446b390a1b1007a94a40521ff7d210c7add761558800718d"
-    },
-    "tests/testdata/repositories/flask/src/flask/signals.py": {
-      "mtime": 1774701800.5297747,
-      "sha256": "b351f8c8a8dfddce5d815af8d55eac26913d74b26f99324c62e2b4ae4ab1decc"
-    },
-    "tests/testdata/repositories/flask/src/flask/typing.py": {
-      "mtime": 1774701800.5313191,
-      "sha256": "e0b8fe613c54a18bcf6287c2f462aefb5a341edf25ca3a7dcf7237dfa275dffa"
-    },
-    "tests/testdata/repositories/flask/src/flask/testing.py": {
-      "mtime": 1774701800.531215,
-      "sha256": "87b0229e082b3201b32a50cdeba55f074263596e19d54fce0fa1728ea04d8983"
-    },
-    "tests/testdata/repositories/flask/src/flask/views.py": {
-      "mtime": 1774701800.531496,
-      "sha256": "57984e1992f1d019fdf5019c33a9a1e71fee33e332a554f4f91cac10553ce237"
-    },
-    "tests/testdata/repositories/flask/src/flask/scaffold.py": {
-      "mtime": 1774701800.529487,
-      "sha256": "00b1872dccb6a926c9ec435dd47f1d3a7ab9543807e57485b0e9037a570e295f"
-    },
-    "tests/testdata/repositories/multi_language/frontend/package.json": {
-      "mtime": 1774701800.553238,
-      "sha256": "c04f1b43ab39024d357e8bb5a4bd8274d774c9addf83a3dd5b088179be5ab99d"
-    },
-    "tests/testdata/repositories/multi_language/backend/app.py": {
-      "mtime": 1774701800.5528932,
-      "sha256": "29cc1e607c91781becbe6f0cdef87dd6811a049b0e39e5b10bff283537b262ac"
-    },
-    "tests/testdata/repositories/multi_language/backend/models.py": {
-      "mtime": 1774701800.5530016,
-      "sha256": "4303ad036d93a520db3469dc8f3668fa409778b5a735b040b7e5d584631559bf"
-    },
-    "tests/testdata/repositories/multi_language/frontend/tsconfig.json": {
-      "mtime": 1774701800.5535786,
-      "sha256": "df4d67b968d22aa677cd98fa244d7328b84b7252e366b25b084673827cc8448f"
-    },
-    "tests/testdata/repositories/simple_python/README.md": {
-      "mtime": 1774701800.761533,
-      "sha256": "2e3d2c26877bbb755e8784f685f6dc3bdd7e2ac087fa49004854c7655b55d0ff"
-    },
-    "tests/testdata/repositories/simple_python/setup.py": {
-      "mtime": 1774701800.761831,
-      "sha256": "2b3451cf698557d36246939415d469aa9a38d0d83fce0d4c347ec5597c6f26ff"
-    },
-    "tests/testdata/repositories/multi_language/frontend/src/App.tsx": {
-      "mtime": 1774701800.5533757,
-      "sha256": "d79b135eda23c19f9432b18965c92f921458b7adda9db3a9597bd7c624efeecf"
-    },
-    "tests/testdata/repositories/multi_language/frontend/src/utils.ts": {
-      "mtime": 1774701800.5534773,
-      "sha256": "8ca31f78922dccc62c15ca89caf38cfac14d3d77028b284e02e9ca0049622314"
-    },
-    "tests/testdata/repositories/flask/src/flask/wrappers.py": {
-      "mtime": 1774701800.5316622,
-      "sha256": "3e1329ded78add29c4988768839f5c3bf0c7899f41b67d2a2351227eb4ddc0ff"
-    },
-    "tests/utils/__init__.py": {
-      "mtime": 1774701800.763367,
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    "tests/testdata/repositories/simple_python/src/utils.py": {
-      "mtime": 1774701800.76228,
-      "sha256": "01292d82bd7a19f3efb7416a861ee5c6f6b2d5b9d474d157ae8ae5cf16cf1b10"
-    },
-    "tests/utils/test_encoding.py": {
-      "mtime": 1774701800.7637727,
-      "sha256": "bce1d80d3fd581b257b835edfa89e7e8b38887fc9a6b5d6e92670329e4e92b42"
-    },
-    "tests/testdata/repositories/simple_python/src/__init__.py": {
-      "mtime": 1774701800.7620032,
-      "sha256": "04b1e6509be4c864cf32050be9e14efbffbda7d7e79316168a6978a6452bd776"
-    },
-    "tests/testdata/repositories/simple_python/src/calculator.py": {
-      "mtime": 1774701800.7621112,
-      "sha256": "c325600c67b9c0cc549078ce943b640edd9ac8d6e9bc45da196f5dda5fb734af"
-    },
-    "tests/testdata/repositories/simple_python/tests/test_calculator.py": {
-      "mtime": 1774701800.7633173,
-      "sha256": "049b361d21a0d8443c605be5471c544e504afd650f3da0b089827d8f03a8d86e"
-    },
-    "tests/utils/test_hash.py": {
-      "mtime": 1774701800.764042,
-      "sha256": "cf2f8444e07b57b5e6f09c247f799bb9c97345ccd3868e33af868ef3a7b90370"
-    },
-    "tests/utils/test_dependencies.py": {
-      "mtime": 1774701800.7636406,
-      "sha256": "558eb8b1ac5a89f4f0f525865ff9bd5866b55814abe82531cd25a13ce851f4cf"
-    },
-    "tests/utils/test_logging.py": {
-      "mtime": 1774701800.7650554,
-      "sha256": "e4b2a3101024719d9ade77682ad303823003db994daae3bb6fbece95e00257c4"
-    },
-    "tests/utils/test_ignore.py": {
-      "mtime": 1774701800.7643442,
-      "sha256": "056dd48f3317d44062341862eb52bcb53b7d004c55c443c188b6890bca30dbf8"
-    },
-    "verify_repomap_entity_types.py": {
-      "mtime": 1774193866.908192,
-      "sha256": "89d120a31812a8eb9f413584659268419a853db0ae7a5f589ff222f6ecb128a0"
-    },
-    "batho_core/context/c4_generator.py": {
-      "mtime": 1774701800.3938308,
-      "sha256": "db71956514a961afdec19ac4386ae15785ffd1ca25eeb767bd69f874a9e07141"
-    },
-    "batho_core/context/c4_llm_extensions.py": {
-      "mtime": 1774701800.3941019,
-      "sha256": "60f02249f232b156a5864fac9c9f34ea767496421e74d919ad403a0e79bf550c"
-    },
-    "batho_core/context/c4_structurizr.py": {
-      "mtime": 1774701800.3944707,
-      "sha256": "c2abb15963fec60fe0ee36e3435d5655f927feb77eb1a6758386554b3ca67edb"
-    },
-    "batho_core/context/c4_rules.py": {
-      "mtime": 1774701800.3943374,
-      "sha256": "f411f7bbef79c03b4a0b648a6038790ad3aa606056239e93a7b1ace8c71c5978"
-    },
-    "batho_core/utils/file_io.py": {
-      "mtime": 1774706566.658067,
-      "sha256": "792b4f9750b5d86027637d98c671aaf1e19f41712fde651ae2daa4c922610368"
-    },
-    "docs/tasks.md": {
-      "mtime": 1774171869.945073,
-      "sha256": "b2fe0700d9819bc422740ab6a67777a9d3c20e0b0cb7679b0d365d2f8e5c1af0"
-    },
-    "docs/Brownfield-Core-Engine-PDD.docx.md": {
-      "mtime": 1774179273.4609482,
-      "sha256": "5aa19a007e706f753e2cee67cce4051fae984fb3b2f029c002fdc47fe4c6fbd2"
-    },
-    "tests/context/test_c4_generator.py": {
-      "mtime": 1774701800.4188795,
-      "sha256": "38c89f656c21ff0e59163cf8386132d43aaf24cec0487822d7a772786d5c2dcb"
+      "mtime": 1775239615.041499,
+      "sha256": "5c6c998f884d9754fa0f4b10db9b6454438cad392a0d6306b80da0aab708a687",
+      "size": 64441
+    },
+    "batho_core/__init__.py": {
+      "mtime": 1774789144.2003844,
+      "sha256": "d77564ccb44da31337152a0fa8afc843a8632fad13517228bc95b34310859cd9",
+      "size": 477
     },
     ".windsurf/plans/batho-testing-checklist-c65c7b.md": {
       "mtime": 1774716504.8698323,
-      "sha256": "82e9ace9f9fa7e3503d21fddfae5f6543ce76fbd283c2f16c4e90f9f6210d33d"
+      "sha256": "82e9ace9f9fa7e3503d21fddfae5f6543ce76fbd283c2f16c4e90f9f6210d33d",
+      "size": 1366
     },
-    "batho_core/context/c4/__init__.py": {
-      "mtime": 1774701800.3794036,
-      "sha256": "d1bcea3df3a486cedbd6715d00570eadf5f03ab033e5e54eac34e92fcea92162"
+    "batho_core/.github/workflows/ci.yml": {
+      "mtime": 1774701800.378336,
+      "sha256": "932fbe6000c8aa6db2f3aca4268b66127904897ee55659b8f4ceda2b096fb740",
+      "size": 1642
     },
-    "batho_core/context/c4/detection/cloud_native.py": {
-      "mtime": 1774701800.3809555,
-      "sha256": "d4f6626edbaba3d4d8a3430f6c2f7c6a64e8e79f5f9db4efb5f8d2a3deafaf09"
+    "batho_core/context/codegraph.py": {
+      "mtime": 1775225367.55362,
+      "sha256": "94805144140ebf20eabfba44ca765f3d80bffcb8c16a6c04c4b98e10b6af492a",
+      "size": 44574
     },
-    "batho_core/context/c4/detection/data_patterns.py": {
-      "mtime": 1774701800.381082,
-      "sha256": "4933b69f08c3d853dd1c0be64b0eca2f540eefce6d3b8525f62c86f480a31638"
+    "batho_core/context/__init__.py": {
+      "mtime": 1774701800.3792775,
+      "sha256": "462da38e22760a4d27f92a5f81a0651b2e6d74bfa69259d5acaed12fbb3efe57",
+      "size": 277
     },
-    "batho_core/context/c4/detection/event_driven.py": {
-      "mtime": 1774701800.3811963,
-      "sha256": "2f5d5825a642baad133ba100f5feecb5fb98ac6d5bf25c88ee98d3a2fce55dca"
+    "batho_core/config.py": {
+      "mtime": 1775239867.2982635,
+      "sha256": "06217a03e8c225acaf8286e8e4798711019fc20200ce9d5b64afcb7aa2a165b0",
+      "size": 12363
     },
-    "batho_core/context/c4/formatters/interactive.py": {
-      "mtime": 1774701800.3820543,
-      "sha256": "0ea54e4da114d39f2aa95a2403eda13a4d5bc32c884315e0d22779daab8ed431"
+    "batho_core/context/languages/bash.py": {
+      "mtime": 1774701800.3969157,
+      "sha256": "7ff5de2614cec2e86497f28eb68b0f2eeda581b6b6672a391807db54cb636dd6",
+      "size": 2058
     },
-    "batho_core/context/c4/formatters/d2.py": {
-      "mtime": 1774701800.3818383,
-      "sha256": "2665f78472fc6cb74eb2f8820caa5e3b334e2e34811ad0737ea41db63900dc49"
+    "batho_core/context/languages/c.py": {
+      "mtime": 1774701800.397047,
+      "sha256": "7a369a6c120ed46d483b9a2be7eccf832afdf18848fe596908cf7ba3c3613069",
+      "size": 2382
     },
-    "batho_core/context/c4/formatters/__init__.py": {
-      "mtime": 1774701800.3815928,
-      "sha256": "7567199701b161c591a9d085c21abdf45a44f11cf59c6394d2771c8981490568"
+    "batho_core/context/extractor.py": {
+      "mtime": 1775225363.6396701,
+      "sha256": "8db917b15eaadcad1c911bc53c77c6b53fb457a01739f7b1ffcc1ae681794ef2",
+      "size": 23345
     },
-    "batho_core/context/c4/granularity/__init__.py": {
-      "mtime": 1774701800.3826451,
-      "sha256": "bed112e1656a85216a71349532a32a12d1f69deba7e471ccc92255221052b909"
+    "batho_core/context/languages/_common.py": {
+      "mtime": 1774701800.3959563,
+      "sha256": "5861e35e8b9bbddecb9fc60c59536b58f02d84bf8f1b384a73f1231e5635eca4",
+      "size": 9269
     },
-    "batho_core/context/c4/detection/__init__.py": {
-      "mtime": 1774701800.3796718,
-      "sha256": "40162e471860736884dd3542dce5d87889c13b43a292d32a923d5e170321de39"
+    "batho_core/context/languages/csharp.py": {
+      "mtime": 1774701800.3973773,
+      "sha256": "e0723f91c527cee505edaa2e3e78e463001e4c2f67daa82bba55a7dafa2c9471",
+      "size": 3656
     },
-    "batho_core/context/c4/granularity/analyzer.py": {
-      "mtime": 1774701800.3828304,
-      "sha256": "68282d0e1bda300962e93d7d009192f905cbda4a64d2ca5ca10380be3584cadb"
+    "batho_core/context/languages/cpp.py": {
+      "mtime": 1774701800.3971658,
+      "sha256": "d88bc5de9c54eff45f0bfa4fd9f621dd0325fe1e95341e7541ef063a820f61d6",
+      "size": 3380
     },
-    "batho_core/context/c4/formatters/registry.py": {
-      "mtime": 1774701800.3825262,
-      "sha256": "aaf1cb13bc3ea56d2ffe78c0c449b57d05b01ab9783fc5073d270b5bce59c53e"
+    "batho_core/context/languages/factory.py": {
+      "mtime": 1774701800.3995156,
+      "sha256": "e6114a3ef27144672c13f698a4830e77c7e5f7cbef23ecd851767fecc6c457df",
+      "size": 21575
     },
-    "batho_core/context/c4/granularity/engine.py": {
-      "mtime": 1774701800.3834102,
-      "sha256": "6bf0e71143a87e67dc73a541821e0281e05274491dde6d2634e5836b028a1c05"
+    "batho_core/context/languages/__init__.py": {
+      "mtime": 1774701800.3955975,
+      "sha256": "ebcda0b174ceafe011ebc26e30ebe32723b4a08ae39af04ec92f53fd96cc7284",
+      "size": 4518
     },
-    "batho_core/context/c4/formatters/mermaid.py": {
-      "mtime": 1774706831.0853796,
-      "sha256": "92734e785d942d71320a570e378af2054a2d3bf0fef006b9661d95c1a2d1db21"
+    "batho_core/context/languages/hcl.py": {
+      "mtime": 1774701800.4009106,
+      "sha256": "2dccb32b9ec83c4bd1296aff676a060908b5d10ca0c42b8d1c06347cf1d92e26",
+      "size": 12417
     },
-    "batho_core/context/c4/detection/base.py": {
-      "mtime": 1774701800.3800123,
-      "sha256": "db09a14306e31c7ea6456faaad0d0f4ebc50d045debec8a263d23639aade0b5e"
+    "batho_core/context/languages/haskell.py": {
+      "mtime": 1774701800.4007826,
+      "sha256": "d2b0805bab4ecb772edbf2981aacb3bf26f9a69aba153a1043f15b2d0545a21e",
+      "size": 3007
     },
-    "batho_core/context/c4/granularity/filtering.py": {
-      "mtime": 1774701800.3841443,
-      "sha256": "86be778d2d7faf9ae0ef7b7641093251c7102de85f21a8666f5dca30bf097834"
+    "batho_core/context/languages/go.py": {
+      "mtime": 1774701800.3996937,
+      "sha256": "9b607880a4d2bf607dd5d76b037ec4316f69edc5055540a471469afb383a2674",
+      "size": 2795
     },
-    "batho_core/context/c4/detection/microservices.py": {
-      "mtime": 1774701800.3813055,
-      "sha256": "c44d3ed7079da95f71fc485884562873c68e9d55923b9352a25e1296c31e52cb"
+    "batho_core/context/languages/dart.py": {
+      "mtime": 1774701800.3979273,
+      "sha256": "3c42fe8d9cec70da1851acb26cf21f7bebc0c365c4d5291abdb670f60cc89639",
+      "size": 3188
     },
-    "batho_core/context/c4/detection/registry.py": {
-      "mtime": 1774701800.3814714,
-      "sha256": "d950a8ebf0fcddd992041ae4fdc7cee3fdebde839b5e1dbe14edad3657bcf525"
+    "batho_core/context/languages/detector.py": {
+      "mtime": 1774701800.3992746,
+      "sha256": "4d0b2f8695bd8c6575bd941c4e44ba4ab9247a15f2cf604f51a8dd4ebbd48f8b",
+      "size": 18147
     },
-    "batho_core/context/c4/granularity/cache.py": {
-      "mtime": 1774701800.383146,
-      "sha256": "20db0fb9344ea88d87b2784516fae05dd89b40f434670efeeca0368da7c5e4e5"
+    "batho_core/context/languages/erlang.py": {
+      "mtime": 1774701800.399395,
+      "sha256": "f381a9183b6e93d7e7b63aff08381456a0c6a96baa5cf98f66a1b0570ffb70af",
+      "size": 2774
     },
-    "batho_core/context/c4/formatters/plantuml.py": {
-      "mtime": 1774701800.3823261,
-      "sha256": "2232ca17818096789c62539a69054a379aa1b6b62b2595af6cbac94e10763a5d"
+    "batho_core/context/languages/hack.py": {
+      "mtime": 1774701800.399973,
+      "sha256": "a13a9893541374d2d75fd8c25ef6c3f6383182821fc031296fdb15f1c4c4a36b",
+      "size": 3373
     },
-    "batho_core/context/c4/rules/dynamic/__init__.py": {
-      "mtime": 1774701800.3872797,
-      "sha256": "424b7f80e16306fbb90ba09dffc311afc4cdaa7a6093abc7ce2d8fc258cf67bc"
+    "batho_core/context/languages/javascript.py": {
+      "mtime": 1774701800.4012673,
+      "sha256": "d6dacf0174b456a90566a195d57caac7b4f12cf15908e66bbb5bd3e297a2c3a3",
+      "size": 2738
     },
-    "batho_core/context/c4/rules/base/external_systems.yaml": {
-      "mtime": 1774701800.3867288,
-      "sha256": "33b066f4c8eade2579acd4fbe8e67dbfe5d4adf095464caeb44242ecc6bbf015"
+    "batho_core/context/languages/kotlin.py": {
+      "mtime": 1774701800.4018857,
+      "sha256": "8df797023e6d9641b70b84ae267c4364635d3386eca51c7f87ae80538b30c7e5",
+      "size": 2985
     },
-    "batho_core/context/c4/granularity/metrics.py": {
-      "mtime": 1774701800.3847456,
-      "sha256": "1af0f422b5ae81ec84b0c83fd36f7179f61ff2c92ef1fdb93d8b6a9473637b79"
+    "batho_core/context/languages/java.py": {
+      "mtime": 1774701800.4011607,
+      "sha256": "41db39faa8d3c91d2d426959950a818355580d3924818a8b14d855ad502564f2",
+      "size": 2744
     },
-    "batho_core/context/c4/rules/__init__.py": {
-      "mtime": 1774701800.3861463,
-      "sha256": "0e814b852e23676cdb2b7e1c7a088ccce98c40be315a5a1112747422564a7855"
+    "batho_core/context/languages/css.py": {
+      "mtime": 1774701800.397681,
+      "sha256": "5662a31d1f74db8594eb9fe9af41bd25e13bdc20c1738e52b96114c93bd86c01",
+      "size": 8886
     },
-    "batho_core/context/c4/rules/dynamic/detected_patterns.json": {
-      "mtime": 1774701800.387989,
-      "sha256": "bbf516d95d4dccc222a148f8d48de0a60b53966b85528cada333d17e9a7020c0"
+    "batho_core/context/languages/julia.py": {
+      "mtime": 1774701800.4016254,
+      "sha256": "31eac7521072e67681ce76bf007ea253a89e32ab853bd3add20e7fa7409cc0e5",
+      "size": 3483
     },
-    "batho_core/context/c4/granularity/grouping.py": {
-      "mtime": 1774701800.3845248,
-      "sha256": "17b95259077de5477212a5b20f199ef89478d24ee2e53de530f0bed748968b94"
+    "batho_core/context/languages/lua.py": {
+      "mtime": 1774701800.4027956,
+      "sha256": "b77f07e4f7b9b7c04ec665c298a1bc20040bd3615c8b8d335ce23103545deaba",
+      "size": 2626
     },
-    "batho_core/context/c4/rules/base/components.yaml": {
-      "mtime": 1774701800.386329,
-      "sha256": "7d38ea9a5f86dbfa2e707ddab43fde429f59743ae94977230ac7eb6682b97782"
+    "batho_core/context/languages/perl.py": {
+      "mtime": 1774701800.403195,
+      "sha256": "f925aec9263a378ed43e0683be15b8cd3b0ce5e430af041bcf37c83e2e88a18b",
+      "size": 2536
     },
-    "batho_core/context/c4/rules/base/containers.yaml": {
-      "mtime": 1774701800.3865347,
-      "sha256": "0b97da944604cdd7e048327c68f614e14f252d9386b8c6b8f26a70a83b2d1ae1"
+    "batho_core/context/languages/registry.py": {
+      "mtime": 1775225363.6404355,
+      "sha256": "dc85def7e19025a1614c7d04f4f2343c28de6072ac3feba8c5ec7b0844cca07b",
+      "size": 18823
     },
-    "batho_core/context/c4/formatters/base.py": {
-      "mtime": 1774701800.3817072,
-      "sha256": "bf3463f827f142109f1ac07b54f694ae6f5051957c4ea686865ecc1e1645293d"
+    "batho_core/context/languages/php.py": {
+      "mtime": 1774701800.4035058,
+      "sha256": "f1b4dd53a0b2014f77434f2fbd3d5f35df7e9815d395adbf728904cde4b44b30",
+      "size": 3002
     },
-    "batho_core/context/c4/rules/languages/java.yaml": {
-      "mtime": 1774701800.390818,
-      "sha256": "8e2b8887ac26301aa2600c11fcccf39e2b95f27b5e73c6dc434bd8cbec53000e"
+    "batho_core/context/languages/json.py": {
+      "mtime": 1774701800.4014435,
+      "sha256": "4235cf5e92ce7d740a9b7b03ad30a53dde9afbf80c24fae241f3b25e49e76598",
+      "size": 8035
     },
-    "batho_core/context/c4/rules/languages/go.yaml": {
-      "mtime": 1774701800.390537,
-      "sha256": "06e1c6f5375c425176874d5df36be66ccfc89d0897a35d0963ac6f9e6e63f148"
+    "batho_core/context/languages/html.py": {
+      "mtime": 1774701800.4010534,
+      "sha256": "0fab8eb53e672b07cddf3fe97c8e87b52408f120352d9d1f819ea649e6cbcdc2",
+      "size": 9380
     },
-    "batho_core/context/c4/rules/enhanced/data_patterns.yaml": {
-      "mtime": 1774701800.3888528,
-      "sha256": "c8c3f6e5e6b5f476c5c91305b5d6d2d75cdbe0abbc411383e6f21727e3349c90"
+    "batho_core/context/languages/ocaml.py": {
+      "mtime": 1774701800.403064,
+      "sha256": "6ce7820983483d1c8f522ba398da9e335fc7dc5153dcbcc677087bae7edee98e",
+      "size": 3423
     },
-    "batho_core/context/c4/rules/enhanced/cloud_native.yaml": {
-      "mtime": 1774701800.3884785,
-      "sha256": "76231c7e7a82958366cda9fad485114d18b9c27c6b21114f8fb372615bb318f6"
+    "batho_core/context/languages/objectivec.py": {
+      "mtime": 1775225363.6402175,
+      "sha256": "a57bb823ed8935abee003f148f0a1aa30d7480744863c0da2f70c4d7748235fd",
+      "size": 3957
     },
-    "batho_core/context/c4/rules/loader.py": {
-      "mtime": 1774701800.3933802,
-      "sha256": "54313379306bfae370e151d882849193f83c8133ddbfb7e2ca80bc9027697494"
+    "batho_core/context/languages/python.py": {
+      "mtime": 1774701800.403732,
+      "sha256": "0072c990ffc23f7ad3c44cc77d20c0384e8586fcc0e4e0dbe76c2c496cd364ab",
+      "size": 3511
     },
-    "batho_core/context/c4/rules/dynamic/rule_generator.py": {
-      "mtime": 1774701800.388232,
-      "sha256": "f5435a50e284c0856a79d25218298032865ae8c45ff31f1b8548584793d155a5"
+    "batho_core/context/languages/toml.py": {
+      "mtime": 1774701800.405835,
+      "sha256": "270ad0239c723da279815200984efe555ed54bbf7dedf306caa9bea9c5cb73e0",
+      "size": 8177
     },
-    "batho_core/context/c4/rules/schema.py": {
-      "mtime": 1774701800.3935294,
-      "sha256": "de74d092d43d06cc9e5e998c2e8b16e0641582b2eb06e824437d6fc78d005665"
+    "batho_core/context/languages/swift.py": {
+      "mtime": 1774701800.4055674,
+      "sha256": "2cf96d0c09a9c50179024a297bb8bce33239e6c4088050f44e396a06f8a71144",
+      "size": 3621
     },
-    "batho_core/context/c4/rules/enhanced/microservices.yaml": {
-      "mtime": 1774701800.3902316,
-      "sha256": "552077589988286e054059c4054e7c01c83efbd5c27b417bbbd745c738239a82"
+    "batho_core/context/languages/typescript.py": {
+      "mtime": 1774701800.4060779,
+      "sha256": "8ec2e4bf176c287500eeaf42d87d9eab72e6d1a9a8039ce18be8e97b103a79f2",
+      "size": 3371
     },
-    "batho_core/context/c4/rules/languages/typescript.yaml": {
-      "mtime": 1774701800.3931441,
-      "sha256": "9eda8223ee543b8cc532c1b95f93ca90086139ef18f75224c4b270ef919b9879"
+    "batho_core/context/languages/r.py": {
+      "mtime": 1774701800.4047754,
+      "sha256": "62d71e50f11cc2e16e0e784b5daabbe1824966e2cadd190a24ea9b32769f596d",
+      "size": 2311
     },
-    "batho_core/context/c4/rules/enhanced/event_driven.yaml": {
-      "mtime": 1774701800.389207,
-      "sha256": "13c1037cda93a97372557ac508f9a7f6d686dbfe98fd8386ce706951560d92db"
+    "batho_core/context/languages/yaml.py": {
+      "mtime": 1774701800.4073765,
+      "sha256": "9bfdbc0b135f815222a2e65e1d9fa744d61601472811695c91cab0aacd443d23",
+      "size": 9016
     },
-    "batho_core/context/c4/rules/cache.py": {
-      "mtime": 1774701800.386993,
-      "sha256": "4d8b7152c5653fc7fed905d8dca01d7a03458c6d1800ff0ec83e5f86ca3e3932"
+    "batho_core/context/languages/rust.py": {
+      "mtime": 1774701800.405331,
+      "sha256": "a6035c4a6f87e26d8504ed90f3d7627590cac256c181e018ed4335ad25ef328f",
+      "size": 3137
     },
-    "batho_core/context/c4/rules/languages/python.yaml": {
-      "mtime": 1774701800.3923218,
-      "sha256": "cc7fbc939db360a5cc92fb3ef64f49b6d4c634d1620874db8de3a20a0be2891b"
+    "batho_core/context/languages/verilog.py": {
+      "mtime": 1774701800.407206,
+      "sha256": "20a02928395777bcf710e7abe54697f63785788b137d3b64540bf00f330615c1",
+      "size": 3993
     },
-    "batho_core/context/c4/rules/.cache/rule_cache.json": {
-      "mtime": 1774758741.4785209,
-      "sha256": "55635d1f534c078f67baa36495640132ff0744701884a938cae2498486ddf6ac"
+    "batho_core/context/languages/scala.py": {
+      "mtime": 1774701800.4054444,
+      "sha256": "49f63d2e2080dd3379a5d2d2935bc834a05aaf3e0271ae027eccb052b2196ba9",
+      "size": 3417
     },
-    "batho_core/context/c4/rules/languages/javascript.yaml": {
-      "mtime": 1774701800.3920221,
-      "sha256": "7f39635fdc3efb688d9e874cfc16d1dbd0d85621ec632695960ef10c17d68191"
+    "batho_core/context/languages/markdown.py": {
+      "mtime": 1774701800.4029334,
+      "sha256": "5c94f5a3cdc9f2ad28bc8c5604d9fe8e656f3cce043c928208b449a4800a1f3c",
+      "size": 12766
+    },
+    "batho_core/context/schema.py": {
+      "mtime": 1774789144.2045767,
+      "sha256": "a3386adc1513786c860a471b505861fdbcace400b01b60fce844a25f9d59a023",
+      "size": 6789
+    },
+    "batho_core/context/languages/ruby.py": {
+      "mtime": 1774701800.4052064,
+      "sha256": "fa9feef0e5757914e7a67d0b896d8be9f37feb5c2af40e61fbf46ddaec7b9d53",
+      "size": 2472
+    },
+    "batho_core/context/stack_detector.py": {
+      "mtime": 1775066190.9424314,
+      "sha256": "164ee70f9d5dbfac69ffdfd99b7ca539dd8f3ae04681887a98787bcbd30d18da",
+      "size": 34162
+    },
+    "batho_core/utils/encoding.py": {
+      "mtime": 1774701800.4110434,
+      "sha256": "35f47e9c5dc21d06a1102a2448c19aae7eb8ebb67e9525e42a0f4779dc0b8d25",
+      "size": 3264
+    },
+    "batho_core/utils/__init__.py": {
+      "mtime": 1774706226.6145692,
+      "sha256": "65670c8a2176bf575f534e05030aaa22927ac5ac720ab218b1003cbf22fe307a",
+      "size": 1051
+    },
+    "batho_core/utils/file_io.py": {
+      "mtime": 1774789144.2059412,
+      "sha256": "03f914603324f04bd9ed81b94b02c5fd0dc0fda5ba0ad6e687bc7826ef6e6688",
+      "size": 6276
+    },
+    "batho_core/utils/dependencies.py": {
+      "mtime": 1774789144.2055807,
+      "sha256": "280bf2e56dda43bb8e49444a0faca7e7e075cfda3f5c8c6b7e73b935dbceb92f",
+      "size": 19300
+    },
+    "batho_core/context/repomap.py": {
+      "mtime": 1774789144.2041714,
+      "sha256": "8a968f1d45234a93fc88100a4e7fa5eca3ffcc81ef7363a8e41c3601a95cf283",
+      "size": 38359
+    },
+    "batho_core/time_machine.py": {
+      "mtime": 1775225363.6407163,
+      "sha256": "5638732399d64a1fee614c8c62567542c40b9f4018bd73e93531f51ae00eda5d",
+      "size": 57661
+    },
+    "batho_core/utils/memory_monitor.py": {
+      "mtime": 1774789144.2073345,
+      "sha256": "b87c0fb139c7c7cfd063069ceb46875df4478120cc3463e144629c0def2fae35",
+      "size": 10031
+    },
+    "batho_core/utils/hash.py": {
+      "mtime": 1774706536.6158612,
+      "sha256": "5f4f61e27dde36215b6da29fa863c40b191b4a58cbe2e532145a0a9dd7014816",
+      "size": 6415
     },
     "batho_core/utils/patch_errors.py": {
       "mtime": 1774706269.0750437,
-      "sha256": "479189c35ce3209165bd818cd396478ae16b569296a5710fe831ef414b690ad7"
+      "sha256": "479189c35ce3209165bd818cd396478ae16b569296a5710fe831ef414b690ad7",
+      "size": 7451
+    },
+    "batho_core/context/languages/zig.py": {
+      "mtime": 1774701800.4075615,
+      "sha256": "ee968264f757da43c2336f4d6df2e115617daf8863ecafa7210f9a7890bc4506",
+      "size": 3532
+    },
+    "batho_core/utils/path_sanitizer.py": {
+      "mtime": 1774789144.2076795,
+      "sha256": "4a9b3d7a5b8302ee0b1b10ffab6b1b66f2844a42ecec46e7d1f098fcd08cc864",
+      "size": 6250
+    },
+    "batho_core/utils/file_lock.py": {
+      "mtime": 1774789144.2063313,
+      "sha256": "72acdc3711fe3d8db8185a37c67591e91d43007fd54a19f5a3846228dfea66e5",
+      "size": 8897
+    },
+    "batho_core/webhook/processor.py": {
+      "mtime": 1775225363.6417043,
+      "sha256": "12e0e112a51f19ccb9ba3dad57cc0588a07541af83a5f82e1573e060b07c53d6",
+      "size": 7499
+    },
+    "batho_core/utils/logging.py": {
+      "mtime": 1774701800.4116564,
+      "sha256": "002dee0948ebb20a875e96a93e3e716fbbe1f117d4cd9c2b35c393bf7918e96c",
+      "size": 2899
+    },
+    "batho_core/webhook/queue.py": {
+      "mtime": 1775225363.6419094,
+      "sha256": "6de0c3328528f93e839c5e51bece1763bae545fa981c4a4eeed034ead0f06713",
+      "size": 8722
+    },
+    "batho_core/webhook/auth.py": {
+      "mtime": 1775225363.641053,
+      "sha256": "2a004ec99b9cd265606b13ed086e92051ad1a83ad8f41bd8779744a40853abc2",
+      "size": 1228
+    },
+    "batho_core/webhook/parser.py": {
+      "mtime": 1775225363.641513,
+      "sha256": "538091fd1e8379bb64b1c6f097216399c1bbcfb79cba101992288b70e9f441f9",
+      "size": 8450
+    },
+    "batho_core/webhook/__init__.py": {
+      "mtime": 1775225363.6409035,
+      "sha256": "cb528016b57e2456440e78b089a64fa7564571bdec24538ae060fbb12be11cb7",
+      "size": 636
+    },
+    "tests/cli/__init__.py": {
+      "mtime": 1774701800.4176056,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "test.py": {
+      "mtime": 1774701800.4167666,
+      "sha256": "b895764c15100e78c66b0ce1ebd08e495c4d8365de87d3682202977b69ccb210",
+      "size": 2483
+    },
+    "docs/production-readiness-report.md": {
+      "mtime": 1775240170.0740502,
+      "sha256": "443fc340fefba8bc8660f0cba4d5bcae8c832713bb752dded64da0777e192f98",
+      "size": 6730
+    },
+    "batho_core/webhook/config.py": {
+      "mtime": 1775225363.641226,
+      "sha256": "d049a29398b731f61237e950c465d5ce403b3cffc188217bada1f7bf6954149d",
+      "size": 4917
+    },
+    "batho_core/utils/ignore.py": {
+      "mtime": 1774789144.2068493,
+      "sha256": "91d14f0cdacbab8ad15ee16fa97da1db2059acbab3ef808e55e5d7d106a2bca4",
+      "size": 9512
     },
     "docs/test.md": {
       "mtime": 1774716534.6476135,
-      "sha256": "06989cd9487a5a3669c8bafec3f1a518fee94a340927d35d9e12c7d1260b7023"
+      "sha256": "06989cd9487a5a3669c8bafec3f1a518fee94a340927d35d9e12c7d1260b7023",
+      "size": 17987
     },
-    "docs/updated.md": {
-      "mtime": 1774715763.5477984,
-      "sha256": "f7f2d4e7a3ceb2ed7aa4f42c9b0ec5392265490c8f8b8ad016799b8b3bb6eca4"
+    "batho_core/webhook/handler.py": {
+      "mtime": 1775225363.641354,
+      "sha256": "181a854738f1b1624cfb6db2084be26523f2019e39f325185eb74c801af90078",
+      "size": 8035
+    },
+    "docs/webhook-setup.md": {
+      "mtime": 1775225363.642266,
+      "sha256": "f98859a80441162dd11f6cf046e30bb672e0a9d9f17ec0f20bcf94c88ea0e27b",
+      "size": 6085
     },
     "extract_graph_data.py": {
       "mtime": 1774701800.4148746,
-      "sha256": "bd998dd209ffcad2cf06d7ccaef9655482d359caddb4210bd278a4bee524fbc8"
+      "sha256": "bd998dd209ffcad2cf06d7ccaef9655482d359caddb4210bd278a4bee524fbc8",
+      "size": 7802
     },
-    "tests/context/granularity/__init__.py": {
-      "mtime": 1774701800.41848,
-      "sha256": "2c824eee48ef76ba0d89efe60dac812a5f548783aed2023d98a50d232c7fa815"
+    "tests/context/test_html_extractor.py": {
+      "mtime": 1774701800.4223545,
+      "sha256": "01b0bad2c2c19a20e884701950a39694ea0fdab4f05c2446198fdd927ce6dd56",
+      "size": 8335
     },
-    "tests/context/test_detection_cloud_native.py": {
-      "mtime": 1774701800.4196782,
-      "sha256": "a4544ff36ead6e5382ad91c2af6552dbf72fbf4825702cca87fc52a3c2b64536"
+    "batho_core/webhook/server.py": {
+      "mtime": 1775225363.6420748,
+      "sha256": "a270911ede6e40bced36992079fb44ee55ab0ba7f2d751a2c606c4968f906a19",
+      "size": 6080
     },
-    "tests/context/granularity/test_analyzer.py": {
-      "mtime": 1774701800.418623,
-      "sha256": "dd553d20d5ef1eb3b4ebf18f6582058060d564d9162f1b0c39403d5efd48466d"
+    "tests/cli/test_cli_parser.py": {
+      "mtime": 1774789144.209629,
+      "sha256": "441998cba6f3685a30350566be5262218adbebad956b4365b9560f320a1bf6af",
+      "size": 2823
     },
-    "tests/context/test_detection_data_patterns.py": {
-      "mtime": 1774701800.419864,
-      "sha256": "17da8c3de0f190b095498bf672b16103fa644e5ed0aaeadc8b5ae93b9e1a8d75"
+    "pyproject.toml": {
+      "mtime": 1775239544.953158,
+      "sha256": "5c0fa1011f9d3eb7957fc51b1f070a6bd1d1d6cfaa3443c5b0897e04d32c6516",
+      "size": 2368
     },
-    "tests/context/test_detection_microservices.py": {
-      "mtime": 1774701800.4207647,
-      "sha256": "674fa027f86902409d4b36a13d50a5d17a8b30a9f7df1268215357de612acab2"
+    "tests/cli/test_cli_commands.py": {
+      "mtime": 1775239879.1030407,
+      "sha256": "5d92d1319b362dc532fb4a5c20c54908e071883e1119b2dd90069f8c5f623a7d",
+      "size": 6445
     },
-    "tests/context/granularity/test_engine.py": {
-      "mtime": 1774701800.418754,
-      "sha256": "e413212e5940b698ba9c60ac8fdc28012fba2a901469fc5a236a08e8d7c9f428"
+    "tests/context/__init__.py": {
+      "mtime": 1774701800.4183183,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
     },
-    "tests/context/test_c4_integration.py": {
-      "mtime": 1774701800.4190102,
-      "sha256": "122694cdd36d466994dd241a425251cb74f70682e139c6aca69d0cbf218e10ce"
+    "tests/__init__.py": {
+      "mtime": 1774701800.4175785,
+      "sha256": "7e6409d9f150666c65da09e371d9c766677b993744cf263e8308967833cd85c1",
+      "size": 19
     },
-    "tests/context/test_c4_rules_engine.py": {
-      "mtime": 1774701800.419134,
-      "sha256": "ca22b71985d7ce0d7506b92765655c5e8bf696ad7b190707e06e07944c12d22e"
+    "tests/cli/test_cli_integration.py": {
+      "mtime": 1775225363.6427355,
+      "sha256": "f7d5c349c996d78ba704a081f42a301108593cd40401099fa072e85a730fc6da",
+      "size": 2523
     },
-    "tests/context/test_detection_event_driven.py": {
-      "mtime": 1774701800.4200442,
-      "sha256": "9452612933b4f94f26e1d427dea60b81fa373b2194e9bcff5def7638c419d0b4"
+    "docs/updated.md": {
+      "mtime": 1775240022.4157126,
+      "sha256": "5732d51d15921068e134a759df4906d122cbf6daf8578046c5291f42fddc4241",
+      "size": 17087
     },
-    "tests/context/test_dynamic_rule_generator.py": {
-      "mtime": 1774701800.4214106,
-      "sha256": "8426909624d13fb68b62c757ba5b656cd7f72e41ad4c55832c41699e94a6243c"
+    "tests/context/test_hcl_extractor.py": {
+      "mtime": 1774701800.4220428,
+      "sha256": "f1f90ee40569ccf76264632db0dd364b403ea9e8ad5cff1de0040bcea0958584",
+      "size": 15385
     },
-    "tests/context/test_detection_integration.py": {
-      "mtime": 1774701800.4204423,
-      "sha256": "8e739500fb100495d23b3b7630262c1cafa4e5c90436355d45b97fe7ebe13ef3"
+    "tests/context/test_language_detector_comprehensive.py": {
+      "mtime": 1774701800.4231374,
+      "sha256": "80856cc94a102397e23ec8dbd8294917b57c6231d21895ff67ee081df891a14b",
+      "size": 14536
     },
-    "tests/context/test_formatters.py": {
-      "mtime": 1774701800.4217904,
-      "sha256": "052cf718abaa0d934a53e95c12dd10e45967005cbf835299694a86d37829b860"
+    "tests/context/test_factory.py": {
+      "mtime": 1774701800.4215705,
+      "sha256": "e4aedc6b8bceb5622a95a80535fd98168391ca6a27837fec77e4f66f1f57c196",
+      "size": 10367
     },
-    "tests/context/test_rule_loader.py": {
-      "mtime": 1774701800.4238591,
-      "sha256": "066edb7b40c44935c0ba5e635d43fe88701b494168b30c2e620b132fa35fbd32"
+    "tests/context/test_objectivec_extractor.py": {
+      "mtime": 1775225363.6428704,
+      "sha256": "8a552a4d4b5bb00641042a05f160a88906dacb3a0c10a873b63dbfd5e7ea7dee",
+      "size": 6916
+    },
+    "tests/context/test_languages.py": {
+      "mtime": 1774701800.423374,
+      "sha256": "715037cd0f3f3bc8612b95de64aa7669f156c29c2ae95fe5571ef4360db37cf9",
+      "size": 4607
+    },
+    "tests/context/test_css_extractor.py": {
+      "mtime": 1774701800.4194982,
+      "sha256": "a2d28a3bc07de5010595f9b3b274e48e77e19684aa4e76103bcf04d75a2ec845",
+      "size": 17295
+    },
+    "tests/conftest.py": {
+      "mtime": 1774701800.41829,
+      "sha256": "90afc830a52535b731045721e33d31f6db96cece3e8775c52665efd5acda6610",
+      "size": 5161
+    },
+    "tests/context/test_codegraph.py": {
+      "mtime": 1774706718.1252763,
+      "sha256": "b89fa8a16b68edc75fad75aa8ce0f6e162c1ddbccd895417c9b9b1b25dba5d5f",
+      "size": 11468
+    },
+    "tests/core/__init__.py": {
+      "mtime": 1774701800.4242327,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "tests/context/test_markdown_extractor.py": {
+      "mtime": 1774701800.4235196,
+      "sha256": "0b803cf41efccd71d1b6522afd21aa68fd7208cdbdf96e79aff8d4e9a03ac273",
+      "size": 8843
+    },
+    "tests/context/test_stack_detector.py": {
+      "mtime": 1774701800.4240193,
+      "sha256": "dc3655961ecb4e0e6649e7a0d9fe153620b959c75d39ae79cda673048ffd3854",
+      "size": 10163
+    },
+    "tests/context/test_repomap.py": {
+      "mtime": 1774701800.423705,
+      "sha256": "ded7c75d6c1798c6ed31e9674e52978b5562bcbba76aaa7aadb2d028e5263d47",
+      "size": 5236
+    },
+    "tests/core/test_config.py": {
+      "mtime": 1775239544.9561186,
+      "sha256": "d1bda58c7f23f8e167f0a94b4f72946760476608407dd42ef11d4e500909141e",
+      "size": 6847
+    },
+    "tests/context/test_yaml_extractor.py": {
+      "mtime": 1774701800.4242024,
+      "sha256": "5ae7600b8c0dcec90a142f95cc2974a3a228be0399afec7f98da69a030385b42",
+      "size": 13661
+    },
+    "tests/core/test_schema.py": {
+      "mtime": 1774701800.4248648,
+      "sha256": "b43f6779af0dac413c358ff2de1df7db232b60ec5805fc513dd9ae90bfdae9e8",
+      "size": 5569
+    },
+    "tests/testdata/PHASES1_5_COMPLETION_SUMMARY.md": {
+      "mtime": 1774701800.4264648,
+      "sha256": "bdb3c785458721c04a7555751f42c34b63cb6231aca801584d749023c9bfdb2f",
+      "size": 7567
+    },
+    "tests/test_flask_fixture.py": {
+      "mtime": 1774701800.4258134,
+      "sha256": "c79b526b5983e8ea23906a57937fe8f1cf5f71dd29e007a0b22a7f7a4bf0b9ae",
+      "size": 2084
+    },
+    "tests/testdata/files/README.md": {
+      "mtime": 1774701800.4266107,
+      "sha256": "7525035bc41ac4fdd68c75ef9ee7e3be92da709190192c9da020e728817d4f72",
+      "size": 459
+    },
+    "tests/integration/test_error_handling.py": {
+      "mtime": 1774789144.210927,
+      "sha256": "80760e10d52eea43c51166025214af86678b944f1c6b79dcae48f78568f39d98",
+      "size": 11164
+    },
+    "tests/test_webhook.py": {
+      "mtime": 1775225363.6436276,
+      "sha256": "7209112cdd12ae3f93ef558c31025481bfc0c3792c0b67b69b0b3f7f185b71b8",
+      "size": 5631
+    },
+    "tests/core/test_extractor.py": {
+      "mtime": 1774701800.4246657,
+      "sha256": "bd466d28e4c00edbd65f9ed01c7278465a8463eb206a022aceacfffe0b4ac1cc",
+      "size": 5900
+    },
+    "tests/performance/test_performance.py": {
+      "mtime": 1774789144.2115257,
+      "sha256": "d589c8907791ee08066b4209b67b71f01465e81c82075b4478166b3e352cba06",
+      "size": 10249
+    },
+    "tests/testdata/PHASE1_COMPLETION_SUMMARY.md": {
+      "mtime": 1774701800.4262483,
+      "sha256": "554d421c4dc3e20394dc0d60b26e6916625646d722fb63b37c85a20ad20f5381",
+      "size": 4836
     },
     "tests/test_incremental_patch.py": {
-      "mtime": 1774707448.5833254,
-      "sha256": "525afa7fbcee1ae2d2460b10239d4b8b9925112a4470e5a952186f327c50d7da"
+      "mtime": 1774789144.2121415,
+      "sha256": "ffdead10bc9f5f8ef48824691d36c75d0ed89581fb36939d90b225ca8117b16f",
+      "size": 28941
+    },
+    "tests/test_time_machine.py": {
+      "mtime": 1775225363.6432455,
+      "sha256": "aa9dddae03241888644af9ac04168b76bbcaa8542fc80c2b063e17f597c8e5fb",
+      "size": 14478
+    },
+    "tests/integration/__init__.py": {
+      "mtime": 1774701800.4248958,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "tests/integration/test_cross_platform.py": {
+      "mtime": 1774789144.210533,
+      "sha256": "8001c180a80cdeacf2d4f8ba2edbe2dd7e7362c4643898f08a9961c976e96817",
+      "size": 10281
+    },
+    "tests/testdata/files/config/sample_config.yaml": {
+      "mtime": 1774701800.4271164,
+      "sha256": "46cfb8239fd52890fb4abb5d90a9c5b538b9fc8371fd8a4c8aaf16fbf85f25bd",
+      "size": 1371
+    },
+    "tests/integration/test_workflows.py": {
+      "mtime": 1774789144.2111437,
+      "sha256": "77f3fa173b1037a1979f9aedefcc1bcf6aba5ce5f7816ab44009e35c07f16742",
+      "size": 5929
+    },
+    "tests/testdata/files/config/sample_config.json": {
+      "mtime": 1774701800.42687,
+      "sha256": "9ce2c3dd04ef203f8bb286a37bc049a44a58576b47ce0d3aec172052c354f260",
+      "size": 1548
+    },
+    "tests/testdata/files/config/sample_config.toml": {
+      "mtime": 1774701800.4269834,
+      "sha256": "5ff2c733f95d4fa317ea7f163dc91767c402f40275faae93d5344a008315e1dc",
+      "size": 1199
+    },
+    "tests/testdata/files/css/basic.css": {
+      "mtime": 1774701800.4276052,
+      "sha256": "79eb3b29146c0ef44d4e9252a634cc74961005ddbad69e9f2bb8c78874ef2e3e",
+      "size": 274
+    },
+    "tests/testdata/files/css/complex_selectors.css": {
+      "mtime": 1774701800.4277046,
+      "sha256": "ebdf64d1dd9c12bfa7c233c79c5245ad868f4e208f58e9833ecc949bb7ec28fd",
+      "size": 872
+    },
+    "tests/testdata/files/go/sample_go.go": {
+      "mtime": 1774701800.4279633,
+      "sha256": "12d94360d11c1711aa927c61fef0fcd19f6de1b7f09c158aaedc38739148ada6",
+      "size": 2169
+    },
+    "tests/testdata/files/python/sample_functions.py": {
+      "mtime": 1774701800.4292126,
+      "sha256": "9ca7c65ac67e9bd52aefe473d644d41e94c87d354415bc47a8a4508c6feacfe3",
+      "size": 1911
+    },
+    "tests/testdata/files/hcl/complex.tf": {
+      "mtime": 1774701800.4282696,
+      "sha256": "c1b1d13da6bc2453b4ed8ed6ce6715f3975722dea2d23e56bbad6595ed92a65d",
+      "size": 1461
+    },
+    "tests/testdata/files/yaml/basic.yaml": {
+      "mtime": 1774701800.4295337,
+      "sha256": "79e1cc989af36cb1dab9f5449b4b4c568a166b4983c7dac93cac4d8b86147e01",
+      "size": 263
+    },
+    "tests/testdata/files/javascript/sample_es6.js": {
+      "mtime": 1774701800.428609,
+      "sha256": "f02b675c39e069a40574aa52e0da7f0eff23753b28aa7e98b13b443a2f175843",
+      "size": 1641
+    },
+    "tests/testdata/files/css/scss_style.scss": {
+      "mtime": 1774701800.4278162,
+      "sha256": "a3e25429f8536042e6a64ebe08999e4dded41609b38d33c715aa819abf3a876e",
+      "size": 1007
+    },
+    "tests/testdata/files/hcl/basic.tf": {
+      "mtime": 1774701800.428133,
+      "sha256": "5ded2c82035f3e1cbd2bcea741ec7cccae6fcc9a5598e3c6aa6bd056a1a45e92",
+      "size": 422
+    },
+    "tests/testdata/files/markup/sample_html.html": {
+      "mtime": 1774701800.4287834,
+      "sha256": "0afb7482d9434e7a0f563b6a518c336134b0987a97ba8912448135e01827d8a0",
+      "size": 10749
+    },
+    "tests/testdata/files/rust/sample_rust.rs": {
+      "mtime": 1774701800.4293692,
+      "sha256": "b8c406b6e384969af1acabd4cf55aa1a93fe4d7c3c98d3040fa24a4f43a4315a",
+      "size": 3390
+    },
+    "tests/testdata/files/css/advanced.css": {
+      "mtime": 1774701800.4275005,
+      "sha256": "c0da11e9df0cec32d4380677380fc2c3056cc6e2ed499756bc3ede6bceadacc4",
+      "size": 732
+    },
+    "tests/testdata/files/java/SampleClass.java": {
+      "mtime": 1774701800.4284527,
+      "sha256": "bee00ea14ae10f5d7cb571f357ea88b1197fe7be1effb4a204371c1cc27d82aa",
+      "size": 3843
+    },
+    "tests/testdata/fixtures/README.md": {
+      "mtime": 1774701800.4299538,
+      "sha256": "09042a00ee9edf8bbf78cf6a441a68c972ff5403ae692d44fb2c5e2e1acc322f",
+      "size": 452
+    },
+    "tests/testdata/files/markup/sample_markdown.md": {
+      "mtime": 1774701800.428911,
+      "sha256": "44547ab0c5594c579a3a0d9a8af24914a39edab20b325af47be410de46e5aec5",
+      "size": 3014
+    },
+    "tests/testdata/files/cpp/sample_cpp.cpp": {
+      "mtime": 1774701800.4273512,
+      "sha256": "b7ebfb14c82bd36c2b7e15d36493a7e9a9b78547f185c3aac2ade54afcb6e52f",
+      "size": 5524
+    },
+    "tests/testdata/outputs/PHASE7_COMPLETION_SUMMARY.md": {
+      "mtime": 1774701800.4307554,
+      "sha256": "d0899d5e1543f4f246b5a4b5d2a21e029acfd1fdce44843e13223ee4e0c2a197",
+      "size": 6086
+    },
+    "tests/testdata/outputs/configs/custom_configs/performance_tuning_config.toml": {
+      "mtime": 1774701800.4322524,
+      "sha256": "56e54ffb027514325039ffd245b2840785937a541eab9c2c7cd3bb806ff4373f",
+      "size": 258
+    },
+    "tests/testdata/outputs/configs/default_config.json": {
+      "mtime": 1774701800.4323554,
+      "sha256": "43d8323e9df25c6ece8827a0f6efc38ee882cb3914873cbcbb245a1eaf005dec",
+      "size": 353
+    },
+    "tests/testdata/outputs/configs/custom_configs/language_specific_config.yaml": {
+      "mtime": 1774701800.4320362,
+      "sha256": "36c2c873ba67b8e35e04edbe9dbcaa1cdeb88fb4f76ba35b432c361ffb4a90c8",
+      "size": 251
+    },
+    "tests/testdata/files/yaml/complex.yaml": {
+      "mtime": 1774701800.4297364,
+      "sha256": "e3cb4049c481b4739b9195f55deca22e9057ed027eeb0bd194e40f6471739b99",
+      "size": 1019
+    },
+    "tests/testdata/outputs/configs/env_override_configs/override_example.json": {
+      "mtime": 1774701800.4325528,
+      "sha256": "932a325a8118b260522327eb78c67293bf3f0941ffcf141ee43d908978a4d298",
+      "size": 1099
+    },
+    "tests/testdata/outputs/configs/custom_configs/large_repository_config.json": {
+      "mtime": 1774701800.4321468,
+      "sha256": "f1126d2e9f2c7d95fa254d51962dba21f610655d4fe80d8883b4e9e865a6e890",
+      "size": 366
+    },
+    "tests/testdata/outputs/configs/invalid_configs/type_errors.json": {
+      "mtime": 1774701800.4340746,
+      "sha256": "a6074366e2ab5289df38aad53a6aeb4b3d68d5509670e1c3eb048f3360d0d560",
+      "size": 365
+    },
+    "tests/testdata/outputs/README.md": {
+      "mtime": 1774701800.4309413,
+      "sha256": "ee9d09e931524fbe44fc85647a9ca496adde19b3307546d7f4446600bdc5380e",
+      "size": 485
+    },
+    "tests/testdata/outputs/graphs/simple_python_graph.json": {
+      "mtime": 1774701800.4360676,
+      "sha256": "78aa8918689464876f05a830d5519d3657f456569556f4581a0830eb1ee4351a",
+      "size": 15270
+    },
+    "tests/testdata/outputs/api_responses/error_response.json": {
+      "mtime": 1774701800.431623,
+      "sha256": "4e44754ece206f86768982c3142c89b0acea2bf1188c4d0ae25d0b70a86675b0",
+      "size": 390
+    },
+    "tests/testdata/outputs/configs/invalid_configs/schema_violation.json": {
+      "mtime": 1774701800.4329484,
+      "sha256": "c63608aee5ecb84e8cef77eb020ba6bdb335f5121e904314512a5310bb0ae772",
+      "size": 405
+    },
+    "tests/testdata/outputs/api_responses/index_success.json": {
+      "mtime": 1774701800.4317539,
+      "sha256": "f19a73a1260c554fa285ed986262f71e85b5982a7e8ed20715c797f5295bf01a",
+      "size": 847
+    },
+    "tests/testdata/outputs/webhooks/github_pr_merged.json": {
+      "mtime": 1774701800.4408772,
+      "sha256": "aebbd787aa262a468118c0c696b9a228f82110a9bc73ad463cbcefbffdf87126",
+      "size": 1742
+    },
+    "tests/testdata/outputs/configs/invalid_configs/missing_fields.json": {
+      "mtime": 1774701800.4327607,
+      "sha256": "60e6bb5e3536fe15b5b37290670ba310e56ff3f7b370dd7293b1e51c516e28bd",
+      "size": 106
+    },
+    "tests/testdata/outputs/webhooks/invalid_missing_fields.json": {
+      "mtime": 1774701800.4412093,
+      "sha256": "ddcdb7cf9a2d51c441285bd79758b4f5a8f5559a4df7a0c7575c77ad5938cc3e",
+      "size": 204
+    },
+    "tests/testdata/outputs/graphs/multi_language_graph.json": {
+      "mtime": 1774701800.435917,
+      "sha256": "ef7df07e79f59bad12365ccbb6f4f003a957c37da99bf08b3ebfc4665ef3c8cf",
+      "size": 35561
+    },
+    "tests/testdata/repositories/edge_cases/empty_file.py": {
+      "mtime": 1774701800.4418015,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "tests/testdata/outputs/webhooks/github_pr_opened.json": {
+      "mtime": 1774701800.4409943,
+      "sha256": "e078dbd49a49b64282e2b9d22b9447cc25720f0b3dff69e569e454f85bfc754c",
+      "size": 1590
+    },
+    "tests/testdata/outputs/api_responses/stats_response.json": {
+      "mtime": 1774701800.4318702,
+      "sha256": "5e5f1f66d93598992f9ae7b8582db940815c9bb9e785fed958af850e8a67a782",
+      "size": 865
+    },
+    "tests/testdata/outputs/repomaps/multi_language_repomap.json": {
+      "mtime": 1774701800.4385314,
+      "sha256": "19686c56e79b07543e8946bc75680cb096d3efb683e9778c45c8a959f95364cf",
+      "size": 5634
+    },
+    "tests/testdata/repositories/flask/.readthedocs.yaml": {
+      "mtime": 1774701800.499013,
+      "sha256": "dd47a46c7c3027f89216b0a9c2f2ea91275cc7dd2717f6a271a661a29beb2b1a",
+      "size": 209
+    },
+    "tests/testdata/outputs/webhooks/invalid_wrong_format.json": {
+      "mtime": 1774701800.441321,
+      "sha256": "43550e4ef99512239773d780ef93bdc2f067cc0bd27f2017d8d1b60450b9ad15",
+      "size": 735
+    },
+    "tests/testdata/repositories/edge_cases/whitespace_only.py": {
+      "mtime": 1774701800.4426627,
+      "sha256": "9afccfcefeb8c670de1e0076249d2e41b702fb0dc2623770b5e001ff47a44784",
+      "size": 9
+    },
+    "tests/testdata/outputs/webhooks/github_push_main.json": {
+      "mtime": 1774701800.4411027,
+      "sha256": "a5b158fec318b40c476792437799a214f86688e7af0bec004a0331ec0aae2321",
+      "size": 1943
+    },
+    "tests/testdata/repositories/flask/.devcontainer/devcontainer.json": {
+      "mtime": 1774701800.497553,
+      "sha256": "b8fdd479fae20d10e0563d343d4a8e3fa728a88288ef8b24e9e9c761f1e00dc6",
+      "size": 434
+    },
+    "tests/testdata/outputs/repomaps/flask_sample_repomap.json": {
+      "mtime": 1774701800.436483,
+      "sha256": "bb1113f78ee7ea0bd2364da193fb6449994e20e0696f0c4b702c8f1c7405ef58",
+      "size": 100781
+    },
+    "tests/testdata/repositories/edge_cases/latin1_file.py": {
+      "mtime": 1774701800.4424214,
+      "sha256": "d12d9c33b9781a29624977c617754d3ed76f8d07fdcec638cf735c7220abe0c4",
+      "size": 78
+    },
+    "tests/testdata/outputs/repomaps/simple_python_repomap.json": {
+      "mtime": 1774701800.4402122,
+      "sha256": "d1839645bb454cf8d8686cbe32753760603c83cbb2f3f2c32e539a82bd7c3a34",
+      "size": 3143
+    },
+    "tests/testdata/repositories/flask/CODE_OF_CONDUCT.md": {
+      "mtime": 1774701800.4995909,
+      "sha256": "3b3eee7b9db5c0c0a27b60a60883dd706dc954b5dcb25264ff1611ef87426c79",
+      "size": 3358
+    },
+    "tests/testdata/repositories/flask/.devcontainer/on-create-command.sh": {
+      "mtime": 1774701800.498231,
+      "sha256": "6785abbdaf0a3d2cc68d5ba322eb8eb48b0b0bf421e69b57ab736e9399df9a27",
+      "size": 170
+    },
+    "tests/testdata/repositories/flask/.pre-commit-config.yaml": {
+      "mtime": 1774701800.4988678,
+      "sha256": "af0369858e952d72687da160237e713cbdf84690466f4e82844dcb7caf60170f",
+      "size": 1028
+    },
+    "tests/testdata/repositories/edge_cases/deep/nested/path/to/file.py": {
+      "mtime": 1774701800.4417758,
+      "sha256": "c291f32a541dca0bb5bf3a2c63334dce740c079bab56e421b3222a5f6197e8e5",
+      "size": 31
+    },
+    "tests/testdata/repositories/flask/metadata.py": {
+      "mtime": 1774701800.5200305,
+      "sha256": "d85bd42f377bbc3042f4926f4eb712c782f284003dcf7abeac137c6aef9b6a78",
+      "size": 3928
+    },
+    "tests/testdata/repositories/flask/src/flask/cli.py": {
+      "mtime": 1774701800.5253258,
+      "sha256": "3c3c1909f3da822e465336fe0fa74437bcb6d205a25408377a3467c4128d1cf0",
+      "size": 33821
+    },
+    "tests/testdata/repositories/flask/src/flask/__main__.py": {
+      "mtime": 1774701800.523839,
+      "sha256": "6d8b7d7846a845059d7a3107143f11131f63c5511d669b44085b15ec5e3d2279",
+      "size": 30
+    },
+    "tests/testdata/repositories/flask/docs/conf.py": {
+      "mtime": 1774701800.5035014,
+      "sha256": "46859ff27d0e416563dab19969c7a69009655fc11e73a8a00c8f901441efaa7e",
+      "size": 3238
+    },
+    "tests/testdata/repositories/flask/pyproject.toml": {
+      "mtime": 1774701800.5202203,
+      "sha256": "09cd53cb0c1dbd80af863dc1bd76aeeabb952ad8281b6759ae3130aba9939822",
+      "size": 2609
+    },
+    "tests/testdata/repositories/flask/src/flask/config.py": {
+      "mtime": 1774701800.525576,
+      "sha256": "619499fb1a458f5896d41d4a8f5883869739b3ba479dc9688912ea5e1b14ec7b",
+      "size": 12856
+    },
+    "tests/testdata/repositories/flask/repository_metadata.json": {
+      "mtime": 1774701800.5212429,
+      "sha256": "3eb4602c6d2b3b06766624dc64a8a95a790ef7909965d025c0718a27faad1a82",
+      "size": 4159
+    },
+    "tests/testdata/repositories/flask/src/flask/blueprints.py": {
+      "mtime": 1774701800.5249531,
+      "sha256": "66956bc1af1463e627543b17ff52b5d174230f0094a7b427da198a967e627044",
+      "size": 24332
+    },
+    "tests/testdata/repositories/flask/src/flask/globals.py": {
+      "mtime": 1774701800.5260582,
+      "sha256": "294cd5bd23e1f2fdbc9146ac5438bf690281f612368d9498407a9a0d4d8fe35e",
+      "size": 2945
+    },
+    "tests/testdata/repositories/flask/src/flask/json/provider.py": {
+      "mtime": 1774701800.5270774,
+      "sha256": "3acd1fadbf2819fc9628bf930f16f4532f8c63a80384f749911694979c403972",
+      "size": 7637
+    },
+    "tests/testdata/repositories/flask/src/flask/__init__.py": {
+      "mtime": 1774701800.522857,
+      "sha256": "c6ad3d5cd28ff98f9f76fe817861fb46515a634d3ab54037a3f96519c97e767a",
+      "size": 3731
+    },
+    "tests/testdata/repositories/flask/src/flask/app.py": {
+      "mtime": 1774701800.5242348,
+      "sha256": "86ddd0c7d53dcf4235a947cba12edb62125cb9b76993e8b9e1e1eadfb2c394df",
+      "size": 87620
+    },
+    "tests/testdata/repositories/flask/src/flask/ctx.py": {
+      "mtime": 1774701800.5257878,
+      "sha256": "c76906cd45ed3f35728b66122ab53f3d5d40bedc539a1da245dae22514d23c63",
+      "size": 14841
+    },
+    "tests/testdata/repositories/flask/src/flask/json/tag.py": {
+      "mtime": 1774701800.5272834,
+      "sha256": "8a16fb416acd12bd180b7283e13a2565b7ed8123c2b8b93b140bcae3d86e602d",
+      "size": 8871
+    },
+    "tests/testdata/repositories/flask/src/flask/debughelpers.py": {
+      "mtime": 1774701800.5259612,
+      "sha256": "051d3191dfac03216e156d3b0fa35faea370499c64d48ae41b99fccde9bedecc",
+      "size": 5547
+    },
+    "tests/testdata/repositories/flask/src/flask/helpers.py": {
+      "mtime": 1774701800.526562,
+      "sha256": "b9584cc2185fc208c1b7c6fefb32194e391f0512b6f323e998d86057384fe38e",
+      "size": 25106
+    },
+    "tests/testdata/repositories/flask/src/flask/signals.py": {
+      "mtime": 1774701800.5297747,
+      "sha256": "b351f8c8a8dfddce5d815af8d55eac26913d74b26f99324c62e2b4ae4ab1decc",
+      "size": 1146
+    },
+    "tests/testdata/repositories/flask/src/flask/json/__init__.py": {
+      "mtime": 1774701800.5268178,
+      "sha256": "a5db69a0ad9bd1bd6eed2c5bc777de33b55686c236d25d72180bdb616c5ac6f7",
+      "size": 5572
+    },
+    "tests/testdata/repositories/flask/src/flask/scaffold.py": {
+      "mtime": 1774701800.529487,
+      "sha256": "00b1872dccb6a926c9ec435dd47f1d3a7ab9543807e57485b0e9037a570e295f",
+      "size": 33217
+    },
+    "tests/testdata/repositories/flask/src/flask/logging.py": {
+      "mtime": 1774701800.5274796,
+      "sha256": "940af1d81abda13b5427e0e764bf6df3cc54db3cadce9e1459233d05def63434",
+      "size": 2327
+    },
+    "tests/testdata/repositories/flask/src/flask/templating.py": {
+      "mtime": 1774701800.5300193,
+      "sha256": "5dd3f684c16767914264e1bb1d468b8c2d950be6f8b874969438f0bffd69dea7",
+      "size": 7503
+    },
+    "tests/testdata/repositories/multi_language/backend/app.py": {
+      "mtime": 1774701800.5528932,
+      "sha256": "29cc1e607c91781becbe6f0cdef87dd6811a049b0e39e5b10bff283537b262ac",
+      "size": 369
+    },
+    "tests/testdata/repositories/flask/src/flask/testing.py": {
+      "mtime": 1774701800.531215,
+      "sha256": "87b0229e082b3201b32a50cdeba55f074263596e19d54fce0fa1728ea04d8983",
+      "size": 10017
+    },
+    "tests/testdata/repositories/flask/src/flask/wrappers.py": {
+      "mtime": 1774701800.5316622,
+      "sha256": "3e1329ded78add29c4988768839f5c3bf0c7899f41b67d2a2351227eb4ddc0ff",
+      "size": 5709
+    },
+    "tests/testdata/repositories/flask/src/flask/typing.py": {
+      "mtime": 1774701800.5313191,
+      "sha256": "e0b8fe613c54a18bcf6287c2f462aefb5a341edf25ca3a7dcf7237dfa275dffa",
+      "size": 3005
+    },
+    "tests/testdata/repositories/multi_language/frontend/package.json": {
+      "mtime": 1774701800.553238,
+      "sha256": "c04f1b43ab39024d357e8bb5a4bd8274d774c9addf83a3dd5b088179be5ab99d",
+      "size": 246
+    },
+    "tests/testdata/repositories/flask/src/flask/views.py": {
+      "mtime": 1774701800.531496,
+      "sha256": "57984e1992f1d019fdf5019c33a9a1e71fee33e332a554f4f91cac10553ce237",
+      "size": 6789
+    },
+    "tests/testdata/repositories/multi_language/backend/models.py": {
+      "mtime": 1774701800.5530016,
+      "sha256": "4303ad036d93a520db3469dc8f3668fa409778b5a735b040b7e5d584631559bf",
+      "size": 625
+    },
+    "tests/testdata/repositories/flask/src/flask/sessions.py": {
+      "mtime": 1774701800.5296087,
+      "sha256": "ac51f640a5c6db87446b390a1b1007a94a40521ff7d210c7add761558800718d",
+      "size": 14169
+    },
+    "tests/testdata/repositories/simple_python/README.md": {
+      "mtime": 1774701800.761533,
+      "sha256": "2e3d2c26877bbb755e8784f685f6dc3bdd7e2ac087fa49004854c7655b55d0ff",
+      "size": 68
+    },
+    "tests/testdata/repositories/multi_language/frontend/src/utils.ts": {
+      "mtime": 1774701800.5534773,
+      "sha256": "8ca31f78922dccc62c15ca89caf38cfac14d3d77028b284e02e9ca0049622314",
+      "size": 233
+    },
+    "tests/testdata/repositories/simple_python/setup.py": {
+      "mtime": 1774701800.761831,
+      "sha256": "2b3451cf698557d36246939415d469aa9a38d0d83fce0d4c347ec5597c6f26ff",
+      "size": 204
+    },
+    "tests/utils/__init__.py": {
+      "mtime": 1774701800.763367,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "tests/testdata/repositories/multi_language/frontend/tsconfig.json": {
+      "mtime": 1774701800.5535786,
+      "sha256": "df4d67b968d22aa677cd98fa244d7328b84b7252e366b25b084673827cc8448f",
+      "size": 168
+    },
+    "tests/testdata/repositories/simple_python/src/calculator.py": {
+      "mtime": 1774701800.7621112,
+      "sha256": "c325600c67b9c0cc549078ce943b640edd9ac8d6e9bc45da196f5dda5fb734af",
+      "size": 1116
+    },
+    "tests/utils/test_encoding.py": {
+      "mtime": 1774701800.7637727,
+      "sha256": "bce1d80d3fd581b257b835edfa89e7e8b38887fc9a6b5d6e92670329e4e92b42",
+      "size": 3431
+    },
+    "tests/utils/test_logging.py": {
+      "mtime": 1774701800.7650554,
+      "sha256": "e4b2a3101024719d9ade77682ad303823003db994daae3bb6fbece95e00257c4",
+      "size": 1227
+    },
+    "tests/testdata/repositories/simple_python/src/__init__.py": {
+      "mtime": 1774701800.7620032,
+      "sha256": "04b1e6509be4c864cf32050be9e14efbffbda7d7e79316168a6978a6452bd776",
+      "size": 253
+    },
+    "tests/utils/test_ignore.py": {
+      "mtime": 1774701800.7643442,
+      "sha256": "056dd48f3317d44062341862eb52bcb53b7d004c55c443c188b6890bca30dbf8",
+      "size": 5765
+    },
+    "tests/utils/test_hash.py": {
+      "mtime": 1774789144.2198572,
+      "sha256": "3586fdc227e93ad9f973b27b09e20e4daba5b75ce74341c5f8b0e2d13988f2f7",
+      "size": 5414
+    },
+    "tests/testdata/repositories/simple_python/tests/test_calculator.py": {
+      "mtime": 1774701800.7633173,
+      "sha256": "049b361d21a0d8443c605be5471c544e504afd650f3da0b089827d8f03a8d86e",
+      "size": 311
+    },
+    "tests/utils/test_dependencies.py": {
+      "mtime": 1774701800.7636406,
+      "sha256": "558eb8b1ac5a89f4f0f525865ff9bd5866b55814abe82531cd25a13ce851f4cf",
+      "size": 12323
+    },
+    "tests/testdata/repositories/multi_language/frontend/src/App.tsx": {
+      "mtime": 1774701800.5533757,
+      "sha256": "d79b135eda23c19f9432b18965c92f921458b7adda9db3a9597bd7c624efeecf",
+      "size": 287
+    },
+    "tests/testdata/repositories/simple_python/src/utils.py": {
+      "mtime": 1774701800.76228,
+      "sha256": "01292d82bd7a19f3efb7416a861ee5c6f6b2d5b9d474d157ae8ae5cf16cf1b10",
+      "size": 300
     }
   },
-  "_checksum": "45950f26445e34da56479dae9c4aa99ad4a8e8421946b11759d379d584a5e93b"
+  "_checksum": "3d391c841af8d6a4278d826478b08f9c61f1ad3670ae689ddd83819a997b4408"
 }
