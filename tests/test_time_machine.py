@@ -59,6 +59,7 @@ class TestSnapshotLifecycle:
         assert loaded is not None
         assert loaded["snapshot_id"] == sid
         assert loaded["label"] == "test"
+        assert "bsg" in loaded
 
     def test_list_snapshots(self, tmp_path: Path, mock_graph):
         ctn_dir = tmp_path / ".ctn"
@@ -117,11 +118,11 @@ class TestDiffSnapshots:
     def test_diff_with_changes(self):
         a = {
             "stats": {"entity_count": 10, "relationship_count": 5},
-            "repomap": {"files": {"a.py": [], "b.py": []}},
+            "bsg": {"indexes": {"nodes_by_file": {"a.py": [], "b.py": []}}},
         }
         b = {
             "stats": {"entity_count": 15, "relationship_count": 8},
-            "repomap": {"files": {"b.py": [], "c.py": []}},
+            "bsg": {"indexes": {"nodes_by_file": {"b.py": [], "c.py": []}}},
         }
         diff = diff_snapshots(a, b)
         assert diff["entity_delta"] == 5

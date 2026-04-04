@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+from batho_core.synthesizer import record_failure_rule
 from batho_core.time_machine import incremental_patch
 from batho_core.utils.logging import get_logger
 from .config import WebhookConfig
@@ -98,6 +99,53 @@ class WebhookProcessor:
                 "status": "error",
                 "message": f"Processing error: {str(e)}",
             }
+
+    def process_webhook_sync(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
+        """Process a webhook immediately in the current thread.
+
+        This is used by one-shot CLI webhook handling to exercise the same
+        parser, validation, and patch application pipeline as server mode.
+        """
+
+        try:
+            event = parse_webhook_event(payload, headers)
+            validation = self._validate_event(event)
+            if validation:
+                return {
+                    "status": validation["status"],
+                    "message": validation["message"],
+                }
+
+            queue_item = QueueItem(
+                event_id=str(uuid.uuid4()),
+                event={"payload": payload, "headers": headers},
+                priority=self._event_priority(event),
+                max_attempts=1,
+            )
+            success = self._handle_queue_item(queue_item)
+            if not success:
+                return {
+                    "status": "error",
+                    "event_id": queue_item.event_id,
+                    "message": "Synchronous webhook processing failed",
+                }
+
+            return {
+                "status": "processed",
+                "event_id": queue_item.event_id,
+                "message": "Webhook processed synchronously",
+            }
+
+        except Exception as e:
+            logger.error("webhook_sync_processing_error", error=str(e))
+            return {
+                "status": "error",
+                "message": f"Processing error: {str(e)}",
+            }
     
     def start(self) -> None:
         """Start background processing."""
@@ -115,6 +163,7 @@ class WebhookProcessor:
         Returns:
             True if successful, False for retry
         """
+        event: WebhookEvent | None = None
         try:
             event_data = item.event
             event = parse_webhook_event(event_data["payload"], event_data["headers"])
@@ -135,6 +184,17 @@ class WebhookProcessor:
                     "webhook_processing_no_snapshot",
                     event_id=item.event_id,
                     ctn_dir=str(self._ctn_dir),
+                )
+                self._record_failure_entry(
+                    source="webhook.processor",
+                    error_message="No base snapshot available for webhook incremental patching",
+                    changed_files=[change.path for change in event.changes],
+                    context={
+                        "event_id": item.event_id,
+                        "event_type": event.event_type.value,
+                        "repository": event.repository,
+                        "branch": event.branch,
+                    },
                 )
                 return False
 
@@ -161,6 +221,19 @@ class WebhookProcessor:
                         event_id=item.event_id,
                         error=result.get("error"),
                     )
+                    self._record_failure_entry(
+                        source="webhook.processor",
+                        error_message=str(result.get("error") or "incremental patch failed"),
+                        changed_files=[change.path for change in event.changes],
+                        context={
+                            "event_id": item.event_id,
+                            "event_type": event.event_type.value,
+                            "repository": event.repository,
+                            "branch": event.branch,
+                            "commit": event.commit_hash,
+                            "operation_id": result.get("operation_id"),
+                        },
+                    )
                     return False
             else:
                 # No changes to process
@@ -173,7 +246,37 @@ class WebhookProcessor:
                 event_id=item.event_id,
                 error=str(e),
             )
+            self._record_failure_entry(
+                source="webhook.processor",
+                error_message=str(e),
+                changed_files=[change.path for change in event.changes] if event else [],
+                context={
+                    "event_id": item.event_id,
+                    "event_type": event.event_type.value if event else "unknown",
+                    "repository": event.repository if event else "unknown",
+                    "branch": event.branch if event else "",
+                    "commit": event.commit_hash if event else "",
+                },
+            )
             return False
+
+    def _record_failure_entry(
+        self,
+        source: str,
+        error_message: str,
+        changed_files: list[str],
+        context: dict[str, Any],
+    ) -> None:
+        try:
+            record_failure_rule(
+                ctn_dir=self._ctn_dir,
+                source=source,
+                error_message=error_message,
+                changed_files=changed_files,
+                context=context,
+            )
+        except Exception as exc:
+            logger.warning("webhook_evolution_ledger_record_failed", error=str(exc))
     
     def _find_latest_snapshot(self) -> Optional[str]:
         """Find the latest snapshot ID."""

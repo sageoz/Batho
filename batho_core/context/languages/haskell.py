@@ -71,10 +71,10 @@ class HaskellExtractor(ASTExtractor):
 
 ; ── Import statements ──────────────────────────────────────────────────────────
 (import_statement
-  (module_name) @ref.import)
+  (module_name) @ref.import.module)
 
 (qualified_import
-  (module_name) @ref.import)
+  (module_name) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (function_call_expression

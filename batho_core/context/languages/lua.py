@@ -49,9 +49,10 @@ class LuaExtractor(ASTExtractor):
 ; ── Require statements (imports) ───────────────────────────────────────────────
 (function_call
   (prefix
-    (identifier) @ref.import)
+    (identifier) @_import_fn)
   (arguments
-    (string) @ref.import))
+    (string) @ref.import.module)
+  (#match? @_import_fn "^(require|dofile|loadfile)$"))
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (function_call

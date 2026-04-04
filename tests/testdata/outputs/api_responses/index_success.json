@@ -18,7 +18,7 @@
     },
     "outputs": {
       "graph_json": ".ctn/batho_784444934fd14c22b65ce10eecf8bb68_20260322T084912Z/graph.json",
-      "repomap_json": ".ctn/batho_784444934fd14c22b65ce10eecf8bb68_20260322T084912Z/repomap.json",
+      "bsg_json": ".ctn/batho_784444934fd14c22b65ce10eecf8bb68_20260322T084912Z/bsg.json",
       "architecture_md": ".ctn/batho_784444934fd14c22b65ce10eecf8bb68_20260322T084912Z/architecture.md"
     }
   },

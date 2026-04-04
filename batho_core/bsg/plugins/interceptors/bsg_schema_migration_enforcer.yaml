@@ -1,0 +1,23 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_schema_migration_enforcer
+name: Schema Migration Enforcer
+version: 1.0.0
+enabled: true
+description: Ensure ORM and schema changes are treated as migration-sensitive operations.
+rules:
+  - rule_id: orm-schema-migration-risk
+    name: orm-schema-migration-risk
+    description: Flag modified schema/orm entities that require migration companion changes.
+    severity: block
+    priority: 330
+    enabled: true
+    matchers:
+      usn_tags_any:
+        - orm_model
+        - databaseschema
+    actions:
+      metadata:
+        bsg.intercept.category: DATA
+        bsg.intercept.message: Database structure changed; ensure migration artifacts are generated and reviewed.
+      add_usn_tags:
+        - MigrationSensitive

@@ -12,6 +12,8 @@ from batho_core.config import (
     IndexerConfig,
     LoggingConfig,
     PathsConfig,
+    DEFAULT_RULES_BUILTIN_PLUGINS,
+    RulesConfig,
     get_build_info,
     get_config,
     get_config_cached,
@@ -53,12 +55,24 @@ class TestPydanticModels:
         assert cfg.fail_on_warning is False
         assert cfg.strict is False
 
+    def test_rules_config_defaults(self):
+        cfg = RulesConfig()
+        assert cfg.enabled is True
+        assert cfg.builtin_plugins == list(DEFAULT_RULES_BUILTIN_PLUGINS)
+        assert cfg.disabled_rules == []
+        assert cfg.custom_rules_path is None
+        assert cfg.custom_rules_inline == []
+        assert cfg.strict_validation is False
+        assert cfg.cache_ttl == 3600
+        assert cfg.fail_on_rule_error is False
+
     def test_config_full(self):
         cfg = Config()
         assert isinstance(cfg.logging, LoggingConfig)
         assert isinstance(cfg.paths, PathsConfig)
         assert isinstance(cfg.indexer, IndexerConfig)
         assert isinstance(cfg.flags, FlagsConfig)
+        assert isinstance(cfg.rules, RulesConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +91,7 @@ class TestGetConfig:
         assert "paths" in cfg
         assert "indexer" in cfg
         assert "flags" in cfg
+        assert "rules" in cfg
 
     def test_logging_level_is_int(self):
         cfg = get_config()
@@ -85,7 +100,7 @@ class TestGetConfig:
     def test_schema_versions(self):
         cfg = get_config()
         assert "graph_schema_version" in cfg
-        assert "repomap_schema_version" in cfg
+        assert "bsg_schema_version" in cfg
         assert "snapshot_schema_version" in cfg
         assert "index_metadata_schema_version" in cfg
 
@@ -118,6 +133,23 @@ class TestGetConfig:
         monkeypatch.setenv("BATHO_IGNORE_FILES", ".gitignore,.bathoignore")
         cfg = get_config()
         assert cfg["indexer"]["ignore_files"] == [".gitignore", ".bathoignore"]
+
+    def test_env_override_rules_enabled(self, monkeypatch):
+        monkeypatch.setenv("BATHO_RULES_ENABLED", "true")
+        cfg = get_config()
+        assert cfg["rules"]["enabled"] is True
+
+    def test_env_override_rules_custom_path(self, monkeypatch):
+        monkeypatch.setenv("BATHO_RULES_CUSTOM_RULES_PATH", "plugins/custom.yaml")
+        cfg = get_config()
+        assert cfg["rules"]["custom_rules_path"] == "plugins/custom.yaml"
+
+    def test_env_override_rules_lists(self, monkeypatch):
+        monkeypatch.setenv("BATHO_RULES_BUILTIN_PLUGINS", "bsg_core,custom_pack")
+        monkeypatch.setenv("BATHO_RULES_DISABLED_RULES", "rule_one,rule_two")
+        cfg = get_config()
+        assert cfg["rules"]["builtin_plugins"] == ["bsg_core", "custom_pack"]
+        assert cfg["rules"]["disabled_rules"] == ["rule_one", "rule_two"]
 
 
 # ---------------------------------------------------------------------------

@@ -80,12 +80,12 @@ class ScalaExtractor(ASTExtractor):
 ; ── Import statements ──────────────────────────────────────────────────────────
 (import_declaration
   (import_expression
-    (identifier) @ref.import))
+    (identifier) @ref.import.module))
 
 (import_declaration
   (import_expression
     (stable_identifier
-      (identifier) @ref.import)))
+      (identifier) @ref.import.module)))
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression

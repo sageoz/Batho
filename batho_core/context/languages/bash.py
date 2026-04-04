@@ -39,12 +39,24 @@ class BashExtractor(ASTExtractor):
 
 ; ── Source/Include statements ─────────────────────────────────────────────────
 (command
-  (word) @ref.import
-  (#eq? @ref.import "source"))
+  (word) @_source_cmd
+  (word) @ref.import.path
+  (#eq? @_source_cmd "source"))
 
 (command
-  (word) @ref.import
-  (#eq? @ref.import "."))
+  (word) @_source_cmd
+  (string) @ref.import.path
+  (#eq? @_source_cmd "source"))
+
+(command
+  (word) @_dot_cmd
+  (word) @ref.import.path
+  (#eq? @_dot_cmd "."))
+
+(command
+  (word) @_dot_cmd
+  (string) @ref.import.path
+  (#eq? @_dot_cmd "."))
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (command

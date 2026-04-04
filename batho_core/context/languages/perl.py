@@ -38,14 +38,14 @@ class PerlExtractor(ASTExtractor):
 
 ; ── Use statements (imports) ─────────────────────────────────────────────────
 (use_statement
-  module: (module_name) @ref.import)
+  module: (module_name) @ref.import.module)
 
 (no_statement
-  module: (module_name) @ref.import)
+  module: (module_name) @ref.import.module)
 
 (use_statements
   (use_statement
-    module: (module_name) @ref.import))
+    module: (module_name) @ref.import.module))
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (function_call

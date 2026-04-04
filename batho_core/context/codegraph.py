@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -996,12 +997,58 @@ class CodeGraphIndexer:
             self.logger.warning("cache_save_failed", error=str(exc))
 
         graph = self._resolve_imports(graph)
+        derived_hierarchy_edges = self._derive_hierarchy_relations(graph)
+        derived_overrides_edges = self._derive_override_edges(graph)
+
+        semantic_stats: dict[str, int] = {
+            "semantic_tags_added": 0,
+            "semantic_edges_added": 0,
+        }
+        try:
+            from batho_core.bsg import apply_semantic_overlay
+
+            semantic_stats = apply_semantic_overlay(
+                graph=graph,
+                root_path=root_path,
+                logger=self.logger,
+            )
+        except Exception as exc:
+            self.logger.warning("bsg_semantic_stage_failed", error=str(exc))
+
+        rule_stats: dict[str, Any] = {
+            "enabled": False,
+            "rules_loaded": 0,
+            "rules_applied": 0,
+            "entities_updated": 0,
+            "errors": [],
+        }
+        rules_cfg = cfg.get("rules", {}) if isinstance(cfg, dict) else {}
+        plugins_cfg = cfg.get("plugins", {}) if isinstance(cfg, dict) else {}
+        if isinstance(rules_cfg, dict) and isinstance(plugins_cfg, dict):
+            overrides = plugins_cfg.get("overrides")
+            if overrides:
+                rules_cfg = {**rules_cfg, "plugins_overrides": overrides}
+        try:
+            from batho_core.bsg import apply_rule_plugins
+
+            rule_stats = apply_rule_plugins(
+                graph=graph,
+                root_path=root_path,
+                rules_config=rules_cfg,
+                logger=self.logger,
+            )
+        except Exception as exc:
+            if rules_cfg.get("fail_on_rule_error", False):
+                raise
+            self.logger.warning("bsg_rules_stage_failed", error=str(exc))
+            rule_stats["errors"] = [str(exc)]
 
         elapsed = (
             (os.times().elapsed if hasattr(os, "times") else 0.0) - start_ts
             if start_ts
             else None
         )
+
         self.stats = {
             "files_candidates": len(candidates),
             "files_parsed": files_parsed,
@@ -1012,6 +1059,15 @@ class CodeGraphIndexer:
             "relationship_count": len(graph.relationships),
             "elapsed_seconds": elapsed,
             "workers_used": actual_workers,
+            "derived_hierarchy_edges": derived_hierarchy_edges,
+            "derived_overrides_edges": derived_overrides_edges,
+            "semantic_tags_added": int(semantic_stats.get("semantic_tags_added", 0)),
+            "semantic_edges_added": int(semantic_stats.get("semantic_edges_added", 0)),
+            "rules_enabled": bool(rule_stats.get("enabled", False)),
+            "rules_loaded": int(rule_stats.get("rules_loaded", 0)),
+            "rules_applied": int(rule_stats.get("rules_applied", 0)),
+            "entities_rule_tagged": int(rule_stats.get("entities_updated", 0)),
+            "rules": rule_stats,
         }
 
         self.logger.info(
@@ -1105,6 +1161,248 @@ class CodeGraphIndexer:
     # Internal — cross-file import resolution
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_ref_token(text: str) -> str:
+        normalized = text.strip().strip(",;")
+        normalized = re.sub(r"\s+as\s+\w+$", "", normalized).strip()
+        if (
+            len(normalized) >= 2
+            and normalized[0] == normalized[-1]
+            and normalized[0] in {'"', "'", "`"}
+        ):
+            normalized = normalized[1:-1].strip()
+        elif normalized.startswith("<") and normalized.endswith(">"):
+            normalized = normalized[1:-1].strip()
+        return normalized.replace("::", ".").strip()
+
+    @classmethod
+    def _lookup_candidates(cls, ref_text: str) -> list[str]:
+        base = cls._normalize_ref_token(ref_text)
+        if not base:
+            return []
+
+        ordered: list[str] = []
+        seen: set[str] = set()
+
+        def _add(value: str) -> None:
+            token = cls._normalize_ref_token(value)
+            if not token or token in seen:
+                return
+            seen.add(token)
+            ordered.append(token)
+
+        _add(base)
+
+        if "/" in base:
+            tail = base.rsplit("/", 1)[-1]
+            _add(tail)
+            if "." in tail:
+                _add(tail.rsplit(".", 1)[0])
+
+        if "." in base:
+            _add(base.rsplit(".", 1)[-1])
+
+        if ":" in base and not base.startswith(("http://", "https://")):
+            _add(base.rsplit(":", 1)[-1])
+
+        return ordered
+
+    @staticmethod
+    def _extract_type_references(raw: Any) -> list[str]:
+        reserved = {
+            "class",
+            "extends",
+            "implements",
+            "interface",
+            "public",
+            "private",
+            "protected",
+            "internal",
+            "abstract",
+            "final",
+            "static",
+            "trait",
+            "struct",
+        }
+
+        values: list[str] = []
+        if isinstance(raw, list):
+            values = [str(item) for item in raw if str(item).strip()]
+        elif isinstance(raw, str):
+            values = [raw]
+        elif raw is not None:
+            values = [str(raw)]
+
+        refs: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            for token in re.findall(r"[A-Za-z_][A-Za-z0-9_\.]*", value):
+                lowered = token.lower()
+                if lowered in reserved:
+                    continue
+                if token in seen:
+                    continue
+                seen.add(token)
+                refs.append(token)
+        return refs
+
+    def _derive_hierarchy_relations(self, graph: InMemoryGraph) -> int:
+        """Derive INHERITS/IMPLEMENTS edges from entity metadata."""
+        if not graph.entities:
+            return 0
+
+        name_to_id: dict[str, str] = {}
+        for ent in sorted(graph.entities.values(), key=lambda e: e.id):
+            name_to_id[ent.name] = ent.id
+            if "." in ent.name:
+                name_to_id[ent.name.split(".")[-1]] = ent.id
+            if ent.type == EntityType.MODULE:
+                name_to_id[Path(ent.file).stem] = ent.id
+
+        existing = {
+            (
+                str(rel.source_id),
+                str(rel.target_id),
+                rel.type if isinstance(rel.type, RelationshipType) else rel.type,
+            )
+            for rel in graph.relationships
+        }
+
+        def _resolve_target(ref: str) -> str | None:
+            for candidate in self._lookup_candidates(ref):
+                target_id = name_to_id.get(candidate)
+                if target_id:
+                    return target_id
+            return None
+
+        added = 0
+        class_like = {
+            EntityType.CLASS,
+            EntityType.INTERFACE,
+            EntityType.TRAIT,
+            EntityType.STRUCT,
+        }
+        for entity in graph.entities.values():
+            if entity.type not in class_like:
+                continue
+
+            metadata = dict(entity.metadata or {})
+            relation_specs = [
+                (RelationshipType.INHERITS, metadata.get("bases")),
+                (RelationshipType.INHERITS, metadata.get("extends")),
+                (RelationshipType.IMPLEMENTS, metadata.get("implements")),
+            ]
+            for relation_type, raw_refs in relation_specs:
+                for ref in self._extract_type_references(raw_refs):
+                    target_id = _resolve_target(ref)
+                    if not target_id or target_id == entity.id:
+                        continue
+
+                    key = (entity.id, target_id, relation_type)
+                    if key in existing:
+                        continue
+
+                    existing.add(key)
+                    graph.add_relationship(
+                        Relationship(
+                            source_id=entity.id,
+                            target_id=target_id,
+                            type=relation_type,
+                            metadata={"derived": True, "reason": "metadata_hierarchy"},
+                        )
+                    )
+                    added += 1
+
+        return added
+
+    def _derive_override_edges(self, graph: InMemoryGraph) -> int:
+        """Derive OVERRIDES edges from CONTAINS + INHERITS relationships."""
+        if not graph.entities:
+            return 0
+
+        class_methods: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+        parent_map: dict[str, set[str]] = defaultdict(set)
+        existing = {
+            (
+                str(rel.source_id),
+                str(rel.target_id),
+                rel.type if isinstance(rel.type, RelationshipType) else rel.type,
+            )
+            for rel in graph.relationships
+        }
+
+        for rel in graph.relationships:
+            if rel.type == RelationshipType.CONTAINS:
+                parent = graph.get_entity(rel.source_id)
+                child = graph.get_entity(rel.target_id)
+                if parent is None or child is None:
+                    continue
+                if parent.type != EntityType.CLASS or child.type != EntityType.METHOD:
+                    continue
+                class_methods[parent.id][child.name].append(child.id)
+            elif rel.type == RelationshipType.INHERITS:
+                source = graph.get_entity(rel.source_id)
+                target = graph.get_entity(rel.target_id)
+                if source is None or target is None:
+                    continue
+                if source.type != EntityType.CLASS or target.type != EntityType.CLASS:
+                    continue
+                parent_map[source.id].add(target.id)
+
+        added = 0
+        for class_id, methods_by_name in class_methods.items():
+            if not methods_by_name:
+                continue
+
+            stack = list(parent_map.get(class_id, set()))
+            visited: set[str] = set()
+            ancestors: list[str] = []
+            while stack:
+                ancestor_id = stack.pop()
+                if ancestor_id in visited:
+                    continue
+                visited.add(ancestor_id)
+                ancestors.append(ancestor_id)
+                stack.extend(parent_map.get(ancestor_id, set()))
+
+            for ancestor_id in ancestors:
+                ancestor_methods = class_methods.get(ancestor_id, {})
+                if not ancestor_methods:
+                    continue
+
+                for method_name, child_method_ids in methods_by_name.items():
+                    parent_method_ids = ancestor_methods.get(method_name, [])
+                    if not parent_method_ids:
+                        continue
+
+                    for child_method_id in child_method_ids:
+                        for parent_method_id in parent_method_ids:
+                            if child_method_id == parent_method_id:
+                                continue
+                            key = (
+                                child_method_id,
+                                parent_method_id,
+                                RelationshipType.OVERRIDES,
+                            )
+                            if key in existing:
+                                continue
+
+                            existing.add(key)
+                            graph.add_relationship(
+                                Relationship(
+                                    source_id=child_method_id,
+                                    target_id=parent_method_id,
+                                    type=RelationshipType.OVERRIDES,
+                                    metadata={
+                                        "derived": True,
+                                        "reason": "method_name_and_inheritance",
+                                    },
+                                )
+                            )
+                            added += 1
+
+        return added
+
     def _resolve_imports(self, graph: InMemoryGraph) -> InMemoryGraph:
         """
         Resolve "unresolved:X" relationship targets across the full graph.
@@ -1132,17 +1430,20 @@ class CodeGraphIndexer:
 
         for rel in unresolved:
             ref_text = rel.target_id[11:]  # strip "unresolved:"
-            target_id = name_to_id.get(ref_text)
-
-            if not target_id and "/" in ref_text:
-                target_id = name_to_id.get(ref_text.split("/")[-1])
-            if not target_id and "." in ref_text:
-                target_id = name_to_id.get(ref_text.split(".")[-1])
+            target_id = None
+            for candidate in self._lookup_candidates(ref_text):
+                target_id = name_to_id.get(candidate)
+                if target_id:
+                    break
 
             resolved.append(
                 Relationship(
                     source_id=rel.source_id,
-                    target_id=target_id if target_id else ref_text,
+                    target_id=(
+                        target_id
+                        if target_id
+                        else self._normalize_ref_token(ref_text)
+                    ),
                     type=rel.type,
                     metadata=rel.metadata,
                 )
@@ -1158,8 +1459,6 @@ class CodeGraphIndexer:
         self.logger.info(
             "import_resolution_complete",
             unresolved_count=len(unresolved),
-            resolved_count=sum(
-                1 for r in resolved if "." not in r.target_id and "/" not in r.target_id
-            ),
+            resolved_count=sum(1 for r in resolved if r.target_id in graph.entities),
         )
         return graph

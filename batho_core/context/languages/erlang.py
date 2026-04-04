@@ -54,7 +54,7 @@ class ErlangExtractor(ASTExtractor):
 
 ; ── Import statements ──────────────────────────────────────────────────────────
 (import_attribute
-  (module_name) @ref.import)
+  (module_name) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (function_call
@@ -68,7 +68,7 @@ class ErlangExtractor(ASTExtractor):
 ; ── Module-qualified calls ─────────────────────────────────────────────────────
 (remote_function_call
   (module
-    (atom) @ref.import)
+    (atom) @ref.import.module)
   (function
     (atom) @ref.call))
 """

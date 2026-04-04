@@ -28,11 +28,10 @@ flags:
   fail_on_warning: false
   strict: false
   audit_log_enabled: true
-  enable_llm: false
 
 schemas:
   graph: graph.v1
-  repomap: repomap.v1
+  bsg: bsg.v1
   snapshot: snapshot.v1
   index_metadata: index-metadata.v1
   file_cache: file-cache.v1

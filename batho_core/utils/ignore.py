@@ -83,6 +83,15 @@ DEFAULT_IGNORE_PATTERNS: list[str] = [
     ".roo/",
     ".cline/",
     ".kilo/",
+    # Test fixture data (not source-of-truth code)
+    "testdata/",
+    "test_data/",
+    "fixtures/",
+    "mock_data/",
+    "**/testdata/**",
+    "**/test_data/**",
+    "**/fixtures/**",
+    "**/mock_data/**",
 ]
 
 # Patterns that should always be ignored for file watching
@@ -117,6 +126,10 @@ WATCH_IGNORE_PATTERNS: list[str] = [
     "**/.roo/**",
     "**/.cline/**",
     "**/.kilo/**",
+    "**/testdata/**",
+    "**/test_data/**",
+    "**/fixtures/**",
+    "**/mock_data/**",
 ]
 
 # Agent-related patterns that should be ignored

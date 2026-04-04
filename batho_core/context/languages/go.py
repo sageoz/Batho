@@ -6,7 +6,7 @@ Capture coverage:
   - method declarations (with receiver, params, optional return type)
   - struct type declarations (mapped to def.struct)
   - interface type declarations (mapped to def.interface)
-  - import spec paths (mapped to ref.import)
+  - import spec paths (mapped to ref.import.module)
   - call expressions
 
 Go has no classes.  Structs + interfaces are the primary composite types;
@@ -53,7 +53,7 @@ class GoExtractor(ASTExtractor):
 
 ; ── Imports ───────────────────────────────────────────────────────────────────
 (import_spec
-  path: (interpreted_string_literal) @ref.import)
+  path: (interpreted_string_literal) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression

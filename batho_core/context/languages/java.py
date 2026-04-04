@@ -55,7 +55,11 @@ class JavaExtractor(ASTExtractor):
 
 ; ── Imports ───────────────────────────────────────────────────────────────────
 (import_declaration
-  (scoped_identifier) @ref.import)
+  (scoped_identifier) @ref.import.module)
+
+(import_declaration
+  "static"
+  (scoped_identifier) @ref.import.static)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (method_invocation

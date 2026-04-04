@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-Batho is an **enterprise-ready, high-speed, multi-language code indexer** with RepoMap compression and Time Machine snapshots/diffs — no LLM required. It transforms any codebase into structured knowledge that AI tools, agents, and developers can actually use.
+Batho is an **enterprise-ready, high-speed, multi-language code indexer** with BSG structural output and Time Machine snapshots/diffs — no LLM required. It transforms any codebase into structured knowledge that AI tools, agents, and developers can actually use.
 
 ### Core Problem Solved
 - **Codebase Opacity**: Large-scale codebases become increasingly difficult to understand
@@ -22,25 +22,22 @@ Transform Batho into a **living, self-updating architectural memory system** tha
 ### ✅ Fully Implemented Features
 
 #### Core Functionality
-- **CLI Commands**: Complete command suite (`index`, `stats`, `patch`, `patches`, `patch-info`, `patch-chain`, `apply-patch`, `cherry-pick`, `snapshots`, `diff-snapshots`, `invalidate`, `webhook`, `c4`, `repomap`)
+- **CLI Commands**: Complete command suite (`index`, `stats`, `patch`, `patches`, `patch-info`, `patch-chain`, `apply-patch`, `cherry-pick`, `snapshots`, `diff-snapshots`, `invalidate`, `webhook`, `bsg`)
 - **Code Graph Indexing**: Feature-complete with caching, binary/size guards, ignore support, parallel extraction
-- **RepoMap Rendering**: Multiple formats (full, hierarchical, compressed) with dependency mapping
+- **BSG Rendering**: Multiple formats (full, hierarchical, compressed) with dependency mapping
 - **Time Machine**: Snapshot creation, listing, loading, and diffing with staleness scoring
 - **Configuration**: Validated config system with environment variable overrides
 - **Multi-Language Support**: 40+ languages via tree-sitter with runtime grammar availability checks
 - **True Incremental Patching**: Graph delta application with automatic snapshot detection
 - **Patch Chain Tracking**: Complete lineage tracking with CLI management and cherry-picking
 - **Stack Detection**: Python/web, Node.js, Java/Spring, .NET, Go, PHP/Laravel, Ruby/Rails, Rust, Android/iOS, Data/ML
-- **C4 Model Generation**: Automatic architecture diagram generation with adaptive granularity
-- **Multi-Format Output**: PlantUML, Mermaid, D2, interactive HTML with plugin architecture
-- **Enhanced Pattern Detection**: Microservices, event-driven, cloud-native architectural patterns
 - **Enterprise-Grade Security**: Parse-only operation, binary detection, ignore rules, atomic writes
 - **Memory Monitoring**: Real-time memory usage tracking with warning/critical thresholds
 - **File Locking**: Cross-platform file locking with timeout and stale lock cleanup
 - **Path Sanitization**: Security utilities to prevent path traversal attacks
 - **Production Webhooks**: GitHub/GitLab integration with authentication and queueing
 - **CI/CD Pipeline Hooks**: Turnkey GitHub Actions and GitLab CI templates
-- **Analyze Pipeline**: Generate C4, SRS, and OWASP documentation from graph
+- **Analyze Pipeline**: Generate SRS and OWASP documentation from graph
 
 #### Testing & Quality
 - **Comprehensive Test Suite**: 637 tests with 100% pass rate (637/637 passing)
@@ -71,7 +68,7 @@ Transform Batho into a **living, self-updating architectural memory system** tha
 
 ### Data Flow
 ```
-Repository Files → CodeGraphIndexer → InMemoryGraph → RepoMap → Multiple Outputs
+Repository Files → CodeGraphIndexer → InMemoryGraph → BSG Renderer → Multiple Outputs
                       ↓                    ↓              ↓
                  Caching Layer    Time Machine   Multi-Format
                       ↓                    ↓              ↓
@@ -83,48 +80,42 @@ Repository Files → CodeGraphIndexer → InMemoryGraph → RepoMap → Multiple
 #### CLI (`batho.py`)
 - **Purpose**: Main entry point orchestrating all commands
 - **Features**: Rich argument parsing, progress reporting, error handling
-- **Commands**: index, stats, patch, snapshots, diff-snapshots, invalidate, webhook (stub), repomap (NEW), c4, patches, patch-info, patch-chain, apply-patch, cherry-pick
+- **Commands**: index, stats, patch, snapshots, diff-snapshots, invalidate, webhook (stub), bsg, patches, patch-info, patch-chain, apply-patch, cherry-pick
 
 #### CodeGraphIndexer (`batho_core/context/codegraph.py`)
 - **Purpose**: Walks repository, extracts AST entities and relationships
 - **Features**: Parallel extraction, caching, binary guards, import resolution
 - **Output**: InMemoryGraph with entities and relationships
 
-#### RepoMap (`batho_core/context/repomap.py`)
-- **Purpose**: Compresses code graph into LLM-friendly formats
+#### BSG Renderer (`batho_core/context/bsg_map.py`)
+- **Purpose**: Builds canonical BSG output and rendering views
 - **Features**: Multiple rendering modes, dependency mapping, token budgeting
-- **Outputs**: JSON, Markdown (architecture.md), hierarchical views
+- **Outputs**: `bsg.json`, Markdown summaries, hierarchical views
 
 #### Time Machine (`batho_core/time_machine.py`)
 - **Purpose**: Historical analysis and change tracking
 - **Features**: Snapshots, diffing, staleness computation
 - **Storage**: `.ctn/snapshots/<snapshot_id>.json`
 
-#### C4 Generator (`batho_core/context/c4*.py`)
-- **Purpose**: Automatic architecture diagram generation
-- **Features**: Pattern detection, adaptive granularity, multi-format output
-- **Outputs**: PlantUML, Mermaid, D2, interactive HTML
-
 ## Feature Matrix
 
 | Feature Category | Implemented | Status | Notes |
 |------------------|-------------|---------|-------|
 | **Core Indexing** | ✅ | Complete | Multi-language, parallel, cached |
-| **RepoMap Compression** | ✅ | Complete | Multiple formats, token budgeting |
+| **BSG Rendering** | ✅ | Complete | Multiple formats, token budgeting |
 | **Time Machine** | ✅ | Complete | Snapshots, diffing, staleness |
 | **CLI Interface** | ✅ | Complete | Full command suite + patch management |
 | **Stack Detection** | ✅ | Complete | 10+ technology stacks |
-| **C4 Generation** | ✅ | Complete | Multi-format, adaptive |
 | **Testing Framework** | ✅ | Complete | 637 tests, 100% pass |
 | **Incremental Patching** | ✅ | Complete | True graph delta application + tracking |
 | **Patch Chain Tracking** | ✅ | Complete | Full lineage, CLI management, cherry-picking |
 | **Memory Monitoring** | ✅ | Complete | Real-time tracking, leak detection |
 | **File Locking** | ✅ | Complete | Cross-platform, atomic operations |
 | **Path Security** | ✅ | Complete | Sanitization, traversal prevention |
-| **RepoMap CLI** | ✅ | Complete | Standalone repomap command |
+| **BSG CLI** | ✅ | Complete | Standalone bsg command |
 | **Webhook Handling** | ✅ | Complete | GitHub/GitLab integration, auth, queueing |
 | **CI/CD Pipeline** | ✅ | Complete | GitHub Actions, GitLab CI templates |
-| **Analyze Pipeline** | ✅ | Complete | C4, SRS, OWASP generation |
+| **Analyze Pipeline** | ✅ | Complete | SRS and OWASP generation |
 | **Agentic Architecture** | ⚠️ | Partial | Framework ready, needs expansion |
 | **Standards Docs** | ⚠️ | Partial | Templates available, automation partial |
 | **Live State Engine** | ⚠️ | Partial | Framework ready, integration needed |
@@ -235,28 +226,16 @@ batho diff-snapshots --root /path/to/repo SNAP_A SNAP_B
 batho index --root /path/to/repo --snapshot
 ```
 
-#### RepoMap Command (NEW)
+#### BSG Command
 ```bash
-# Generate compressed repomap for LLM context
-batho repomap --root /path/to/repo --mode compressed --budget 12000
+# Generate compressed BSG view for LLM context
+batho bsg --root /path/to/repo --mode compressed --budget 12000
 
-# Generate full repomap with all signatures
-batho repomap --root /path/to/repo --mode full
+# Generate full BSG with all signatures
+batho bsg --root /path/to/repo --mode full
 
 # Generate hierarchical directory view
-batho repomap --root /path/to/repo --mode hierarchical
-```
-
-#### C4 Diagram Generation
-```bash
-# Generate C4 models (automatic during index)
-batho index --root /path/to/repo
-
-# Generate from existing index
-batho c4 --root /path/to/repo --output /path/to/c4-model.json
-
-# Skip C4 generation
-batho index --root /path/to/repo --no-c4
+batho bsg --root /path/to/repo --mode hierarchical
 ```
 
 ### Output Structure
@@ -269,9 +248,13 @@ batho index --root /path/to/repo --no-c4
 │   └── batho_<uuid>_<ts>.json
 └── <index_id>/
     ├── graph.json                # All entities + relationships
-    ├── repomap.json              # Structured symbol index
-    ├── architecture.md           # Human-readable summary
-    └── c4-model.json             # C4 architecture model
+    ├── bsg.json                  # Canonical structured symbol index
+    └── context/
+        ├── overview.md           # Human-readable repository summary
+        ├── architecture.md       # Source-focused summary
+        ├── tests.md              # Test-focused summary
+        ├── docs.md               # Documentation-focused summary
+        └── config.md             # Configuration-focused summary
 ```
 
 ## Testing & Validation
@@ -294,7 +277,7 @@ uv run pytest tests/ -v --cov=batho_core
 - **Total Tests**: 637
 - **Passing**: 637 (100%)
 - **Failing**: 0
-- **Coverage Areas**: CLI, indexing, repomap, C4 generation, formatters, incremental patching, memory monitoring, file locking, path security
+- **Coverage Areas**: CLI, indexing, bsg renderer, incremental patching, memory monitoring, file locking, path security
 
 ### Known Test Issues
 None - All tests are currently passing with 100% success rate.
@@ -315,7 +298,6 @@ None - All tests are currently passing with 100% success rate.
 - **NEW**: Analyze pipeline for automated documentation generation
 
 ### ⚠️ Future Enhancements for v1.1
-- Some advanced C4 features need refinement
 - Performance optimization for very large repositories (>100K files)
 - Advanced AI features need expansion
 - Live state engine integration with ticketing systems
@@ -331,7 +313,7 @@ Batho v1.0.0 has successfully launched with:
 5. **CLI Ergonomics**: User-friendly interface (✅ DONE)
 6. **Webhooks**: Production-ready GitHub/GitLab integration (✅ DONE)
 7. **CI/CD**: Turnkey pipeline templates (✅ DONE)
-8. **Documentation Generation**: Automated C4, SRS, OWASP (✅ DONE)
+8. **Documentation Generation**: Automated SRS and OWASP (✅ DONE)
 
 ## Future Roadmap (v1.1+)
 
@@ -383,7 +365,7 @@ logging:
 indexer:
   max_file_size_kb: 500
   max_workers: 0  # Auto-detect
-  repomap_budget_tokens: 12000
+  bsg_budget_tokens: 12000
   ignore_patterns:
     - "**/vendor/**"
     - "**/dist/**"
@@ -400,7 +382,6 @@ Batho v1.0.0 is **successfully launched and production-ready** with a robust cor
 The current implementation provides immediate value to development teams by:
 - Making codebases searchable and understandable
 - Enabling AI tools to work with structured code knowledge
-- Providing architectural insights through automatic C4 generation
 - Supporting continuous integration workflows
 - **Delivering 10-100x faster incremental updates** for small changes
 - **Providing complete patch lineage tracking** for audit trails and debugging
@@ -411,6 +392,6 @@ The current implementation provides immediate value to development teams by:
 - **Preventing security issues** with path sanitization utilities
 - **Integrating with GitHub/GitLab** through production-ready webhooks
 - **Automating CI/CD pipelines** with turnkey templates
-- **Generating documentation automatically** with C4, SRS, and OWASP support
+- **Generating documentation automatically** with SRS and OWASP support
 
 **Status**: ✅ V1.0.0 SUCCESSFULLY LAUNCHED - Ready for production use.
