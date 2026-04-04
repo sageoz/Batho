@@ -12,6 +12,7 @@ from batho_core.config import (
     IndexerConfig,
     LoggingConfig,
     PathsConfig,
+    DEFAULT_RULES_BUILTIN_PLUGINS,
     RulesConfig,
     get_build_info,
     get_config,
@@ -56,8 +57,8 @@ class TestPydanticModels:
 
     def test_rules_config_defaults(self):
         cfg = RulesConfig()
-        assert cfg.enabled is False
-        assert cfg.builtin_plugins == ["bsg_core"]
+        assert cfg.enabled is True
+        assert cfg.builtin_plugins == list(DEFAULT_RULES_BUILTIN_PLUGINS)
         assert cfg.disabled_rules == []
         assert cfg.custom_rules_path is None
         assert cfg.custom_rules_inline == []
@@ -139,9 +140,9 @@ class TestGetConfig:
         assert cfg["rules"]["enabled"] is True
 
     def test_env_override_rules_custom_path(self, monkeypatch):
-        monkeypatch.setenv("BATHO_RULES_CUSTOM_RULES_PATH", "rules/custom.yaml")
+        monkeypatch.setenv("BATHO_RULES_CUSTOM_RULES_PATH", "plugins/custom.yaml")
         cfg = get_config()
-        assert cfg["rules"]["custom_rules_path"] == "rules/custom.yaml"
+        assert cfg["rules"]["custom_rules_path"] == "plugins/custom.yaml"
 
     def test_env_override_rules_lists(self, monkeypatch):
         monkeypatch.setenv("BATHO_RULES_BUILTIN_PLUGINS", "bsg_core,custom_pack")

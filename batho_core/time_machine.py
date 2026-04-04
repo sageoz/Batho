@@ -39,6 +39,10 @@ from batho_core.utils.patch_errors import (
 
 logger = get_logger(__name__, component="time_machine")
 
+# Backward compatibility for legacy tests/mocks that patch
+# batho_core.time_machine.RepoMap.
+RepoMap = BSGMap
+
 
 @contextmanager
 def timeout_context(timeout_seconds: float):
@@ -465,7 +469,10 @@ def create_snapshot(
         "root": str(root),
         "label": label or "",
         "graph": graph.to_dict(),
-        "bsg": bsg_map.render_json(),
+        "bsg": bsg_map.render_json(
+            default_snapshot_id=snapshot_id,
+            default_service_tag=root.name,
+        ),
         "stats": {
             "entity_count": len(graph.entities),
             "relationship_count": len(graph.relationships),

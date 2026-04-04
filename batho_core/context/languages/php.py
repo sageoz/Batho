@@ -54,7 +54,7 @@ class PHPExtractor(ASTExtractor):
 
 ; ── Use statements (imports) ──────────────────────────────────────────────────
 (use_declaration
-  (namespace_use_clause (name) @ref.import))
+  (namespace_use_clause (name) @ref.import.module))
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (function_call_expression

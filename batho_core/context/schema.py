@@ -70,6 +70,11 @@ class RelationshipType(Enum):
     IMPORTED_BY = auto()
     OVERRIDES = auto()
     STACK_BOUNDARY = auto()
+    WRAPPED_BY = auto()
+    DEPENDS_ON_API = auto()
+    REFERENCED_IN = auto()
+    CLEANED_BY = auto()
+    CONTAINED_WITHIN = auto()
     # Markup / Config
     HAS_ATTRIBUTE = auto()
     LINKS_TO = auto()

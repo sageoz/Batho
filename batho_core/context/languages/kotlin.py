@@ -62,7 +62,7 @@ class KotlinExtractor(ASTExtractor):
 
 ; ── Import statements ──────────────────────────────────────────────────────────
 (import_header
-  (imported_namespace) @ref.import)
+  (imported_namespace) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression

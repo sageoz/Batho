@@ -67,10 +67,13 @@ class PythonExtractor(ASTExtractor):
 
 ; ── Imports ───────────────────────────────────────────────────────────────────
 (import_statement
-  name: (dotted_name) @ref.import)
+  name: (_) @ref.import.module)
 
 (import_from_statement
-  module_name: (dotted_name) @ref.import)
+  module_name: (_) @ref.import.module)
+
+(import_from_statement
+  name: (_) @ref.import.symbol)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call

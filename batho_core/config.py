@@ -29,8 +29,19 @@ DEFAULT_INDEX_WORKERS = 0  # auto
 DEFAULT_IGNORE_FILES: list[str] | None = None
 DEFAULT_METRICS_OUTPUT: str | None = ".ctn/metrics.json"
 DEFAULT_ROOT_CONFIG_FILE = "batho.yaml"
-DEFAULT_RULES_ENABLED = False
-DEFAULT_RULES_BUILTIN_PLUGINS = ("bsg_core",)
+DEFAULT_RULES_ENABLED = True
+DEFAULT_RULES_INTERCEPTOR_PLUGINS = (
+    "bsg_silent_failure_catcher",
+    "bsg_dependency_blast_radius",
+    "bsg_resource_leak_preventer",
+    "bsg_nplus1_query_catcher",
+    "bsg_iac_drift_sentinel",
+    "bsg_schema_migration_enforcer",
+    "bsg_api_contract_guardian",
+    "bsg_hardcoded_secret_catcher",
+    "bsg_auth_boundary_shield",
+)
+DEFAULT_RULES_BUILTIN_PLUGINS = ("bsg_core",) + DEFAULT_RULES_INTERCEPTOR_PLUGINS
 DEFAULT_RULES_CACHE_TTL = 3600
 DEFAULT_PATCH_TIMEOUT_SECONDS = 300  # 5 minutes
 DEFAULT_MAX_PATCH_CHANGES = 10000  # Max changes in a single patch
@@ -111,6 +122,10 @@ class RulesConfig(BaseModel):
     fail_on_rule_error: bool = Field(default=False)
 
 
+class PluginsConfig(BaseModel):
+    overrides: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
+
+
 class Config(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
@@ -118,6 +133,7 @@ class Config(BaseModel):
     patch: dict = Field(default_factory=dict)
     flags: FlagsConfig = Field(default_factory=FlagsConfig)
     rules: RulesConfig = Field(default_factory=RulesConfig)
+    plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     schemas: dict = Field(default_factory=dict)
     webhook: dict = Field(default_factory=dict)
 
@@ -232,6 +248,9 @@ def get_config() -> Dict[str, Any]:
             "strict_validation": False,
             "cache_ttl": DEFAULT_RULES_CACHE_TTL,
             "fail_on_rule_error": False,
+        },
+        "plugins": {
+            "overrides": {},
         },
         "schemas": {
             "graph": GRAPH_SCHEMA_VERSION,

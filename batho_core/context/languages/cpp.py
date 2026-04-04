@@ -7,7 +7,7 @@ Capture coverage:
   - member function / method definitions — function_declarator inside a
     class scope (mapped to def.method)
   - namespace definitions (mapped to def.namespace)
-  - preprocessor ``#include`` directives (mapped to ref.import)
+  - preprocessor ``#include`` directives (mapped to ref.import.module)
   - call expressions (mapped to ref.call)
 
 C++ has considerably more complex syntax than C; this query captures the
@@ -69,7 +69,7 @@ class CppExtractor(ASTExtractor):
 
 ; ── Preprocessor includes ─────────────────────────────────────────────────────
 (preproc_include
-  path: (_) @ref.import)
+  path: (_) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression

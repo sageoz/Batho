@@ -33,6 +33,11 @@ class TypeScriptExtractor(ASTExtractor):
     (implements_clause
       (type_identifier) @def.class.implements))?)
 
+(class_declaration
+  (class_heritage
+    (extends_clause
+      (_) @def.class.extends)))
+
 ; ── Interface declarations ────────────────────────────────────────────────────
 (interface_declaration
   name: (type_identifier) @def.interface.name)
@@ -59,7 +64,13 @@ class TypeScriptExtractor(ASTExtractor):
 
 ; ── Imports ───────────────────────────────────────────────────────────────────
 (import_statement
-  source: (string) @ref.import)
+  source: (string) @ref.import.module)
+
+(call_expression
+  function: (identifier) @_require_fn
+  arguments: (arguments
+    (string) @ref.import.require)
+  (#eq? @_require_fn "require"))
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression

@@ -1,14 +1,14 @@
 {
-  "current_index_id": "batho_853614845bdc47f281dd9c3e15e630f3_20260403T222202Z",
+  "current_index_id": "batho_cc13f99b63e54af68e726dee53e97441_20260404T092119Z",
   "indexes": {
-    "batho_16be9be273ac4953a6a950c0607cd955_20260403T215950Z": {
-      "id": "batho_16be9be273ac4953a6a950c0607cd955_20260403T215950Z",
-      "timestamp": "2026-04-03T21:59:51.900627+00:00",
+    "batho_12bb4e701e3b47a89f4476ba38292d6f_20260404T090256Z": {
+      "id": "batho_12bb4e701e3b47a89f4476ba38292d6f_20260404T090256Z",
+      "timestamp": "2026-04-04T09:02:57.757223+00:00",
       "root": "/Users/rishirajsharma/Sageoz/batho",
-      "file_count": 210,
-      "entity_count": 26298,
-      "relationship_count": 25915,
-      "repo_hash": "f9d741040dfc6c415090321a7a95f0f5a3df2a09d26887003992604405416db1",
+      "file_count": 125,
+      "entity_count": 3322,
+      "relationship_count": 4577,
+      "repo_hash": "313456b2baed5e64a62d45ff4cd265c1f413ea2e9f9cfc021575156bcadca6f2",
       "staleness_score": 1.0,
       "stack": {
         "languages": [
@@ -34,54 +34,97 @@
         "infra": []
       },
       "outputs": {
-        "graph_json": ".ctn/batho_16be9be273ac4953a6a950c0607cd955_20260403T215950Z/graph.json",
-        "bsg_json": ".ctn/batho_16be9be273ac4953a6a950c0607cd955_20260403T215950Z/bsg.json",
-        "overview_md": ".ctn/batho_16be9be273ac4953a6a950c0607cd955_20260403T215950Z/context/overview.md",
-        "architecture_md": ".ctn/batho_16be9be273ac4953a6a950c0607cd955_20260403T215950Z/context/architecture.md",
-        "tests_md": ".ctn/batho_16be9be273ac4953a6a950c0607cd955_20260403T215950Z/context/tests.md",
-        "docs_md": ".ctn/batho_16be9be273ac4953a6a950c0607cd955_20260403T215950Z/context/docs.md",
-        "config_md": ".ctn/batho_16be9be273ac4953a6a950c0607cd955_20260403T215950Z/context/config.md"
+        "graph_json": ".ctn/batho_12bb4e701e3b47a89f4476ba38292d6f_20260404T090256Z/graph.json",
+        "bsg_json": ".ctn/batho_12bb4e701e3b47a89f4476ba38292d6f_20260404T090256Z/bsg.json",
+        "overview_md": ".ctn/batho_12bb4e701e3b47a89f4476ba38292d6f_20260404T090256Z/context/overview.md",
+        "architecture_md": ".ctn/batho_12bb4e701e3b47a89f4476ba38292d6f_20260404T090256Z/context/architecture.md",
+        "tests_md": ".ctn/batho_12bb4e701e3b47a89f4476ba38292d6f_20260404T090256Z/context/tests.md",
+        "docs_md": ".ctn/batho_12bb4e701e3b47a89f4476ba38292d6f_20260404T090256Z/context/docs.md",
+        "config_md": ".ctn/batho_12bb4e701e3b47a89f4476ba38292d6f_20260404T090256Z/context/config.md"
       },
       "stats": {
-        "files_candidates": 236,
-        "files_parsed": 235,
+        "files_candidates": 139,
+        "files_parsed": 138,
         "files_skipped": 1,
         "files_cached": 0,
         "errors": 0,
-        "entity_count": 26298,
-        "relationship_count": 25915,
-        "elapsed_seconds": 1.7599999904632568,
-        "workers_used": 16,
-        "rules_enabled": false,
-        "rules_loaded": 0,
-        "rules_applied": 0,
-        "entities_rule_tagged": 0,
+        "entity_count": 3322,
+        "relationship_count": 4577,
+        "elapsed_seconds": 1.869999885559082,
+        "workers_used": 8,
+        "derived_hierarchy_edges": 36,
+        "derived_overrides_edges": 44,
+        "semantic_tags_added": 571,
+        "semantic_edges_added": 208,
+        "rules_enabled": true,
+        "rules_loaded": 15,
+        "rules_applied": 11,
+        "entities_rule_tagged": 3322,
         "rules": {
-          "enabled": false,
-          "builtin_plugins_requested": 0,
-          "builtin_plugins_loaded": 0,
-          "rules_loaded": 0,
+          "enabled": true,
+          "cache_hit": false,
+          "cache_path": "/Users/rishirajsharma/Sageoz/batho/.ctn/rules_cache.bin",
+          "builtin_plugins_requested": 10,
+          "builtin_plugins_loaded": 10,
+          "rules_loaded": 15,
           "rules_disabled": 0,
           "custom_inline_count": 0,
           "custom_file_count": 0,
+          "overrides_applied": 0,
+          "shadowed_rules": [],
           "errors": [],
-          "entities_updated": 0,
-          "rules_applied": 0,
-          "rule_hits": {}
+          "entities_updated": 3322,
+          "rules_applied": 11,
+          "semantic_tags_added": 0,
+          "semantic_edges_added": 0,
+          "plugin_hits": {
+            "bsg_api_contract_guardian": 11,
+            "bsg_auth_boundary_shield": 1,
+            "bsg_dependency_blast_radius": 13,
+            "bsg_graph_foundation": 5334,
+            "bsg_iac_drift_sentinel": 64,
+            "bsg_resource_leak_preventer": 1,
+            "bsg_schema_migration_enforcer": 216,
+            "bsg_silent_failure_catcher": 86
+          },
+          "rule_hits": {
+            "api-contract-boundary-drift": 11,
+            "bsg-category-config": 637,
+            "bsg-category-docs": 677,
+            "bsg-category-tests": 698,
+            "bsg-derive-scope-tier": 3322,
+            "high-blast-radius-node": 13,
+            "iac-reference-drift": 64,
+            "missing-resource-cleanup": 1,
+            "orm-schema-migration-risk": 216,
+            "silent-failure-risk": 86,
+            "unsecured-api-boundary": 1
+          },
+          "interception_totals": {
+            "bsg_api_contract_guardian": 11,
+            "bsg_auth_boundary_shield": 1,
+            "bsg_dependency_blast_radius": 13,
+            "bsg_graph_foundation": 5334,
+            "bsg_iac_drift_sentinel": 64,
+            "bsg_resource_leak_preventer": 1,
+            "bsg_schema_migration_enforcer": 216,
+            "bsg_silent_failure_catcher": 86
+          },
+          "interception_stats_path": "/Users/rishirajsharma/Sageoz/batho/.ctn/interception_stats.json"
         },
-        "loc_total": 90980,
-        "repo_size_bytes": 3965952,
-        "file_count_total": 376,
-        "text_files_count": 375,
+        "loc_total": 35202,
+        "repo_size_bytes": 20975196,
+        "file_count_total": 150,
+        "text_files_count": 149,
         "skipped_files_count": 1
       },
       "metrics": {
-        "file_count_total": 376,
-        "repo_size_bytes": 3965952,
-        "loc_total": 90980,
-        "text_files_count": 375,
+        "file_count_total": 150,
+        "repo_size_bytes": 20975196,
+        "loc_total": 35202,
+        "text_files_count": 149,
         "skipped_files_count": 1,
-        "token_input_estimate": 550471,
+        "token_input_estimate": 49148,
         "cache_hit_rate": 0.0
       },
       "build": {
@@ -96,15 +139,15 @@
         "file_cache": "file-cache.v1"
       }
     },
-    "batho_853614845bdc47f281dd9c3e15e630f3_20260403T222202Z": {
-      "id": "batho_853614845bdc47f281dd9c3e15e630f3_20260403T222202Z",
-      "timestamp": "2026-04-03T22:22:04.670940+00:00",
+    "batho_dae1816aa1964910a9c4661b38399474_20260404T090643Z": {
+      "id": "batho_dae1816aa1964910a9c4661b38399474_20260404T090643Z",
+      "timestamp": "2026-04-04T09:06:44.455680+00:00",
       "root": "/Users/rishirajsharma/Sageoz/batho",
-      "file_count": 210,
-      "entity_count": 26298,
-      "relationship_count": 25915,
-      "repo_hash": "398b718a28979ff987715ff7b42fa6f60864f51e379321d5844905506abe748e",
-      "staleness_score": 0.902,
+      "file_count": 125,
+      "entity_count": 3322,
+      "relationship_count": 4577,
+      "repo_hash": "3d0667dd12515e06094f3a21bac3cae096a835d261cf8625ef4ed7a96856fb3d",
+      "staleness_score": 0.9,
       "stack": {
         "languages": [
           "Python 3.12"
@@ -129,55 +172,512 @@
         "infra": []
       },
       "outputs": {
-        "graph_json": ".ctn/batho_853614845bdc47f281dd9c3e15e630f3_20260403T222202Z/graph.json",
-        "bsg_json": ".ctn/batho_853614845bdc47f281dd9c3e15e630f3_20260403T222202Z/bsg.json",
-        "overview_md": ".ctn/batho_853614845bdc47f281dd9c3e15e630f3_20260403T222202Z/context/overview.md",
-        "architecture_md": ".ctn/batho_853614845bdc47f281dd9c3e15e630f3_20260403T222202Z/context/architecture.md",
-        "tests_md": ".ctn/batho_853614845bdc47f281dd9c3e15e630f3_20260403T222202Z/context/tests.md",
-        "docs_md": ".ctn/batho_853614845bdc47f281dd9c3e15e630f3_20260403T222202Z/context/docs.md",
-        "config_md": ".ctn/batho_853614845bdc47f281dd9c3e15e630f3_20260403T222202Z/context/config.md"
+        "graph_json": ".ctn/batho_dae1816aa1964910a9c4661b38399474_20260404T090643Z/graph.json",
+        "bsg_json": ".ctn/batho_dae1816aa1964910a9c4661b38399474_20260404T090643Z/bsg.json",
+        "overview_md": ".ctn/batho_dae1816aa1964910a9c4661b38399474_20260404T090643Z/context/overview.md",
+        "architecture_md": ".ctn/batho_dae1816aa1964910a9c4661b38399474_20260404T090643Z/context/architecture.md",
+        "tests_md": ".ctn/batho_dae1816aa1964910a9c4661b38399474_20260404T090643Z/context/tests.md",
+        "docs_md": ".ctn/batho_dae1816aa1964910a9c4661b38399474_20260404T090643Z/context/docs.md",
+        "config_md": ".ctn/batho_dae1816aa1964910a9c4661b38399474_20260404T090643Z/context/config.md"
       },
       "stats": {
-        "files_candidates": 237,
-        "files_parsed": 236,
+        "files_candidates": 139,
+        "files_parsed": 138,
         "files_skipped": 1,
-        "files_cached": 216,
+        "files_cached": 118,
         "errors": 0,
-        "entity_count": 26298,
-        "relationship_count": 25915,
-        "elapsed_seconds": 1.7699999809265137,
-        "workers_used": 16,
-        "rules_enabled": false,
-        "rules_loaded": 0,
-        "rules_applied": 0,
-        "entities_rule_tagged": 0,
+        "entity_count": 3322,
+        "relationship_count": 4577,
+        "elapsed_seconds": 1.7000000476837158,
+        "workers_used": 8,
+        "derived_hierarchy_edges": 36,
+        "derived_overrides_edges": 44,
+        "semantic_tags_added": 571,
+        "semantic_edges_added": 208,
+        "rules_enabled": true,
+        "rules_loaded": 15,
+        "rules_applied": 11,
+        "entities_rule_tagged": 3322,
         "rules": {
-          "enabled": false,
-          "builtin_plugins_requested": 0,
-          "builtin_plugins_loaded": 0,
-          "rules_loaded": 0,
+          "enabled": true,
+          "cache_hit": false,
+          "cache_path": "/Users/rishirajsharma/Sageoz/batho/.ctn/rules_cache.bin",
+          "builtin_plugins_requested": 10,
+          "builtin_plugins_loaded": 10,
+          "rules_loaded": 15,
           "rules_disabled": 0,
           "custom_inline_count": 0,
           "custom_file_count": 0,
+          "overrides_applied": 0,
+          "shadowed_rules": [],
           "errors": [],
-          "entities_updated": 0,
-          "rules_applied": 0,
-          "rule_hits": {}
+          "entities_updated": 3322,
+          "rules_applied": 11,
+          "semantic_tags_added": 0,
+          "semantic_edges_added": 0,
+          "plugin_hits": {
+            "bsg_api_contract_guardian": 11,
+            "bsg_auth_boundary_shield": 1,
+            "bsg_dependency_blast_radius": 13,
+            "bsg_graph_foundation": 5334,
+            "bsg_iac_drift_sentinel": 64,
+            "bsg_resource_leak_preventer": 1,
+            "bsg_schema_migration_enforcer": 216,
+            "bsg_silent_failure_catcher": 86
+          },
+          "rule_hits": {
+            "api-contract-boundary-drift": 11,
+            "bsg-category-config": 637,
+            "bsg-category-docs": 677,
+            "bsg-category-tests": 698,
+            "bsg-derive-scope-tier": 3322,
+            "high-blast-radius-node": 13,
+            "iac-reference-drift": 64,
+            "missing-resource-cleanup": 1,
+            "orm-schema-migration-risk": 216,
+            "silent-failure-risk": 86,
+            "unsecured-api-boundary": 1
+          },
+          "interception_totals": {
+            "bsg_api_contract_guardian": 22,
+            "bsg_auth_boundary_shield": 2,
+            "bsg_dependency_blast_radius": 26,
+            "bsg_graph_foundation": 10672,
+            "bsg_iac_drift_sentinel": 128,
+            "bsg_resource_leak_preventer": 2,
+            "bsg_schema_migration_enforcer": 432,
+            "bsg_silent_failure_catcher": 172
+          },
+          "interception_stats_path": "/Users/rishirajsharma/Sageoz/batho/.ctn/interception_stats.json"
         },
-        "loc_total": 90999,
-        "repo_size_bytes": 3966689,
-        "file_count_total": 377,
-        "text_files_count": 376,
+        "loc_total": 35206,
+        "repo_size_bytes": 20975308,
+        "file_count_total": 150,
+        "text_files_count": 149,
         "skipped_files_count": 1
       },
       "metrics": {
-        "file_count_total": 377,
-        "repo_size_bytes": 3966689,
-        "loc_total": 90999,
-        "text_files_count": 376,
+        "file_count_total": 150,
+        "repo_size_bytes": 20975308,
+        "loc_total": 35206,
+        "text_files_count": 149,
         "skipped_files_count": 1,
-        "token_input_estimate": 550517,
-        "cache_hit_rate": 0.4779
+        "token_input_estimate": 49127,
+        "cache_hit_rate": 0.4609
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {
+        "graph": "graph.v1",
+        "bsg": "bsg.v1",
+        "snapshot": "snapshot.v1",
+        "index_metadata": "index-metadata.v1",
+        "file_cache": "file-cache.v1"
+      }
+    },
+    "batho_c20cc25c1e50407eb9eb29e4ce9dd1d7_20260404T090656Z": {
+      "id": "batho_c20cc25c1e50407eb9eb29e4ce9dd1d7_20260404T090656Z",
+      "timestamp": "2026-04-04T09:06:56.959329+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho",
+      "file_count": 125,
+      "entity_count": 3322,
+      "relationship_count": 4577,
+      "repo_hash": "3d0667dd12515e06094f3a21bac3cae096a835d261cf8625ef4ed7a96856fb3d",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python 3.12"
+        ],
+        "frameworks": [
+          "FastAPI",
+          "PyYAML",
+          "Pydantic",
+          "Pytest",
+          "Pytest Coverage",
+          "Structlog",
+          "Tree-sitter",
+          "Uvicorn",
+          "python-dotenv"
+        ],
+        "build_tools": [
+          "Hatch"
+        ],
+        "package_managers": [
+          "poetry/pdm/setuptools"
+        ],
+        "infra": []
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_c20cc25c1e50407eb9eb29e4ce9dd1d7_20260404T090656Z/graph.json",
+        "bsg_json": ".ctn/batho_c20cc25c1e50407eb9eb29e4ce9dd1d7_20260404T090656Z/bsg.json",
+        "overview_md": ".ctn/batho_c20cc25c1e50407eb9eb29e4ce9dd1d7_20260404T090656Z/context/overview.md",
+        "architecture_md": ".ctn/batho_c20cc25c1e50407eb9eb29e4ce9dd1d7_20260404T090656Z/context/architecture.md",
+        "tests_md": ".ctn/batho_c20cc25c1e50407eb9eb29e4ce9dd1d7_20260404T090656Z/context/tests.md",
+        "docs_md": ".ctn/batho_c20cc25c1e50407eb9eb29e4ce9dd1d7_20260404T090656Z/context/docs.md",
+        "config_md": ".ctn/batho_c20cc25c1e50407eb9eb29e4ce9dd1d7_20260404T090656Z/context/config.md"
+      },
+      "stats": {
+        "files_candidates": 139,
+        "files_parsed": 138,
+        "files_skipped": 1,
+        "files_cached": 138,
+        "errors": 0,
+        "entity_count": 3322,
+        "relationship_count": 4577,
+        "elapsed_seconds": 2.2699999809265137,
+        "workers_used": 8,
+        "derived_hierarchy_edges": 36,
+        "derived_overrides_edges": 44,
+        "semantic_tags_added": 570,
+        "semantic_edges_added": 208,
+        "rules_enabled": true,
+        "rules_loaded": 15,
+        "rules_applied": 11,
+        "entities_rule_tagged": 3322,
+        "rules": {
+          "enabled": true,
+          "cache_hit": true,
+          "cache_path": "/Users/rishirajsharma/Sageoz/batho/.ctn/rules_cache.bin",
+          "builtin_plugins_requested": 10,
+          "builtin_plugins_loaded": 10,
+          "rules_loaded": 15,
+          "rules_disabled": 0,
+          "custom_inline_count": 0,
+          "custom_file_count": 0,
+          "overrides_applied": 0,
+          "shadowed_rules": [],
+          "errors": [],
+          "entities_updated": 3322,
+          "rules_applied": 11,
+          "semantic_tags_added": 0,
+          "semantic_edges_added": 0,
+          "plugin_hits": {
+            "bsg_api_contract_guardian": 11,
+            "bsg_auth_boundary_shield": 1,
+            "bsg_dependency_blast_radius": 13,
+            "bsg_graph_foundation": 5334,
+            "bsg_iac_drift_sentinel": 64,
+            "bsg_resource_leak_preventer": 1,
+            "bsg_schema_migration_enforcer": 216,
+            "bsg_silent_failure_catcher": 86
+          },
+          "rule_hits": {
+            "api-contract-boundary-drift": 11,
+            "bsg-category-config": 637,
+            "bsg-category-docs": 677,
+            "bsg-category-tests": 698,
+            "bsg-derive-scope-tier": 3322,
+            "high-blast-radius-node": 13,
+            "iac-reference-drift": 64,
+            "missing-resource-cleanup": 1,
+            "orm-schema-migration-risk": 216,
+            "silent-failure-risk": 86,
+            "unsecured-api-boundary": 1
+          },
+          "interception_totals": {
+            "bsg_api_contract_guardian": 33,
+            "bsg_auth_boundary_shield": 3,
+            "bsg_dependency_blast_radius": 39,
+            "bsg_graph_foundation": 16006,
+            "bsg_iac_drift_sentinel": 192,
+            "bsg_resource_leak_preventer": 3,
+            "bsg_schema_migration_enforcer": 648,
+            "bsg_silent_failure_catcher": 258
+          },
+          "interception_stats_path": "/Users/rishirajsharma/Sageoz/batho/.ctn/interception_stats.json"
+        },
+        "loc_total": 35206,
+        "repo_size_bytes": 20975308,
+        "file_count_total": 150,
+        "text_files_count": 149,
+        "skipped_files_count": 1
+      },
+      "metrics": {
+        "file_count_total": 150,
+        "repo_size_bytes": 20975308,
+        "loc_total": 35206,
+        "text_files_count": 149,
+        "skipped_files_count": 1,
+        "token_input_estimate": 49119,
+        "cache_hit_rate": 0.5
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {
+        "graph": "graph.v1",
+        "bsg": "bsg.v1",
+        "snapshot": "snapshot.v1",
+        "index_metadata": "index-metadata.v1",
+        "file_cache": "file-cache.v1"
+      }
+    },
+    "batho_3454e7ceda0947cea6dacdbc616b7bd0_20260404T091906Z": {
+      "id": "batho_3454e7ceda0947cea6dacdbc616b7bd0_20260404T091906Z",
+      "timestamp": "2026-04-04T09:19:07.814892+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho",
+      "file_count": 125,
+      "entity_count": 3322,
+      "relationship_count": 4577,
+      "repo_hash": "3d0667dd12515e06094f3a21bac3cae096a835d261cf8625ef4ed7a96856fb3d",
+      "staleness_score": 0.401,
+      "stack": {
+        "languages": [
+          "Python 3.12"
+        ],
+        "frameworks": [
+          "FastAPI",
+          "PyYAML",
+          "Pydantic",
+          "Pytest",
+          "Pytest Coverage",
+          "Structlog",
+          "Tree-sitter",
+          "Uvicorn",
+          "python-dotenv"
+        ],
+        "build_tools": [
+          "Hatch"
+        ],
+        "package_managers": [
+          "poetry/pdm/setuptools"
+        ],
+        "infra": []
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_3454e7ceda0947cea6dacdbc616b7bd0_20260404T091906Z/graph.json",
+        "bsg_json": ".ctn/batho_3454e7ceda0947cea6dacdbc616b7bd0_20260404T091906Z/bsg.json",
+        "overview_md": ".ctn/batho_3454e7ceda0947cea6dacdbc616b7bd0_20260404T091906Z/context/overview.md",
+        "architecture_md": ".ctn/batho_3454e7ceda0947cea6dacdbc616b7bd0_20260404T091906Z/context/architecture.md",
+        "tests_md": ".ctn/batho_3454e7ceda0947cea6dacdbc616b7bd0_20260404T091906Z/context/tests.md",
+        "docs_md": ".ctn/batho_3454e7ceda0947cea6dacdbc616b7bd0_20260404T091906Z/context/docs.md",
+        "config_md": ".ctn/batho_3454e7ceda0947cea6dacdbc616b7bd0_20260404T091906Z/context/config.md"
+      },
+      "stats": {
+        "files_candidates": 139,
+        "files_parsed": 138,
+        "files_skipped": 1,
+        "files_cached": 138,
+        "errors": 0,
+        "entity_count": 3322,
+        "relationship_count": 4577,
+        "elapsed_seconds": 2.5899999141693115,
+        "workers_used": 8,
+        "derived_hierarchy_edges": 36,
+        "derived_overrides_edges": 44,
+        "semantic_tags_added": 571,
+        "semantic_edges_added": 208,
+        "rules_enabled": true,
+        "rules_loaded": 15,
+        "rules_applied": 11,
+        "entities_rule_tagged": 3322,
+        "rules": {
+          "enabled": true,
+          "cache_hit": true,
+          "cache_path": "/Users/rishirajsharma/Sageoz/batho/.ctn/rules_cache.bin",
+          "builtin_plugins_requested": 10,
+          "builtin_plugins_loaded": 10,
+          "rules_loaded": 15,
+          "rules_disabled": 0,
+          "custom_inline_count": 0,
+          "custom_file_count": 0,
+          "overrides_applied": 0,
+          "shadowed_rules": [],
+          "errors": [],
+          "entities_updated": 3322,
+          "rules_applied": 11,
+          "semantic_tags_added": 0,
+          "semantic_edges_added": 0,
+          "plugin_hits": {
+            "bsg_api_contract_guardian": 11,
+            "bsg_auth_boundary_shield": 1,
+            "bsg_dependency_blast_radius": 13,
+            "bsg_graph_foundation": 5334,
+            "bsg_iac_drift_sentinel": 64,
+            "bsg_resource_leak_preventer": 1,
+            "bsg_schema_migration_enforcer": 216,
+            "bsg_silent_failure_catcher": 86
+          },
+          "rule_hits": {
+            "api-contract-boundary-drift": 11,
+            "bsg-category-config": 637,
+            "bsg-category-docs": 677,
+            "bsg-category-tests": 698,
+            "bsg-derive-scope-tier": 3322,
+            "high-blast-radius-node": 13,
+            "iac-reference-drift": 64,
+            "missing-resource-cleanup": 1,
+            "orm-schema-migration-risk": 216,
+            "silent-failure-risk": 86,
+            "unsecured-api-boundary": 1
+          },
+          "interception_totals": {
+            "bsg_api_contract_guardian": 44,
+            "bsg_auth_boundary_shield": 4,
+            "bsg_dependency_blast_radius": 52,
+            "bsg_graph_foundation": 21340,
+            "bsg_iac_drift_sentinel": 256,
+            "bsg_resource_leak_preventer": 4,
+            "bsg_schema_migration_enforcer": 864,
+            "bsg_silent_failure_catcher": 344
+          },
+          "interception_stats_path": "/Users/rishirajsharma/Sageoz/batho/.ctn/interception_stats.json"
+        },
+        "loc_total": 35206,
+        "repo_size_bytes": 5550746,
+        "file_count_total": 150,
+        "text_files_count": 149,
+        "skipped_files_count": 1
+      },
+      "metrics": {
+        "file_count_total": 150,
+        "repo_size_bytes": 5550746,
+        "loc_total": 35206,
+        "text_files_count": 149,
+        "skipped_files_count": 1,
+        "token_input_estimate": 49098,
+        "cache_hit_rate": 0.5
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {
+        "graph": "graph.v1",
+        "bsg": "bsg.v1",
+        "snapshot": "snapshot.v1",
+        "index_metadata": "index-metadata.v1",
+        "file_cache": "file-cache.v1"
+      }
+    },
+    "batho_cc13f99b63e54af68e726dee53e97441_20260404T092119Z": {
+      "id": "batho_cc13f99b63e54af68e726dee53e97441_20260404T092119Z",
+      "timestamp": "2026-04-04T09:21:20.781061+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho",
+      "file_count": 125,
+      "entity_count": 3322,
+      "relationship_count": 4577,
+      "repo_hash": "3d0667dd12515e06094f3a21bac3cae096a835d261cf8625ef4ed7a96856fb3d",
+      "staleness_score": 0.4,
+      "stack": {
+        "languages": [
+          "Python 3.12"
+        ],
+        "frameworks": [
+          "FastAPI",
+          "PyYAML",
+          "Pydantic",
+          "Pytest",
+          "Pytest Coverage",
+          "Structlog",
+          "Tree-sitter",
+          "Uvicorn",
+          "python-dotenv"
+        ],
+        "build_tools": [
+          "Hatch"
+        ],
+        "package_managers": [
+          "poetry/pdm/setuptools"
+        ],
+        "infra": []
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_cc13f99b63e54af68e726dee53e97441_20260404T092119Z/graph.json",
+        "bsg_json": ".ctn/batho_cc13f99b63e54af68e726dee53e97441_20260404T092119Z/bsg.json",
+        "overview_md": ".ctn/batho_cc13f99b63e54af68e726dee53e97441_20260404T092119Z/context/overview.md",
+        "architecture_md": ".ctn/batho_cc13f99b63e54af68e726dee53e97441_20260404T092119Z/context/architecture.md",
+        "tests_md": ".ctn/batho_cc13f99b63e54af68e726dee53e97441_20260404T092119Z/context/tests.md",
+        "docs_md": ".ctn/batho_cc13f99b63e54af68e726dee53e97441_20260404T092119Z/context/docs.md",
+        "config_md": ".ctn/batho_cc13f99b63e54af68e726dee53e97441_20260404T092119Z/context/config.md"
+      },
+      "stats": {
+        "files_candidates": 139,
+        "files_parsed": 138,
+        "files_skipped": 1,
+        "files_cached": 138,
+        "errors": 0,
+        "entity_count": 3322,
+        "relationship_count": 4577,
+        "elapsed_seconds": 2.0399999618530273,
+        "workers_used": 8,
+        "derived_hierarchy_edges": 36,
+        "derived_overrides_edges": 44,
+        "semantic_tags_added": 571,
+        "semantic_edges_added": 208,
+        "rules_enabled": true,
+        "rules_loaded": 15,
+        "rules_applied": 11,
+        "entities_rule_tagged": 3322,
+        "rules": {
+          "enabled": true,
+          "cache_hit": true,
+          "cache_path": "/Users/rishirajsharma/Sageoz/batho/.ctn/rules_cache.bin",
+          "builtin_plugins_requested": 10,
+          "builtin_plugins_loaded": 10,
+          "rules_loaded": 15,
+          "rules_disabled": 0,
+          "custom_inline_count": 0,
+          "custom_file_count": 0,
+          "overrides_applied": 0,
+          "shadowed_rules": [],
+          "errors": [],
+          "entities_updated": 3322,
+          "rules_applied": 11,
+          "semantic_tags_added": 0,
+          "semantic_edges_added": 0,
+          "plugin_hits": {
+            "bsg_api_contract_guardian": 11,
+            "bsg_auth_boundary_shield": 1,
+            "bsg_dependency_blast_radius": 13,
+            "bsg_graph_foundation": 5334,
+            "bsg_iac_drift_sentinel": 64,
+            "bsg_resource_leak_preventer": 1,
+            "bsg_schema_migration_enforcer": 216,
+            "bsg_silent_failure_catcher": 86
+          },
+          "rule_hits": {
+            "api-contract-boundary-drift": 11,
+            "bsg-category-config": 637,
+            "bsg-category-docs": 677,
+            "bsg-category-tests": 698,
+            "bsg-derive-scope-tier": 3322,
+            "high-blast-radius-node": 13,
+            "iac-reference-drift": 64,
+            "missing-resource-cleanup": 1,
+            "orm-schema-migration-risk": 216,
+            "silent-failure-risk": 86,
+            "unsecured-api-boundary": 1
+          },
+          "interception_totals": {
+            "bsg_api_contract_guardian": 55,
+            "bsg_auth_boundary_shield": 5,
+            "bsg_dependency_blast_radius": 65,
+            "bsg_graph_foundation": 26674,
+            "bsg_iac_drift_sentinel": 320,
+            "bsg_resource_leak_preventer": 5,
+            "bsg_schema_migration_enforcer": 1080,
+            "bsg_silent_failure_catcher": 430
+          },
+          "interception_stats_path": "/Users/rishirajsharma/Sageoz/batho/.ctn/interception_stats.json"
+        },
+        "loc_total": 35206,
+        "repo_size_bytes": 5550746,
+        "file_count_total": 150,
+        "text_files_count": 149,
+        "skipped_files_count": 1
+      },
+      "metrics": {
+        "file_count_total": 150,
+        "repo_size_bytes": 5550746,
+        "loc_total": 35206,
+        "text_files_count": 149,
+        "skipped_files_count": 1,
+        "token_input_estimate": 49120,
+        "cache_hit_rate": 0.5
       },
       "build": {
         "version": "0.1.0",
@@ -193,5 +693,5 @@
     }
   },
   "schema_version": "index-metadata.v1",
-  "_checksum": "74bfc37a829c5d83c62d3e9922099f13e336b6c8dbaa5308b8ba9f77bdb53ac2"
+  "_checksum": "12d3b8a4a0c2d1bca49592259fbaab8d4e496ef86b5dd0ef2c99624a85db9c32"
 }

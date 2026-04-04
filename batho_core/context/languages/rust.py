@@ -61,7 +61,7 @@ class RustExtractor(ASTExtractor):
 
 ; ── Use declarations (imports) ────────────────────────────────────────────────
 (use_declaration
-  argument: (_) @ref.import)
+  argument: (_) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression

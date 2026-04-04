@@ -34,7 +34,17 @@ flags:
 
 rules:
   enabled: false            # Enable BSG rule plugins during indexing
-  builtin_plugins: [bsg_core]
+  builtin_plugins:
+    - bsg_core
+    - bsg_silent_failure_catcher
+    - bsg_dependency_blast_radius
+    - bsg_resource_leak_preventer
+    - bsg_nplus1_query_catcher
+    - bsg_iac_drift_sentinel
+    - bsg_schema_migration_enforcer
+    - bsg_api_contract_guardian
+    - bsg_hardcoded_secret_catcher
+    - bsg_auth_boundary_shield
   disabled_rules: []
   custom_rules_path: null   # Optional path to YAML file with custom rules
   custom_rules_inline: []   # Optional inline rules (same schema as file-based rules)
@@ -53,6 +63,17 @@ rules:
   #     name_patterns: ["*payment*", "*invoice*"]
   #     metadata:
   #       bsg.cluster_hint: billing
+
+plugins:
+  overrides: {}
+  # Example override:
+  # overrides:
+  #   bsg_graph_foundation:
+  #     bsg-category-tests:
+  #       severity: warning
+  #       actions:
+  #         metadata:
+  #           bsg.category: TEST
 
 schemas:
   graph: graph.v1

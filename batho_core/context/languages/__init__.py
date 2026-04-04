@@ -18,7 +18,7 @@ The capture naming convention used throughout is the one defined by the
   @def.<type>.receiver      — method receiver (Go)
   @def.<type>.type          — field / variable type
   @ref.call                 — function call reference
-  @ref.import               — import reference
+  @ref.import.module               — import reference
 
 Use :mod:`batho_core.context.languages.registry` to resolve a file
 extension to the correct extractor instance at runtime.

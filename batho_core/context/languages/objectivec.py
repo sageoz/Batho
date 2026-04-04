@@ -95,8 +95,8 @@ class ObjectiveCExtractor(ASTExtractor):
 (class_implementation (identifier) @def.class.name)
 
 ; ── Import statements (#import) ────────────────────────────────────────────────
-(preproc_include (system_lib_string) @ref.import)
-(preproc_include (string_literal) @ref.import)
+(preproc_include (system_lib_string) @ref.import.module)
+(preproc_include (string_literal) @ref.import.module)
 
 ; ── Message sends (selector calls) ─────────────────────────────────────────────
 (message_expression

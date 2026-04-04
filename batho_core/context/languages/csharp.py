@@ -69,7 +69,7 @@ class CSharpExtractor(ASTExtractor):
 
 ; ── Using statements (imports) ────────────────────────────────────────────────
 (using_directive
-  (qualified_name) @ref.import)
+  (qualified_name) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (invocation_expression

@@ -121,10 +121,10 @@ PYTHON_QUERY = r"""
 
 ; ── Imports ───────────────────────────────────────────────────────────────────
 (import_statement
-  name: (dotted_name) @ref.import)
+  name: (dotted_name) @ref.import.module)
 
 (import_from_statement
-  module_name: (dotted_name) @ref.import)
+  module_name: (dotted_name) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call
@@ -159,7 +159,7 @@ JAVASCRIPT_QUERY = r"""
 
 ; ── Imports ───────────────────────────────────────────────────────────────────
 (import_statement
-  source: (string) @ref.import)
+  source: (string) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression
@@ -212,7 +212,7 @@ TYPESCRIPT_QUERY = r"""
 
 ; ── Imports ───────────────────────────────────────────────────────────────────
 (import_statement
-  source: (string) @ref.import)
+  source: (string) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression
@@ -256,10 +256,10 @@ RUST_QUERY = r"""
 
 ; ── Use declarations (imports) ────────────────────────────────────────────────
 (use_declaration
-  (scoped_identifier) @ref.import)
+  (scoped_identifier) @ref.import.module)
 
 (use_declaration
-  (identifier) @ref.import)
+  (identifier) @ref.import.module)
 
 ; ── Call expressions ──────────────────────────────────────────────────────────
 (call_expression
@@ -301,7 +301,7 @@ GO_QUERY = r"""
 ; ── Imports ───────────────────────────────────────────────────────────────────
 (import_declaration
   (import_spec
-    path: (interpreted_string_literal) @ref.import))
+    path: (interpreted_string_literal) @ref.import.module))
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression
@@ -343,8 +343,8 @@ JAVA_QUERY = r"""
 
 ; ── Import declarations ───────────────────────────────────────────────────────
 (import_declaration
-  (identifier)? @ref.import
-  (asterisk)? @ref.import)
+  (identifier)? @ref.import.module
+  (asterisk)? @ref.import.module)
 
 ; ── Method invocations ────────────────────────────────────────────────────────
 (method_invocation
@@ -400,7 +400,7 @@ CPP_QUERY = r"""
 
 ; ── Include directives ────────────────────────────────────────────────────────
 (preproc_include
-  (string_literal) @ref.import)
+  (string_literal) @ref.import.module)
 
 ; ── Function calls ────────────────────────────────────────────────────────────
 (call_expression

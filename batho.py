@@ -33,25 +33,28 @@ from batho_core.context.languages.registry import (
 )
 from batho_core.context.bsg_map import BSGMap
 from batho_core.context.stack_detector import detect_stack
+from batho_core.synthesizer import load_evolution_ledger, record_failure_rule
 from batho_core.time_machine import (
-    generate_snapshot_id,
     create_snapshot,
-    list_snapshots,
-    load_snapshot,
     diff_snapshots,
-    incremental_patch,
-    list_snapshots,
-    load_snapshot,
-    webhook_stub,
-    FileChangeTracker,
     FileChange,
-    FileChangeType,
     FileChangeSummary,
+    FileChangeTracker,
+    FileChangeType,
     FileTrackingConfig,
     PatchOperation,
     compute_staleness,
+    generate_snapshot_id,
+    incremental_patch,
+    list_snapshots,
+    load_snapshot,
 )
-from batho_core.webhook import WebhookServer, WebhookConfig
+from batho_core.webhook import (
+    WebhookConfig,
+    WebhookProcessor,
+    WebhookServer,
+    parse_webhook_event,
+)
 from batho_core.utils.file_io import read_file_bytes, write_atomically, _is_binary
 from batho_core.utils.hash import compute_bytes_hash, compute_file_hash
 from batho_core.utils.ignore import is_ignored, load_ignore_spec
@@ -76,6 +79,32 @@ def _ensure_ctn_dir(root: Path) -> Path:
     ctn_dir = root / get_config_cached()["paths"]["ctn_dir"]
     ctn_dir.mkdir(parents=True, exist_ok=True)
     return ctn_dir
+
+
+def _extract_change_paths(changes: Iterable[Any]) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+
+    for change in changes:
+        path_value: str | None = None
+        if isinstance(change, dict):
+            raw_path = change.get("path")
+            if raw_path:
+                path_value = str(raw_path)
+        else:
+            raw_path = getattr(change, "path", None)
+            if raw_path:
+                path_value = str(raw_path)
+
+        if not path_value:
+            continue
+        if path_value in seen:
+            continue
+
+        seen.add(path_value)
+        paths.append(path_value)
+
+    return sorted(paths)
 
 
 @contextmanager
@@ -134,6 +163,81 @@ def _save_index_metadata(ctn_dir: Path, metadata: dict[str, Any]) -> None:
         ).encode("utf-8")
     )
     write_atomically(index_path, payload, is_json=True)
+
+
+def _load_interception_stats(ctn_dir: Path) -> dict[str, Any]:
+    path = ctn_dir / "interception_stats.json"
+    if not path.exists():
+        return {"plugins": {}}
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"plugins": {}}
+
+    if not isinstance(payload, dict):
+        return {"plugins": {}}
+
+    plugins = payload.get("plugins")
+    if not isinstance(plugins, dict):
+        return {"plugins": {}}
+
+    return payload
+
+
+def _build_interception_matrix(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    plugins = payload.get("plugins") if isinstance(payload, dict) else {}
+    if not isinstance(plugins, dict):
+        return []
+
+    matrix: list[dict[str, Any]] = []
+    for plugin_id, plugin_data in plugins.items():
+        if not isinstance(plugin_data, dict):
+            continue
+
+        interceptions = int(plugin_data.get("interceptions", 0) or 0)
+        name = str(plugin_data.get("name") or plugin_id)
+        matrix.append(
+            {
+                "plugin_id": str(plugin_id),
+                "name": name,
+                "interceptions": interceptions,
+            }
+        )
+
+    matrix.sort(key=lambda item: (-item["interceptions"], item["name"]))
+    return matrix
+
+
+def _load_recent_evolution_rules(ctn_dir: Path, limit: int = 5) -> list[dict[str, str]]:
+    try:
+        ledger = load_evolution_ledger(ctn_dir)
+    except Exception:
+        return []
+
+    entries = ledger.get("entries") if isinstance(ledger, dict) else []
+    if not isinstance(entries, list) or not entries:
+        return []
+
+    recent: list[dict[str, str]] = []
+    for raw in entries[-max(1, limit):]:
+        if not isinstance(raw, dict):
+            continue
+
+        dont_rule = str(raw.get("dont_rule") or "").strip()
+        if not dont_rule:
+            continue
+
+        recent.append(
+            {
+                "entry_id": str(raw.get("entry_id") or ""),
+                "source": str(raw.get("source") or "unknown"),
+                "timestamp": str(raw.get("timestamp") or ""),
+                "dont_rule": dont_rule,
+            }
+        )
+
+    return recent
 
 
 def _write_json(path: Path, data: Any) -> None:
@@ -267,8 +371,34 @@ def _load_current_graph(ctn_dir: Path, index_id: str) -> InMemoryGraph | None:
         return None
 
 
-def _strip_files(graph: InMemoryGraph, file_paths: Iterable[str]) -> None:
-    targets = set(file_paths)
+def _strip_files(
+    graph: InMemoryGraph,
+    file_paths: Iterable[str],
+    root: Path | None = None,
+) -> None:
+    targets: set[str] = set()
+    root_resolved = root.resolve() if root else None
+
+    for file_path in file_paths:
+        raw = str(file_path)
+        if not raw:
+            continue
+        targets.add(raw)
+        targets.add(Path(raw).as_posix())
+
+        candidate = Path(raw)
+        if root_resolved is not None and not candidate.is_absolute():
+            resolved = (root_resolved / candidate).resolve()
+            targets.add(str(resolved))
+            targets.add(resolved.as_posix())
+
+        if root_resolved is not None and candidate.is_absolute():
+            try:
+                rel = candidate.resolve().relative_to(root_resolved)
+                targets.add(rel.as_posix())
+            except ValueError:
+                pass
+
     remove_ids = {
         eid for eid, ent in list(graph.entities.items()) if ent.file in targets
     }
@@ -303,7 +433,7 @@ def _reindex_files(
             continue
 
         filepath_str = str(file_path)
-        _strip_files(graph, [filepath_str])
+        _strip_files(graph, [filepath_str], root=root)
         ents, rels = extractor.parse_file(filepath_str, content)
         for ent in ents:
             graph.add_entity(ent)
@@ -464,6 +594,7 @@ def cmd_index(args: argparse.Namespace) -> int:
 
     cache_path = ctn_dir / "file_cache.json"
     indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
+    build_start = time.perf_counter()
 
     if args.force and cache_path.exists():
         cache_path.unlink()
@@ -500,19 +631,26 @@ def cmd_index(args: argparse.Namespace) -> int:
         bsg_path = versioned_dir / "bsg.json"
 
         _write_json(graph_path, graph.to_dict())
-        bsg_json = bsg_map.render_json()
+        index_build_ms = max(0, int((time.perf_counter() - build_start) * 1000))
+        bsg_json = bsg_map.render_json(
+            build_ms=index_build_ms,
+            default_snapshot_id=index_id,
+            default_service_tag=root.name,
+        )
         bsg_json["stack"] = stack_info
         _write_json(bsg_path, bsg_json)
 
         # Generate categorized markdown outputs
         timestamp = datetime.now(timezone.utc).isoformat()
         repo_name = root.name
+        evolution_rules = _load_recent_evolution_rules(ctn_dir)
 
         # overview.md - Full repository overview
         overview_content = bsg_map.render_overview(
             stack_info=stack_info,
             repo_name=repo_name,
             timestamp=timestamp,
+            evolution_rules=evolution_rules,
         )
         _write_text(context_dir / "overview.md", overview_content)
 
@@ -668,6 +806,8 @@ def cmd_stats(args: argparse.Namespace) -> int:
     entry = metadata["indexes"].get(current_id, {})
     stats = entry.get("stats", {}) if isinstance(entry, dict) else {}
     metrics = entry.get("metrics", {}) if isinstance(entry, dict) else {}
+    interception_payload = _load_interception_stats(ctn_dir)
+    interception_matrix = _build_interception_matrix(interception_payload)
     summary = {
         "loc_total": stats.get("loc_total") or metrics.get("loc_total"),
         "repo_size_bytes": stats.get("repo_size_bytes")
@@ -675,16 +815,21 @@ def cmd_stats(args: argparse.Namespace) -> int:
         "compression_ratio": metrics.get("compression_ratio"),
         "cache_hit_rate": metrics.get("cache_hit_rate"),
     }
+    output = {
+        "summary": summary,
+        "current": entry,
+        "all_indexes": list(metadata.get("indexes", {}).keys()),
+        "interception_matrix": interception_matrix,
+    }
     print(
-        json.dumps(
-            {
-                "summary": summary,
-                "current": entry,
-                "all_indexes": list(metadata.get("indexes", {}).keys()),
-            },
-            indent=2,
-        )
+        json.dumps(output, indent=2)
     )
+
+    if interception_matrix:
+        print("\nInterception Matrix")
+        for row in interception_matrix:
+            print(f"{row['name']}: {row['interceptions']} Interceptions")
+
     return 0
 
 
@@ -898,6 +1043,11 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
     indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
 
     files: list[Path] = []
+    added_count = 0
+    modified_count = 0
+    deleted_count = 0
+    affected_files: list[str] = []
+    existing_files = {Path(entity.file).resolve() for entity in graph.entities.values()}
 
     if args.scan:
         hash_cache_path = ctn_dir / "file_hashes.json"
@@ -906,9 +1056,19 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         changes = tracker.scan_for_changes(max_file_size_kb=args.max_file_size_kb)
         deleted_paths = tracker.get_deleted_files(changes)
         if deleted_paths:
-            _strip_files(graph, deleted_paths)
+            _strip_files(graph, deleted_paths, root=root)
         files = tracker.get_changed_files(changes)
-        if not files:
+        added_count = sum(
+            1 for change in changes if change.change_type == FileChangeType.ADDED
+        )
+        modified_count = sum(
+            1 for change in changes if change.change_type == FileChangeType.MODIFIED
+        )
+        deleted_count = sum(
+            1 for change in changes if change.change_type == FileChangeType.DELETED
+        )
+        affected_files = sorted({change.path for change in changes})
+        if not files and deleted_count == 0:
             print("No changes detected.")
             return 0
         tracker.save(hash_cache_path)
@@ -922,6 +1082,10 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
                 for f in args.files
             )
         files = sorted({f for f in files if f.exists()})
+        added_count = sum(1 for file_path in files if file_path.resolve() not in existing_files)
+        modified_count = max(0, len(files) - added_count)
+        deleted_count = 0
+        affected_files = sorted({str(file_path.relative_to(root)) for file_path in files})
 
     if not files:
         print("No files to patch.")
@@ -950,18 +1114,25 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         entry = metadata.get("indexes", {}).get(current_id, {})
 
         _write_json(graph_path, graph.to_dict())
-        bsg_json = bsg_map.render_json()
+        patch_build_ms = max(0, int((time.perf_counter() - patch_start) * 1000))
+        bsg_json = bsg_map.render_json(
+            build_ms=patch_build_ms,
+            default_snapshot_id=current_id,
+            default_service_tag=root.name,
+        )
         _write_json(bsg_path, bsg_json)
 
         # Generate categorized markdown outputs
         timestamp = datetime.now(timezone.utc).isoformat()
         repo_name = root.name
+        evolution_rules = _load_recent_evolution_rules(ctn_dir)
 
         # overview.md
         overview_content = bsg_map.render_overview(
             stack_info=entry.get("stack"),
             repo_name=repo_name,
             timestamp=timestamp,
+            evolution_rules=evolution_rules,
         )
         _write_text(context_dir / "overview.md", overview_content)
 
@@ -1061,12 +1232,12 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
             _save_index_metadata(ctn_dir, metadata)
 
     summary = FileChangeSummary(
-        total_changes=len(files),
-        added=0,  # TODO: track these separately
-        modified=len(files),
-        deleted=0,
+        total_changes=added_count + modified_count + deleted_count,
+        added=added_count,
+        modified=modified_count,
+        deleted=deleted_count,
         unchanged=0,
-        affected_files=[str(f.relative_to(root)) for f in files],
+        affected_files=affected_files,
     )
 
     print(
@@ -1076,7 +1247,10 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
                 "index_id": current_id,
                 "summary": {
                     "total_changes": summary.total_changes,
+                    "added": summary.added,
                     "modified": summary.modified,
+                    "deleted": summary.deleted,
+                    "unchanged": summary.unchanged,
                 },
                 "snapshot_id": snapshot_id,
             },
@@ -1152,9 +1326,29 @@ def _cmd_patch_snapshot_based(
                     error=error_msg, 
                     operation_id=result.get("operation_id"),
                     changes_count=len(changes))
+        ledger_entry = record_failure_rule(
+            ctn_dir=ctn_dir,
+            source="cli.patch.snapshot",
+            error_message=error_msg,
+            changed_files=summary.affected_files,
+            context={
+                "base_snapshot_id": args.base_snapshot,
+                "operation_id": result.get("operation_id"),
+                "changes_count": len(changes),
+            },
+        )
+
+        failure_payload = {
+            "error": result["error"],
+            "operation_id": result.get("operation_id"),
+        }
+        if ledger_entry.get("entry_id"):
+            failure_payload["ledger_entry_id"] = ledger_entry.get("entry_id")
+            failure_payload["dont_rule"] = ledger_entry.get("dont_rule")
+
         print(
             json.dumps(
-                {"error": result["error"], "operation_id": result.get("operation_id")},
+                failure_payload,
                 indent=2,
             )
         )
@@ -1213,7 +1407,85 @@ def cmd_webhook(args: argparse.Namespace) -> int:
         print("❌ Invalid headers JSON")
         return 1
 
-    result = webhook_stub(payload, headers=headers)
+    incoming_headers = dict(headers)
+    if not incoming_headers:
+        if "repository" in payload:
+            github_event = payload.get("event")
+            if not github_event:
+                github_event = (
+                    "pull_request" if "pull_request" in payload else "push"
+                )
+            incoming_headers["X-GitHub-Event"] = github_event
+        elif "project" in payload:
+            gitlab_event = payload.get("event")
+            if not gitlab_event:
+                gitlab_event = (
+                    "Merge Request Hook"
+                    if "object_attributes" in payload
+                    else "Push Hook"
+                )
+            incoming_headers["X-Gitlab-Event"] = gitlab_event
+
+    try:
+        parsed = parse_webhook_event(payload, incoming_headers)
+    except Exception as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "message": str(exc),
+                },
+                indent=2,
+            )
+        )
+        return 1
+
+    result: dict[str, Any] = {
+        "event": parsed.event_type.value,
+        "repo": parsed.repository,
+        "status": "parsed",
+        "platform": parsed.platform.value,
+        "branch": parsed.branch,
+        "commit": parsed.commit_hash,
+        "changes": len(parsed.changes),
+    }
+
+    root_value = getattr(args, "root", None)
+    if not root_value:
+        print(json.dumps(result, indent=2))
+        return 0
+
+    root = Path(root_value).resolve()
+    if not root.exists() or not root.is_dir():
+        print(f"❌ Root does not exist or is not a directory: {root}")
+        return 1
+
+    config_payload = reload_config().get("webhook")
+    webhook_cfg = dict(config_payload) if isinstance(config_payload, dict) else {}
+    if not webhook_cfg.get("repository"):
+        branches = [parsed.branch] if parsed.branch else ["main"]
+        webhook_cfg["repository"] = {
+            "name": parsed.repository,
+            "platform": parsed.platform.value,
+            "branches": branches,
+        }
+
+    try:
+        processor = WebhookProcessor(WebhookConfig.from_dict(webhook_cfg), root)
+        processing = processor.process_webhook_sync(payload, incoming_headers)
+    except Exception as exc:
+        result["status"] = "error"
+        result["processing"] = {"status": "error", "message": str(exc)}
+        print(json.dumps(result, indent=2))
+        return 1
+
+    result["processing"] = processing
+    processing_status = str(processing.get("status") or "").lower()
+    if processing_status in {"processed", "ignored"}:
+        result["status"] = processing_status
+    elif processing_status == "error":
+        result["status"] = "error"
+
     print(json.dumps(result, indent=2))
     return 0 if result.get("status") != "error" else 1
 
@@ -1469,7 +1741,11 @@ def build_parser() -> argparse.ArgumentParser:
     cherry_pick.add_argument("--dry-run", action="store_true", help="Preview without applying")
     cherry_pick.set_defaults(func=cmd_cherry_pick)
 
-    wh = sub.add_parser("webhook", help="Validate webhook payload parsing")
+    wh = sub.add_parser("webhook", help="Parse/process a webhook payload")
+    wh.add_argument(
+        "--root",
+        help="Optional repository root for synchronous processing (parse-only when omitted)",
+    )
     wh.add_argument("--payload", required=True, help="JSON payload string")
     wh.add_argument(
         "--headers",
@@ -1646,10 +1922,34 @@ def cmd_apply_patch(args: argparse.Namespace) -> int:
                 print(f"New snapshot: {result.get('new_snapshot_id')}")
                 return 0
             else:
+                ledger_entry = record_failure_rule(
+                    ctn_dir=ctn_dir,
+                    source="cli.apply_patch",
+                    error_message=str(result.get("error") or "patch application failed"),
+                    changed_files=_extract_change_paths(changes),
+                    context={
+                        "base_snapshot_id": args.base_snapshot,
+                        "mode": "diff_file",
+                        "diff_file": args.diff_file,
+                    },
+                )
                 print(f"❌ Patch application failed: {result.get('error')}")
+                if ledger_entry.get("entry_id"):
+                    print(f"   Evolution Ledger: {ledger_entry.get('entry_id')}")
+                    print(f"   Don't rule: {ledger_entry.get('dont_rule')}")
                 return 1
                 
         except Exception as exc:
+            record_failure_rule(
+                ctn_dir=ctn_dir,
+                source="cli.apply_patch",
+                error_message=str(exc),
+                changed_files=[str(args.diff_file)],
+                context={
+                    "base_snapshot_id": args.base_snapshot,
+                    "mode": "diff_file",
+                },
+            )
             print(f"❌ Error reading diff file: {exc}")
             return 1
     
@@ -1675,7 +1975,21 @@ def cmd_apply_patch(args: argparse.Namespace) -> int:
             print(f"New snapshot: {new_snapshot_id}")
             return 0
         else:
+            ledger_entry = record_failure_rule(
+                ctn_dir=ctn_dir,
+                source="cli.apply_patch",
+                error_message="cherry-pick failed while applying patch deltas",
+                changed_files=_extract_change_paths(operation.changes_applied),
+                context={
+                    "base_snapshot_id": args.base_snapshot,
+                    "patch_id": args.patch_id,
+                    "mode": "patch_id",
+                },
+            )
             print("❌ Cherry-pick failed")
+            if ledger_entry.get("entry_id"):
+                print(f"   Evolution Ledger: {ledger_entry.get('entry_id')}")
+                print(f"   Don't rule: {ledger_entry.get('dont_rule')}")
             return 1
     
     else:
@@ -1710,7 +2024,20 @@ def cmd_cherry_pick(args: argparse.Namespace) -> int:
         print(f"New snapshot: {new_snapshot_id}")
         return 0
     else:
+        ledger_entry = record_failure_rule(
+            ctn_dir=ctn_dir,
+            source="cli.cherry_pick",
+            error_message="cherry-pick failed while applying patch deltas",
+            changed_files=_extract_change_paths(operation.changes_applied),
+            context={
+                "target_snapshot": args.target_snapshot,
+                "patch_id": args.patch_id,
+            },
+        )
         print("❌ Cherry-pick failed")
+        if ledger_entry.get("entry_id"):
+            print(f"   Evolution Ledger: {ledger_entry.get('entry_id')}")
+            print(f"   Don't rule: {ledger_entry.get('dont_rule')}")
         return 1
 
 

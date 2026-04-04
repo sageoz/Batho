@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from batho_core.context.codegraph import InMemoryGraph
-from batho_core.context.repomap import RepoMap, _text_tokens
+from batho_core.context.bsg_map import BSGMap as RepoMap, _text_tokens
 from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
 
 
@@ -106,6 +106,16 @@ class TestRenderJson:
         edge_types = {edge["type"] for edge in data["edges"]}
         assert "CALLS" in edge_types
         assert "CALLED_BY" in edge_types
+
+    def test_build_ms_and_snapshot_fallback(self, mock_graph):
+        repomap = RepoMap.build(mock_graph, root="/fake/root")
+        data = repomap.render_json(build_ms=321, default_snapshot_id="snap-123")
+
+        assert data["stats"]["build_ms"] == 321
+        assert data["nodes"]
+        for node in data["nodes"]:
+            assert node["snapshot_id"] == "snap-123"
+            assert node["service_tag"]
 
 
 class TestRenderHierarchical:

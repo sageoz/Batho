@@ -1,0 +1,29 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_iac_drift_sentinel
+name: IaC Drift Sentinel
+version: 1.0.0
+enabled: true
+description: Catch configuration drift between application env references and infrastructure definitions.
+rules:
+  - rule_id: iac-reference-drift
+    name: iac-reference-drift
+    description: Flag environment references not mirrored in infrastructure-linked nodes.
+    severity: warning
+    priority: 320
+    enabled: true
+    matchers:
+      usn_tags_any:
+        - environmentvariable
+      ast_edges:
+        all:
+          - edge: REFERENCED_IN
+            direction: either
+            target_usn_tags_any:
+              - infrastructureconfig
+            min_count: 1
+    actions:
+      metadata:
+        bsg.intercept.category: INFRA
+        bsg.intercept.message: Environment/config key changed; validate IaC manifests and deployment templates.
+      add_usn_tags:
+        - DriftSensitive

@@ -67,7 +67,7 @@ class DartExtractor(ASTExtractor):
 
 ; ── Import statements ──────────────────────────────────────────────────────────
 (import_directive
-  (string (string_content) @ref.import))
+  (string (string_content) @ref.import.module))
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (method_invocation

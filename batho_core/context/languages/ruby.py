@@ -6,7 +6,7 @@ Capture coverage:
   - module definitions (mapped to def.namespace)
   - method definitions (mapped to def.method)
   - singleton method definitions / class methods (mapped to def.method)
-  - require / require_relative calls (mapped to ref.import)
+  - require / require_relative calls (mapped to ref.import.module)
   - method call expressions (mapped to ref.call)
 
 Ruby's tree-sitter grammar uses ``class``, ``module``, ``method``, and
@@ -50,8 +50,14 @@ class RubyExtractor(ASTExtractor):
 (call
   method: (identifier) @_require_method
   arguments: (argument_list
-    (string) @ref.import)
-  (#match? @_require_method "^require"))
+    (string) @ref.import.module)
+  (#match? @_require_method "^require(_relative)?$"))
+
+(call
+  method: (identifier) @_load_method
+  arguments: (argument_list
+    (string) @ref.import.load)
+  (#eq? @_load_method "load"))
 
 ; ── Method calls ──────────────────────────────────────────────────────────────
 (call

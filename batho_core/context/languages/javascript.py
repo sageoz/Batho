@@ -43,6 +43,10 @@ class JavaScriptExtractor(ASTExtractor):
 (class_declaration
   name: (identifier) @def.class.name)
 
+(class_declaration
+  (class_heritage
+    (_) @def.class.extends))
+
 ; ── Method definitions ────────────────────────────────────────────────────────
 (method_definition
   name: (property_identifier) @def.method.name
@@ -50,7 +54,13 @@ class JavaScriptExtractor(ASTExtractor):
 
 ; ── Imports ───────────────────────────────────────────────────────────────────
 (import_statement
-  source: (string) @ref.import)
+  source: (string) @ref.import.module)
+
+(call_expression
+  function: (identifier) @_require_fn
+  arguments: (arguments
+    (string) @ref.import.require)
+  (#eq? @_require_fn "require"))
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression

@@ -1,0 +1,109 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_graph_foundation
+name: BSG Graph Foundation
+version: 1.0.0
+enabled: true
+description: Baseline deterministic node tagging for category, scope, and service metadata.
+rules:
+  - rule_id: bsg-category-tests
+    name: bsg-category-tests
+    description: Tag test files as TEST category.
+    severity: info
+    priority: 200
+    enabled: true
+    matchers:
+      file_patterns:
+        - tests/**
+        - '**/tests/**'
+        - '**/test_*.py'
+        - '**/*_test.py'
+        - '**/*.spec.ts'
+        - '**/*.spec.js'
+    actions:
+      metadata:
+        bsg.category: TEST
+      add_usn_tags:
+        - TestArtifact
+
+  - rule_id: bsg-category-docs
+    name: bsg-category-docs
+    description: Tag documentation files as DOC category.
+    severity: info
+    priority: 190
+    enabled: true
+    matchers:
+      file_patterns:
+        - docs/**
+        - '**/*.md'
+        - '**/*.rst'
+        - '**/*.adoc'
+    actions:
+      metadata:
+        bsg.category: DOC
+      add_usn_tags:
+        - Documentation
+
+  - rule_id: bsg-category-config
+    name: bsg-category-config
+    description: Tag configuration files as CONFIG category.
+    severity: info
+    priority: 180
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.yaml'
+        - '**/*.yml'
+        - '**/*.toml'
+        - '**/*.json'
+        - '**/*.ini'
+        - '**/*.cfg'
+        - '**/*.conf'
+    actions:
+      metadata:
+        bsg.category: CONFIG
+      add_usn_tags:
+        - Configuration
+
+  - rule_id: bsg-category-infra
+    name: bsg-category-infra
+    description: Tag infrastructure files as INFRA category.
+    severity: warning
+    priority: 175
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.tf'
+        - '**/*.tfvars'
+        - '**/Dockerfile'
+        - '**/docker-compose*.yaml'
+        - '**/docker-compose*.yml'
+    actions:
+      metadata:
+        bsg.category: INFRA
+      add_usn_tags:
+        - InfrastructureConfig
+
+  - rule_id: bsg-derive-service-tag
+    name: bsg-derive-service-tag
+    description: Derive service tag from common multi-service directory layouts.
+    severity: info
+    priority: 120
+    enabled: true
+    matchers:
+      file_patterns:
+        - services/*/**
+        - apps/*/**
+        - backend/*/**
+        - frontend/*/**
+    actions:
+      derive_service_tag: true
+
+  - rule_id: bsg-derive-scope-tier
+    name: bsg-derive-scope-tier
+    description: Derive structural scope tier from entity kind and nesting.
+    severity: info
+    priority: 100
+    enabled: true
+    matchers: {}
+    actions:
+      derive_scope_tier: true

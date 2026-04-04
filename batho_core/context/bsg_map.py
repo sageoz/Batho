@@ -369,15 +369,40 @@ class BSGMap:
         }
         return "\n".join(lines), stats
 
-    def render_json(self) -> dict[str, Any]:
+    def render_json(
+        self,
+        build_ms: int | None = None,
+        default_snapshot_id: str | None = None,
+        default_service_tag: str | None = None,
+    ) -> dict[str, Any]:
         """
         Render the structural graph as a bsg.v1 dictionary.
+
+        Args:
+            build_ms: Optional build latency in milliseconds for stats payload.
+            default_snapshot_id: Fallback snapshot identifier to stamp nodes when
+                metadata does not already provide one.
+            default_service_tag: Optional service tag fallback when derivation
+                from file path yields no service.
 
         Returns:
             JSON-serialisable bsg.v1 payload.
         """
-        if self._serialized_bsg is not None:
+        if (
+            self._serialized_bsg is not None
+            and build_ms is None
+            and default_snapshot_id is None
+            and default_service_tag is None
+        ):
             return json.loads(json.dumps(self._serialized_bsg))
+
+        resolved_default_snapshot = (default_snapshot_id or "").strip() or None
+        resolved_default_service = (
+            (default_service_tag or "").strip() if default_service_tag is not None else ""
+        )
+        if not resolved_default_service:
+            resolved_default_service = Path(self._root).name or "root"
+        resolved_build_ms = max(0, int(build_ms or 0))
 
         nodes: list[dict[str, Any]] = []
         node_by_id: dict[str, dict[str, Any]] = {}
@@ -389,9 +414,17 @@ class BSGMap:
                 metadata = dict(entity.metadata or {})
                 scope_tier = str(metadata.get("bsg.scope_tier") or self._derive_scope_tier(entity))
                 category = str(metadata.get("bsg.category") or self._derive_category(file_path)).upper()
-                service_tag = str(metadata.get("bsg.service_tag") or self._derive_service_tag(file_path) or "")
+                service_tag = str(
+                    metadata.get("bsg.service_tag")
+                    or self._derive_service_tag(file_path)
+                    or resolved_default_service
+                )
                 language = self._derive_language(entity, file_path)
-                snapshot_id = metadata.get("bsg.snapshot_id") or metadata.get("snapshot_id")
+                snapshot_id = (
+                    metadata.get("bsg.snapshot_id")
+                    or metadata.get("snapshot_id")
+                    or resolved_default_snapshot
+                )
 
                 rules = metadata.get("bsg.rules")
                 if isinstance(rules, list):
@@ -586,7 +619,7 @@ class BSGMap:
                 "total_files": len(nodes_by_file),
                 "total_entities": len(nodes),
                 "total_relationships": len(edges),
-                "build_ms": 0,
+                "build_ms": resolved_build_ms,
                 "rules_loaded": len(rule_names),
                 "rules_applied": rules_applied,
             },
@@ -654,7 +687,7 @@ class BSGMap:
     def _derive_service_tag(self, rel_file_path: str) -> str | None:
         parts = [part for part in Path(rel_file_path).parts if part and part != "."]
         if not parts:
-            return None
+            return Path(self._root).name or "root"
 
         for marker in ("services", "service", "apps", "modules"):
             if marker in parts:
@@ -664,7 +697,35 @@ class BSGMap:
 
         if len(parts) >= 2 and parts[0] in {"backend", "frontend", "api"}:
             return parts[1]
-        return None
+
+        skip = {
+            "src",
+            "lib",
+            "app",
+            "apps",
+            "service",
+            "services",
+            "module",
+            "modules",
+            "backend",
+            "frontend",
+            "api",
+            "internal",
+            "pkg",
+            "tests",
+            "test",
+            "docs",
+            "config",
+            "configs",
+            "scripts",
+        }
+        for segment in parts[:-1]:
+            if segment.lower() not in skip:
+                return segment
+
+        if len(parts) == 1:
+            return Path(self._root).name or "root"
+        return parts[0]
 
     def _derive_category(self, rel_file_path: str) -> str:
         return _FILE_CATEGORIZER.categorize(rel_file_path).upper()
@@ -1025,6 +1086,7 @@ class BSGMap:
         stack_info: dict[str, Any] | None = None,
         repo_name: str | None = None,
         timestamp: str | None = None,
+        evolution_rules: list[dict[str, Any]] | None = None,
     ) -> str:
         """
         Generate comprehensive repository overview.
@@ -1033,6 +1095,7 @@ class BSGMap:
             stack_info: Stack detection results from detect_stack()
             repo_name: Repository name (defaults to root directory name)
             timestamp: ISO timestamp for the index
+            evolution_rules: Optional recent entries from evolution ledger
 
         Returns:
             Full markdown overview document
@@ -1063,6 +1126,21 @@ class BSGMap:
         lines.append(f"| Total Entities | {total_entities} |")
         lines.append(f"| Total Relationships | {total_relationships} |")
         lines.append("")
+
+        if evolution_rules:
+            lines.append("## Evolution Ledger Insights")
+            lines.append("")
+            for item in evolution_rules:
+                dont_rule = str(item.get("dont_rule") or "").strip()
+                if not dont_rule:
+                    continue
+                source = str(item.get("source") or "unknown")
+                timestamp_hint = str(item.get("timestamp") or "").strip()
+                if timestamp_hint:
+                    lines.append(f"- **{source}**: {dont_rule} *(recorded {timestamp_hint})*")
+                else:
+                    lines.append(f"- **{source}**: {dont_rule}")
+            lines.append("")
 
         lines.append("## File Distribution")
         lines.append("")

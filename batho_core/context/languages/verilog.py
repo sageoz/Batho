@@ -84,7 +84,7 @@ class VerilogExtractor(ASTExtractor):
 
 ; ── Include statements ──────────────────────────────────────────────────────────
 (preproc_include
-  (string_literal) @ref.import)
+  (string_literal) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (function_call
