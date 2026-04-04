@@ -1,0 +1,28 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_dependency_blast_radius
+name: Dependency Blast Radius
+version: 1.0.0
+enabled: true
+description: Highlight high fan-in symbols where changes can cause broad regressions.
+rules:
+  - rule_id: high-blast-radius-node
+    name: high-blast-radius-node
+    description: Flag nodes with many inbound calls/imports.
+    severity: warning
+    priority: 300
+    enabled: true
+    matchers:
+      ast_edges:
+        any:
+          - edge: CALLS
+            direction: inbound
+            min_count: 10
+          - edge: IMPORTS
+            direction: inbound
+            min_count: 10
+    actions:
+      metadata:
+        bsg.intercept.category: STABILITY
+        bsg.intercept.message: High dependency fan-in detected; review compatibility impact before merge.
+      add_usn_tags:
+        - BlastRadiusHigh

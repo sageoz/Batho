@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -175,7 +176,7 @@ class _FileStateCache:
 
     The mtime check short-circuits the SHA-256 computation for unchanged
     files — stat() is orders of magnitude faster than hashing.
-    
+
     Thread-safe operations ensure cache consistency during parallel processing.
     """
 
@@ -187,7 +188,9 @@ class _FileStateCache:
         self._checksum_valid: bool = True
         self._lock = threading.RLock()  # Reentrant lock for nested operations
         self._dirty = False  # Track if cache needs saving
-        self._file_lock = FileLock(cache_path.with_suffix('.lock'))  # File-level lock for disk operations
+        self._file_lock = FileLock(
+            cache_path.with_suffix(".lock")
+        )  # File-level lock for disk operations
         self.logger = get_logger(__name__, component="file_cache")
         self._load()
 
@@ -201,13 +204,13 @@ class _FileStateCache:
                 # First read and validate checksum before loading full data
                 raw_content = self._path.read_text(encoding="utf-8")
                 raw = json.loads(raw_content)
-                
+
                 if not isinstance(raw, dict) or "files" not in raw:
                     # backward compatibility (flat mapping)
                     self._data = raw if isinstance(raw, dict) else {}
                     self._schema_version = raw.get("schema_version")
                     return
-                
+
                 # Validate checksum before accepting data
                 files = raw.get("files", {})
                 checksum = raw.get("_checksum")
@@ -218,16 +221,20 @@ class _FileStateCache:
                     if checksum != calc:
                         self._mark_corrupt("checksum_mismatch")
                         return
-                
+
                 # Checksum is valid, load the data
                 self._schema_version = raw.get("schema_version")
                 self._data = files
-                
+
             except (json.JSONDecodeError, OSError) as e:
-                self.logger.error("cache_load_failed", cache_path=str(self._path), error=str(e))
+                self.logger.error(
+                    "cache_load_failed", cache_path=str(self._path), error=str(e)
+                )
                 self._mark_corrupt("read_failed")
             except FileLockError as e:
-                self.logger.error("cache_lock_failed", cache_path=str(self._path), error=str(e))
+                self.logger.error(
+                    "cache_lock_failed", cache_path=str(self._path), error=str(e)
+                )
                 self._mark_corrupt("lock_failed")
 
     def _mark_corrupt(self, reason: str) -> None:
@@ -246,21 +253,17 @@ class _FileStateCache:
                 )
         except OSError as e:
             get_logger(__name__, operation="index").error(
-                "cache_backup_failed", 
-                path=str(self._path), 
-                error=str(e)
+                "cache_backup_failed", path=str(self._path), error=str(e)
             )
             # Try to delete the corrupt file if backup fails
             try:
                 self._path.unlink()
                 get_logger(__name__, operation="index").info(
-                    "cache_corrupt_file_deleted", 
-                    path=str(self._path)
+                    "cache_corrupt_file_deleted", path=str(self._path)
                 )
             except OSError:
                 get_logger(__name__, operation="index").warning(
-                    "cache_corrupt_file_cleanup_failed", 
-                    path=str(self._path)
+                    "cache_corrupt_file_cleanup_failed", path=str(self._path)
                 )
 
     @property
@@ -278,14 +281,14 @@ class _FileStateCache:
 
     def save(self) -> None:
         """Save cache to disk atomically if dirty.
-        
+
         Thread-safe operation that only saves if cache has been modified.
         Uses file locking to prevent corruption during concurrent access.
         """
         with self._lock:
             if not self._dirty:
                 return  # No changes to save
-            
+
             # Acquire file lock for writing
             try:
                 with self._file_lock:
@@ -304,18 +307,22 @@ class _FileStateCache:
                     tmp.replace(self._path)  # Atomic rename
                     self._dirty = False
             except FileLockError as e:
-                self.logger.error("cache_save_lock_failed", cache_path=str(self._path), error=str(e))
+                self.logger.error(
+                    "cache_save_lock_failed", cache_path=str(self._path), error=str(e)
+                )
                 raise
             except (OSError, json.JSONEncodeError) as e:
-                self.logger.error("cache_save_failed", cache_path=str(self._path), error=str(e))
+                self.logger.error(
+                    "cache_save_failed", cache_path=str(self._path), error=str(e)
+                )
                 raise
-    
+
     def force_save(self) -> None:
         """Force save cache regardless of dirty flag."""
         with self._lock:
             self._dirty = True
             self.save()
-    
+
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics for monitoring."""
         with self._lock:
@@ -328,26 +335,28 @@ class _FileStateCache:
 
     def is_cached(self, filepath: str, content_hash: str) -> bool:
         """Return True if filepath's stored hash matches content_hash.
-        
+
         Thread-safe atomic operation with mtime validation.
         """
         with self._lock:
             entry = self._data.get(self._normalise(filepath))
             if entry is None:
                 return False
-            
+
             # Validate mtime if available and file exists
             if "mtime" in entry:
                 try:
                     current_mtime = Path(filepath).stat().st_mtime
                     cached_mtime = entry["mtime"]
                     # If file was modified after cache entry, it's not cached
-                    if abs(current_mtime - cached_mtime) > 1.0:  # Allow 1 second tolerance
+                    if (
+                        abs(current_mtime - cached_mtime) > 1.0
+                    ):  # Allow 1 second tolerance
                         self.logger.debug(
-                            "cache_mtime_mismatch", 
-                            filepath=filepath, 
-                            cached_mtime=cached_mtime, 
-                            current_mtime=current_mtime
+                            "cache_mtime_mismatch",
+                            filepath=filepath,
+                            cached_mtime=cached_mtime,
+                            current_mtime=current_mtime,
                         )
                         return False
                 except OSError:
@@ -355,12 +364,14 @@ class _FileStateCache:
                     # In this case, just check the hash without mtime validation
                     self.logger.debug("cache_stat_failed", filepath=filepath)
                     pass
-            
+
             return entry.get("sha256") == content_hash
 
-    def update(self, filepath: str, mtime: float, content_hash: str, size: int | None = None) -> None:
+    def update(
+        self, filepath: str, mtime: float, content_hash: str, size: int | None = None
+    ) -> None:
         """Update cache entry for filepath.
-        
+
         Thread-safe atomic operation.
         """
         with self._lock:
@@ -372,7 +383,7 @@ class _FileStateCache:
 
     def invalidate(self, filepath: str) -> None:
         """Remove cache entry for filepath.
-        
+
         Thread-safe atomic operation.
         """
         with self._lock:
@@ -380,11 +391,11 @@ class _FileStateCache:
             if key in self._data:
                 del self._data[key]
                 self._dirty = True
-    
+
     @contextmanager
     def atomic_update(self, filepath: str):
         """Context manager for atomic cache operations.
-        
+
         Usage:
             with cache.atomic_update(filepath) as entry:
                 # Check if cached
@@ -399,17 +410,17 @@ class _FileStateCache:
         """
         key = self._normalise(filepath)
         # Use a per-file lock to prevent race conditions while allowing concurrent access to different files
-        if not hasattr(self, '_file_locks'):
+        if not hasattr(self, "_file_locks"):
             self._file_locks = {}
-        
+
         file_lock = self._file_locks.setdefault(key, threading.Lock())
-        
+
         with file_lock:
             with self._lock:
                 entry = self._data.get(key, {}).copy()
-            
+
             yield entry
-            
+
             # Update the cache with modified entry under both locks
             with self._lock:
                 if entry:
@@ -475,10 +486,10 @@ class IncrementalGraphUpdater:
         entities_to_remove = [
             eid for eid, entity in graph.entities.items() if entity.file == file_path
         ]
-        
+
         relationships_to_keep = []
         relationships_to_remove = []
-        
+
         # Identify relationships to remove
         for rel in graph.relationships:
             if (
@@ -488,28 +499,28 @@ class IncrementalGraphUpdater:
                 relationships_to_remove.append(rel)
             else:
                 relationships_to_keep.append(rel)
-        
+
         # Apply all changes atomically
         try:
             # Remove entities
             for eid in entities_to_remove:
                 if eid in graph.entities:  # Double-check existence
                     del graph.entities[eid]
-            
+
             # Update relationships
             graph.relationships = relationships_to_keep
-            
+
             # Invalidate adjacency cache
             graph._adj_out = None
             graph._adj_in = None
-            
+
             self.logger.debug(
                 "removed_entities_for_file",
                 file_path=file_path,
                 entity_count=len(entities_to_remove),
                 relationship_count=len(relationships_to_remove),
             )
-            
+
         except Exception as e:
             # Log the error but don't leave graph in partial state
             # The graph should remain consistent since we collected changes first
@@ -518,7 +529,7 @@ class IncrementalGraphUpdater:
                 file_path=file_path,
                 error=str(e),
                 entities_targeted=len(entities_to_remove),
-                relationships_targeted=len(relationships_to_remove)
+                relationships_targeted=len(relationships_to_remove),
             )
             raise
 
@@ -698,7 +709,7 @@ class CodeGraphIndexer:
 
         Returns:
             Populated InMemoryGraph.
-        
+
         Raises:
             ValueError: If input parameters are invalid.
             OSError: If root directory doesn't exist or isn't accessible.
@@ -706,24 +717,30 @@ class CodeGraphIndexer:
         # Input validation
         if not root or not isinstance(root, str):
             raise ValueError("root must be a non-empty string")
-        
+
         root_path = Path(root).resolve()
         if not root_path.exists():
             raise OSError(f"Root directory does not exist: {root_path}")
         if not root_path.is_dir():
             raise OSError(f"Root path is not a directory: {root_path}")
-        
-        if max_file_size_kb is not None and (not isinstance(max_file_size_kb, (int, float)) or max_file_size_kb <= 0):
+
+        if max_file_size_kb is not None and (
+            not isinstance(max_file_size_kb, (int, float)) or max_file_size_kb <= 0
+        ):
             raise ValueError("max_file_size_kb must be a positive number or None")
-        
+
         if max_workers < 0:
             raise ValueError("max_workers must be non-negative")
-        
+
         if extensions is not None:
-            if not isinstance(extensions, list) or not all(isinstance(ext, str) for ext in extensions):
+            if not isinstance(extensions, list) or not all(
+                isinstance(ext, str) for ext in extensions
+            ):
                 raise ValueError("extensions must be a list of strings or None")
         # Use memory monitoring for large operations
-        with memory_monitor("build_graph", warning_threshold_mb=300.0, critical_threshold_mb=800.0) as monitor:
+        with memory_monitor(
+            "build_graph", warning_threshold_mb=300.0, critical_threshold_mb=800.0
+        ) as monitor:
             from .languages.detector import default_detector
             from .languages.registry import get_extractor as _registry_get_extractor
 
@@ -799,114 +816,116 @@ class CodeGraphIndexer:
             errors = 0
 
         # Check memory usage after operation and cleanup if needed
-        if monitor and hasattr(monitor, 'get_memory_stats'):
+        if monitor and hasattr(monitor, "get_memory_stats"):
             final_stats = monitor.get_memory_stats()
             if final_stats.rss_mb > 500:  # If memory usage is high
                 gc_result = force_garbage_collection()
-                self.logger.info("memory_cleanup_performed", 
-                                memory_before_mb=f"{final_stats.rss_mb:.1f}",
-                                objects_freed=gc_result.get('objects_freed', 0))
+                self.logger.info(
+                    "memory_cleanup_performed",
+                    memory_before_mb=f"{final_stats.rss_mb:.1f}",
+                    objects_freed=gc_result.get("objects_freed", 0),
+                )
 
-        def _handle_file_error(filepath: str, error: Exception, error_type: str = "parse") -> None:
-                """Centralized error handling for file processing failures."""
-                error_context = {
-                    "filepath": filepath,
-                    "error": str(error),
-                    "error_type": error_type
-                }
-                
-                if error_type == "parse":
-                    self.logger.warning("file_parse_failed", **error_context)
-                elif error_type == "graph_update":
-                    self.logger.error("graph_update_failed", **error_context)
-                elif error_type == "future_processing":
-                    self.logger.error("future_processing_failed", **error_context)
-                else:
-                    self.logger.error("file_processing_failed", **error_context)
+        def _handle_file_error(
+            filepath: str, error: Exception, error_type: str = "parse"
+        ) -> None:
+            """Centralized error handling for file processing failures."""
+            error_context = {
+                "filepath": filepath,
+                "error": str(error),
+                "error_type": error_type,
+            }
+
+            if error_type == "parse":
+                self.logger.warning("file_parse_failed", **error_context)
+            elif error_type == "graph_update":
+                self.logger.error("graph_update_failed", **error_context)
+            elif error_type == "future_processing":
+                self.logger.error("future_processing_failed", **error_context)
+            else:
+                self.logger.error("file_processing_failed", **error_context)
 
         def _process_file(
-                args: tuple[Path, str],
-            ) -> tuple[str, list[Entity], list[Relationship], bool] | None:
-                """Worker: size/binary guard, atomic cache check, parse, update cache."""
+            args: tuple[Path, str],
+        ) -> tuple[str, list[Entity], list[Relationship], bool] | None:
+            """Worker: size/binary guard, atomic cache check, parse, update cache."""
 
-                nonlocal errors
-                file_path, filepath = args
+            nonlocal errors
+            file_path, filepath = args
+
+            try:
+                stat_info = file_path.stat()
+                size = stat_info.st_size
+                current_mtime = stat_info.st_mtime
+            except OSError:
+                return None
+            if size > configured_max_file_size_kb * 1024:
+                self.logger.debug(
+                    "skipping_large_file", filepath=filepath, size_kb=size // 1024
+                )
+                return None
+
+            content = _read_file_content(filepath, configured_max_file_size_kb)
+            if content is None:
+                return None
+
+            content_hash = compute_bytes_hash(content)
+
+            # Single atomic operation for both cache check and update
+            with self._cache.atomic_update(filepath) as cache_entry:
+                from .languages.detector import default_detector
+                from .languages.registry import get_extractor as _registry_get_extractor
+
+                suffix = file_path.suffix.lower()
+                file_extractor: ASTExtractor | object | None
+                if extractor is not None:
+                    file_extractor = extractor
+                else:
+                    file_extractor = default_detector.get_extractor(
+                        file_path, content
+                    ) or _registry_get_extractor(suffix)
+                if file_extractor is None:
+                    return None
+
+                # Perform atomic cache validation and update
+                # Check if we have a cache hit with both hash and mtime validation
+                cached_mtime = cache_entry.get("mtime")
+                cached_hash = cache_entry.get("sha256")
+                cached_size = cache_entry.get("size")
+
+                # Atomic validation - check all conditions together
+                is_cached = (
+                    cached_hash == content_hash
+                    and cached_mtime is not None
+                    and cached_size == size
+                    and abs(current_mtime - cached_mtime)
+                    <= 1.0  # Allow 1 second tolerance
+                )
+
+                # Update cache entry atomically if needed
+                if not is_cached:
+                    cache_entry.update(
+                        {"mtime": current_mtime, "sha256": content_hash, "size": size}
+                    )
+                    self.logger.debug(
+                        "cache_updated",
+                        filepath=filepath,
+                        reason="hash_or_mtime_mismatch",
+                    )
+                else:
+                    self.logger.debug("cache_hit", filepath=filepath)
 
                 try:
-                    stat_info = file_path.stat()
-                    size = stat_info.st_size
-                    current_mtime = stat_info.st_mtime
-                except OSError:
-                    return None
-                if size > configured_max_file_size_kb * 1024:
-                    self.logger.debug(
-                        "skipping_large_file", filepath=filepath, size_kb=size // 1024
-                    )
-                    return None
-
-                content = _read_file_content(filepath, configured_max_file_size_kb)
-                if content is None:
-                    return None
-
-                content_hash = compute_bytes_hash(content)
-                
-                # Single atomic operation for both cache check and update
-                with self._cache.atomic_update(filepath) as cache_entry:
-                    from .languages.detector import default_detector
-                    from .languages.registry import get_extractor as _registry_get_extractor
-
-                    suffix = file_path.suffix.lower()
-                    file_extractor: ASTExtractor | object | None
-                    if extractor is not None:
-                        file_extractor = extractor
-                    else:
-                        file_extractor = default_detector.get_extractor(
-                            file_path, content
-                        ) or _registry_get_extractor(suffix)
-                    if file_extractor is None:
+                    if not isinstance(file_extractor, ASTExtractor):
                         return None
-
-                    # Perform atomic cache validation and update
-                    # Check if we have a cache hit with both hash and mtime validation
-                    cached_mtime = cache_entry.get("mtime")
-                    cached_hash = cache_entry.get("sha256")
-                    cached_size = cache_entry.get("size")
-                    
-                    # Atomic validation - check all conditions together
-                    is_cached = (
-                        cached_hash == content_hash and
-                        cached_mtime is not None and
-                        cached_size == size and
-                        abs(current_mtime - cached_mtime) <= 1.0  # Allow 1 second tolerance
+                    entities, relationships = file_extractor.parse_file(
+                        filepath, content
                     )
-                    
-                    # Update cache entry atomically if needed
-                    if not is_cached:
-                        cache_entry.update({
-                            "mtime": current_mtime, 
-                            "sha256": content_hash,
-                            "size": size
-                        })
-                        self.logger.debug(
-                            "cache_updated", 
-                            filepath=filepath, 
-                            reason="hash_or_mtime_mismatch"
-                        )
-                    else:
-                        self.logger.debug(
-                            "cache_hit", 
-                            filepath=filepath
-                        )
-
-                    try:
-                        if not isinstance(file_extractor, ASTExtractor):
-                            return None
-                        entities, relationships = file_extractor.parse_file(filepath, content)
-                        return (filepath, entities, relationships, is_cached)
-                    except Exception as exc:
-                        errors += 1
-                        _handle_file_error(filepath, exc, "parse")
-                        return None
+                    return (filepath, entities, relationships, is_cached)
+                except Exception as exc:
+                    errors += 1
+                    _handle_file_error(filepath, exc, "parse")
+                    return None
 
         graph = InMemoryGraph()
         files_parsed = 0
@@ -919,16 +938,16 @@ class CodeGraphIndexer:
         try:
             pool = ThreadPoolExecutor(max_workers=actual_workers)
             futures = {pool.submit(_process_file, args): args for args in candidates}
-            
+
             for future in as_completed(futures):
                 try:
                     result = future.result()
                     if result is None:
                         files_skipped += 1
                         continue
-                    
+
                     filepath, entities, relationships, cached_hit = result
-                    
+
                     # Add entities and relationships with error handling
                     try:
                         for entity in entities:
@@ -942,12 +961,14 @@ class CodeGraphIndexer:
                         _handle_file_error(filepath, graph_error, "graph_update")
                         errors += 1
                         files_skipped += 1
-                        
+
                 except Exception as future_error:
-                    _handle_file_error("unknown_future", future_error, "future_processing")
+                    _handle_file_error(
+                        "unknown_future", future_error, "future_processing"
+                    )
                     errors += 1
                     files_skipped += 1
-                    
+
         except Exception as pool_error:
             self.logger.error("thread_pool_creation_failed", error=str(pool_error))
             # Ensure cleanup even if pool creation failed partially
@@ -955,7 +976,10 @@ class CodeGraphIndexer:
                 try:
                     pool.shutdown(wait=False)  # Don't wait since we're in error state
                 except Exception as shutdown_error:
-                    self.logger.warning("thread_pool_emergency_shutdown_failed", error=str(shutdown_error))
+                    self.logger.warning(
+                        "thread_pool_emergency_shutdown_failed",
+                        error=str(shutdown_error),
+                    )
             raise
         finally:
             # Ensure proper cleanup of thread pool
@@ -963,7 +987,9 @@ class CodeGraphIndexer:
                 try:
                     pool.shutdown(wait=True)
                 except Exception as shutdown_error:
-                    self.logger.warning("thread_pool_shutdown_failed", error=str(shutdown_error))
+                    self.logger.warning(
+                        "thread_pool_shutdown_failed", error=str(shutdown_error)
+                    )
 
         try:
             self._cache.save()
@@ -971,12 +997,58 @@ class CodeGraphIndexer:
             self.logger.warning("cache_save_failed", error=str(exc))
 
         graph = self._resolve_imports(graph)
+        derived_hierarchy_edges = self._derive_hierarchy_relations(graph)
+        derived_overrides_edges = self._derive_override_edges(graph)
+
+        semantic_stats: dict[str, int] = {
+            "semantic_tags_added": 0,
+            "semantic_edges_added": 0,
+        }
+        try:
+            from batho_core.bsg import apply_semantic_overlay
+
+            semantic_stats = apply_semantic_overlay(
+                graph=graph,
+                root_path=root_path,
+                logger=self.logger,
+            )
+        except Exception as exc:
+            self.logger.warning("bsg_semantic_stage_failed", error=str(exc))
+
+        rule_stats: dict[str, Any] = {
+            "enabled": False,
+            "rules_loaded": 0,
+            "rules_applied": 0,
+            "entities_updated": 0,
+            "errors": [],
+        }
+        rules_cfg = cfg.get("rules", {}) if isinstance(cfg, dict) else {}
+        plugins_cfg = cfg.get("plugins", {}) if isinstance(cfg, dict) else {}
+        if isinstance(rules_cfg, dict) and isinstance(plugins_cfg, dict):
+            overrides = plugins_cfg.get("overrides")
+            if overrides:
+                rules_cfg = {**rules_cfg, "plugins_overrides": overrides}
+        try:
+            from batho_core.bsg import apply_rule_plugins
+
+            rule_stats = apply_rule_plugins(
+                graph=graph,
+                root_path=root_path,
+                rules_config=rules_cfg,
+                logger=self.logger,
+            )
+        except Exception as exc:
+            if rules_cfg.get("fail_on_rule_error", False):
+                raise
+            self.logger.warning("bsg_rules_stage_failed", error=str(exc))
+            rule_stats["errors"] = [str(exc)]
 
         elapsed = (
             (os.times().elapsed if hasattr(os, "times") else 0.0) - start_ts
             if start_ts
             else None
         )
+
         self.stats = {
             "files_candidates": len(candidates),
             "files_parsed": files_parsed,
@@ -987,6 +1059,15 @@ class CodeGraphIndexer:
             "relationship_count": len(graph.relationships),
             "elapsed_seconds": elapsed,
             "workers_used": actual_workers,
+            "derived_hierarchy_edges": derived_hierarchy_edges,
+            "derived_overrides_edges": derived_overrides_edges,
+            "semantic_tags_added": int(semantic_stats.get("semantic_tags_added", 0)),
+            "semantic_edges_added": int(semantic_stats.get("semantic_edges_added", 0)),
+            "rules_enabled": bool(rule_stats.get("enabled", False)),
+            "rules_loaded": int(rule_stats.get("rules_loaded", 0)),
+            "rules_applied": int(rule_stats.get("rules_applied", 0)),
+            "entities_rule_tagged": int(rule_stats.get("entities_updated", 0)),
+            "rules": rule_stats,
         }
 
         self.logger.info(
@@ -1071,7 +1152,7 @@ class CodeGraphIndexer:
         """Return cache statistics."""
         cache_stats = self._cache.get_cache_stats()
         return {"cached_files": cache_stats["entries"]}
-    
+
     def get_cache_stats(self) -> dict[str, Any]:
         """Get detailed cache statistics for monitoring."""
         return self._cache.get_cache_stats()
@@ -1079,6 +1160,248 @@ class CodeGraphIndexer:
     # ------------------------------------------------------------------
     # Internal — cross-file import resolution
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_ref_token(text: str) -> str:
+        normalized = text.strip().strip(",;")
+        normalized = re.sub(r"\s+as\s+\w+$", "", normalized).strip()
+        if (
+            len(normalized) >= 2
+            and normalized[0] == normalized[-1]
+            and normalized[0] in {'"', "'", "`"}
+        ):
+            normalized = normalized[1:-1].strip()
+        elif normalized.startswith("<") and normalized.endswith(">"):
+            normalized = normalized[1:-1].strip()
+        return normalized.replace("::", ".").strip()
+
+    @classmethod
+    def _lookup_candidates(cls, ref_text: str) -> list[str]:
+        base = cls._normalize_ref_token(ref_text)
+        if not base:
+            return []
+
+        ordered: list[str] = []
+        seen: set[str] = set()
+
+        def _add(value: str) -> None:
+            token = cls._normalize_ref_token(value)
+            if not token or token in seen:
+                return
+            seen.add(token)
+            ordered.append(token)
+
+        _add(base)
+
+        if "/" in base:
+            tail = base.rsplit("/", 1)[-1]
+            _add(tail)
+            if "." in tail:
+                _add(tail.rsplit(".", 1)[0])
+
+        if "." in base:
+            _add(base.rsplit(".", 1)[-1])
+
+        if ":" in base and not base.startswith(("http://", "https://")):
+            _add(base.rsplit(":", 1)[-1])
+
+        return ordered
+
+    @staticmethod
+    def _extract_type_references(raw: Any) -> list[str]:
+        reserved = {
+            "class",
+            "extends",
+            "implements",
+            "interface",
+            "public",
+            "private",
+            "protected",
+            "internal",
+            "abstract",
+            "final",
+            "static",
+            "trait",
+            "struct",
+        }
+
+        values: list[str] = []
+        if isinstance(raw, list):
+            values = [str(item) for item in raw if str(item).strip()]
+        elif isinstance(raw, str):
+            values = [raw]
+        elif raw is not None:
+            values = [str(raw)]
+
+        refs: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            for token in re.findall(r"[A-Za-z_][A-Za-z0-9_\.]*", value):
+                lowered = token.lower()
+                if lowered in reserved:
+                    continue
+                if token in seen:
+                    continue
+                seen.add(token)
+                refs.append(token)
+        return refs
+
+    def _derive_hierarchy_relations(self, graph: InMemoryGraph) -> int:
+        """Derive INHERITS/IMPLEMENTS edges from entity metadata."""
+        if not graph.entities:
+            return 0
+
+        name_to_id: dict[str, str] = {}
+        for ent in sorted(graph.entities.values(), key=lambda e: e.id):
+            name_to_id[ent.name] = ent.id
+            if "." in ent.name:
+                name_to_id[ent.name.split(".")[-1]] = ent.id
+            if ent.type == EntityType.MODULE:
+                name_to_id[Path(ent.file).stem] = ent.id
+
+        existing = {
+            (
+                str(rel.source_id),
+                str(rel.target_id),
+                rel.type if isinstance(rel.type, RelationshipType) else rel.type,
+            )
+            for rel in graph.relationships
+        }
+
+        def _resolve_target(ref: str) -> str | None:
+            for candidate in self._lookup_candidates(ref):
+                target_id = name_to_id.get(candidate)
+                if target_id:
+                    return target_id
+            return None
+
+        added = 0
+        class_like = {
+            EntityType.CLASS,
+            EntityType.INTERFACE,
+            EntityType.TRAIT,
+            EntityType.STRUCT,
+        }
+        for entity in graph.entities.values():
+            if entity.type not in class_like:
+                continue
+
+            metadata = dict(entity.metadata or {})
+            relation_specs = [
+                (RelationshipType.INHERITS, metadata.get("bases")),
+                (RelationshipType.INHERITS, metadata.get("extends")),
+                (RelationshipType.IMPLEMENTS, metadata.get("implements")),
+            ]
+            for relation_type, raw_refs in relation_specs:
+                for ref in self._extract_type_references(raw_refs):
+                    target_id = _resolve_target(ref)
+                    if not target_id or target_id == entity.id:
+                        continue
+
+                    key = (entity.id, target_id, relation_type)
+                    if key in existing:
+                        continue
+
+                    existing.add(key)
+                    graph.add_relationship(
+                        Relationship(
+                            source_id=entity.id,
+                            target_id=target_id,
+                            type=relation_type,
+                            metadata={"derived": True, "reason": "metadata_hierarchy"},
+                        )
+                    )
+                    added += 1
+
+        return added
+
+    def _derive_override_edges(self, graph: InMemoryGraph) -> int:
+        """Derive OVERRIDES edges from CONTAINS + INHERITS relationships."""
+        if not graph.entities:
+            return 0
+
+        class_methods: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+        parent_map: dict[str, set[str]] = defaultdict(set)
+        existing = {
+            (
+                str(rel.source_id),
+                str(rel.target_id),
+                rel.type if isinstance(rel.type, RelationshipType) else rel.type,
+            )
+            for rel in graph.relationships
+        }
+
+        for rel in graph.relationships:
+            if rel.type == RelationshipType.CONTAINS:
+                parent = graph.get_entity(rel.source_id)
+                child = graph.get_entity(rel.target_id)
+                if parent is None or child is None:
+                    continue
+                if parent.type != EntityType.CLASS or child.type != EntityType.METHOD:
+                    continue
+                class_methods[parent.id][child.name].append(child.id)
+            elif rel.type == RelationshipType.INHERITS:
+                source = graph.get_entity(rel.source_id)
+                target = graph.get_entity(rel.target_id)
+                if source is None or target is None:
+                    continue
+                if source.type != EntityType.CLASS or target.type != EntityType.CLASS:
+                    continue
+                parent_map[source.id].add(target.id)
+
+        added = 0
+        for class_id, methods_by_name in class_methods.items():
+            if not methods_by_name:
+                continue
+
+            stack = list(parent_map.get(class_id, set()))
+            visited: set[str] = set()
+            ancestors: list[str] = []
+            while stack:
+                ancestor_id = stack.pop()
+                if ancestor_id in visited:
+                    continue
+                visited.add(ancestor_id)
+                ancestors.append(ancestor_id)
+                stack.extend(parent_map.get(ancestor_id, set()))
+
+            for ancestor_id in ancestors:
+                ancestor_methods = class_methods.get(ancestor_id, {})
+                if not ancestor_methods:
+                    continue
+
+                for method_name, child_method_ids in methods_by_name.items():
+                    parent_method_ids = ancestor_methods.get(method_name, [])
+                    if not parent_method_ids:
+                        continue
+
+                    for child_method_id in child_method_ids:
+                        for parent_method_id in parent_method_ids:
+                            if child_method_id == parent_method_id:
+                                continue
+                            key = (
+                                child_method_id,
+                                parent_method_id,
+                                RelationshipType.OVERRIDES,
+                            )
+                            if key in existing:
+                                continue
+
+                            existing.add(key)
+                            graph.add_relationship(
+                                Relationship(
+                                    source_id=child_method_id,
+                                    target_id=parent_method_id,
+                                    type=RelationshipType.OVERRIDES,
+                                    metadata={
+                                        "derived": True,
+                                        "reason": "method_name_and_inheritance",
+                                    },
+                                )
+                            )
+                            added += 1
+
+        return added
 
     def _resolve_imports(self, graph: InMemoryGraph) -> InMemoryGraph:
         """
@@ -1107,17 +1430,20 @@ class CodeGraphIndexer:
 
         for rel in unresolved:
             ref_text = rel.target_id[11:]  # strip "unresolved:"
-            target_id = name_to_id.get(ref_text)
-
-            if not target_id and "/" in ref_text:
-                target_id = name_to_id.get(ref_text.split("/")[-1])
-            if not target_id and "." in ref_text:
-                target_id = name_to_id.get(ref_text.split(".")[-1])
+            target_id = None
+            for candidate in self._lookup_candidates(ref_text):
+                target_id = name_to_id.get(candidate)
+                if target_id:
+                    break
 
             resolved.append(
                 Relationship(
                     source_id=rel.source_id,
-                    target_id=target_id if target_id else ref_text,
+                    target_id=(
+                        target_id
+                        if target_id
+                        else self._normalize_ref_token(ref_text)
+                    ),
                     type=rel.type,
                     metadata=rel.metadata,
                 )
@@ -1133,8 +1459,6 @@ class CodeGraphIndexer:
         self.logger.info(
             "import_resolution_complete",
             unresolved_count=len(unresolved),
-            resolved_count=sum(
-                1 for r in resolved if "." not in r.target_id and "/" not in r.target_id
-            ),
+            resolved_count=sum(1 for r in resolved if r.target_id in graph.entities),
         )
         return graph

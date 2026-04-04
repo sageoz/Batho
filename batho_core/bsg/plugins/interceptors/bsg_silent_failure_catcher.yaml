@@ -1,0 +1,23 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_silent_failure_catcher
+name: Silent Failure Catcher
+version: 1.0.0
+enabled: true
+description: Flag exception handling symbols associated with swallowed failures.
+rules:
+  - rule_id: silent-failure-risk
+    name: silent-failure-risk
+    description: Detect empty or pass-style exception handlers.
+    severity: warning
+    priority: 299
+    enabled: true
+    matchers:
+      usn_tags_any:
+        - catchclause
+        - excepthandler
+    actions:
+      metadata:
+        bsg.intercept.category: RELIABILITY
+        bsg.intercept.message: Exception handling may suppress actionable failures; ensure explicit handling and telemetry.
+      add_usn_tags:
+        - SilentFailureRisk

@@ -69,7 +69,7 @@ class ZigExtractor(ASTExtractor):
 
 ; ── Import statements ──────────────────────────────────────────────────────────
 (import
-  (string) @ref.import)
+  (string) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (function_call_expression

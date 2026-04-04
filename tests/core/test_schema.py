@@ -42,6 +42,7 @@ class TestRelationshipType:
         expected = {
             "CALLS", "IMPORTS", "INHERITS", "IMPLEMENTS", "USES",
             "CONTAINS", "REFERENCES", "DEFINES",
+            "WRAPPED_BY", "DEPENDS_ON_API", "REFERENCED_IN", "CLEANED_BY", "CONTAINED_WITHIN",
             "HAS_ATTRIBUTE", "LINKS_TO", "IMPORTS_STYLE",
         }
         actual = {r.name for r in RelationshipType}

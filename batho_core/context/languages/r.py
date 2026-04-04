@@ -22,50 +22,40 @@ class RExtractor(ASTExtractor):
     def _query_source(self) -> str:
         return r"""
 ; ── Function definitions ────────────────────────────────────────────────────────
-(function_definition
-  name: (identifier) @def.function.name
-  parameters: (parameters) @def.function.params)
-
-; ── Binary operator function definition (<-) ─────────────────────────────────
-(binary
-  left: (identifier) @def.function.name
-  operator: "<-"
-  right: (function_definition
-    parameters: (parameters) @def.function.params))
+(binary_operator
+  (identifier) @def.function.name
+  ["<-" "="]
+  (function_definition
+    (parameters) @def.function.params))
 
 ; ── Variable assignments ────────────────────────────────────────────────────────
-(binary
-  left: (identifier) @def.field.name
-  operator: "<-"
-  right: (_) @def.field.value)
-
-(binary
-  left: (identifier) @def.field.name
-  operator: "="
-  right: (_) @def.field.value)
+(binary_operator
+  (identifier) @def.field.name
+  ["<-" "="]
+  (_) @def.field.value
+  (#not-match? @def.field.value "^function\\b"))
 
 ; ── Library/Require statements (imports) ──────────────────────────────────────
-(function_call
-  name: (identifier) @ref.import
-  (#eq? @ref.import "library"))
-
-(function_call
-  name: (identifier) @ref.import
-  (#eq? @ref.import "require"))
-
-(function_call
-  name: (identifier) @ref.import
-  (#eq? @ref.import "requireNamespace"))
-
-(function_call
-  name: (identifier) @ref.import
-  (#eq? @ref.import "loadNamespace"))
+(call
+  (identifier) @_import_fn
+  (arguments
+    (argument
+      [
+        (identifier)
+        (string)
+        (namespace_operator
+          (identifier)
+          (identifier))
+      ] @ref.import.module))
+  (#match? @_import_fn "^(library|require|requireNamespace|loadNamespace)$"))
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
-(function_call
-  name: (identifier) @ref.call)
+(call
+  (identifier) @ref.call)
 
-(function_call
-  name: (namespace_get
-    (identifier) @ref.call))
+(call
+  (namespace_operator
+    (identifier)
+    (identifier) @ref.call)
+  (arguments))
 """

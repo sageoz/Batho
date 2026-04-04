@@ -16,6 +16,7 @@ Design principles:
 from __future__ import annotations
 
 import abc
+import re
 import time
 from typing import Any
 
@@ -98,6 +99,100 @@ def _clean_docstring(text: str) -> str:
         if t.startswith(q) and t.endswith(q) and len(t) >= 2 * len(q):
             return t[len(q) : -len(q)].strip()
     return t
+
+
+def _relationship_capture_info(cap_name: str) -> tuple[RelationshipType | None, str | None]:
+    """Map a capture name to relationship type and optional capture variant."""
+    parts = cap_name.split(".")
+    if len(parts) < 2 or parts[0] != "ref":
+        return None, None
+
+    base_key = f"{parts[0]}.{parts[1]}"
+    rel_type = _CAPTURE_REL_MAP.get(base_key)
+    if rel_type is None:
+        return None, None
+
+    suffix = ".".join(parts[2:]).strip() if len(parts) > 2 else ""
+    return rel_type, suffix or None
+
+
+def _normalize_import_target(raw: str) -> str:
+    """Normalize a raw import string to improve cross-file matching."""
+    text = raw.strip().strip(",;")
+    if not text:
+        return ""
+
+    text = re.sub(r"\s+as\s+\w+$", "", text).strip()
+
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'", "`"}:
+        text = text[1:-1].strip()
+    elif text.startswith("<") and text.endswith(">"):
+        text = text[1:-1].strip()
+
+    text = text.replace("::", ".")
+    return text.strip()
+
+
+def _expand_import_targets(raw: str) -> list[str]:
+    """Expand grouped import forms into resolvable target candidates."""
+    normalized = _normalize_import_target(raw)
+    if not normalized:
+        return []
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    stopwords = {
+        ".",
+        "as",
+        "from",
+        "import",
+        "include",
+        "library",
+        "load",
+        "loadnamespace",
+        "require",
+        "require_relative",
+        "requirenamespace",
+        "source",
+        "using",
+    }
+
+    def _push(candidate: str) -> None:
+        token = _normalize_import_target(candidate)
+        if token.lower() in stopwords:
+            return
+        if not token or token in seen:
+            return
+        seen.add(token)
+        candidates.append(token)
+
+    _push(normalized)
+
+    # Rust-like grouped imports: foo::{bar, baz as qux, self, *}
+    if "{" in normalized and "}" in normalized:
+        prefix, remainder = normalized.split("{", 1)
+        prefix = prefix.rstrip(":.").strip()
+        members = remainder.rsplit("}", 1)[0]
+        for member in members.split(","):
+            token = member.strip()
+            if not token:
+                continue
+            token = re.sub(r"\s+as\s+\w+$", "", token)
+            if token in {"*", "self"}:
+                _push(prefix)
+                continue
+            if prefix:
+                _push(f"{prefix}.{token}")
+            else:
+                _push(token)
+
+    if "/" in normalized:
+        _push(normalized.rsplit("/", 1)[-1])
+
+    if "." in normalized:
+        _push(normalized.rsplit(".", 1)[-1])
+
+    return candidates
 
 
 # File reading is now handled in batho_core.utils.file_io
@@ -320,16 +415,25 @@ class ASTExtractor(abc.ABC):
         relationships: list[Relationship] = []
         emitted: set[tuple[str, str, str]] = set()
 
-        def _add(src_id: str, tgt_id: str, rel_type: RelationshipType, line: int) -> None:
+        def _add(
+            src_id: str,
+            tgt_id: str,
+            rel_type: RelationshipType,
+            line: int,
+            extra_metadata: dict[str, Any] | None = None,
+        ) -> None:
             key = (src_id, tgt_id, str(rel_type))
             if key not in emitted:
                 emitted.add(key)
+                metadata = {"line_number": line}
+                if extra_metadata:
+                    metadata.update(extra_metadata)
                 relationships.append(
                     Relationship(
                         source_id=src_id,
                         target_id=tgt_id,
                         type=rel_type,
-                        metadata={"line_number": line},
+                        metadata=metadata,
                     )
                 )
 
@@ -359,7 +463,7 @@ class ASTExtractor(abc.ABC):
             return best
 
         for cap_name, nodes in captures.items():
-            rel_type = _CAPTURE_REL_MAP.get(cap_name)
+            rel_type, capture_variant = _relationship_capture_info(cap_name)
             if rel_type is None:
                 continue
             if rel_type == RelationshipType.CONTAINS:
@@ -371,6 +475,10 @@ class ASTExtractor(abc.ABC):
                     continue
 
                 line_no = node.start_point[0] + 1
+
+                rel_meta = {"capture": cap_name}
+                if capture_variant:
+                    rel_meta["capture_variant"] = capture_variant
 
                 if rel_type in (
                     RelationshipType.CALLS,
@@ -384,34 +492,53 @@ class ASTExtractor(abc.ABC):
                         and target_ent is not None
                         and source_ent.id != target_ent.id
                     ):
-                        _add(source_ent.id, target_ent.id, rel_type, line_no)
+                        _add(source_ent.id, target_ent.id, rel_type, line_no, rel_meta)
 
                 elif rel_type == RelationshipType.IMPORTS:
                     source_ent = _find_enclosing(node.start_byte)
                     source_id = source_ent.id if source_ent else filepath
-                    target_ent = by_name.get(ref_text)
+                    targets = _expand_import_targets(ref_text)
+                    if not targets:
+                        continue
 
-                    if target_ent is not None and source_id != target_ent.id:
-                        _add(source_id, target_ent.id, rel_type, line_no)
-                    elif target_ent is None:
-                        # External import — store as unresolved reference.
-                        # CodeGraphIndexer resolves these in a cross-file pass.
-                        _add(source_id, f"unresolved:{ref_text}", rel_type, line_no)
-                        self.logger.debug(
-                            "unresolved_import",
-                            filepath=filepath,
-                            ref=ref_text,
-                        )
+                    for target_ref in targets:
+                        target_ent = by_name.get(target_ref)
+                        if target_ent is not None and source_id != target_ent.id:
+                            _add(source_id, target_ent.id, rel_type, line_no, rel_meta)
+                        elif target_ent is None:
+                            # External import — store as unresolved reference.
+                            # CodeGraphIndexer resolves these in a cross-file pass.
+                            _add(
+                                source_id,
+                                f"unresolved:{target_ref}",
+                                rel_type,
+                                line_no,
+                                rel_meta,
+                            )
+                            self.logger.debug(
+                                "unresolved_import",
+                                filepath=filepath,
+                                ref=target_ref,
+                            )
 
                 elif rel_type in (RelationshipType.INHERITS, RelationshipType.IMPLEMENTS):
                     source_ent = _find_enclosing(node.start_byte)
+                    if source_ent is None:
+                        continue
+
                     target_ent = by_name.get(ref_text)
-                    if (
-                        source_ent is not None
-                        and target_ent is not None
-                        and source_ent.id != target_ent.id
-                    ):
-                        _add(source_ent.id, target_ent.id, rel_type, line_no)
+                    if target_ent is not None and source_ent.id != target_ent.id:
+                        _add(source_ent.id, target_ent.id, rel_type, line_no, rel_meta)
+                    elif target_ent is None:
+                        normalized_ref = _normalize_import_target(ref_text)
+                        if normalized_ref:
+                            _add(
+                                source_ent.id,
+                                f"unresolved:{normalized_ref}",
+                                rel_type,
+                                line_no,
+                                rel_meta,
+                            )
 
         return relationships
 
@@ -448,6 +575,11 @@ class ASTExtractor(abc.ABC):
                 text = _clean_docstring(text)
             metadata[meta_key] = text
 
+        if not metadata.get("docstring"):
+            fallback_doc = self._extract_leading_doc_comment(decl_node=decl_node, source=source)
+            if fallback_doc:
+                metadata["docstring"] = fallback_doc
+
         # implements: comma-separated list
         impl_nodes = auxiliary_nodes.get((base_key, "implements"), [])
         impl_node = self._nearest_ancestor(impl_nodes, decl_node)
@@ -462,6 +594,62 @@ class ASTExtractor(abc.ABC):
             metadata["field_type"] = _node_text(ft_node, source)
 
         return metadata
+
+    def _extract_leading_doc_comment(self, decl_node: Node, source: bytes) -> str | None:
+        """Extract contiguous comment lines immediately above a declaration."""
+        try:
+            text = source.decode("utf-8", errors="replace")
+        except Exception:
+            return None
+
+        lines = text.splitlines()
+        line_idx = decl_node.start_point[0] - 1
+        if line_idx < 0:
+            return None
+
+        comment_prefixes = ["#", "//", "--", ";", "%"]
+        collected: list[str] = []
+        in_block = False
+
+        while line_idx >= 0:
+            raw = lines[line_idx].rstrip()
+            stripped = raw.strip()
+
+            if not stripped:
+                if collected:
+                    break
+                line_idx -= 1
+                continue
+
+            if stripped.endswith("*/"):
+                in_block = True
+
+            if in_block:
+                cleaned = stripped
+                cleaned = cleaned.lstrip("/*").rstrip("*/").strip()
+                if cleaned:
+                    collected.append(cleaned)
+                if stripped.startswith("/*"):
+                    in_block = False
+                line_idx -= 1
+                continue
+
+            matched_prefix = next(
+                (prefix for prefix in comment_prefixes if stripped.startswith(prefix)),
+                None,
+            )
+            if matched_prefix is not None:
+                cleaned = stripped[len(matched_prefix) :].strip()
+                if cleaned:
+                    collected.append(cleaned)
+                line_idx -= 1
+                continue
+
+            break
+
+        if not collected:
+            return None
+        return "\n".join(reversed(collected)).strip() or None
 
     def _build_signature(
         self,

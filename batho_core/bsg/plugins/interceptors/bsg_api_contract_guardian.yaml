@@ -1,0 +1,27 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_api_contract_guardian
+name: API Contract Guardian
+version: 1.0.0
+enabled: true
+description: Prevent backend API contract changes from drifting away from frontend request consumers.
+rules:
+  - rule_id: api-contract-boundary-drift
+    name: api-contract-boundary-drift
+    description: Flag api boundary changes with downstream dependency links.
+    severity: block
+    priority: 340
+    enabled: true
+    matchers:
+      usn_tags_any:
+        - apiboundary
+      ast_edges:
+        any:
+          - edge: DEPENDS_ON_API
+            direction: inbound
+            min_count: 1
+    actions:
+      metadata:
+        bsg.intercept.category: CONTRACT
+        bsg.intercept.message: Backend API boundary changed while dependent clients exist; synchronize request/response contracts.
+      add_usn_tags:
+        - ContractSensitive

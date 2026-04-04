@@ -61,10 +61,10 @@ class JuliaExtractor(ASTExtractor):
 
 ; ── Import statements ──────────────────────────────────────────────────────────
 (import_statement
-  (identifier) @ref.import)
+  (identifier) @ref.import.module)
 
 (using_statement
-  (identifier) @ref.import)
+  (identifier) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (function_call

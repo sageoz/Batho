@@ -48,7 +48,7 @@ class TestCLIIntegration:
         versioned_dir = ctn_dir / current_id
         assert versioned_dir.exists()
         assert (versioned_dir / "graph.json").exists()
-        assert (versioned_dir / "repomap.json").exists()
+        assert (versioned_dir / "bsg.json").exists()
 
         # Multi-file context outputs
         context_dir = versioned_dir / "context"

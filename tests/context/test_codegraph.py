@@ -335,3 +335,147 @@ class TestCodeGraphIndexer:
         indexer._cache.save()
         indexer.invalidate("test.py")
         assert not indexer._cache.is_cached("test.py", "hash1")
+
+    def test_resolve_imports_uses_normalized_candidates(self, tmp_path: Path):
+        cache_path = tmp_path / "cache.json"
+        indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(tmp_path))
+
+        source = Entity(
+            type=EntityType.FUNCTION,
+            name="caller",
+            file="src/main.py",
+            start_line=1,
+            end_line=2,
+        )
+        target = Entity(
+            type=EntityType.MODULE,
+            name="pkg.utils.helpers",
+            file="pkg/utils/helpers.py",
+            start_line=1,
+            end_line=20,
+        )
+
+        graph = InMemoryGraph()
+        graph.add_entity(source)
+        graph.add_entity(target)
+        graph.add_relationship(
+            Relationship(
+                source_id=source.id,
+                target_id='unresolved:"pkg/utils/helpers.py" as helpers',
+                type=RelationshipType.IMPORTS,
+            )
+        )
+        graph.add_relationship(
+            Relationship(
+                source_id=source.id,
+                target_id="unresolved:<external/pkg>",
+                type=RelationshipType.IMPORTS,
+            )
+        )
+
+        resolved = indexer._resolve_imports(graph)
+
+        import_targets = [
+            rel.target_id
+            for rel in resolved.relationships
+            if rel.source_id == source.id and rel.type == RelationshipType.IMPORTS
+        ]
+        assert target.id in import_targets
+        assert "external/pkg" in import_targets
+
+    def test_build_graph_applies_bsg_rules_from_config(
+        self, simple_python_repo: Path, tmp_path: Path, monkeypatch
+    ):
+        cfg_file = tmp_path / "batho.yaml"
+        cfg_file.write_text(
+            """
+rules:
+  enabled: true
+  builtin_plugins: []
+  custom_rules_inline:
+    - name: mark-python-files
+      file_patterns: ["**/*.py"]
+      metadata:
+        bsg.test_marker: enabled
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(tmp_path)
+
+        cache_path = tmp_path / "cache.json"
+        indexer = CodeGraphIndexer(
+            cache_path=str(cache_path), root=str(simple_python_repo)
+        )
+        graph = indexer.build_graph(root=str(simple_python_repo), extensions=[".py"])
+
+        assert any(
+            entity.metadata.get("bsg.test_marker") == "enabled"
+            for entity in graph.entities.values()
+        )
+        assert indexer.stats.get("rules_enabled") is True
+        assert indexer.stats.get("entities_rule_tagged", 0) >= 1
+
+    def test_build_graph_applies_semantic_overlay_before_rules(self, tmp_path: Path):
+        root = tmp_path / "repo"
+        src_dir = root / "services" / "api"
+        src_dir.mkdir(parents=True)
+        (src_dir / "user_routes.py").write_text(
+            """
+def get_user_endpoint(user_id: str):
+    return user_id
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        cache_path = tmp_path / "cache.json"
+        indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
+        graph = indexer.build_graph(root=str(root), extensions=[".py"])
+
+        assert len(graph.entities) >= 1
+        assert indexer.stats.get("semantic_tags_added", 0) >= 1
+        assert any(
+            "ApiBoundary" in (entity.metadata or {}).get("bsg.usn", [])
+            for entity in graph.entities.values()
+        )
+
+    def test_build_graph_derives_inherits_and_overrides(self, tmp_path: Path):
+        root = tmp_path / "repo"
+        root.mkdir(parents=True)
+        (root / "models.py").write_text(
+            """
+class Base:
+    def run(self):
+        return 1
+
+
+class Child(Base):
+    def run(self):
+        return 2
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        cache_path = tmp_path / "cache.json"
+        indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
+        graph = indexer.build_graph(root=str(root), extensions=[".py"])
+
+        def _entity_name(entity_id: str) -> str | None:
+            entity = graph.get_entity(entity_id)
+            return entity.name if entity is not None else None
+
+        assert any(
+            rel.type == RelationshipType.INHERITS
+            and _entity_name(rel.source_id) == "Child"
+            and _entity_name(rel.target_id) == "Base"
+            for rel in graph.relationships
+        )
+        assert any(
+            rel.type == RelationshipType.OVERRIDES
+            and _entity_name(rel.source_id) == "run"
+            and _entity_name(rel.target_id) == "run"
+            for rel in graph.relationships
+        )

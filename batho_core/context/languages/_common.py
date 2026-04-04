@@ -188,7 +188,7 @@ class ImportPatterns:
         """Import via string literal (common in JS, TS, Go)."""
         return r"""
 (import_statement
-  source: (string) @ref.import)
+  source: (string) @ref.import.module)
 """
 
     @staticmethod
@@ -196,7 +196,7 @@ class ImportPatterns:
         """Import via dotted name (common in Python, Java)."""
         return r"""
 (import_statement
-  name: (dotted_name) @ref.import)
+  name: (dotted_name) @ref.import.module)
 """
 
     @staticmethod
@@ -204,7 +204,7 @@ class ImportPatterns:
         """Import via qualified name (common in PHP, Hack)."""
         return r"""
 (use_declaration
-  (namespace_use_clause (name) @ref.import))
+  (namespace_use_clause (name) @ref.import.module))
 """
 
 

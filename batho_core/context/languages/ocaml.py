@@ -70,10 +70,10 @@ class OCamlExtractor(ASTExtractor):
 
 ; ── Open statements (imports) ──────────────────────────────────────────────────
 (open_statement
-  (module_name) @ref.import)
+  (module_name) @ref.import.module)
 
 (include_statement
-  (module_name) @ref.import)
+  (module_name) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (function_call

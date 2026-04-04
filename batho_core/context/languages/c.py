@@ -4,7 +4,7 @@ context/languages/c.py — C ASTExtractor subclass.
 Capture coverage:
   - function definitions (with declarator name and parameter list)
   - struct specifiers with a tag name (mapped to def.struct)
-  - preprocessor ``#include`` directives (mapped to ref.import)
+  - preprocessor ``#include`` directives (mapped to ref.import.module)
   - call expressions (mapped to ref.call)
 
 C has no classes, methods, or visibility modifiers.  All callables are
@@ -51,7 +51,7 @@ class CExtractor(ASTExtractor):
 
 ; ── Preprocessor includes ─────────────────────────────────────────────────────
 (preproc_include
-  path: (_) @ref.import)
+  path: (_) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression

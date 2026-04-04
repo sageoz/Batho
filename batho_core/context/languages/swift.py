@@ -80,7 +80,7 @@ class SwiftExtractor(ASTExtractor):
 ; ── Import statements ──────────────────────────────────────────────────────────
 (import_declaration
   (import_path
-    (simple_identifier) @ref.import))
+    (simple_identifier) @ref.import.module))
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression
