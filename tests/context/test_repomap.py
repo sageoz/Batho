@@ -117,6 +117,57 @@ class TestRenderJson:
             assert node["snapshot_id"] == "snap-123"
             assert node["service_tag"]
 
+        assert data["stats"]["autofilled_snapshot_ids"] == len(data["nodes"])
+        assert data["stats"]["quality_warnings"] >= 1
+        assert any("auto-filled snapshot_id" in warning for warning in data["quality_warnings"])
+
+    def test_quality_warning_for_zero_build_and_missing_snapshot(self):
+        graph = InMemoryGraph()
+        graph.add_entity(
+            Entity(
+                type=EntityType.FUNCTION,
+                name="run",
+                file="src/main.py",
+                start_line=1,
+                end_line=3,
+                signature="run()",
+                metadata={"language": "python"},
+            )
+        )
+
+        repomap = RepoMap.build(graph, root="/fake/root")
+        data = repomap.render_json(build_ms=0)
+
+        assert data["nodes"][0]["snapshot_id"] is None
+        assert data["nodes"][0]["service_tag"]
+        assert data["stats"]["missing_snapshot_ids"] == 1
+        assert data["stats"]["quality_warnings"] >= 1
+        assert any("build_ms is 0" in warning for warning in data["quality_warnings"])
+        assert any("missing snapshot_id" in warning for warning in data["quality_warnings"])
+
+    def test_category_normalization_docs_to_doc(self):
+        graph = InMemoryGraph()
+        graph.add_entity(
+            Entity(
+                type=EntityType.DOCUMENT,
+                name="guide",
+                file="docs/guide.md",
+                start_line=1,
+                end_line=5,
+                metadata={
+                    "language": "markdown",
+                    "bsg.category": "DOCS",
+                },
+            )
+        )
+
+        repomap = RepoMap.build(graph, root="/fake/root")
+        data = repomap.render_json(build_ms=42, default_snapshot_id="snap-doc")
+
+        assert data["nodes"][0]["category"] == "DOC"
+        assert data["stats"]["category_normalizations"] == 1
+        assert any("normalized bsg.category" in warning for warning in data["quality_warnings"])
+
 
 class TestRenderHierarchical:
 

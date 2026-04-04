@@ -107,6 +107,38 @@ def _extract_change_paths(changes: Iterable[Any]) -> list[str]:
     return sorted(paths)
 
 
+def _extract_bsg_quality_warnings(payload: dict[str, Any]) -> list[str]:
+    """Return normalized quality warning strings from a bsg payload."""
+
+    raw_warnings = payload.get("quality_warnings")
+    if not isinstance(raw_warnings, list):
+        return []
+
+    warnings: list[str] = []
+    for item in raw_warnings:
+        text = str(item).strip()
+        if text:
+            warnings.append(text)
+    return warnings
+
+
+def _emit_bsg_quality_warnings(warnings: list[str], verbose: bool) -> None:
+    """Emit a compact warning summary and optional sample lines."""
+
+    if not warnings:
+        return
+
+    print(f"⚠️  BSG quality warnings: {len(warnings)}")
+    if not verbose:
+        return
+
+    sample_size = 5
+    for warning in warnings[:sample_size]:
+        print(f"   - {warning}")
+    if len(warnings) > sample_size:
+        print(f"   - ... {len(warnings) - sample_size} more")
+
+
 @contextmanager
 def _ctn_lock(ctn_dir: Path):
     lock_path = ctn_dir / "ctn.lock"
@@ -622,6 +654,7 @@ def cmd_index(args: argparse.Namespace) -> int:
 
     context_dir = versioned_dir / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
+    quality_warnings: list[str] = []
 
     with _ctn_lock(ctn_dir):
         # Outputs
@@ -637,6 +670,7 @@ def cmd_index(args: argparse.Namespace) -> int:
             default_snapshot_id=index_id,
             default_service_tag=root.name,
         )
+        quality_warnings = _extract_bsg_quality_warnings(bsg_json)
         bsg_json["stack"] = stack_info
         _write_json(bsg_path, bsg_json)
 
@@ -711,6 +745,8 @@ def cmd_index(args: argparse.Namespace) -> int:
                 "file_count_total": repo_metrics.get("file_count_total"),
                 "text_files_count": repo_metrics.get("text_files_count"),
                 "skipped_files_count": repo_metrics.get("skipped_files_count"),
+                "bsg_quality_warnings": len(quality_warnings),
+                "bsg_quality_warning_samples": quality_warnings[:5],
             }
         )
         metrics = {
@@ -780,6 +816,8 @@ def cmd_index(args: argparse.Namespace) -> int:
 
     if stats.get("errors"):
         print(f"⚠️  Indexed with {stats['errors']} parse errors (partial success).")
+
+    _emit_bsg_quality_warnings(quality_warnings, verbose=args.verbose)
 
     if args.verbose:
         print(f"✅ Indexed {root} → {index_id}")
@@ -1107,6 +1145,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
 
     context_dir = versioned_dir / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
+    quality_warnings: list[str] = []
 
     with _ctn_lock(ctn_dir):
         # Load metadata for stack info
@@ -1120,6 +1159,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
             default_snapshot_id=current_id,
             default_service_tag=root.name,
         )
+        quality_warnings = _extract_bsg_quality_warnings(bsg_json)
         _write_json(bsg_path, bsg_json)
 
         # Generate categorized markdown outputs
@@ -1195,6 +1235,8 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         ):
             if key in prev_stats and key not in merged_stats:
                 merged_stats[key] = prev_stats[key]
+        merged_stats["bsg_quality_warnings"] = len(quality_warnings)
+        merged_stats["bsg_quality_warning_samples"] = quality_warnings[:5]
         entry.update(
             {
                 "entity_count": bsg_map.entity_count,
@@ -1231,6 +1273,8 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
             metadata["indexes"][current_id] = entry
             _save_index_metadata(ctn_dir, metadata)
 
+    _emit_bsg_quality_warnings(quality_warnings, verbose=False)
+
     summary = FileChangeSummary(
         total_changes=added_count + modified_count + deleted_count,
         added=added_count,
@@ -1252,6 +1296,8 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
                     "deleted": summary.deleted,
                     "unchanged": summary.unchanged,
                 },
+                "bsg_quality_warning_count": len(quality_warnings),
+                "bsg_quality_warnings": quality_warnings[:5],
                 "snapshot_id": snapshot_id,
             },
             indent=2,
@@ -1368,6 +1414,19 @@ def _cmd_patch_snapshot_based(
                 label="Post-patch snapshot",
             )
 
+    quality_warnings: list[str] = []
+    quality_snapshot_id = (
+        final_snapshot_id if args.snapshot else result.get("new_snapshot_id")
+    )
+    if quality_snapshot_id:
+        quality_snapshot = load_snapshot(ctn_dir, str(quality_snapshot_id))
+        if isinstance(quality_snapshot, dict):
+            bsg_payload = quality_snapshot.get("bsg")
+            if isinstance(bsg_payload, dict):
+                quality_warnings = _extract_bsg_quality_warnings(bsg_payload)
+
+    _emit_bsg_quality_warnings(quality_warnings, verbose=False)
+
     print(
         json.dumps(
             {
@@ -1382,6 +1441,8 @@ def _cmd_patch_snapshot_based(
                     "modified": summary.modified,
                     "deleted": summary.deleted,
                 },
+                "bsg_quality_warning_count": len(quality_warnings),
+                "bsg_quality_warnings": quality_warnings[:5],
                 "final_snapshot_id": final_snapshot_id
                 if args.snapshot
                 else result["new_snapshot_id"],

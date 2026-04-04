@@ -58,6 +58,22 @@ class TestFullWorkflows:
         meta = json.loads((ctn_dir / "index.json").read_text())
         current_id = meta["current_index_id"]
 
+    def test_index_bsg_metadata_is_complete(self, simple_python_repo: Path):
+        """Indexed bsg output should have non-empty service tags and snapshot IDs."""
+        rc = main(["index", "--root", str(simple_python_repo), "--force"])
+        assert rc == 0
+
+        ctn_dir = simple_python_repo / ".ctn"
+        meta = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(meta.get("current_index_id"))
+        bsg = json.loads((ctn_dir / current_id / "bsg.json").read_text(encoding="utf-8"))
+
+        nodes = bsg.get("nodes", [])
+        assert nodes
+        assert all(node.get("service_tag") for node in nodes)
+        assert all(node.get("snapshot_id") is not None for node in nodes)
+        assert isinstance(bsg.get("quality_warnings"), list)
+
     def test_incremental_patch_workflows(
         self, simple_python_repo: Path, tmp_path: Path
     ):

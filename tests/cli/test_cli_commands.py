@@ -107,6 +107,36 @@ class TestCmdIndex:
         assert payload.get("index_id")
         assert payload.get("stats")
 
+    def test_index_persists_bsg_quality_warning_stats(self, simple_python_repo: Path):
+        args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        result = cmd_index(args)
+        assert result == 0
+
+        ctn_dir = simple_python_repo / ".ctn"
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        entry = index_payload.get("indexes", {}).get(current_id, {})
+        stats = entry.get("stats", {})
+        bsg_payload = json.loads((ctn_dir / current_id / "bsg.json").read_text(encoding="utf-8"))
+
+        assert "bsg_quality_warnings" in stats
+        assert stats["bsg_quality_warnings"] == len(bsg_payload.get("quality_warnings", []))
+        assert "bsg_quality_warning_samples" in stats
+
     def test_index_overview_includes_evolution_ledger_insights(
         self,
         simple_python_repo: Path,
@@ -499,3 +529,5 @@ class TestCmdPatch:
         summary = payload.get("summary", {})
         assert summary.get("added", 0) >= 1
         assert summary.get("deleted", 0) >= 1
+        assert "bsg_quality_warning_count" in payload
+        assert isinstance(payload.get("bsg_quality_warnings"), list)

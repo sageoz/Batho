@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-
 # ---------------------------------------------------------------------------
 # Default ignore patterns — applied even if ignore files don't exist
 # ---------------------------------------------------------------------------
@@ -83,15 +82,19 @@ DEFAULT_IGNORE_PATTERNS: list[str] = [
     ".roo/",
     ".cline/",
     ".kilo/",
-    # Test fixture data (not source-of-truth code)
-    "testdata/",
-    "test_data/",
-    "fixtures/",
-    "mock_data/",
-    "**/testdata/**",
-    "**/test_data/**",
-    "**/fixtures/**",
-    "**/mock_data/**",
+    # (not source-of-truth code)
+    "*.mod.c",  # Kernel module metadata — auto-generated
+    "*.mod.h",
+    ".config",  # Kconfig output — binary-ish
+    "vmlinux.symvers",  # Linker symbol table
+    "*.order",  # Build order files
+    "*.a",  # Static libs
+    "*.ko",  # Compiled modules
+    "scripts/kconfig/*",  # Kconfig parser — not user code
+    "Documentation/**/*.rst",  # Optional: skip docs for code-only graph
+    "tools/testing/**",  # Optional: skip kernel selftests
+    "arch/*/boot/compressed/",  # Compressed boot stubs
+
 ]
 
 # Patterns that should always be ignored for file watching

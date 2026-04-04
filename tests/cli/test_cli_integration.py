@@ -50,6 +50,12 @@ class TestCLIIntegration:
         assert (versioned_dir / "graph.json").exists()
         assert (versioned_dir / "bsg.json").exists()
 
+        bsg_payload = json.loads((versioned_dir / "bsg.json").read_text(encoding="utf-8"))
+        assert isinstance(bsg_payload.get("quality_warnings"), list)
+        assert bsg_payload.get("stats", {}).get("quality_warnings") == len(
+            bsg_payload.get("quality_warnings", [])
+        )
+
         # Multi-file context outputs
         context_dir = versioned_dir / "context"
         assert context_dir.exists()

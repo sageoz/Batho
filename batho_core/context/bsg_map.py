@@ -30,6 +30,10 @@ from .categorizer import FileCategorizer
 from .schema import Entity, EntityType
 
 _FILE_CATEGORIZER = FileCategorizer()
+_CATEGORY_ALIASES: dict[str, str] = {
+    "DOCS": "DOC",
+    "DOCUMENTATION": "DOC",
+}
 
 if TYPE_CHECKING:
     from batho_core.time_machine import FileChange
@@ -407,24 +411,57 @@ class BSGMap:
         nodes: list[dict[str, Any]] = []
         node_by_id: dict[str, dict[str, Any]] = {}
         rule_names: set[str] = set()
+        quality_warnings: list[str] = []
+        autofilled_snapshot_ids = 0
+        missing_snapshot_ids = 0
+        autofilled_service_tags = 0
+        missing_service_tags = 0
+        normalized_categories = 0
+
+        if resolved_build_ms == 0:
+            quality_warnings.append(
+                "build_ms is 0; verify build timing capture for this run"
+            )
 
         for file_path in sorted(self._by_file.keys()):
             entities = self._by_file[file_path]
             for entity in sorted(entities, key=lambda item: (item.start_line, item.id)):
                 metadata = dict(entity.metadata or {})
                 scope_tier = str(metadata.get("bsg.scope_tier") or self._derive_scope_tier(entity))
-                category = str(metadata.get("bsg.category") or self._derive_category(file_path)).upper()
-                service_tag = str(
-                    metadata.get("bsg.service_tag")
-                    or self._derive_service_tag(file_path)
-                    or resolved_default_service
+                raw_category = str(
+                    metadata.get("bsg.category") or self._derive_category(file_path)
                 )
+                category = self._normalize_category(raw_category)
+                if raw_category.strip().upper() != category:
+                    normalized_categories += 1
+
+                raw_service_tag = metadata.get("bsg.service_tag")
+                service_tag = str(raw_service_tag or "").strip()
+                if not service_tag:
+                    service_tag = str(
+                        self._derive_service_tag(file_path) or resolved_default_service
+                    ).strip()
+                    if service_tag:
+                        autofilled_service_tags += 1
+                if not service_tag:
+                    missing_service_tags += 1
+
                 language = self._derive_language(entity, file_path)
-                snapshot_id = (
+                raw_snapshot_id = (
                     metadata.get("bsg.snapshot_id")
                     or metadata.get("snapshot_id")
-                    or resolved_default_snapshot
                 )
+                snapshot_id_text = (
+                    str(raw_snapshot_id).strip()
+                    if raw_snapshot_id is not None
+                    else ""
+                )
+                if not snapshot_id_text and resolved_default_snapshot:
+                    snapshot_id_text = resolved_default_snapshot
+                    autofilled_snapshot_ids += 1
+                if not snapshot_id_text:
+                    missing_snapshot_ids += 1
+                snapshot_id = snapshot_id_text or None
 
                 rules = metadata.get("bsg.rules")
                 if isinstance(rules, list):
@@ -611,6 +648,29 @@ class BSGMap:
             and len(node.get("metadata", {}).get("bsg.rules", [])) > 0
         )
 
+        if autofilled_snapshot_ids:
+            quality_warnings.append(
+                "auto-filled snapshot_id for "
+                f"{autofilled_snapshot_ids} nodes from default_snapshot_id"
+            )
+        if missing_snapshot_ids:
+            quality_warnings.append(
+                f"{missing_snapshot_ids} nodes missing snapshot_id after fallback"
+            )
+        if autofilled_service_tags:
+            quality_warnings.append(
+                f"auto-derived service_tag for {autofilled_service_tags} nodes"
+            )
+        if missing_service_tags:
+            quality_warnings.append(
+                f"{missing_service_tags} nodes missing service_tag after fallback"
+            )
+        if normalized_categories:
+            quality_warnings.append(
+                "normalized bsg.category values for "
+                f"{normalized_categories} nodes (e.g. DOCS -> DOC)"
+            )
+
         payload = {
             "schema_version": BSG_SCHEMA_VERSION,
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -622,9 +682,16 @@ class BSGMap:
                 "build_ms": resolved_build_ms,
                 "rules_loaded": len(rule_names),
                 "rules_applied": rules_applied,
+                "quality_warnings": len(quality_warnings),
+                "autofilled_snapshot_ids": autofilled_snapshot_ids,
+                "missing_snapshot_ids": missing_snapshot_ids,
+                "autofilled_service_tags": autofilled_service_tags,
+                "missing_service_tags": missing_service_tags,
+                "category_normalizations": normalized_categories,
             },
             "nodes": nodes,
             "edges": edges,
+            "quality_warnings": quality_warnings,
             "indexes": {
                 "nodes_by_file": _sorted_index(nodes_by_file),
                 "nodes_by_type": _sorted_index(nodes_by_type),
@@ -729,6 +796,12 @@ class BSGMap:
 
     def _derive_category(self, rel_file_path: str) -> str:
         return _FILE_CATEGORIZER.categorize(rel_file_path).upper()
+
+    def _normalize_category(self, raw_category: str) -> str:
+        candidate = str(raw_category or "").strip().upper()
+        if not candidate:
+            return "SOURCE"
+        return _CATEGORY_ALIASES.get(candidate, candidate)
 
     def _derive_language(self, entity: Entity, rel_file_path: str) -> str:
         metadata = entity.metadata or {}
