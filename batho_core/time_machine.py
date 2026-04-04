@@ -42,6 +42,12 @@ from batho_core.utils.patch_errors import (
 
 logger = get_logger(__name__, component="time_machine")
 
+
+def _get_serialization_config() -> dict[str, Any]:
+    """Get BSG serialization config from cached config."""
+    return get_config_cached().get("bsg", {}).get("serialization", {})
+
+
 # Backward compatibility for legacy tests/mocks that patch
 # batho_core.time_machine.RepoMap.
 RepoMap = BSGMap
@@ -800,7 +806,7 @@ def incremental_patch(
 
             # Reconstruct base graph and bsg map
             base_graph = InMemoryGraph.from_dict(base_snapshot["graph"])
-            base_bsg = BSGMap.from_dict(base_snapshot["bsg"])
+            base_bsg = BSGMap.from_dict(base_snapshot["bsg"], serialization_config=_get_serialization_config())
             base_bsg._root = base_snapshot["root"]  # Set the root path
 
             # Initialize updater

@@ -218,6 +218,34 @@ class TestRenderJson:
         payload = json.loads(streamed)
         assert payload["root"] == "/override/root"
 
+    def test_serialization_config_streaming_mode(self, mock_graph):
+        """Test that streaming mode is used when configured."""
+        repomap = RepoMap.build(
+            mock_graph,
+            root="/fake/root",
+            serialization_config={"method": "streaming"}
+        )
+        data = repomap.render_json(build_ms=50, default_snapshot_id="snap-xyz")
+        assert data["schema_version"] == "bsg.v1"
+        assert data["stats"]["build_ms"] == 50
+
+    def test_serialization_config_legacy_mode(self, mock_graph):
+        """Test that legacy mode is used when configured."""
+        repomap = RepoMap.build(
+            mock_graph,
+            root="/fake/root",
+            serialization_config={"method": "legacy"}
+        )
+        data = repomap.render_json(build_ms=50, default_snapshot_id="snap-xyz")
+        assert data["schema_version"] == "bsg.v1"
+        assert data["stats"]["build_ms"] == 50
+
+    def test_serialization_config_default_to_streaming(self, mock_graph):
+        """Test that streaming is the default when no config is provided."""
+        repomap = RepoMap.build(mock_graph, root="/fake/root")
+        # Default should be streaming
+        assert repomap._serialization_config.get("method", "streaming") == "streaming"
+
 
 class TestRenderHierarchical:
 

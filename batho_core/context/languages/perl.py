@@ -11,14 +11,16 @@ Capture coverage:
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..extractor import ASTExtractor
 
 
 class PerlExtractor(ASTExtractor):
     """Tree-sitter based extractor for Perl source files."""
 
-    def __init__(self) -> None:
-        super().__init__("perl")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("perl", parsing_config)
 
     def _query_source(self) -> str:
         return r"""

@@ -85,6 +85,11 @@ def _ensure_ctn_dir(root: Path) -> Path:
     return ctn_dir
 
 
+def _get_serialization_config() -> dict[str, Any]:
+    """Get BSG serialization config from cached config."""
+    return get_config_cached().get("bsg", {}).get("serialization", {})
+
+
 def _extract_change_paths(changes: Iterable[Any]) -> list[str]:
     paths: list[str] = []
     seen: set[str] = set()
@@ -728,7 +733,7 @@ def cmd_index(args: argparse.Namespace) -> int:
                 if diff_entries is not None:
                     if not diff_entries:
                         graph = InMemoryGraph.from_dict(base_snapshot.get("graph", {}))
-                        bsg_map = BSGMap.build(graph, root=str(root))
+                        bsg_map = BSGMap.build(graph, root=str(root), serialization_config=_get_serialization_config())
                         incremental_stats = {
                             "incremental": True,
                             "base_snapshot_id": base_snapshot_id,
@@ -766,7 +771,7 @@ def cmd_index(args: argparse.Namespace) -> int:
                                 graph = InMemoryGraph.from_dict(
                                     patched_snapshot.get("graph", {})
                                 )
-                                bsg_map = BSGMap.build(graph, root=str(root))
+                                bsg_map = BSGMap.build(graph, root=str(root), serialization_config=_get_serialization_config())
                                 incremental_stats = {
                                     "incremental": True,
                                     "base_snapshot_id": base_snapshot_id,
@@ -828,7 +833,7 @@ def cmd_index(args: argparse.Namespace) -> int:
             max_file_size_kb=args.max_file_size_kb,
             verbose=args.verbose,
         )
-        bsg_map = BSGMap.build(graph, root=str(root))
+        bsg_map = BSGMap.build(graph, root=str(root), serialization_config=_get_serialization_config())
 
     if not graph.entities:
         print("⚠️  No entities extracted. Check source files and ignore patterns.")
@@ -1347,7 +1352,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
     patch_start = time.perf_counter()
     _reindex_files(root, files, indexer, graph)
 
-    bsg_map = BSGMap.build(graph, root=str(root))
+    bsg_map = BSGMap.build(graph, root=str(root), serialization_config=_get_serialization_config())
     versioned_dir = ctn_dir / current_id
     graph_path = versioned_dir / "graph.json"
     bsg_path = versioned_dir / "bsg.json"
@@ -1915,7 +1920,7 @@ def cmd_bsg(args: argparse.Namespace) -> int:
         print("❌ Current graph.json missing or invalid")
         return 1
 
-    bsg_map = BSGMap.build(graph, root=str(root))
+    bsg_map = BSGMap.build(graph, root=str(root), serialization_config=_get_serialization_config())
 
     # Render based on mode
     try:

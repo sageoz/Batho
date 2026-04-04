@@ -49,6 +49,15 @@ bsg:
     path: ~/.batho/ast_cache.db
     max_size_mb: 1024
     ttl_days: 30
+  serialization:
+    method: streaming
+    compression: false
+    batch_size: 1000
+  parsing:
+    error_recovery: true
+    partial_parsing: false
+    max_file_size_mb: 10
+    skip_comments: false
 
 webhook:
   enabled: false

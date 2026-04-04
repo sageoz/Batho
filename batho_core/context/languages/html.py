@@ -27,8 +27,8 @@ from ..schema import Entity, EntityType, Relationship, RelationshipType
 class HTMLExtractor(MarkupConfigExtractor):
     """Extractor for HTML files."""
 
-    def __init__(self) -> None:
-        super().__init__("html")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("html", parsing_config)
 
     def _extract_elements(
         self,

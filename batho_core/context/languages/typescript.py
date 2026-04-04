@@ -13,6 +13,8 @@ Capture coverage:
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..extractor import ASTExtractor
 from ._common import CommonQueries
 
@@ -20,8 +22,8 @@ from ._common import CommonQueries
 class TypeScriptExtractor(ASTExtractor):
     """Tree-sitter based extractor for TypeScript source files."""
 
-    def __init__(self) -> None:
-        super().__init__("typescript")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("typescript", parsing_config)
 
     def _query_source(self) -> str:
         # Use common entry point patterns (shared with JavaScript)

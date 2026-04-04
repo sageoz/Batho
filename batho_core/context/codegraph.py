@@ -498,6 +498,11 @@ class CodeGraphIndexer:
                 bsg_ignore_cfg.get("file") if bsg_ignore_cfg.get("enabled") else None
             )
 
+            # Set parsing config for all extractors
+            from .languages.registry import set_parsing_config
+            bsg_parsing_cfg = bsg_cfg.get("parsing", {})
+            set_parsing_config(bsg_parsing_cfg)
+
             ignore_spec = _load_ignore_spec(
                 root_path,
                 extra_patterns=cfg["indexer"].get("ignore_patterns"),

@@ -69,6 +69,7 @@ class BSGMap:
         _root: Absolute workspace root used to normalise all paths at build time.
         _by_file: Mapping of relative_file_path → list[Entity] sorted by start_line.
         _dependencies: Mapping of relative_file_path → list[dep_module_or_rel_path].
+        _serialization_config: Config dict for serialization method selection.
     """
 
     _root: str = field(default="", repr=False)
@@ -76,6 +77,7 @@ class BSGMap:
     _dependencies: dict[str, list[str]] = field(default_factory=dict, repr=False)
     _relationships: list[Any] = field(default_factory=list, repr=False)
     _serialized_bsg: dict[str, Any] | None = field(default=None, repr=False)
+    _serialization_config: dict[str, Any] = field(default_factory=dict, repr=False)
     _logger: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -97,7 +99,7 @@ class BSGMap:
             changes: List of FileChange objects representing what changed
             graph: Updated InMemoryGraph with the changes applied
         """
-        rebuilt = BSGMap.build(graph=graph, root=self._root)
+        rebuilt = BSGMap.build(graph=graph, root=self._root, serialization_config=self._serialization_config)
         self._by_file = rebuilt._by_file
         self._dependencies = rebuilt._dependencies
         self._relationships = rebuilt._relationships
@@ -115,12 +117,13 @@ class BSGMap:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "BSGMap":
+    def from_dict(cls, data: dict[str, Any], serialization_config: dict[str, Any] | None = None) -> "BSGMap":
         """
         Reconstruct a BSGMap from serialized data.
 
         Args:
             data: Dict from render_json() or snapshot
+            serialization_config: Optional serialization config dict.
 
         Returns:
             Reconstructed BSGMap instance
@@ -160,53 +163,37 @@ class BSGMap:
                 entities.sort(key=lambda e: e.start_line)
 
             serialized_bsg = data
-            return cls(
-                _root=root_value,
-                _by_file=by_file,
-                _dependencies=dependencies,
-                _relationships=[],
-                _serialized_bsg=serialized_bsg,
-            )
-
-        # Legacy fallback payload
-        dependencies = data.get("dependencies", {}) or {}
-        for file_path, entities_data in (data.get("files", {}) or {}).items():
-            entities: list[Entity] = []
-            for ent_data in entities_data:
-                type_str = str(ent_data.get("type", "VARIABLE")).upper()
-                entity_type = (
-                    EntityType[type_str]
-                    if type_str in EntityType.__members__
-                    else EntityType.VARIABLE
-                )
-                lines = ent_data.get("lines", [0, 0])
-                start_line = int(lines[0] if isinstance(lines, list) and lines else 0)
-                end_line = int(lines[1] if isinstance(lines, list) and len(lines) > 1 else start_line)
-                metadata: dict[str, Any] = {}
-                if ent_data.get("docstring"):
-                    metadata["docstring"] = ent_data.get("docstring")
-                entity = Entity(
-                    type=entity_type,
-                    name=str(ent_data.get("name", "")),
-                    file=file_path,
-                    start_line=start_line,
-                    end_line=end_line,
-                    signature=ent_data.get("signature"),
-                    metadata=metadata,
-                )
-                entities.append(entity)
-            by_file[file_path] = entities
+        else:
+            # Legacy format
+            for file_path, entities_data in data.items():
+                if not isinstance(entities_data, list):
+                    continue
+                entities = [
+                    Entity(
+                        type=EntityType.VARIABLE,
+                        name=str(e.get("name", "")),
+                        file=file_path,
+                        start_line=int(e.get("start_line", 0) or 0),
+                        end_line=int(e.get("end_line", 0) or 0),
+                        signature=e.get("signature"),
+                        metadata=dict(e.get("metadata", {}) or {}),
+                    )
+                    for e in entities_data
+                    if isinstance(e, dict)
+                ]
+                by_file[file_path] = entities
 
         return cls(
             _root=root_value,
             _by_file=by_file,
             _dependencies=dependencies,
             _relationships=[],
-            _serialized_bsg=None,
+            _serialized_bsg=serialized_bsg,
+            _serialization_config=serialization_config or {},
         )
 
     @classmethod
-    def build(cls, graph: "object", root: str) -> "BSGMap":
+    def build(cls, graph: "object", root: str, serialization_config: dict[str, Any] | None = None) -> "BSGMap":
         """
         Build a BSGMap from an InMemoryGraph.
 
@@ -217,6 +204,7 @@ class BSGMap:
         Args:
             graph: An InMemoryGraph populated by CodeGraphIndexer.
             root: Absolute workspace root (output of ``Path.cwd().resolve()``).
+            serialization_config: Optional serialization config dict.
 
         Returns:
             A fresh BSGMap instance with relative-path keys.
@@ -274,6 +262,7 @@ class BSGMap:
             _by_file=sorted_map,
             _dependencies=sorted_deps,
             _relationships=list(graph.relationships),
+            _serialization_config=serialization_config or {},
         )
         instance._logger.debug(
             "bsg_built",
@@ -725,6 +714,22 @@ class BSGMap:
         Returns:
             JSON-serialisable bsg.v1 payload.
         """
+        # Check serialization config to determine method
+        method = self._serialization_config.get("method", "streaming")
+        
+        if method == "streaming":
+            # For streaming mode, we need to materialize the full dict from the streaming generator
+            # This maintains the API contract while using streaming internally
+            chunks = []
+            for chunk in self.render_json_streaming(
+                build_ms=build_ms,
+                default_snapshot_id=default_snapshot_id,
+                default_service_tag=default_service_tag,
+            ):
+                chunks.append(chunk)
+            return json.loads("".join(chunks))
+        
+        # Legacy mode - use original implementation
         if (
             self._serialized_bsg is not None
             and build_ms is None

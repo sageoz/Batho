@@ -15,14 +15,16 @@ methods are functions with a receiver parameter.
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..extractor import ASTExtractor
 
 
 class GoExtractor(ASTExtractor):
     """Tree-sitter based extractor for Go source files."""
 
-    def __init__(self) -> None:
-        super().__init__("go")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("go", parsing_config)
 
     def _query_source(self) -> str:
         return r"""

@@ -17,14 +17,16 @@ additional type annotations and strict typing features.
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..extractor import ASTExtractor
 
 
 class HackExtractor(ASTExtractor):
     """Tree-sitter based extractor for Hack source files."""
 
-    def __init__(self) -> None:
-        super().__init__("hack")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("hack", parsing_config)
 
     def _query_source(self) -> str:
         return r"""

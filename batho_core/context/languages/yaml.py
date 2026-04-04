@@ -30,8 +30,8 @@ except ImportError:
 class YAMLExtractor(MarkupConfigExtractor):
     """Extractor for YAML configuration files."""
 
-    def __init__(self) -> None:
-        super().__init__("yaml")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("yaml", parsing_config)
 
     def _extract_elements(
         self,

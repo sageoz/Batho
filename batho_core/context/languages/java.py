@@ -12,14 +12,16 @@ Capture coverage:
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..extractor import ASTExtractor
 
 
 class JavaExtractor(ASTExtractor):
     """Tree-sitter based extractor for Java source files."""
 
-    def __init__(self) -> None:
-        super().__init__("java")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("java", parsing_config)
 
     def _query_source(self) -> str:
         return r"""
