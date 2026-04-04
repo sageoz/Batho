@@ -36,6 +36,20 @@ schemas:
   index_metadata: index-metadata.v1
   file_cache: file-cache.v1
 
+bsg:
+  parallel:
+    enabled: true
+    max_workers: 16
+    chunk_size: 50
+  ignore:
+    enabled: true
+    file: .bathoignore
+  cache:
+    enabled: true
+    path: ~/.batho/ast_cache.db
+    max_size_mb: 1024
+    ttl_days: 30
+
 webhook:
   enabled: false
   server:

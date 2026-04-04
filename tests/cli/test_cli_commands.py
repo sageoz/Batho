@@ -8,8 +8,10 @@ from pathlib import Path
 import pytest
 
 from batho import cmd_index, cmd_invalidate, cmd_patch, cmd_stats, cmd_webhook
+from batho_core.config import get_config_cached
 from batho_core.context.bsg_map import BSGMap
 from batho_core.context.codegraph import InMemoryGraph
+from batho_core.context.incremental import GitDiffEntry
 from batho_core.context.schema import Entity, EntityType
 from batho_core.time_machine import FileChangeTracker, create_snapshot
 
@@ -185,6 +187,163 @@ class TestCmdIndex:
         overview = overview_path.read_text(encoding="utf-8")
         assert "Evolution Ledger Insights" in overview
         assert "Don't patch without a valid base snapshot" in overview
+
+    def test_index_auto_incremental_reuses_snapshot_when_no_git_changes(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        root = tmp_path / "repo"
+        root.mkdir()
+        src = root / "a.py"
+        src.write_text("def alpha():\n    return 1\n", encoding="utf-8")
+
+        ctn_dir = root / ".ctn"
+        ctn_dir.mkdir()
+
+        graph = InMemoryGraph()
+        graph.add_entity(
+            Entity(
+                type=EntityType.FUNCTION,
+                name="alpha",
+                file="a.py",
+                start_line=1,
+                end_line=2,
+                metadata={"language": "python"},
+            )
+        )
+        bsg_map = BSGMap.build(graph, root=str(root))
+        snapshot_id = create_snapshot(ctn_dir, root, graph, bsg_map, label="base")
+
+        monkeypatch.setattr(
+            "batho.get_changed_file_status_since",
+            lambda *_args, **_kwargs: [],
+        )
+
+        args = argparse.Namespace(
+            root=str(root),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=False,
+            full=False,
+            base_snapshot=snapshot_id,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        result = cmd_index(args)
+        assert result == 0
+
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        entry = index_payload.get("indexes", {}).get(current_id, {})
+        assert entry.get("stats", {}).get("incremental") is True
+        assert entry.get("stats", {}).get("changes_applied") == 0
+
+    def test_index_auto_incremental_applies_patch_for_git_changes(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        root = tmp_path / "repo"
+        root.mkdir()
+        src = root / "a.py"
+        src.write_text("def alpha():\n    return 1\n", encoding="utf-8")
+
+        ctn_dir = root / ".ctn"
+        ctn_dir.mkdir()
+
+        graph = InMemoryGraph()
+        graph.add_entity(
+            Entity(
+                type=EntityType.FUNCTION,
+                name="alpha",
+                file="a.py",
+                start_line=1,
+                end_line=2,
+                metadata={"language": "python"},
+            )
+        )
+        bsg_map = BSGMap.build(graph, root=str(root))
+        snapshot_id = create_snapshot(ctn_dir, root, graph, bsg_map, label="base")
+
+        monkeypatch.setattr(
+            "batho.get_changed_file_status_since",
+            lambda *_args, **_kwargs: [GitDiffEntry(status="M", path="a.py")],
+        )
+        monkeypatch.setattr(
+            "batho.incremental_patch",
+            lambda *_args, **_kwargs: {
+                "success": True,
+                "new_snapshot_id": snapshot_id,
+                "applied_changes": 1,
+            },
+        )
+
+        args = argparse.Namespace(
+            root=str(root),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=False,
+            full=False,
+            base_snapshot=snapshot_id,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        result = cmd_index(args)
+        assert result == 0
+
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        entry = index_payload.get("indexes", {}).get(current_id, {})
+        assert entry.get("stats", {}).get("incremental") is True
+        assert entry.get("stats", {}).get("changes_applied") == 1
+
+    def test_index_streaming_serialization_mode(self, simple_python_repo: Path, monkeypatch):
+        monkeypatch.setenv("BATHO_BSG_SERIALIZATION_METHOD", "streaming")
+        get_config_cached.cache_clear()
+
+        args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            full=False,
+            base_snapshot=None,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        result = cmd_index(args)
+        assert result == 0
+
+        ctn_dir = simple_python_repo / ".ctn"
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        bsg_payload = json.loads((ctn_dir / current_id / "bsg.json").read_text(encoding="utf-8"))
+        assert "nodes" in bsg_payload
+        assert "edges" in bsg_payload
+        assert isinstance(bsg_payload.get("quality_warnings"), list)
+        get_config_cached.cache_clear()
 
 
 # ---------------------------------------------------------------------------

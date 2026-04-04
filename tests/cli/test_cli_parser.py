@@ -34,8 +34,17 @@ class TestBuildParser:
         assert args.max_workers == 0
         assert args.max_file_size_kb is None
         assert args.force is False
+        assert args.full is False
+        assert args.base_snapshot is None
         assert args.metrics_output is None
         assert args.verbose is False
+
+    def test_index_full_and_base_snapshot(self, parser):
+        args = parser.parse_args(
+            ["index", "--root", "/tmp", "--full", "--base-snapshot", "snap-123"]
+        )
+        assert args.full is True
+        assert args.base_snapshot == "snap-123"
 
     def test_index_snapshot(self, parser):
         args = parser.parse_args(["index", "--root", "/tmp", "--snapshot", "--snapshot-label", "v1"])

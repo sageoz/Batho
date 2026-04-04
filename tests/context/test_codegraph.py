@@ -11,8 +11,9 @@ import pytest
 from batho_core.context.codegraph import (
     CodeGraphIndexer,
     InMemoryGraph,
-    _FileStateCache,
 )
+from batho_core.context.cache import ASTCache
+from batho_core.context.symbol_index import SymbolIndex
 from batho_core.utils.file_io import _read_file_content
 from batho_core.utils.hash import _calculate_shannon_entropy, _is_binary
 from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
@@ -224,56 +225,132 @@ class TestInMemoryGraph:
 
 
 # ---------------------------------------------------------------------------
-# _FileStateCache
+# ---------------------------------------------------------------------------
+# ASTCache
 # ---------------------------------------------------------------------------
 
 
-class TestFileStateCache:
-    def test_save_and_load(self, tmp_path: Path):
-        cache_path = tmp_path / "cache.json"
-        cache = _FileStateCache(cache_path)
-        cache.update("src/main.py", 1234.0, "abc123")
-        cache.save()
-
-        cache2 = _FileStateCache(cache_path)
-        assert cache2.is_cached("src/main.py", "abc123")
-
-    def test_is_cached_miss(self, tmp_path: Path):
-        cache = _FileStateCache(tmp_path / "cache.json")
-        assert not cache.is_cached("missing.py", "hash")
-
-    def test_invalidate(self, tmp_path: Path):
-        cache = _FileStateCache(tmp_path / "cache.json")
-        cache.update("a.py", 1.0, "h1")
-        assert cache.is_cached("a.py", "h1")
-        cache.invalidate("a.py")
-        assert not cache.is_cached("a.py", "h1")
-
-    def test_path_normalization(self, tmp_path: Path):
-        root = tmp_path / "repo"
-        root.mkdir()
-        cache = _FileStateCache(tmp_path / "cache.json", root=root)
-        abs_path = str(root / "src" / "main.py")
-        cache.update(abs_path, 1.0, "hash1")
-        assert cache.is_cached(abs_path, "hash1")
-
-    def test_corrupted_checksum(self, tmp_path: Path):
-        cache_path = tmp_path / "cache.json"
-        cache_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": "file-cache.v1",
-                    "files": {"a.py": {"mtime": 1.0, "sha256": "h1"}},
-                    "_checksum": "invalid_checksum",
-                }
+class TestASTCache:
+    def test_cache_and_retrieve(self, tmp_path: Path):
+        cache_path = str(tmp_path / "cache.db")
+        cache = ASTCache(cache_path=cache_path)
+        
+        # Cache some entities
+        entities = [
+            Entity(
+                id="test_entity",
+                type=EntityType.FUNCTION,
+                name="test_func",
+                file="test.py",
+                line=1,
+                start_line=1,
+                end_line=10,
             )
+        ]
+        cache.cache_entities(
+            "test.py", "hash123", entities, 1234.0, 100, ttl_days=30
         )
-        cache = _FileStateCache(cache_path)
-        # Should not load corrupted data
-        assert not cache.is_cached("a.py", "h1")
-        backups = list(tmp_path.glob("cache.json.corrupt.*"))
-        assert backups
-        assert not cache_path.exists()
+        
+        # Retrieve them
+        cached = cache.get_cached_entities("test.py", "hash123", 1234.0, 100)
+        assert cached is not None
+        assert len(cached) == 1
+        assert cached[0].name == "test_func"
+
+    def test_cache_miss_wrong_hash(self, tmp_path: Path):
+        cache_path = str(tmp_path / "cache.db")
+        cache = ASTCache(cache_path=cache_path)
+        
+        entities = [
+            Entity(
+                id="test_entity",
+                type=EntityType.FUNCTION,
+                name="test_func",
+                file="test.py",
+                line=1,
+                start_line=1,
+                end_line=10,
+            )
+        ]
+        cache.cache_entities(
+            "test.py", "hash123", entities, 1234.0, 100, ttl_days=30
+        )
+        
+        # Different hash should miss
+        cached = cache.get_cached_entities("test.py", "hash456", 1234.0, 100)
+        assert cached is None
+
+    def test_cache_miss_mtime_mismatch(self, tmp_path: Path):
+        cache_path = str(tmp_path / "cache.db")
+        cache = ASTCache(cache_path=cache_path)
+        
+        entities = [
+            Entity(
+                id="test_entity",
+                type=EntityType.FUNCTION,
+                name="test_func",
+                file="test.py",
+                line=1,
+                start_line=1,
+                end_line=10,
+            )
+        ]
+        cache.cache_entities(
+            "test.py", "hash123", entities, 1234.0, 100, ttl_days=30
+        )
+        
+        # Different mtime should miss
+        cached = cache.get_cached_entities("test.py", "hash123", 5678.0, 100)
+        assert cached is None
+
+    def test_cache_invalidate(self, tmp_path: Path):
+        cache_path = str(tmp_path / "cache.db")
+        cache = ASTCache(cache_path=cache_path)
+        
+        entities = [
+            Entity(
+                id="test_entity",
+                type=EntityType.FUNCTION,
+                name="test_func",
+                file="test.py",
+                line=1,
+                start_line=1,
+                end_line=10,
+            )
+        ]
+        cache.cache_entities(
+            "test.py", "hash123", entities, 1234.0, 100, ttl_days=30
+        )
+        
+        # Invalidate
+        cache.invalidate_cache(pattern="test.py")
+        
+        # Should miss after invalidation
+        cached = cache.get_cached_entities("test.py", "hash123", 1234.0, 100)
+        assert cached is None
+
+    def test_cache_stats(self, tmp_path: Path):
+        cache_path = str(tmp_path / "cache.db")
+        cache = ASTCache(cache_path=cache_path)
+        
+        entities = [
+            Entity(
+                id="test_entity",
+                type=EntityType.FUNCTION,
+                name="test_func",
+                file="test.py",
+                line=1,
+                start_line=1,
+                end_line=10,
+            )
+        ]
+        cache.cache_entities(
+            "test.py", "hash123", entities, 1234.0, 100, ttl_days=30
+        )
+        
+        stats = cache.get_cache_stats()
+        assert stats["entry_count"] == 1
+        assert stats["total_size_mb"] >= 0
 
 
 # ---------------------------------------------------------------------------
@@ -283,9 +360,9 @@ class TestFileStateCache:
 
 class TestCodeGraphIndexer:
     def test_build_graph_simple_python(self, simple_python_repo: Path, tmp_path: Path):
-        cache_path = tmp_path / "cache.json"
+        cache_path = str(tmp_path / "cache.db")
         indexer = CodeGraphIndexer(
-            cache_path=str(cache_path), root=str(simple_python_repo)
+            cache_path=cache_path, root=str(simple_python_repo)
         )
         graph = indexer.build_graph(root=str(simple_python_repo))
         assert len(graph.entities) > 0
@@ -293,15 +370,15 @@ class TestCodeGraphIndexer:
 
     def test_build_graph_caches(self, simple_python_repo: Path, tmp_path: Path):
         """Second run should hit cache entries."""
-        cache_path = tmp_path / "cache.json"
+        cache_path = str(tmp_path / "cache.db")
         indexer = CodeGraphIndexer(
-            cache_path=str(cache_path), root=str(simple_python_repo)
+            cache_path=cache_path, root=str(simple_python_repo)
         )
         graph1 = indexer.build_graph(root=str(simple_python_repo))
         stats1 = indexer.stats
 
         indexer2 = CodeGraphIndexer(
-            cache_path=str(cache_path), root=str(simple_python_repo)
+            cache_path=cache_path, root=str(simple_python_repo)
         )
         graph2 = indexer2.build_graph(root=str(simple_python_repo))
         stats2 = indexer2.stats
@@ -311,17 +388,17 @@ class TestCodeGraphIndexer:
     def test_build_graph_empty_dir(self, tmp_path: Path):
         root = tmp_path / "empty"
         root.mkdir()
-        cache_path = tmp_path / "cache.json"
-        indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
+        cache_path = str(tmp_path / "cache.db")
+        indexer = CodeGraphIndexer(cache_path=cache_path, root=str(root))
         graph = indexer.build_graph(root=str(root))
         assert len(graph.entities) == 0
 
     def test_build_graph_with_extensions_filter(
         self, simple_python_repo: Path, tmp_path: Path
     ):
-        cache_path = tmp_path / "cache.json"
+        cache_path = str(tmp_path / "cache.db")
         indexer = CodeGraphIndexer(
-            cache_path=str(cache_path), root=str(simple_python_repo)
+            cache_path=cache_path, root=str(simple_python_repo)
         )
         graph = indexer.build_graph(root=str(simple_python_repo), extensions=[".py"])
         # Should only index .py files
@@ -329,15 +406,34 @@ class TestCodeGraphIndexer:
             assert e.file.endswith(".py") or not Path(e.file).suffix
 
     def test_invalidate(self, tmp_path: Path):
-        cache_path = tmp_path / "cache.json"
-        indexer = CodeGraphIndexer(cache_path=str(cache_path))
-        indexer._cache.update("test.py", 1.0, "hash1")
-        indexer._cache.save()
+        cache_path = str(tmp_path / "cache.db")
+        indexer = CodeGraphIndexer(cache_path=cache_path)
+        
+        # Cache some entities
+        entities = [
+            Entity(
+                id="test_entity",
+                type=EntityType.FUNCTION,
+                name="test_func",
+                file="test.py",
+                line=1,
+                start_line=1,
+                end_line=10,
+            )
+        ]
+        indexer._cache.cache_entities(
+            "test.py", "hash123", entities, 1.0, 100, ttl_days=30
+        )
+        
+        # Invalidate
         indexer.invalidate("test.py")
-        assert not indexer._cache.is_cached("test.py", "hash1")
+        
+        # Should not be cached after invalidation
+        cached = indexer._cache.get_cached_entities("test.py", "hash123", 1.0, 100)
+        assert cached is None
 
     def test_resolve_imports_uses_normalized_candidates(self, tmp_path: Path):
-        cache_path = tmp_path / "cache.json"
+        cache_path = str(tmp_path / "cache.db")
         indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(tmp_path))
 
         source = Entity(
@@ -383,6 +479,92 @@ class TestCodeGraphIndexer:
         assert target.id in import_targets
         assert "external/pkg" in import_targets
 
+    def test_resolve_imports_with_symbol_index(self, tmp_path: Path):
+        cache_path = str(tmp_path / "cache.db")
+        indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(tmp_path))
+
+        source = Entity(
+            type=EntityType.FUNCTION,
+            name="caller",
+            file="src/main.py",
+            start_line=1,
+            end_line=2,
+        )
+        target = Entity(
+            type=EntityType.MODULE,
+            name="pkg.api.client",
+            file="pkg/api/client.py",
+            start_line=1,
+            end_line=30,
+        )
+
+        graph = InMemoryGraph()
+        graph.add_entity(source)
+        graph.add_entity(target)
+        graph.add_relationship(
+            Relationship(
+                source_id=source.id,
+                target_id='unresolved:"pkg/api/client.py" as client',
+                type=RelationshipType.IMPORTS,
+            )
+        )
+
+        symbol_index = SymbolIndex.build(graph)
+        resolved = indexer._resolve_imports(graph, symbol_index=symbol_index)
+        import_targets = [
+            rel.target_id
+            for rel in resolved.relationships
+            if rel.source_id == source.id and rel.type == RelationshipType.IMPORTS
+        ]
+        assert import_targets == [target.id]
+
+    def test_resolve_imports_prefers_symbol_in_closest_source_path(self, tmp_path: Path):
+        cache_path = str(tmp_path / "cache.db")
+        indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(tmp_path))
+
+        source = Entity(
+            type=EntityType.FUNCTION,
+            name="caller",
+            file="pkg/beta/main.py",
+            start_line=1,
+            end_line=2,
+        )
+        alpha_target = Entity(
+            type=EntityType.MODULE,
+            name="pkg.alpha.client",
+            file="pkg/alpha/client.py",
+            start_line=1,
+            end_line=30,
+        )
+        beta_target = Entity(
+            type=EntityType.MODULE,
+            name="pkg.beta.client",
+            file="pkg/beta/client.py",
+            start_line=1,
+            end_line=30,
+        )
+
+        graph = InMemoryGraph()
+        graph.add_entity(source)
+        graph.add_entity(alpha_target)
+        graph.add_entity(beta_target)
+        graph.add_relationship(
+            Relationship(
+                source_id=source.id,
+                target_id='unresolved:"client"',
+                type=RelationshipType.IMPORTS,
+            )
+        )
+
+        symbol_index = SymbolIndex.build(graph)
+        resolved = indexer._resolve_imports(graph, symbol_index=symbol_index)
+        import_targets = [
+            rel.target_id
+            for rel in resolved.relationships
+            if rel.source_id == source.id and rel.type == RelationshipType.IMPORTS
+        ]
+        assert import_targets == [beta_target.id]
+
     def test_build_graph_applies_bsg_rules_from_config(
         self, simple_python_repo: Path, tmp_path: Path, monkeypatch
     ):
@@ -404,7 +586,7 @@ rules:
 
         monkeypatch.chdir(tmp_path)
 
-        cache_path = tmp_path / "cache.json"
+        cache_path = tmp_path / "cache.db"
         indexer = CodeGraphIndexer(
             cache_path=str(cache_path), root=str(simple_python_repo)
         )
@@ -430,7 +612,7 @@ def get_user_endpoint(user_id: str):
             encoding="utf-8",
         )
 
-        cache_path = tmp_path / "cache.json"
+        cache_path = tmp_path / "cache.db"
         indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
         graph = indexer.build_graph(root=str(root), extensions=[".py"])
 
@@ -459,7 +641,7 @@ class Child(Base):
             encoding="utf-8",
         )
 
-        cache_path = tmp_path / "cache.json"
+        cache_path = tmp_path / "cache.db"
         indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
         graph = indexer.build_graph(root=str(root), extensions=[".py"])
 

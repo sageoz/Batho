@@ -126,6 +126,69 @@ class PluginsConfig(BaseModel):
     overrides: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
 
 
+class BsgParallelConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    max_workers: int = Field(default=16, ge=1, le=32)
+    chunk_size: int = Field(default=50, ge=1)
+
+
+class BsgIgnoreConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    file: str = Field(default=".bathoignore")
+
+
+class BsgCacheConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    path: str = Field(default="~/.batho/ast_cache.db")
+    max_size_mb: int = Field(default=1024, ge=1)
+    ttl_days: int = Field(default=30, ge=1)
+
+
+class BsgIncrementalConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    fallback_to_full: bool = Field(default=True)
+    auto_detect_git: bool = Field(default=True)
+
+
+class BsgSymbolResolutionConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    fuzzy_matching: bool = Field(default=False)
+    cache_symbols: bool = Field(default=True)
+
+
+class BsgSerializationConfig(BaseModel):
+    method: str = Field(default="legacy")
+    compression: bool = Field(default=False)
+    batch_size: int = Field(default=1000, ge=1)
+
+    @field_validator("method")
+    @classmethod
+    def _validate_method(cls, value: str) -> str:  # noqa: B902
+        normalized = value.strip().lower()
+        if normalized not in {"legacy", "streaming"}:
+            return "legacy"
+        return normalized
+
+
+class BsgParsingConfig(BaseModel):
+    error_recovery: bool = Field(default=True)
+    partial_parsing: bool = Field(default=False)
+    max_file_size_mb: int = Field(default=10, ge=1)
+    skip_comments: bool = Field(default=False)
+
+
+class BsgConfig(BaseModel):
+    parallel: BsgParallelConfig = Field(default_factory=BsgParallelConfig)
+    ignore: BsgIgnoreConfig = Field(default_factory=BsgIgnoreConfig)
+    cache: BsgCacheConfig = Field(default_factory=BsgCacheConfig)
+    incremental: BsgIncrementalConfig = Field(default_factory=BsgIncrementalConfig)
+    symbol_resolution: BsgSymbolResolutionConfig = Field(
+        default_factory=BsgSymbolResolutionConfig
+    )
+    serialization: BsgSerializationConfig = Field(default_factory=BsgSerializationConfig)
+    parsing: BsgParsingConfig = Field(default_factory=BsgParsingConfig)
+
+
 class Config(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
@@ -136,6 +199,7 @@ class Config(BaseModel):
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     schemas: dict = Field(default_factory=dict)
     webhook: dict = Field(default_factory=dict)
+    bsg: BsgConfig = Field(default_factory=BsgConfig)
 
     @field_validator("logging")
     @classmethod
@@ -291,6 +355,44 @@ def get_config() -> Dict[str, Any]:
             "gitlab_token": None,
             "allowed_ips": [],
         },
+        "bsg": {
+            "parallel": {
+                "enabled": True,
+                "max_workers": 16,
+                "chunk_size": 50,
+            },
+            "ignore": {
+                "enabled": True,
+                "file": ".bathoignore",
+            },
+            "cache": {
+                "enabled": True,
+                "path": "~/.batho/ast_cache.db",
+                "max_size_mb": 1024,
+                "ttl_days": 30,
+            },
+            "incremental": {
+                "enabled": True,
+                "fallback_to_full": True,
+                "auto_detect_git": True,
+            },
+            "symbol_resolution": {
+                "enabled": True,
+                "fuzzy_matching": False,
+                "cache_symbols": True,
+            },
+            "serialization": {
+                "method": "legacy",
+                "compression": False,
+                "batch_size": 1000,
+            },
+            "parsing": {
+                "error_recovery": True,
+                "partial_parsing": False,
+                "max_file_size_mb": 10,
+                "skip_comments": False,
+            },
+        },
     }
 
     # Root config override from ./batho.yaml only
@@ -389,6 +491,86 @@ def get_config() -> Dict[str, Any]:
     env_audit_log_path = _env("BATHO_PATCH_AUDIT_LOG_PATH")
     if env_audit_log_path:
         base_cfg["patch"]["audit_log_path"] = env_audit_log_path
+
+    # BSG configuration environment variables
+    base_cfg["bsg"]["parallel"]["enabled"] = _env_bool(
+        "BATHO_BSG_PARALLEL_ENABLED", base_cfg["bsg"]["parallel"]["enabled"]
+    )
+    base_cfg["bsg"]["parallel"]["max_workers"] = _env_int(
+        "BATHO_BSG_MAX_WORKERS", base_cfg["bsg"]["parallel"]["max_workers"]
+    )
+    base_cfg["bsg"]["parallel"]["chunk_size"] = _env_int(
+        "BATHO_BSG_CHUNK_SIZE", base_cfg["bsg"]["parallel"]["chunk_size"]
+    )
+    base_cfg["bsg"]["ignore"]["enabled"] = _env_bool(
+        "BATHO_BSG_IGNORE_ENABLED", base_cfg["bsg"]["ignore"]["enabled"]
+    )
+    env_bathoignore_file = _env("BATHO_BSG_IGNORE_FILE")
+    if env_bathoignore_file:
+        base_cfg["bsg"]["ignore"]["file"] = env_bathoignore_file
+    base_cfg["bsg"]["cache"]["enabled"] = _env_bool(
+        "BATHO_BSG_CACHE_ENABLED", base_cfg["bsg"]["cache"]["enabled"]
+    )
+    env_cache_path = _env("BATHO_BSG_CACHE_PATH")
+    if env_cache_path:
+        base_cfg["bsg"]["cache"]["path"] = env_cache_path
+    base_cfg["bsg"]["cache"]["max_size_mb"] = _env_int(
+        "BATHO_BSG_CACHE_MAX_SIZE_MB", base_cfg["bsg"]["cache"]["max_size_mb"]
+    )
+    base_cfg["bsg"]["cache"]["ttl_days"] = _env_int(
+        "BATHO_BSG_CACHE_TTL_DAYS", base_cfg["bsg"]["cache"]["ttl_days"]
+    )
+    base_cfg["bsg"]["incremental"]["enabled"] = _env_bool(
+        "BATHO_BSG_INCREMENTAL_ENABLED",
+        base_cfg["bsg"]["incremental"]["enabled"],
+    )
+    base_cfg["bsg"]["incremental"]["fallback_to_full"] = _env_bool(
+        "BATHO_BSG_INCREMENTAL_FALLBACK_TO_FULL",
+        base_cfg["bsg"]["incremental"]["fallback_to_full"],
+    )
+    base_cfg["bsg"]["incremental"]["auto_detect_git"] = _env_bool(
+        "BATHO_BSG_INCREMENTAL_AUTO_DETECT_GIT",
+        base_cfg["bsg"]["incremental"]["auto_detect_git"],
+    )
+    base_cfg["bsg"]["symbol_resolution"]["enabled"] = _env_bool(
+        "BATHO_BSG_SYMBOL_RESOLUTION_ENABLED",
+        base_cfg["bsg"]["symbol_resolution"]["enabled"],
+    )
+    base_cfg["bsg"]["symbol_resolution"]["fuzzy_matching"] = _env_bool(
+        "BATHO_BSG_SYMBOL_RESOLUTION_FUZZY",
+        base_cfg["bsg"]["symbol_resolution"]["fuzzy_matching"],
+    )
+    base_cfg["bsg"]["symbol_resolution"]["cache_symbols"] = _env_bool(
+        "BATHO_BSG_SYMBOL_RESOLUTION_CACHE_SYMBOLS",
+        base_cfg["bsg"]["symbol_resolution"]["cache_symbols"],
+    )
+    env_serialization_method = _env("BATHO_BSG_SERIALIZATION_METHOD")
+    if env_serialization_method:
+        base_cfg["bsg"]["serialization"]["method"] = env_serialization_method
+    base_cfg["bsg"]["serialization"]["compression"] = _env_bool(
+        "BATHO_BSG_SERIALIZATION_COMPRESSION",
+        base_cfg["bsg"]["serialization"]["compression"],
+    )
+    base_cfg["bsg"]["serialization"]["batch_size"] = _env_int(
+        "BATHO_BSG_SERIALIZATION_BATCH_SIZE",
+        base_cfg["bsg"]["serialization"]["batch_size"],
+    )
+    base_cfg["bsg"]["parsing"]["error_recovery"] = _env_bool(
+        "BATHO_BSG_PARSING_ERROR_RECOVERY",
+        base_cfg["bsg"]["parsing"]["error_recovery"],
+    )
+    base_cfg["bsg"]["parsing"]["partial_parsing"] = _env_bool(
+        "BATHO_BSG_PARSING_PARTIAL",
+        base_cfg["bsg"]["parsing"]["partial_parsing"],
+    )
+    base_cfg["bsg"]["parsing"]["max_file_size_mb"] = _env_int(
+        "BATHO_BSG_PARSING_MAX_FILE_SIZE_MB",
+        base_cfg["bsg"]["parsing"]["max_file_size_mb"],
+    )
+    base_cfg["bsg"]["parsing"]["skip_comments"] = _env_bool(
+        "BATHO_BSG_PARSING_SKIP_COMMENTS",
+        base_cfg["bsg"]["parsing"]["skip_comments"],
+    )
 
     try:
         cfg = Config.model_validate(base_cfg)

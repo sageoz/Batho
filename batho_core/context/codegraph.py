@@ -2,9 +2,9 @@
 backend/context/codegraph.py — Production Code Graph Indexer.
 
 Improvements over prototype:
-- JSON-based file state cache (no SQLAlchemy/aiosqlite dependency)
-- mtime + SHA-256 hash check: skips unchanged files instantly (stat before hash)
-- Parallel file extraction using ThreadPoolExecutor (I/O-bound, thread-safe)
+- SQLite-based AST entity cache (stores extracted entities, not just file state)
+- AST entity caching: skips unchanged files entirely (no re-parsing)
+- Parallel file extraction using multiprocessing (CPU-bound, bypasses GIL)
 - Per-file exception isolation: one bad file never aborts the whole scan
 - Binary file detection and size guard
 - pathspec-based .gitignore / .bathoignore support
@@ -21,7 +21,6 @@ import json
 import math
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -37,11 +36,13 @@ from batho_core.utils.file_io import _read_file_content, read_file_bytes
 from batho_core.utils.hash import compute_bytes_hash
 from batho_core.utils.ignore import is_ignored, load_ignore_spec
 from batho_core.utils.logging import get_logger
-from batho_core.utils.file_lock import FileLock, FileLockError
 from batho_core.utils.memory_monitor import memory_monitor, force_garbage_collection
 
+from .cache import ASTCache
 from .extractor import ASTExtractor
+from .pipeline import build_graph_parallel
 from .schema import Entity, EntityType, Relationship, RelationshipType
+from .symbol_index import SymbolIndex
 
 # Binary detection is now handled in batho_core.utils.file_io
 
@@ -158,278 +159,6 @@ class InMemoryGraph:
 
     def __repr__(self) -> str:
         return f"InMemoryGraph(entities={len(self.entities)}, relationships={len(self.relationships)})"
-
-
-# ---------------------------------------------------------------------------
-# File state cache (JSON-based, replaces SQLAlchemy)
-# ---------------------------------------------------------------------------
-
-
-class _FileStateCache:
-    """
-    Lightweight JSON-based cache for file mtime + SHA-256 with atomic operations.
-
-    Structure: { "relative/path/to/file.py": {"mtime": float, "sha256": str} }
-
-    All keys are stored as paths relative to *root* so the JSON file is
-    portable and free of machine-specific absolute paths.
-
-    The mtime check short-circuits the SHA-256 computation for unchanged
-    files — stat() is orders of magnitude faster than hashing.
-
-    Thread-safe operations ensure cache consistency during parallel processing.
-    """
-
-    def __init__(self, cache_path: Path, root: Path | None = None) -> None:
-        self._path = cache_path
-        self._root = root  # workspace root for path normalisation
-        self._data: dict[str, dict[str, Any]] = {}
-        self._schema_version: str | None = None
-        self._checksum_valid: bool = True
-        self._lock = threading.RLock()  # Reentrant lock for nested operations
-        self._dirty = False  # Track if cache needs saving
-        self._file_lock = FileLock(
-            cache_path.with_suffix(".lock")
-        )  # File-level lock for disk operations
-        self.logger = get_logger(__name__, component="file_cache")
-        self._load()
-
-    def _load(self) -> None:
-        """Load cache from disk if it exists and is valid."""
-        if not self._path.exists():
-            return
-
-        with self._file_lock:
-            try:
-                # First read and validate checksum before loading full data
-                raw_content = self._path.read_text(encoding="utf-8")
-                raw = json.loads(raw_content)
-
-                if not isinstance(raw, dict) or "files" not in raw:
-                    # backward compatibility (flat mapping)
-                    self._data = raw if isinstance(raw, dict) else {}
-                    self._schema_version = raw.get("schema_version")
-                    return
-
-                # Validate checksum before accepting data
-                files = raw.get("files", {})
-                checksum = raw.get("_checksum")
-                if checksum:
-                    calc = compute_bytes_hash(
-                        json.dumps(files, sort_keys=True).encode("utf-8")
-                    )
-                    if checksum != calc:
-                        self._mark_corrupt("checksum_mismatch")
-                        return
-
-                # Checksum is valid, load the data
-                self._schema_version = raw.get("schema_version")
-                self._data = files
-
-            except (json.JSONDecodeError, OSError) as e:
-                self.logger.error(
-                    "cache_load_failed", cache_path=str(self._path), error=str(e)
-                )
-                self._mark_corrupt("read_failed")
-            except FileLockError as e:
-                self.logger.error(
-                    "cache_lock_failed", cache_path=str(self._path), error=str(e)
-                )
-                self._mark_corrupt("lock_failed")
-
-    def _mark_corrupt(self, reason: str) -> None:
-        self._checksum_valid = False
-        self._data = {}
-        try:
-            if self._path.exists():
-                timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                backup = self._path.with_name(f"{self._path.name}.corrupt.{timestamp}")
-                self._path.replace(backup)
-                get_logger(__name__, operation="index").warning(
-                    "cache_marked_corrupt",
-                    filepath=str(self._path),
-                    backup=str(backup),
-                    reason=reason,
-                )
-        except OSError as e:
-            get_logger(__name__, operation="index").error(
-                "cache_backup_failed", path=str(self._path), error=str(e)
-            )
-            # Try to delete the corrupt file if backup fails
-            try:
-                self._path.unlink()
-                get_logger(__name__, operation="index").info(
-                    "cache_corrupt_file_deleted", path=str(self._path)
-                )
-            except OSError:
-                get_logger(__name__, operation="index").warning(
-                    "cache_corrupt_file_cleanup_failed", path=str(self._path)
-                )
-
-    @property
-    def checksum_valid(self) -> bool:
-        return self._checksum_valid
-
-    def _normalise(self, filepath: str) -> str:
-        """Convert *filepath* to a relative key (no-op if already relative)."""
-        if self._root is None:
-            return filepath
-        try:
-            return Path(filepath).relative_to(self._root).as_posix()
-        except ValueError:
-            return filepath
-
-    def save(self) -> None:
-        """Save cache to disk atomically if dirty.
-
-        Thread-safe operation that only saves if cache has been modified.
-        Uses file locking to prevent corruption during concurrent access.
-        """
-        with self._lock:
-            if not self._dirty:
-                return  # No changes to save
-
-            # Acquire file lock for writing
-            try:
-                with self._file_lock:
-                    self._path.parent.mkdir(parents=True, exist_ok=True)
-                    payload = {
-                        "schema_version": get_config_cached().get(
-                            "file_cache_schema_version", "file-cache.v1"
-                        ),
-                        "files": self._data.copy(),  # Copy to avoid modification during save
-                        "_checksum": compute_bytes_hash(
-                            json.dumps(self._data, sort_keys=True).encode("utf-8")
-                        ),
-                    }
-                    tmp = self._path.with_suffix(".tmp")
-                    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-                    tmp.replace(self._path)  # Atomic rename
-                    self._dirty = False
-            except FileLockError as e:
-                self.logger.error(
-                    "cache_save_lock_failed", cache_path=str(self._path), error=str(e)
-                )
-                raise
-            except (OSError, json.JSONEncodeError) as e:
-                self.logger.error(
-                    "cache_save_failed", cache_path=str(self._path), error=str(e)
-                )
-                raise
-
-    def force_save(self) -> None:
-        """Force save cache regardless of dirty flag."""
-        with self._lock:
-            self._dirty = True
-            self.save()
-
-    def get_cache_stats(self) -> dict[str, Any]:
-        """Get cache statistics for monitoring."""
-        with self._lock:
-            return {
-                "entries": len(self._data),
-                "dirty": self._dirty,
-                "checksum_valid": self._checksum_valid,
-                "schema_version": self._schema_version,
-            }
-
-    def is_cached(self, filepath: str, content_hash: str) -> bool:
-        """Return True if filepath's stored hash matches content_hash.
-
-        Thread-safe atomic operation with mtime validation.
-        """
-        with self._lock:
-            entry = self._data.get(self._normalise(filepath))
-            if entry is None:
-                return False
-
-            # Validate mtime if available and file exists
-            if "mtime" in entry:
-                try:
-                    current_mtime = Path(filepath).stat().st_mtime
-                    cached_mtime = entry["mtime"]
-                    # If file was modified after cache entry, it's not cached
-                    if (
-                        abs(current_mtime - cached_mtime) > 1.0
-                    ):  # Allow 1 second tolerance
-                        self.logger.debug(
-                            "cache_mtime_mismatch",
-                            filepath=filepath,
-                            cached_mtime=cached_mtime,
-                            current_mtime=current_mtime,
-                        )
-                        return False
-                except OSError:
-                    # If we can't stat the file, it might not exist (common in tests)
-                    # In this case, just check the hash without mtime validation
-                    self.logger.debug("cache_stat_failed", filepath=filepath)
-                    pass
-
-            return entry.get("sha256") == content_hash
-
-    def update(
-        self, filepath: str, mtime: float, content_hash: str, size: int | None = None
-    ) -> None:
-        """Update cache entry for filepath.
-
-        Thread-safe atomic operation.
-        """
-        with self._lock:
-            entry_data = {"mtime": mtime, "sha256": content_hash}
-            if size is not None:
-                entry_data["size"] = size
-            self._data[self._normalise(filepath)] = entry_data
-            self._dirty = True
-
-    def invalidate(self, filepath: str) -> None:
-        """Remove cache entry for filepath.
-
-        Thread-safe atomic operation.
-        """
-        with self._lock:
-            key = self._normalise(filepath)
-            if key in self._data:
-                del self._data[key]
-                self._dirty = True
-
-    @contextmanager
-    def atomic_update(self, filepath: str):
-        """Context manager for atomic cache operations.
-
-        Usage:
-            with cache.atomic_update(filepath) as entry:
-                # Check if cached
-                cached = entry.get('cached', False)
-                # Do work...
-                # Update entry
-                entry.update({
-                    'mtime': mtime,
-                    'sha256': content_hash,
-                    'cached': True
-                })
-        """
-        key = self._normalise(filepath)
-        # Use a per-file lock to prevent race conditions while allowing concurrent access to different files
-        if not hasattr(self, "_file_locks"):
-            self._file_locks = {}
-
-        file_lock = self._file_locks.setdefault(key, threading.Lock())
-
-        with file_lock:
-            with self._lock:
-                entry = self._data.get(key, {}).copy()
-
-            yield entry
-
-            # Update the cache with modified entry under both locks
-            with self._lock:
-                if entry:
-                    self._data[key] = entry
-                    self._dirty = True
-                else:
-                    # Remove entry if empty
-                    self._data.pop(key, None)
-                    self._dirty = True
 
 
 # ---------------------------------------------------------------------------
@@ -649,8 +378,8 @@ class CodeGraphIndexer:
     Production code graph indexer for batho-v1.
 
     Features:
-    - mtime + SHA-256 hash caching: skips unchanged files without hashing
-    - Parallel extraction with ThreadPoolExecutor
+    - AST entity caching with SQLite: skips unchanged files entirely
+    - Parallel extraction with multiprocessing (bypasses GIL for CPU-bound parsing)
     - Per-file exception isolation
     - .gitignore + .bathoignore support via pathspec
     - Binary file detection and size guard
@@ -658,7 +387,7 @@ class CodeGraphIndexer:
 
     Usage::
 
-        indexer = CodeGraphIndexer(cache_path=".ctn/file_cache.json")
+        indexer = CodeGraphIndexer(cache_path="~/.batho/ast_cache.db")
         graph = indexer.build_graph(
             root="/path/to/repo",
             max_workers=8,
@@ -667,11 +396,11 @@ class CodeGraphIndexer:
     """
 
     def __init__(
-        self, cache_path: str = ".ctn/file_cache.json", root: str | None = None
+        self, cache_path: str = "~/.batho/ast_cache.db", root: str | None = None
     ) -> None:
         self.logger = get_logger(__name__, operation="index")
         root_path = Path(root).resolve() if root else None
-        self._cache = _FileStateCache(Path(cache_path), root=root_path)
+        self._cache = ASTCache(cache_path=cache_path)
         self._root: Path | None = root_path
         self.stats: Dict[str, Any] = {}
 
@@ -762,10 +491,18 @@ class CodeGraphIndexer:
                 else None
             )
 
+            # Load BSG configuration for ignore settings
+            bsg_cfg = cfg.get("bsg", {})
+            bsg_ignore_cfg = bsg_cfg.get("ignore", {})
+            bathoignore_path = (
+                bsg_ignore_cfg.get("file") if bsg_ignore_cfg.get("enabled") else None
+            )
+
             ignore_spec = _load_ignore_spec(
                 root_path,
                 extra_patterns=cfg["indexer"].get("ignore_patterns"),
                 ignore_files=cfg["indexer"].get("ignore_files"),
+                bathoignore_path=bathoignore_path,
             )
 
             # --- Collect files to process ---
@@ -845,158 +582,60 @@ class CodeGraphIndexer:
             else:
                 self.logger.error("file_processing_failed", **error_context)
 
-        def _process_file(
-            args: tuple[Path, str],
-        ) -> tuple[str, list[Entity], list[Relationship], bool] | None:
-            """Worker: size/binary guard, atomic cache check, parse, update cache."""
-
-            nonlocal errors
-            file_path, filepath = args
-
-            try:
-                stat_info = file_path.stat()
-                size = stat_info.st_size
-                current_mtime = stat_info.st_mtime
-            except OSError:
-                return None
-            if size > configured_max_file_size_kb * 1024:
-                self.logger.debug(
-                    "skipping_large_file", filepath=filepath, size_kb=size // 1024
-                )
-                return None
-
-            content = _read_file_content(filepath, configured_max_file_size_kb)
-            if content is None:
-                return None
-
-            content_hash = compute_bytes_hash(content)
-
-            # Single atomic operation for both cache check and update
-            with self._cache.atomic_update(filepath) as cache_entry:
-                from .languages.detector import default_detector
-                from .languages.registry import get_extractor as _registry_get_extractor
-
-                suffix = file_path.suffix.lower()
-                file_extractor: ASTExtractor | object | None
-                if extractor is not None:
-                    file_extractor = extractor
-                else:
-                    file_extractor = default_detector.get_extractor(
-                        file_path, content
-                    ) or _registry_get_extractor(suffix)
-                if file_extractor is None:
-                    return None
-
-                # Perform atomic cache validation and update
-                # Check if we have a cache hit with both hash and mtime validation
-                cached_mtime = cache_entry.get("mtime")
-                cached_hash = cache_entry.get("sha256")
-                cached_size = cache_entry.get("size")
-
-                # Atomic validation - check all conditions together
-                is_cached = (
-                    cached_hash == content_hash
-                    and cached_mtime is not None
-                    and cached_size == size
-                    and abs(current_mtime - cached_mtime)
-                    <= 1.0  # Allow 1 second tolerance
-                )
-
-                # Update cache entry atomically if needed
-                if not is_cached:
-                    cache_entry.update(
-                        {"mtime": current_mtime, "sha256": content_hash, "size": size}
-                    )
-                    self.logger.debug(
-                        "cache_updated",
-                        filepath=filepath,
-                        reason="hash_or_mtime_mismatch",
-                    )
-                else:
-                    self.logger.debug("cache_hit", filepath=filepath)
-
-                try:
-                    if not isinstance(file_extractor, ASTExtractor):
-                        return None
-                    entities, relationships = file_extractor.parse_file(
-                        filepath, content
-                    )
-                    return (filepath, entities, relationships, is_cached)
-                except Exception as exc:
-                    errors += 1
-                    _handle_file_error(filepath, exc, "parse")
-                    return None
-
         graph = InMemoryGraph()
         files_parsed = 0
         files_skipped = 0
         files_cached = 0
         start_ts = os.times().elapsed if hasattr(os, "times") else 0.0
 
-        # Process files with proper error handling and resource cleanup
-        pool = None
+        # Process files using multiprocessing pipeline
         try:
-            pool = ThreadPoolExecutor(max_workers=actual_workers)
-            futures = {pool.submit(_process_file, args): args for args in candidates}
+            results, parallel_errors = build_graph_parallel(
+                candidates,
+                configured_max_file_size_kb,
+                bsg_cfg,
+                extractor,
+            )
+            errors += parallel_errors
 
-            for future in as_completed(futures):
+            # Add results to graph
+            for filepath, entities, relationships, cached_hit in results:
                 try:
-                    result = future.result()
-                    if result is None:
-                        files_skipped += 1
-                        continue
-
-                    filepath, entities, relationships, cached_hit = result
-
-                    # Add entities and relationships with error handling
-                    try:
-                        for entity in entities:
-                            graph.add_entity(entity)
-                        for rel in relationships:
-                            graph.add_relationship(rel)
-                        files_parsed += 1
-                        if cached_hit:
-                            files_cached += 1
-                    except Exception as graph_error:
-                        _handle_file_error(filepath, graph_error, "graph_update")
-                        errors += 1
-                        files_skipped += 1
-
-                except Exception as future_error:
-                    _handle_file_error(
-                        "unknown_future", future_error, "future_processing"
-                    )
+                    for entity in entities:
+                        graph.add_entity(entity)
+                    for rel in relationships:
+                        graph.add_relationship(rel)
+                    files_parsed += 1
+                    if cached_hit:
+                        files_cached += 1
+                except Exception as graph_error:
+                    _handle_file_error(filepath, graph_error, "graph_update")
                     errors += 1
                     files_skipped += 1
-
         except Exception as pool_error:
-            self.logger.error("thread_pool_creation_failed", error=str(pool_error))
-            # Ensure cleanup even if pool creation failed partially
-            if pool is not None:
-                try:
-                    pool.shutdown(wait=False)  # Don't wait since we're in error state
-                except Exception as shutdown_error:
-                    self.logger.warning(
-                        "thread_pool_emergency_shutdown_failed",
-                        error=str(shutdown_error),
-                    )
+            self.logger.error("parallel_processing_failed", error=str(pool_error))
             raise
-        finally:
-            # Ensure proper cleanup of thread pool
-            if pool is not None:
-                try:
-                    pool.shutdown(wait=True)
-                except Exception as shutdown_error:
-                    self.logger.warning(
-                        "thread_pool_shutdown_failed", error=str(shutdown_error)
-                    )
 
-        try:
-            self._cache.save()
-        except Exception as exc:
-            self.logger.warning("cache_save_failed", error=str(exc))
+        # Cache cleanup: remove expired entries if cache is enabled
+        bsg_cache_cfg = bsg_cfg.get("cache", {})
+        if bsg_cache_cfg.get("enabled"):
+            try:
+                self._cache.cleanup_expired_cache()
+                max_size_mb = bsg_cache_cfg.get("max_size_mb", 1024)
+                self._cache.enforce_max_size(max_size_mb)
+            except Exception as exc:
+                self.logger.warning("cache_cleanup_failed", error=str(exc))
 
-        graph = self._resolve_imports(graph)
+        bsg_symbol_cfg = bsg_cfg.get("symbol_resolution", {})
+        symbol_resolution_enabled = bsg_symbol_cfg.get("enabled", True)
+        symbol_resolution_fuzzy = bool(bsg_symbol_cfg.get("fuzzy_matching", False))
+        symbol_index = SymbolIndex.build(graph) if symbol_resolution_enabled else None
+
+        graph = self._resolve_imports(
+            graph,
+            symbol_index=symbol_index,
+            fuzzy_matching=symbol_resolution_fuzzy,
+        )
         derived_hierarchy_edges = self._derive_hierarchy_relations(graph)
         derived_overrides_edges = self._derive_override_edges(graph)
 
@@ -1059,6 +698,9 @@ class CodeGraphIndexer:
             "relationship_count": len(graph.relationships),
             "elapsed_seconds": elapsed,
             "workers_used": actual_workers,
+            "symbol_resolution_enabled": bool(symbol_resolution_enabled),
+            "symbol_resolution_fuzzy": bool(symbol_resolution_fuzzy),
+            "symbol_index_size": int(symbol_index.size) if symbol_index else 0,
             "derived_hierarchy_edges": derived_hierarchy_edges,
             "derived_overrides_edges": derived_overrides_edges,
             "semantic_tags_added": int(semantic_stats.get("semantic_tags_added", 0)),
@@ -1130,28 +772,31 @@ class CodeGraphIndexer:
             self.logger.warning("index_file_failed", filepath=filepath, error=str(exc))
             return [], []
 
-        content_hash = hashlib.sha256(content).hexdigest()
-        try:
-            mtime = Path(filepath).stat().st_mtime
-            self._cache.update(filepath, mtime, content_hash)
-            self._cache.save()
-        except OSError:
-            pass
+        # Cache the extracted entities if cache is enabled
+        bsg_cache_cfg = get_config_cached().get("bsg", {}).get("cache", {})
+        if bsg_cache_cfg.get("enabled"):
+            try:
+                stat_info = Path(filepath).stat()
+                mtime = stat_info.st_mtime
+                size = stat_info.st_size
+                content_hash = self._cache.file_hash(filepath, content)
+                ttl_days = bsg_cache_cfg.get("ttl_days", 30)
+                self._cache.cache_entities(
+                    filepath, content_hash, entities, mtime, size, ttl_days
+                )
+            except OSError:
+                pass
 
         return entities, rels
 
     def invalidate(self, filepath: str) -> None:
         """Force re-parse of filepath on the next build_graph call."""
-        self._cache.invalidate(filepath)
-        try:
-            self._cache.save()
-        except Exception:
-            pass
+        self._cache.invalidate_cache(pattern=filepath)
 
     def stats(self) -> dict[str, int]:
         """Return cache statistics."""
         cache_stats = self._cache.get_cache_stats()
-        return {"cached_files": cache_stats["entries"]}
+        return {"cached_files": cache_stats["entry_count"]}
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get detailed cache statistics for monitoring."""
@@ -1403,7 +1048,12 @@ class CodeGraphIndexer:
 
         return added
 
-    def _resolve_imports(self, graph: InMemoryGraph) -> InMemoryGraph:
+    def _resolve_imports(
+        self,
+        graph: InMemoryGraph,
+        symbol_index: SymbolIndex | None = None,
+        fuzzy_matching: bool = False,
+    ) -> InMemoryGraph:
         """
         Resolve "unresolved:X" relationship targets across the full graph.
 
@@ -1411,17 +1061,7 @@ class CodeGraphIndexer:
         real entity IDs where possible. Stores unresolvable imports as plain
         module name strings for visualization purposes.
         """
-        # Build name lookup: entity name → entity ID
-        # Sort by ID for determinism: when multiple entities share a name,
-        # the one with the lexicographically smallest ID always wins.
-        name_to_id: dict[str, str] = {}
-        for ent in sorted(graph.entities.values(), key=lambda e: e.id):
-            name_to_id[ent.name] = ent.id
-            if "." in ent.name:
-                name_to_id[ent.name.split(".")[-1]] = ent.id
-            if ent.type == EntityType.MODULE:
-                stem = Path(ent.file).stem
-                name_to_id[stem] = ent.id
+        lookup = symbol_index or SymbolIndex.build(graph)
 
         unresolved = [
             r for r in graph.relationships if r.target_id.startswith("unresolved:")
@@ -1430,11 +1070,13 @@ class CodeGraphIndexer:
 
         for rel in unresolved:
             ref_text = rel.target_id[11:]  # strip "unresolved:"
-            target_id = None
-            for candidate in self._lookup_candidates(ref_text):
-                target_id = name_to_id.get(candidate)
-                if target_id:
-                    break
+            source_entity = graph.get_entity(rel.source_id)
+            source_file = source_entity.file if source_entity is not None else None
+            target_id = lookup.resolve_candidates(
+                self._lookup_candidates(ref_text),
+                source_file=source_file,
+                fuzzy_matching=fuzzy_matching,
+            )
 
             resolved.append(
                 Relationship(
@@ -1460,5 +1102,6 @@ class CodeGraphIndexer:
             "import_resolution_complete",
             unresolved_count=len(unresolved),
             resolved_count=sum(1 for r in resolved if r.target_id in graph.entities),
+            symbol_index_size=lookup.size,
         )
         return graph

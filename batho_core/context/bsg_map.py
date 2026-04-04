@@ -373,33 +373,13 @@ class BSGMap:
         }
         return "\n".join(lines), stats
 
-    def render_json(
+    def _build_render_components(
         self,
         build_ms: int | None = None,
         default_snapshot_id: str | None = None,
         default_service_tag: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Render the structural graph as a bsg.v1 dictionary.
-
-        Args:
-            build_ms: Optional build latency in milliseconds for stats payload.
-            default_snapshot_id: Fallback snapshot identifier to stamp nodes when
-                metadata does not already provide one.
-            default_service_tag: Optional service tag fallback when derivation
-                from file path yields no service.
-
-        Returns:
-            JSON-serialisable bsg.v1 payload.
-        """
-        if (
-            self._serialized_bsg is not None
-            and build_ms is None
-            and default_snapshot_id is None
-            and default_service_tag is None
-        ):
-            return json.loads(json.dumps(self._serialized_bsg))
-
+        """Build reusable render components for JSON outputs."""
         resolved_default_snapshot = (default_snapshot_id or "").strip() or None
         resolved_default_service = (
             (default_service_tag or "").strip() if default_service_tag is not None else ""
@@ -671,58 +651,178 @@ class BSGMap:
                 f"{normalized_categories} nodes (e.g. DOCS -> DOC)"
             )
 
-        payload = {
-            "schema_version": BSG_SCHEMA_VERSION,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "root": self._root,
-            "stats": {
-                "total_files": len(nodes_by_file),
-                "total_entities": len(nodes),
-                "total_relationships": len(edges),
-                "build_ms": resolved_build_ms,
-                "rules_loaded": len(rule_names),
-                "rules_applied": rules_applied,
-                "quality_warnings": len(quality_warnings),
-                "autofilled_snapshot_ids": autofilled_snapshot_ids,
-                "missing_snapshot_ids": missing_snapshot_ids,
-                "autofilled_service_tags": autofilled_service_tags,
-                "missing_service_tags": missing_service_tags,
-                "category_normalizations": normalized_categories,
+        stats_payload = {
+            "total_files": len(nodes_by_file),
+            "total_entities": len(nodes),
+            "total_relationships": len(edges),
+            "build_ms": resolved_build_ms,
+            "rules_loaded": len(rule_names),
+            "rules_applied": rules_applied,
+            "quality_warnings": len(quality_warnings),
+            "autofilled_snapshot_ids": autofilled_snapshot_ids,
+            "missing_snapshot_ids": missing_snapshot_ids,
+            "autofilled_service_tags": autofilled_service_tags,
+            "missing_service_tags": missing_service_tags,
+            "category_normalizations": normalized_categories,
+        }
+
+        indexes_payload = {
+            "nodes_by_file": _sorted_index(nodes_by_file),
+            "nodes_by_type": _sorted_index(nodes_by_type),
+            "nodes_by_scope": _sorted_index(nodes_by_scope),
+            "nodes_by_category": _sorted_index(nodes_by_category),
+            "nodes_by_service": _sorted_index(nodes_by_service),
+            "inbound_edges": sorted_inbound_edges,
+            "outbound_edges": sorted_outbound_edges,
+            "cross_boundaries": cross_boundaries,
+        }
+        views_payload = {
+            "agent": {
+                "top_files_by_node_count": [
+                    {"file": file_path, "count": count}
+                    for file_path, count in files_ranked[:25]
+                ],
+                "cross_boundary_count": len(cross_boundaries),
             },
-            "nodes": nodes,
-            "edges": edges,
-            "quality_warnings": quality_warnings,
-            "indexes": {
-                "nodes_by_file": _sorted_index(nodes_by_file),
-                "nodes_by_type": _sorted_index(nodes_by_type),
-                "nodes_by_scope": _sorted_index(nodes_by_scope),
-                "nodes_by_category": _sorted_index(nodes_by_category),
-                "nodes_by_service": _sorted_index(nodes_by_service),
-                "inbound_edges": sorted_inbound_edges,
-                "outbound_edges": sorted_outbound_edges,
-                "cross_boundaries": cross_boundaries,
-            },
-            "views": {
-                "agent": {
-                    "top_files_by_node_count": [
-                        {"file": file_path, "count": count}
-                        for file_path, count in files_ranked[:25]
-                    ],
-                    "cross_boundary_count": len(cross_boundaries),
+            "human": {
+                "categories": {
+                    key: len(value)
+                    for key, value in sorted(nodes_by_category.items())
                 },
-                "human": {
-                    "categories": {
-                        key: len(value)
-                        for key, value in sorted(nodes_by_category.items())
-                    },
-                    "services": {
-                        key: len(value)
-                        for key, value in sorted(nodes_by_service.items())
-                    },
+                "services": {
+                    key: len(value)
+                    for key, value in sorted(nodes_by_service.items())
                 },
             },
         }
-        return payload
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "stats": stats_payload,
+            "nodes": nodes,
+            "edges": edges,
+            "quality_warnings": quality_warnings,
+            "indexes": indexes_payload,
+            "views": views_payload,
+        }
+
+    def render_json(
+        self,
+        build_ms: int | None = None,
+        default_snapshot_id: str | None = None,
+        default_service_tag: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Render the structural graph as a bsg.v1 dictionary.
+
+        Args:
+            build_ms: Optional build latency in milliseconds for stats payload.
+            default_snapshot_id: Fallback snapshot identifier to stamp nodes when
+                metadata does not already provide one.
+            default_service_tag: Optional service tag fallback when derivation
+                from file path yields no service.
+
+        Returns:
+            JSON-serialisable bsg.v1 payload.
+        """
+        if (
+            self._serialized_bsg is not None
+            and build_ms is None
+            and default_snapshot_id is None
+            and default_service_tag is None
+        ):
+            return json.loads(json.dumps(self._serialized_bsg))
+
+        components = self._build_render_components(
+            build_ms=build_ms,
+            default_snapshot_id=default_snapshot_id,
+            default_service_tag=default_service_tag,
+        )
+
+        return {
+            "schema_version": BSG_SCHEMA_VERSION,
+            "generated_at": components["generated_at"],
+            "root": self._root,
+            "stats": components["stats"],
+            "nodes": components["nodes"],
+            "edges": components["edges"],
+            "quality_warnings": components["quality_warnings"],
+            "indexes": components["indexes"],
+            "views": components["views"],
+        }
+
+    def render_json_streaming(
+        self,
+        build_ms: int | None = None,
+        default_snapshot_id: str | None = None,
+        default_service_tag: str | None = None,
+        extra_fields: dict[str, Any] | None = None,
+    ):
+        """Yield JSON chunks without allocating a full top-level payload dict."""
+        if (
+            self._serialized_bsg is not None
+            and build_ms is None
+            and default_snapshot_id is None
+            and default_service_tag is None
+            and not extra_fields
+        ):
+            encoder = json.JSONEncoder(ensure_ascii=False)
+            for chunk in encoder.iterencode(self._serialized_bsg):
+                yield chunk
+            return
+
+        components = self._build_render_components(
+            build_ms=build_ms,
+            default_snapshot_id=default_snapshot_id,
+            default_service_tag=default_service_tag,
+        )
+
+        base_items: list[tuple[str, Any]] = [
+            ("schema_version", BSG_SCHEMA_VERSION),
+            ("generated_at", components["generated_at"]),
+            ("root", self._root),
+            ("stats", components["stats"]),
+            ("nodes", components["nodes"]),
+            ("edges", components["edges"]),
+            ("quality_warnings", components["quality_warnings"]),
+            ("indexes", components["indexes"]),
+            ("views", components["views"]),
+        ]
+
+        overrides: dict[str, Any] = {}
+        additions: list[tuple[str, Any]] = []
+        if extra_fields:
+            base_keys = {key for key, _ in base_items}
+            for key, value in extra_fields.items():
+                if key in base_keys:
+                    overrides[key] = value
+                else:
+                    additions.append((key, value))
+
+        encoder = json.JSONEncoder(ensure_ascii=False)
+        first = True
+        yield "{"
+
+        for key, value in base_items:
+            resolved_value = overrides[key] if key in overrides else value
+            if not first:
+                yield ","
+            first = False
+            yield encoder.encode(key)
+            yield ":"
+            for chunk in encoder.iterencode(resolved_value):
+                yield chunk
+
+        for key, value in additions:
+            if not first:
+                yield ","
+            first = False
+            yield encoder.encode(key)
+            yield ":"
+            for chunk in encoder.iterencode(value):
+                yield chunk
+
+        yield "}"
 
     def _derive_scope_tier(self, entity: Entity) -> str:
         if entity.type in {

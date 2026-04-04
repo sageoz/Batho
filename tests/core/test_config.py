@@ -92,6 +92,7 @@ class TestGetConfig:
         assert "indexer" in cfg
         assert "flags" in cfg
         assert "rules" in cfg
+        assert "bsg" in cfg
 
     def test_logging_level_is_int(self):
         cfg = get_config()
@@ -150,6 +151,21 @@ class TestGetConfig:
         cfg = get_config()
         assert cfg["rules"]["builtin_plugins"] == ["bsg_core", "custom_pack"]
         assert cfg["rules"]["disabled_rules"] == ["rule_one", "rule_two"]
+
+    def test_bsg_phase2_defaults(self):
+        cfg = get_config()
+        bsg = cfg.get("bsg", {})
+        assert bsg.get("incremental", {}).get("enabled") is True
+        assert bsg.get("symbol_resolution", {}).get("enabled") is True
+        assert bsg.get("serialization", {}).get("method") in {"legacy", "streaming"}
+        assert bsg.get("parsing", {}).get("max_file_size_mb") >= 1
+
+    def test_bsg_incremental_env_override(self, monkeypatch):
+        monkeypatch.setenv("BATHO_BSG_INCREMENTAL_ENABLED", "false")
+        monkeypatch.setenv("BATHO_BSG_INCREMENTAL_FALLBACK_TO_FULL", "false")
+        cfg = get_config()
+        assert cfg["bsg"]["incremental"]["enabled"] is False
+        assert cfg["bsg"]["incremental"]["fallback_to_full"] is False
 
 
 # ---------------------------------------------------------------------------

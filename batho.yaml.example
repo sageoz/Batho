@@ -137,3 +137,40 @@ webhook:
   github_secret: null       # Optional top-level secret override
   gitlab_token: null        # Optional top-level token override
   allowed_ips: []           # Optional global allowlist (IPs/CIDRs)
+
+bsg:
+  parallel:
+    enabled: true
+    max_workers: 16
+    chunk_size: 50
+
+  ignore:
+    enabled: true
+    file: .bathoignore
+
+  cache:
+    enabled: true
+    path: ~/.batho/ast_cache.db
+    max_size_mb: 1024
+    ttl_days: 30
+
+  incremental:
+    enabled: true
+    fallback_to_full: true
+    auto_detect_git: true
+
+  symbol_resolution:
+    enabled: true
+    fuzzy_matching: false
+    cache_symbols: true
+
+  serialization:
+    method: legacy          # legacy | streaming
+    compression: false
+    batch_size: 1000
+
+  parsing:
+    error_recovery: true
+    partial_parsing: false
+    max_file_size_mb: 10
+    skip_comments: false

@@ -27,6 +27,10 @@ from typing import Any, Iterable
 
 from batho_core.config import get_build_info, get_config_cached, reload_config
 from batho_core.context.codegraph import CodeGraphIndexer, InMemoryGraph
+from batho_core.context.incremental import (
+    GitDiffEntry,
+    get_changed_file_status_since,
+)
 from batho_core.context.languages.detector import default_detector
 from batho_core.context.languages.registry import (
     get_extractor as registry_get_extractor,
@@ -105,6 +109,62 @@ def _extract_change_paths(changes: Iterable[Any]) -> list[str]:
         paths.append(path_value)
 
     return sorted(paths)
+
+
+def _git_diff_entries_to_file_changes(
+    root: Path, entries: list[GitDiffEntry]
+) -> list[FileChange]:
+    """Convert git diff status entries to FileChange records for patching."""
+    # Path-level status precedence ensures deterministic outcomes.
+    status_rank = {"D": 3, "A": 2, "M": 1}
+    chosen: dict[str, GitDiffEntry] = {}
+
+    for entry in entries:
+        rel_path = entry.path.strip()
+        if not rel_path:
+            continue
+
+        existing = chosen.get(rel_path)
+        if existing is None or status_rank.get(entry.status, 0) > status_rank.get(
+            existing.status, 0
+        ):
+            chosen[rel_path] = entry
+
+    changes: list[FileChange] = []
+    for rel_path, entry in sorted(chosen.items()):
+        abs_path = root / rel_path
+        if entry.status == "D" or not abs_path.exists():
+            changes.append(
+                FileChange(
+                    path=rel_path,
+                    change_type=FileChangeType.DELETED,
+                    old_hash=None,
+                    new_hash=None,
+                )
+            )
+            continue
+
+        change_type = (
+            FileChangeType.ADDED if entry.status == "A" else FileChangeType.MODIFIED
+        )
+
+        try:
+            stat_info = abs_path.stat()
+            changes.append(
+                FileChange(
+                    path=rel_path,
+                    change_type=change_type,
+                    old_hash=None,
+                    new_hash=compute_file_hash(abs_path),
+                    file_size=stat_info.st_size,
+                    mtime=datetime.fromtimestamp(stat_info.st_mtime, timezone.utc),
+                )
+            )
+        except OSError:
+            # Skip unreadable files and let fallback/full rebuild handle anomalies.
+            continue
+
+    return changes
 
 
 def _extract_bsg_quality_warnings(payload: dict[str, Any]) -> list[str]:
@@ -275,6 +335,16 @@ def _load_recent_evolution_rules(ctn_dir: Path, limit: int = 5) -> list[dict[str
 def _write_json(path: Path, data: Any) -> None:
     """Write JSON data atomically."""
     write_atomically(path, data, is_json=True)
+
+
+def _write_json_chunks(path: Path, chunks: Iterable[str]) -> None:
+    """Write pre-encoded JSON chunks atomically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        for chunk in chunks:
+            handle.write(chunk)
+    tmp_path.replace(path)
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -619,32 +689,151 @@ def cmd_index(args: argparse.Namespace) -> int:
         print(f"❌ Root does not exist or is not a directory: {root}")
         return 1
 
-    configure_logging(
-        get_config_cached()["logging"]["level"], json_format=args.log_json
-    )
+    cfg = get_config_cached()
+    configure_logging(cfg["logging"]["level"], json_format=args.log_json)
     ctn_dir = _ensure_ctn_dir(root)
 
     cache_path = ctn_dir / "file_cache.json"
-    indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
     build_start = time.perf_counter()
+
+    force_full = bool(getattr(args, "full", False)) or bool(args.force)
+    requested_base_snapshot = getattr(args, "base_snapshot", None)
+
+    bsg_cfg = cfg.get("bsg", {}) if isinstance(cfg, dict) else {}
+    incremental_cfg = (
+        bsg_cfg.get("incremental", {}) if isinstance(bsg_cfg, dict) else {}
+    )
+    incremental_enabled = bool(incremental_cfg.get("enabled", True)) and not force_full
+    fallback_to_full = bool(incremental_cfg.get("fallback_to_full", True))
+
+    indexer: CodeGraphIndexer | None = None
+    graph: InMemoryGraph | None = None
+    bsg_map: BSGMap | None = None
+    incremental_stats: dict[str, Any] = {}
 
     if args.force and cache_path.exists():
         cache_path.unlink()
         print("⚡ --force: cleared file cache")
 
-    graph = indexer.build_graph(
-        root=str(root),
-        extensions=args.extensions,
-        max_workers=args.max_workers,
-        max_file_size_kb=args.max_file_size_kb,
-        verbose=args.verbose,
-    )
+    if incremental_enabled:
+        base_snapshot_id = requested_base_snapshot or _get_latest_snapshot(ctn_dir)
+        if base_snapshot_id:
+            base_snapshot = load_snapshot(ctn_dir, base_snapshot_id)
+            if isinstance(base_snapshot, dict):
+                diff_entries = get_changed_file_status_since(
+                    base_snapshot_id,
+                    root,
+                    base_snapshot,
+                )
+                if diff_entries is not None:
+                    if not diff_entries:
+                        graph = InMemoryGraph.from_dict(base_snapshot.get("graph", {}))
+                        bsg_map = BSGMap.build(graph, root=str(root))
+                        incremental_stats = {
+                            "incremental": True,
+                            "base_snapshot_id": base_snapshot_id,
+                            "changes_applied": 0,
+                            "files_candidates": 0,
+                            "files_parsed": 0,
+                            "files_cached": 0,
+                            "files_skipped": 0,
+                            "errors": 0,
+                            "workers_used": 0,
+                            "entity_count": len(graph.entities),
+                            "relationship_count": len(graph.relationships),
+                        }
+                        LOGGER.info(
+                            "index_incremental_reused_snapshot",
+                            base_snapshot_id=base_snapshot_id,
+                        )
+                    else:
+                        changes = _git_diff_entries_to_file_changes(root, diff_entries)
+                        patch_result = incremental_patch(
+                            ctn_dir,
+                            base_snapshot_id,
+                            changes,
+                        )
+                        if patch_result.get("success"):
+                            patched_snapshot_id = str(
+                                patch_result.get("new_snapshot_id") or ""
+                            )
+                            patched_snapshot = (
+                                load_snapshot(ctn_dir, patched_snapshot_id)
+                                if patched_snapshot_id
+                                else None
+                            )
+                            if isinstance(patched_snapshot, dict):
+                                graph = InMemoryGraph.from_dict(
+                                    patched_snapshot.get("graph", {})
+                                )
+                                bsg_map = BSGMap.build(graph, root=str(root))
+                                incremental_stats = {
+                                    "incremental": True,
+                                    "base_snapshot_id": base_snapshot_id,
+                                    "patched_snapshot_id": patched_snapshot_id,
+                                    "changes_applied": int(
+                                        patch_result.get("applied_changes", len(changes))
+                                    ),
+                                    "files_candidates": len(changes),
+                                    "files_parsed": len(changes),
+                                    "files_cached": 0,
+                                    "files_skipped": 0,
+                                    "errors": 0,
+                                    "workers_used": 0,
+                                    "entity_count": len(graph.entities),
+                                    "relationship_count": len(graph.relationships),
+                                }
+                                LOGGER.info(
+                                    "index_incremental_patched",
+                                    base_snapshot_id=base_snapshot_id,
+                                    patched_snapshot_id=patched_snapshot_id,
+                                    changes=len(changes),
+                                )
+                        else:
+                            LOGGER.warning(
+                                "index_incremental_patch_failed",
+                                base_snapshot_id=base_snapshot_id,
+                                error=str(patch_result.get("error") or "unknown"),
+                            )
+                else:
+                    LOGGER.info(
+                        "index_incremental_unavailable",
+                        base_snapshot_id=base_snapshot_id,
+                        reason="git_or_snapshot_commit_unavailable",
+                    )
+
+    if graph is None or bsg_map is None:
+        if incremental_enabled and not fallback_to_full:
+            print("❌ Incremental indexing unavailable and fallback_to_full is disabled.")
+            return 1
+
+        try:
+            indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
+        except Exception as exc:
+            if cache_path.exists() and "not a database" in str(exc).lower():
+                cache_path.unlink(missing_ok=True)
+                LOGGER.warning(
+                    "index_cache_recreated",
+                    cache_path=str(cache_path),
+                    reason="invalid_sqlite_cache",
+                )
+                indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
+            else:
+                raise
+
+        graph = indexer.build_graph(
+            root=str(root),
+            extensions=args.extensions,
+            max_workers=args.max_workers,
+            max_file_size_kb=args.max_file_size_kb,
+            verbose=args.verbose,
+        )
+        bsg_map = BSGMap.build(graph, root=str(root))
 
     if not graph.entities:
         print("⚠️  No entities extracted. Check source files and ignore patterns.")
         return 1
 
-    bsg_map = BSGMap.build(graph, root=str(root))
     stack_info = detect_stack(root)
     token_input_estimate = bsg_map.estimate_tokens()
 
@@ -665,14 +854,34 @@ def cmd_index(args: argparse.Namespace) -> int:
 
         _write_json(graph_path, graph.to_dict())
         index_build_ms = max(0, int((time.perf_counter() - build_start) * 1000))
-        bsg_json = bsg_map.render_json(
-            build_ms=index_build_ms,
-            default_snapshot_id=index_id,
-            default_service_tag=root.name,
+        serialization_method = (
+            cfg.get("bsg", {})
+            .get("serialization", {})
+            .get("method", "legacy")
+            .strip()
+            .lower()
         )
+        if serialization_method == "streaming":
+            _write_json_chunks(
+                bsg_path,
+                bsg_map.render_json_streaming(
+                    build_ms=index_build_ms,
+                    default_snapshot_id=index_id,
+                    default_service_tag=root.name,
+                    extra_fields={"stack": stack_info},
+                ),
+            )
+            bsg_json = json.loads(bsg_path.read_text(encoding="utf-8"))
+        else:
+            bsg_json = bsg_map.render_json(
+                build_ms=index_build_ms,
+                default_snapshot_id=index_id,
+                default_service_tag=root.name,
+            )
+            bsg_json["stack"] = stack_info
+            _write_json(bsg_path, bsg_json)
+
         quality_warnings = _extract_bsg_quality_warnings(bsg_json)
-        bsg_json["stack"] = stack_info
-        _write_json(bsg_path, bsg_json)
 
         # Generate categorized markdown outputs
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -730,7 +939,7 @@ def cmd_index(args: argparse.Namespace) -> int:
             metadata.get("indexes", {}).get(prev_index_id) if prev_index_id else None
         )
         repo_hash = _compute_repo_hash(root)
-        stats = dict(indexer.stats)
+        stats = dict(indexer.stats) if indexer is not None else dict(incremental_stats)
         cache_hit_rate = 0.0
         parsed = int(stats.get("files_parsed", 0))
         cached = int(stats.get("files_cached", 0))
@@ -1154,13 +1363,33 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
 
         _write_json(graph_path, graph.to_dict())
         patch_build_ms = max(0, int((time.perf_counter() - patch_start) * 1000))
-        bsg_json = bsg_map.render_json(
-            build_ms=patch_build_ms,
-            default_snapshot_id=current_id,
-            default_service_tag=root.name,
+        serialization_method = (
+            get_config_cached()
+            .get("bsg", {})
+            .get("serialization", {})
+            .get("method", "legacy")
+            .strip()
+            .lower()
         )
+        if serialization_method == "streaming":
+            _write_json_chunks(
+                bsg_path,
+                bsg_map.render_json_streaming(
+                    build_ms=patch_build_ms,
+                    default_snapshot_id=current_id,
+                    default_service_tag=root.name,
+                ),
+            )
+            bsg_json = json.loads(bsg_path.read_text(encoding="utf-8"))
+        else:
+            bsg_json = bsg_map.render_json(
+                build_ms=patch_build_ms,
+                default_snapshot_id=current_id,
+                default_service_tag=root.name,
+            )
+            _write_json(bsg_path, bsg_json)
+
         quality_warnings = _extract_bsg_quality_warnings(bsg_json)
-        _write_json(bsg_path, bsg_json)
 
         # Generate categorized markdown outputs
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -1612,6 +1841,60 @@ def cmd_invalidate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cache_stats(args: argparse.Namespace) -> int:
+    """Show AST cache statistics."""
+    from batho_core.context.cache import ASTCache
+
+    cfg = get_config_cached()
+    bsg_cache_cfg = cfg.get("bsg", {}).get("cache", {})
+    cache_path = bsg_cache_cfg.get("path", "~/.batho/ast_cache.db")
+
+    cache = ASTCache(cache_path=cache_path)
+    stats = cache.get_cache_stats()
+
+    print("📊 AST Cache Statistics")
+    print(f"  Cache path: {stats['cache_path']}")
+    print(f"  Entry count: {stats['entry_count']}")
+    print(f"  Total size: {stats['total_size_mb']} MB")
+    print(f"  Oldest entry: {stats['oldest_entry']}")
+    print(f"  Newest entry: {stats['newest_entry']}")
+    return 0
+
+
+def cmd_cache_invalidate(args: argparse.Namespace) -> int:
+    """Invalidate cache entries by pattern."""
+    from batho_core.context.cache import ASTCache
+
+    cfg = get_config_cached()
+    bsg_cache_cfg = cfg.get("bsg", {}).get("cache", {})
+    cache_path = bsg_cache_cfg.get("path", "~/.batho/ast_cache.db")
+
+    cache = ASTCache(cache_path=cache_path)
+    pattern = args.pattern
+
+    if pattern:
+        cache.invalidate_cache(pattern=pattern)
+        print(f"✅ Invalidated cache entries matching: {pattern}")
+    else:
+        cache.invalidate_cache(pattern=None)
+        print("✅ Invalidated all cache entries")
+    return 0
+
+
+def cmd_cache_clear(args: argparse.Namespace) -> int:
+    """Clear entire AST cache."""
+    from batho_core.context.cache import ASTCache
+
+    cfg = get_config_cached()
+    bsg_cache_cfg = cfg.get("bsg", {}).get("cache", {})
+    cache_path = bsg_cache_cfg.get("path", "~/.batho/ast_cache.db")
+
+    cache = ASTCache(cache_path=cache_path)
+    cache.invalidate_cache(pattern=None)
+    print("✅ Cleared entire AST cache")
+    return 0
+
+
 def cmd_bsg(args: argparse.Namespace) -> int:
     """Render BSG in various formats."""
     root = Path(args.root).resolve()
@@ -1705,6 +1988,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-file-size-kb", type=int, default=None, help="Max file size KB"
     )
     idx.add_argument("--force", action="store_true", help="Clear cache before indexing")
+    idx.add_argument(
+        "--full",
+        action="store_true",
+        help="Force full rebuild (disable incremental path)",
+    )
+    idx.add_argument(
+        "--base-snapshot",
+        default=None,
+        help="Optional base snapshot ID for incremental indexing",
+    )
     idx.add_argument("--output-json", default=None, help="Path for graph.json output")
     idx.add_argument(
         "--metrics-output", default=None, help="Write metrics JSON to path"
@@ -1818,6 +2111,20 @@ def build_parser() -> argparse.ArgumentParser:
     inv = sub.add_parser("invalidate", help="Clear file cache")
     inv.add_argument("--root", required=True, help="Path to repo root")
     inv.set_defaults(func=cmd_invalidate)
+
+    # Cache commands
+    cache = sub.add_parser("cache", help="AST cache management")
+    cache_sub = cache.add_subparsers(dest="cache_command", required=True)
+
+    cache_stats = cache_sub.add_parser("stats", help="Show cache statistics")
+    cache_stats.set_defaults(func=cmd_cache_stats)
+
+    cache_inv = cache_sub.add_parser("invalidate", help="Invalidate cache entries")
+    cache_inv.add_argument("pattern", nargs="?", default=None, help="Glob pattern to match (optional)")
+    cache_inv.set_defaults(func=cmd_cache_invalidate)
+
+    cache_clr = cache_sub.add_parser("clear", help="Clear entire cache")
+    cache_clr.set_defaults(func=cmd_cache_clear)
 
     # BSG command
     bsg = sub.add_parser("bsg", help="Render BSG in various formats")

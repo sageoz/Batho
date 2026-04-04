@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import abc
 import re
+import threading
 import time
 from typing import Any
 
@@ -240,7 +241,24 @@ class ASTExtractor(abc.ABC):
         self._language_name: str = language
         self._ts_parser = get_parser(language)  # type: ignore[arg-type]
         self._ts_language: Language = get_language(language)  # type: ignore[arg-type]
+        self._compiled_query: Query | None = None
+        self._query_lock = threading.Lock()
         self.logger = get_logger(__name__, operation="ast_extract").bind(language=language)
+
+    def _get_compiled_query(self) -> Query | None:
+        """Compile and cache the tree-sitter query once per extractor instance."""
+        if self._compiled_query is not None:
+            return self._compiled_query
+
+        with self._query_lock:
+            if self._compiled_query is not None:
+                return self._compiled_query
+            try:
+                self._compiled_query = Query(self._ts_language, self._query_source())
+            except (TypeError, ValueError) as exc:
+                self.logger.debug("query_creation_failed", error=str(exc))
+                self._compiled_query = None
+            return self._compiled_query
 
     # ------------------------------------------------------------------
     # Subclass contract
@@ -292,13 +310,11 @@ class ASTExtractor(abc.ABC):
             )
             return [], []
 
-        try:
-            query = Query(self._ts_language, self._query_source())
-        except (TypeError, ValueError) as exc:
+        query = self._get_compiled_query()
+        if query is None:
             self.logger.debug(
-                "query_creation_failed",
+                "query_unavailable",
                 filepath=filepath,
-                error=str(exc),
             )
             return [], []
 

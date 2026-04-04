@@ -1,6 +1,7 @@
 """Tests for batho_core.context.repomap module."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -167,6 +168,55 @@ class TestRenderJson:
         assert data["nodes"][0]["category"] == "DOC"
         assert data["stats"]["category_normalizations"] == 1
         assert any("normalized bsg.category" in warning for warning in data["quality_warnings"])
+
+    def test_streaming_render_matches_json_payload(self, mock_graph):
+        repomap = RepoMap.build(mock_graph, root="/fake/root")
+        expected = repomap.render_json(build_ms=50, default_snapshot_id="snap-xyz")
+        streamed = "".join(
+            repomap.render_json_streaming(build_ms=50, default_snapshot_id="snap-xyz")
+        )
+
+        assert streamed
+        actual = json.loads(streamed)
+        actual["generated_at"] = expected["generated_at"]
+        assert expected == actual
+
+    def test_streaming_render_supports_extra_fields(self, mock_graph):
+        repomap = RepoMap.build(mock_graph, root="/fake/root")
+        streamed = "".join(
+            repomap.render_json_streaming(
+                build_ms=12,
+                default_snapshot_id="snap-extra",
+                extra_fields={"stack": {"primary": "python"}},
+            )
+        )
+        payload = json.loads(streamed)
+        assert payload["stack"]["primary"] == "python"
+
+    def test_streaming_render_does_not_call_render_json(self, mock_graph, monkeypatch):
+        repomap = RepoMap.build(mock_graph, root="/fake/root")
+
+        def _boom(*_args, **_kwargs):
+            raise AssertionError("render_json should not be called by streaming mode")
+
+        monkeypatch.setattr(RepoMap, "render_json", _boom)
+        streamed = "".join(
+            repomap.render_json_streaming(build_ms=7, default_snapshot_id="snap-stream")
+        )
+        payload = json.loads(streamed)
+        assert payload["schema_version"] == "bsg.v1"
+
+    def test_streaming_render_extra_fields_can_override_base_keys(self, mock_graph):
+        repomap = RepoMap.build(mock_graph, root="/fake/root")
+        streamed = "".join(
+            repomap.render_json_streaming(
+                build_ms=12,
+                default_snapshot_id="snap-extra",
+                extra_fields={"root": "/override/root"},
+            )
+        )
+        payload = json.loads(streamed)
+        assert payload["root"] == "/override/root"
 
 
 class TestRenderHierarchical:

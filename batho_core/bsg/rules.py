@@ -1480,38 +1480,55 @@ def _derive_semantic_relations(graph: InMemoryGraph) -> list[Relationship]:
     ]
 
     infra_token_index: dict[str, set[str]] = defaultdict(set)
+    infra_tokens_by_id: dict[str, set[str]] = {}
     for infra_id in infra_entities:
-        for token in key_tokens_by_entity.get(infra_id, set()):
+        infra_tokens = key_tokens_by_entity.get(infra_id, set())
+        infra_tokens_by_id[infra_id] = infra_tokens
+        for token in infra_tokens:
             infra_token_index[token].add(infra_id)
 
+    scored_env_cache: dict[tuple[str, ...], list[str]] = {}
+
     for env_id in env_entities:
-        candidate_infra: set[str] = set()
         env_tokens = key_tokens_by_entity.get(env_id, set())
-        for token in env_tokens:
-            candidate_infra.update(infra_token_index.get(token, set()))
+        env_key = tuple(sorted(env_tokens))
+        best_infra = scored_env_cache.get(env_key)
 
-        scored_candidates: list[tuple[int, str]] = []
-        for infra_id in candidate_infra:
-            infra_tokens = key_tokens_by_entity.get(infra_id, set())
-            shared = env_tokens.intersection(infra_tokens)
-            if not shared:
-                continue
+        if best_infra is None:
+            candidate_infra: set[str] = set()
+            for token in env_tokens:
+                candidate_infra.update(infra_token_index.get(token, set()))
 
-            strong = {
-                token
-                for token in shared
-                if len(token) >= 4 and token not in _REFERENCED_IN_GENERIC_TOKENS
-            }
+            scored_candidates: list[tuple[int, str]] = []
+            for infra_id in candidate_infra:
+                infra_tokens = infra_tokens_by_id.get(infra_id, set())
+                shared = env_tokens.intersection(infra_tokens)
+                if not shared:
+                    continue
 
-            # Guardrails: require either multiple shared tokens or at least one
-            # non-generic strong token to avoid REFERENCED_IN fan-out.
-            if len(shared) < 2 and not strong:
-                continue
+                strong = {
+                    token
+                    for token in shared
+                    if len(token) >= 4 and token not in _REFERENCED_IN_GENERIC_TOKENS
+                }
 
-            score = (len(shared) * 10) + len(strong)
-            scored_candidates.append((score, infra_id))
+                # Guardrails: require either multiple shared tokens or at least one
+                # non-generic strong token to avoid REFERENCED_IN fan-out.
+                if len(shared) < 2 and not strong:
+                    continue
 
-        for _, infra_id in sorted(scored_candidates, key=lambda item: (-item[0], item[1]))[:3]:
+                score = (len(shared) * 10) + len(strong)
+                scored_candidates.append((score, infra_id))
+
+            best_infra = [
+                infra_id
+                for _, infra_id in sorted(
+                    scored_candidates, key=lambda item: (-item[0], item[1])
+                )[:3]
+            ]
+            scored_env_cache[env_key] = best_infra
+
+        for infra_id in best_infra:
             _add(env_id, infra_id, RelationshipType.REFERENCED_IN, "env_name_overlap")
 
     return semantic_relations
