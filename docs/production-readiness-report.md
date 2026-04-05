@@ -27,7 +27,7 @@ Batho demonstrates strong engineering practices with comprehensive error handlin
 - Proper error logging
 
 ### 3. ✅ Architecture Modeling Subsystem Removed
-**Location**: Architecture-modeling modules and tests (removed in `no-c4-support`)  
+**Location**: Architecture-modeling modules and tests (removed from active runtime paths)  
 **Issue**: Legacy architecture-modeling subsystem increased maintenance scope  
 **Status**: ✅ **RESOLVED** - Architecture model generation code paths were removed from runtime, config, and tests  
 **Recommendation**: Keep this report for historical context only

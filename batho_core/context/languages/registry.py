@@ -260,13 +260,14 @@ def is_language_available(language: str) -> bool:
     ts_identifier = _TREE_SITTER_LANGUAGES.get(language, language)
 
     try:
-        # Try to get the language parser
+        # Try to get the language parser.
+        # Cache only successful checks so transient failures (e.g., temporary
+        # monkeypatches in tests) do not permanently poison future lookups.
         get_language(ts_identifier)
         _language_available_cache[language] = True
         _logger.debug("language_available", lang=language, ts_identifier=ts_identifier)
         return True
     except Exception as e:
-        _language_available_cache[language] = False
         _logger.warning(
             "language_not_available",
             lang=language,

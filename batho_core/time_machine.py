@@ -27,6 +27,7 @@ from batho_core.config import SNAPSHOT_SCHEMA_VERSION, get_config_cached
 from batho_core.context.incremental import get_head_commit, is_git_repo
 from batho_core.context.codegraph import InMemoryGraph, IncrementalGraphUpdater
 from batho_core.context.bsg_map import BSGMap
+from batho_core.context.storage import register_artifact
 from batho_core.utils.hash import compute_bytes_hash, compute_file_hash
 from batho_core.utils.ignore import is_ignored, load_ignore_spec
 from batho_core.utils.logging import get_logger
@@ -540,6 +541,15 @@ def create_snapshot(
     tmp = snap_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     tmp.replace(snap_path)
+    register_artifact(
+        ctn_dir,
+        snap_path,
+        "snapshot_json",
+        producer="time_machine.create_snapshot",
+        metadata={"snapshot_id": snapshot_id, "label": label or ""},
+        schema_version=SNAPSHOT_SCHEMA_VERSION,
+        retention_class="snapshot",
+    )
     logger.info("snapshot_created", snapshot_id=snapshot_id, path=str(snap_path))
     return snapshot_id
 
@@ -1138,6 +1148,19 @@ def save_patch_operation(ctn_dir: Path, operation: PatchOperation) -> None:
     patch_file = patches_dir / f"patch_{operation.operation_id}.json"
     patch_data = operation.serialize()
     patch_file.write_text(json.dumps(patch_data, indent=2), encoding="utf-8")
+    register_artifact(
+        ctn_dir,
+        patch_file,
+        "patch_operation_json",
+        producer="time_machine.save_patch_operation",
+        metadata={
+            "operation_id": operation.operation_id,
+            "operation_type": operation.operation_type,
+            "base_snapshot_id": operation.base_snapshot_id,
+            "new_snapshot_id": operation.new_snapshot_id,
+        },
+        retention_class="patch",
+    )
     
     # Update index
     update_patch_index(ctn_dir, operation)
@@ -1205,6 +1228,14 @@ def update_patch_index(ctn_dir: Path, operation: PatchOperation) -> None:
     
     # Save index
     index_file.write_text(json.dumps(index_data, indent=2), encoding="utf-8")
+    register_artifact(
+        ctn_dir,
+        index_file,
+        "patch_index_json",
+        producer="time_machine.update_patch_index",
+        metadata={"last_operation_id": operation.operation_id},
+        retention_class="patch",
+    )
     logger.debug("patch_index_updated", operation_id=operation.operation_id)
 
 

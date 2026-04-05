@@ -36,6 +36,14 @@ from batho_core.context.languages.registry import (
     get_extractor as registry_get_extractor,
 )
 from batho_core.context.bsg_map import BSGMap
+from batho_core.context.query import QueryService
+from batho_core.context.storage import (
+    backfill_registry,
+    cleanup_registry,
+    rebuild_query_index,
+    register_artifact,
+    verify_registry,
+)
 from batho_core.context.stack_detector import detect_stack
 from batho_core.synthesizer import load_evolution_ledger, record_failure_rule
 from batho_core.time_machine import (
@@ -67,6 +75,8 @@ from batho_core.utils.logging import configure_logging, get_logger
 _read_file_content = read_file_bytes
 
 LOGGER = get_logger(__name__)
+
+_PERSISTENCE_MODEL_VERSION = "ctn-artifact-registry.v1"
 
 
 # ---------------------------------------------------------------------------
@@ -251,15 +261,24 @@ def _load_index_metadata(ctn_dir: Path) -> dict[str, Any]:
 def _save_index_metadata(ctn_dir: Path, metadata: dict[str, Any]) -> None:
     index_path = ctn_dir / "index.json"
     payload = {**metadata}
-    payload["schema_version"] = get_config_cached().get(
+    schema_version = get_config_cached().get(
         "index_metadata_schema_version", "index-metadata.v1"
     )
+    payload.setdefault("persistence_model", _PERSISTENCE_MODEL_VERSION)
+    payload["schema_version"] = schema_version
     payload["_checksum"] = compute_bytes_hash(
         json.dumps(
             {k: v for k, v in payload.items() if k != "_checksum"}, sort_keys=True
         ).encode("utf-8")
     )
     write_atomically(index_path, payload, is_json=True)
+    register_artifact(
+        ctn_dir,
+        index_path,
+        "index_metadata",
+        producer="cli.index",
+        schema_version=schema_version,
+    )
 
 
 def _load_interception_stats(ctn_dir: Path) -> dict[str, Any]:
@@ -337,12 +356,47 @@ def _load_recent_evolution_rules(ctn_dir: Path, limit: int = 5) -> list[dict[str
     return recent
 
 
-def _write_json(path: Path, data: Any) -> None:
+def _is_path_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _write_json(
+    path: Path,
+    data: Any,
+    *,
+    ctn_dir: Path | None = None,
+    artifact_type: str | None = None,
+    producer: str = "cli",
+    metadata: dict[str, Any] | None = None,
+    schema_version: str = "",
+) -> None:
     """Write JSON data atomically."""
     write_atomically(path, data, is_json=True)
+    if ctn_dir is not None and artifact_type:
+        register_artifact(
+            ctn_dir,
+            path,
+            artifact_type,
+            producer=producer,
+            metadata=metadata,
+            schema_version=schema_version,
+        )
 
 
-def _write_json_chunks(path: Path, chunks: Iterable[str]) -> None:
+def _write_json_chunks(
+    path: Path,
+    chunks: Iterable[str],
+    *,
+    ctn_dir: Path | None = None,
+    artifact_type: str | None = None,
+    producer: str = "cli",
+    metadata: dict[str, Any] | None = None,
+    schema_version: str = "",
+) -> None:
     """Write pre-encoded JSON chunks atomically."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
@@ -350,16 +404,61 @@ def _write_json_chunks(path: Path, chunks: Iterable[str]) -> None:
         for chunk in chunks:
             handle.write(chunk)
     tmp_path.replace(path)
+    if ctn_dir is not None and artifact_type:
+        register_artifact(
+            ctn_dir,
+            path,
+            artifact_type,
+            producer=producer,
+            metadata=metadata,
+            schema_version=schema_version,
+        )
 
 
-def _write_text(path: Path, content: str) -> None:
+def _write_text(
+    path: Path,
+    content: str,
+    *,
+    ctn_dir: Path | None = None,
+    artifact_type: str | None = None,
+    producer: str = "cli",
+    metadata: dict[str, Any] | None = None,
+    schema_version: str = "",
+) -> None:
     """Write text content atomically."""
     write_atomically(path, content)
+    if ctn_dir is not None and artifact_type:
+        register_artifact(
+            ctn_dir,
+            path,
+            artifact_type,
+            producer=producer,
+            metadata=metadata,
+            schema_version=schema_version,
+        )
 
 
-def _write_metrics(path: Path, payload: dict[str, Any]) -> None:
+def _write_metrics(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    ctn_dir: Path | None = None,
+    artifact_type: str | None = None,
+    producer: str = "cli",
+    metadata: dict[str, Any] | None = None,
+    schema_version: str = "",
+) -> None:
     """Write metrics data atomically as JSON."""
     write_atomically(path, payload, is_json=True)
+    if ctn_dir is not None and artifact_type:
+        register_artifact(
+            ctn_dir,
+            path,
+            artifact_type,
+            producer=producer,
+            metadata=metadata,
+            schema_version=schema_version,
+        )
 
 
 def _estimate_tokens(text: str) -> int:
@@ -857,7 +956,15 @@ def cmd_index(args: argparse.Namespace) -> int:
         )
         bsg_path = versioned_dir / "bsg.json"
 
-        _write_json(graph_path, graph.to_dict())
+        _write_json(
+            graph_path,
+            graph.to_dict(),
+            ctn_dir=ctn_dir,
+            artifact_type="graph_json",
+            producer="cli.index",
+            metadata={"index_id": index_id},
+            schema_version=get_config_cached().get("graph_schema_version", "graph.v1"),
+        )
         index_build_ms = max(0, int((time.perf_counter() - build_start) * 1000))
         serialization_method = (
             cfg.get("bsg", {})
@@ -875,6 +982,11 @@ def cmd_index(args: argparse.Namespace) -> int:
                     default_service_tag=root.name,
                     extra_fields={"stack": stack_info},
                 ),
+                ctn_dir=ctn_dir,
+                artifact_type="bsg_json",
+                producer="cli.index",
+                metadata={"index_id": index_id, "serialization_method": "streaming"},
+                schema_version=get_config_cached().get("bsg_schema_version", "bsg.v1"),
             )
             bsg_json = json.loads(bsg_path.read_text(encoding="utf-8"))
         else:
@@ -884,9 +996,28 @@ def cmd_index(args: argparse.Namespace) -> int:
                 default_service_tag=root.name,
             )
             bsg_json["stack"] = stack_info
-            _write_json(bsg_path, bsg_json)
+            _write_json(
+                bsg_path,
+                bsg_json,
+                ctn_dir=ctn_dir,
+                artifact_type="bsg_json",
+                producer="cli.index",
+                metadata={"index_id": index_id, "serialization_method": "legacy"},
+                schema_version=get_config_cached().get("bsg_schema_version", "bsg.v1"),
+            )
 
         quality_warnings = _extract_bsg_quality_warnings(bsg_json)
+
+        query_cfg = cfg.get("bsg", {}).get("query", {})
+        query_enabled = bool(query_cfg.get("enabled", True))
+        query_index_on_write = bool(query_cfg.get("index_on_write", True))
+        query_index_stats = {"entities_indexed": 0, "relationships_indexed": 0}
+        if query_enabled and query_index_on_write:
+            query_index_stats = rebuild_query_index(
+                ctn_dir,
+                index_id,
+                graph.to_dict(),
+            )
 
         # Generate categorized markdown outputs
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -900,19 +1031,40 @@ def cmd_index(args: argparse.Namespace) -> int:
             timestamp=timestamp,
             evolution_rules=evolution_rules,
         )
-        _write_text(context_dir / "overview.md", overview_content)
+        _write_text(
+            context_dir / "overview.md",
+            overview_content,
+            ctn_dir=ctn_dir,
+            artifact_type="context_overview",
+            producer="cli.index",
+            metadata={"index_id": index_id},
+        )
 
         # architecture.md - Main codebase only (full entities)
         arch_content = bsg_map.render_category(
             "source", include_full_entities=True
         )
-        _write_text(context_dir / "architecture.md", arch_content)
+        _write_text(
+            context_dir / "architecture.md",
+            arch_content,
+            ctn_dir=ctn_dir,
+            artifact_type="context_architecture",
+            producer="cli.index",
+            metadata={"index_id": index_id},
+        )
 
         # tests.md - Test files (summary format)
         tests_content = bsg_map.render_category(
             "tests", include_full_entities=False
         )
-        _write_text(context_dir / "tests.md", tests_content)
+        _write_text(
+            context_dir / "tests.md",
+            tests_content,
+            ctn_dir=ctn_dir,
+            artifact_type="context_tests",
+            producer="cli.index",
+            metadata={"index_id": index_id},
+        )
 
         # docs.md - Uncategorized categories + Documentation files (summary format)
         uncategorized_content = bsg_map.render_uncategorized_categories(
@@ -929,13 +1081,27 @@ def cmd_index(args: argparse.Namespace) -> int:
         elif docs_content.strip():
             combined_docs = docs_content
             
-        _write_text(context_dir / "docs.md", combined_docs)
+        _write_text(
+            context_dir / "docs.md",
+            combined_docs,
+            ctn_dir=ctn_dir,
+            artifact_type="context_docs",
+            producer="cli.index",
+            metadata={"index_id": index_id},
+        )
 
         # config.md - Configuration files (summary format)
         config_content = bsg_map.render_category(
             "config", include_full_entities=False
         )
-        _write_text(context_dir / "config.md", config_content)
+        _write_text(
+            context_dir / "config.md",
+            config_content,
+            ctn_dir=ctn_dir,
+            artifact_type="context_config",
+            producer="cli.index",
+            metadata={"index_id": index_id},
+        )
 
         # Metadata
         metadata = _load_index_metadata(ctn_dir)
@@ -961,6 +1127,12 @@ def cmd_index(args: argparse.Namespace) -> int:
                 "skipped_files_count": repo_metrics.get("skipped_files_count"),
                 "bsg_quality_warnings": len(quality_warnings),
                 "bsg_quality_warning_samples": quality_warnings[:5],
+                "query_entities_indexed": int(
+                    query_index_stats.get("entities_indexed", 0)
+                ),
+                "query_relationships_indexed": int(
+                    query_index_stats.get("relationships_indexed", 0)
+                ),
             }
         )
         metrics = {
@@ -993,6 +1165,13 @@ def cmd_index(args: argparse.Namespace) -> int:
             "metrics": metrics,
             "build": get_build_info(),
             "schemas": get_config_cached().get("schemas", {}),
+            "persistence": {
+                "model": _PERSISTENCE_MODEL_VERSION,
+                "query_index_on_write": bool(query_enabled and query_index_on_write),
+                "mmap_enabled": bool(
+                    cfg.get("bsg", {}).get("storage", {}).get("mmap_enabled", False)
+                ),
+            },
         }
         snapshot_id = None
         if args.snapshot:
@@ -1002,7 +1181,20 @@ def cmd_index(args: argparse.Namespace) -> int:
             entry["snapshot_id"] = snapshot_id
         metadata.setdefault("indexes", {})[index_id] = entry
         metadata["current_index_id"] = index_id
+        metadata["persistence_model"] = _PERSISTENCE_MODEL_VERSION
         _save_index_metadata(ctn_dir, metadata)
+
+        if cache_path.exists():
+            register_artifact(
+                ctn_dir,
+                cache_path,
+                "file_cache_sqlite",
+                producer="cli.index",
+                metadata={"index_id": index_id},
+                schema_version=get_config_cached().get(
+                    "file_cache_schema_version", "file-cache.v1"
+                ),
+            )
 
         metrics_path = args.metrics_output or get_config_cached().get(
             "indexer", {}
@@ -1022,7 +1214,15 @@ def cmd_index(args: argparse.Namespace) -> int:
                 "metrics": metrics,
             }
             try:
-                _write_metrics(metrics_path_obj, metrics_payload)
+                metrics_artifact_type = "metrics_json" if _is_path_under(metrics_path_obj, ctn_dir) else None
+                _write_metrics(
+                    metrics_path_obj,
+                    metrics_payload,
+                    ctn_dir=ctn_dir,
+                    artifact_type=metrics_artifact_type,
+                    producer="cli.index",
+                    metadata={"index_id": index_id},
+                )
             except OSError as exc:
                 LOGGER.warning(
                     "metrics_write_failed", path=metrics_path, error=str(exc)
@@ -1324,6 +1524,14 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
             print("No changes detected.")
             return 0
         tracker.save(hash_cache_path)
+        if hash_cache_path.exists():
+            register_artifact(
+                ctn_dir,
+                hash_cache_path,
+                "file_hashes_json",
+                producer="cli.patch.index",
+                metadata={"index_id": current_id},
+            )
         print(f"Scanned: {len(files)} changed files, {len(deleted_paths)} deleted")
     else:
         if args.diff:
@@ -1366,7 +1574,15 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         metadata = _load_index_metadata(ctn_dir)
         entry = metadata.get("indexes", {}).get(current_id, {})
 
-        _write_json(graph_path, graph.to_dict())
+        _write_json(
+            graph_path,
+            graph.to_dict(),
+            ctn_dir=ctn_dir,
+            artifact_type="graph_json",
+            producer="cli.patch.index",
+            metadata={"index_id": current_id},
+            schema_version=get_config_cached().get("graph_schema_version", "graph.v1"),
+        )
         patch_build_ms = max(0, int((time.perf_counter() - patch_start) * 1000))
         serialization_method = (
             get_config_cached()
@@ -1384,6 +1600,11 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
                     default_snapshot_id=current_id,
                     default_service_tag=root.name,
                 ),
+                ctn_dir=ctn_dir,
+                artifact_type="bsg_json",
+                producer="cli.patch.index",
+                metadata={"index_id": current_id, "serialization_method": "streaming"},
+                schema_version=get_config_cached().get("bsg_schema_version", "bsg.v1"),
             )
             bsg_json = json.loads(bsg_path.read_text(encoding="utf-8"))
         else:
@@ -1392,9 +1613,28 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
                 default_snapshot_id=current_id,
                 default_service_tag=root.name,
             )
-            _write_json(bsg_path, bsg_json)
+            _write_json(
+                bsg_path,
+                bsg_json,
+                ctn_dir=ctn_dir,
+                artifact_type="bsg_json",
+                producer="cli.patch.index",
+                metadata={"index_id": current_id, "serialization_method": "legacy"},
+                schema_version=get_config_cached().get("bsg_schema_version", "bsg.v1"),
+            )
 
         quality_warnings = _extract_bsg_quality_warnings(bsg_json)
+
+        query_cfg = get_config_cached().get("bsg", {}).get("query", {})
+        query_enabled = bool(query_cfg.get("enabled", True))
+        query_index_on_write = bool(query_cfg.get("index_on_write", True))
+        query_index_stats = {"entities_indexed": 0, "relationships_indexed": 0}
+        if query_enabled and query_index_on_write:
+            query_index_stats = rebuild_query_index(
+                ctn_dir,
+                current_id,
+                graph.to_dict(),
+            )
 
         # Generate categorized markdown outputs
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -1408,19 +1648,40 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
             timestamp=timestamp,
             evolution_rules=evolution_rules,
         )
-        _write_text(context_dir / "overview.md", overview_content)
+        _write_text(
+            context_dir / "overview.md",
+            overview_content,
+            ctn_dir=ctn_dir,
+            artifact_type="context_overview",
+            producer="cli.patch.index",
+            metadata={"index_id": current_id},
+        )
 
         # architecture.md - Main codebase only
         arch_content = bsg_map.render_category(
             "source", include_full_entities=True
         )
-        _write_text(context_dir / "architecture.md", arch_content)
+        _write_text(
+            context_dir / "architecture.md",
+            arch_content,
+            ctn_dir=ctn_dir,
+            artifact_type="context_architecture",
+            producer="cli.patch.index",
+            metadata={"index_id": current_id},
+        )
 
         # tests.md
         tests_content = bsg_map.render_category(
             "tests", include_full_entities=False
         )
-        _write_text(context_dir / "tests.md", tests_content)
+        _write_text(
+            context_dir / "tests.md",
+            tests_content,
+            ctn_dir=ctn_dir,
+            artifact_type="context_tests",
+            producer="cli.patch.index",
+            metadata={"index_id": current_id},
+        )
 
         # docs.md - Uncategorized categories + Documentation files
         uncategorized_content = bsg_map.render_uncategorized_categories(
@@ -1437,13 +1698,27 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         elif docs_content.strip():
             combined_docs = docs_content
             
-        _write_text(context_dir / "docs.md", combined_docs)
+        _write_text(
+            context_dir / "docs.md",
+            combined_docs,
+            ctn_dir=ctn_dir,
+            artifact_type="context_docs",
+            producer="cli.patch.index",
+            metadata={"index_id": current_id},
+        )
 
         # config.md
         config_content = bsg_map.render_category(
             "config", include_full_entities=False
         )
-        _write_text(context_dir / "config.md", config_content)
+        _write_text(
+            context_dir / "config.md",
+            config_content,
+            ctn_dir=ctn_dir,
+            artifact_type="context_config",
+            producer="cli.patch.index",
+            metadata={"index_id": current_id},
+        )
 
         # Update metadata entry
         entry = metadata.get("indexes", {}).get(current_id, {})
@@ -1471,6 +1746,12 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
                 merged_stats[key] = prev_stats[key]
         merged_stats["bsg_quality_warnings"] = len(quality_warnings)
         merged_stats["bsg_quality_warning_samples"] = quality_warnings[:5]
+        merged_stats["query_entities_indexed"] = int(
+            query_index_stats.get("entities_indexed", 0)
+        )
+        merged_stats["query_relationships_indexed"] = int(
+            query_index_stats.get("relationships_indexed", 0)
+        )
         entry.update(
             {
                 "entity_count": bsg_map.entity_count,
@@ -1497,8 +1778,28 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         outputs["docs_md"] = str((context_dir / "docs.md").relative_to(root))
         outputs["config_md"] = str((context_dir / "config.md").relative_to(root))
         entry["schemas"] = dict(get_config_cached().get("schemas", {}))
+        entry["persistence"] = {
+            "model": _PERSISTENCE_MODEL_VERSION,
+            "query_index_on_write": bool(query_enabled and query_index_on_write),
+            "mmap_enabled": bool(
+                get_config_cached().get("bsg", {}).get("storage", {}).get("mmap_enabled", False)
+            ),
+        }
         metadata.setdefault("indexes", {})[current_id] = entry
+        metadata["persistence_model"] = _PERSISTENCE_MODEL_VERSION
         _save_index_metadata(ctn_dir, metadata)
+
+        if cache_path.exists():
+            register_artifact(
+                ctn_dir,
+                cache_path,
+                "file_cache_sqlite",
+                producer="cli.patch.index",
+                metadata={"index_id": current_id},
+                schema_version=get_config_cached().get(
+                    "file_cache_schema_version", "file-cache.v1"
+                ),
+            )
 
         snapshot_id = None
         if args.snapshot:
@@ -1553,6 +1854,14 @@ def _cmd_patch_snapshot_based(
         tracker.load(hash_cache_path)
         changes = tracker.scan_for_changes(max_file_size_kb=args.max_file_size_kb)
         tracker.save(hash_cache_path)
+        if hash_cache_path.exists():
+            register_artifact(
+                ctn_dir,
+                hash_cache_path,
+                "file_hashes_json",
+                producer="cli.patch.snapshot",
+                metadata={"base_snapshot_id": args.base_snapshot},
+            )
         print(f"Scanned: {len(changes)} changes detected")
     else:
         # Process explicit file changes or auto-detect from current index
@@ -1900,6 +2209,97 @@ def cmd_cache_clear(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_storage_backfill(args: argparse.Namespace) -> int:
+    """Backfill artifact registry metadata from existing durable .ctn files."""
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    run_id = f"backfill-{uuid.uuid4().hex[:12]}"
+    result = backfill_registry(
+        ctn_dir,
+        producer="cli.storage.backfill",
+        run_id=run_id,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_storage_verify(args: argparse.Namespace) -> int:
+    """Verify registry consistency and optionally repair metadata drift."""
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    run_id = f"verify-{uuid.uuid4().hex[:12]}"
+    result = verify_registry(
+        ctn_dir,
+        repair=bool(args.repair),
+        run_id=run_id,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_storage_cleanup(args: argparse.Namespace) -> int:
+    """Apply storage retention policy with dry-run by default."""
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    dry_run = not bool(args.apply)
+    result = cleanup_registry(ctn_dir, dry_run=dry_run)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_query(args: argparse.Namespace) -> int:
+    """Query persisted graph indexes with automatic in-memory fallback."""
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+
+    cfg = get_config_cached()
+    default_limit = (
+        cfg.get("bsg", {}).get("query", {}).get("default_limit", 200)
+        if isinstance(cfg, dict)
+        else 200
+    )
+    limit = max(1, int(args.limit or default_limit))
+
+    service = QueryService(ctn_dir, index_id=args.index_id)
+    rebuild_stats: dict[str, int] | None = None
+    if args.rebuild_index:
+        rebuild_stats = service.rebuild_indexes()
+
+    metadata = _load_index_metadata(ctn_dir)
+    resolved_index_id = args.index_id or metadata.get("current_index_id")
+    if not resolved_index_id:
+        print("❌ No index found. Run 'batho index' first.")
+        return 1
+
+    if args.entity_type:
+        rows = service.entities_by_type(args.entity_type, limit=limit)
+        mode = "entities_by_type"
+    elif args.file_path:
+        rows = service.entities_by_file(args.file_path, limit=limit)
+        mode = "entities_by_file"
+    elif args.relationship_type:
+        rows = service.relationships_by_type(args.relationship_type, limit=limit)
+        mode = "relationships_by_type"
+    else:
+        print(
+            "❌ Provide one of --entity-type, --file-path, or --relationship-type."
+        )
+        return 1
+
+    payload: dict[str, Any] = {
+        "mode": mode,
+        "index_id": resolved_index_id,
+        "count": len(rows),
+        "limit": limit,
+        "rows": rows,
+    }
+    if rebuild_stats is not None:
+        payload["rebuild_index"] = rebuild_stats
+
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
 def cmd_bsg(args: argparse.Namespace) -> int:
     """Render BSG in various formats."""
     root = Path(args.root).resolve()
@@ -2130,6 +2530,58 @@ def build_parser() -> argparse.ArgumentParser:
 
     cache_clr = cache_sub.add_parser("clear", help="Clear entire cache")
     cache_clr.set_defaults(func=cmd_cache_clear)
+
+    storage = sub.add_parser("storage", help="Artifact registry management")
+    storage_sub = storage.add_subparsers(dest="storage_command", required=True)
+
+    storage_backfill = storage_sub.add_parser(
+        "backfill",
+        help="Register existing durable .ctn artifacts in the SQLite registry",
+    )
+    storage_backfill.add_argument("--root", required=True, help="Path to repo root")
+    storage_backfill.set_defaults(func=cmd_storage_backfill)
+
+    storage_verify = storage_sub.add_parser(
+        "verify",
+        help="Verify registry consistency and optionally repair metadata drift",
+    )
+    storage_verify.add_argument("--root", required=True, help="Path to repo root")
+    storage_verify.add_argument(
+        "--repair",
+        action="store_true",
+        help="Repair unregistered/missing metadata from disk",
+    )
+    storage_verify.set_defaults(func=cmd_storage_verify)
+
+    storage_cleanup = storage_sub.add_parser(
+        "cleanup",
+        help="Apply retention cleanup (dry-run by default)",
+    )
+    storage_cleanup.add_argument("--root", required=True, help="Path to repo root")
+    storage_cleanup.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply deletions (default prints dry-run candidates)",
+    )
+    storage_cleanup.set_defaults(func=cmd_storage_cleanup)
+
+    query = sub.add_parser("query", help="Query persisted graph indexes")
+    query.add_argument("--root", required=True, help="Path to repo root")
+    query.add_argument("--index-id", default=None, help="Optional index id to query")
+    query.add_argument("--entity-type", default=None, help="Filter by entity type")
+    query.add_argument("--file-path", default=None, help="Filter entities by file path")
+    query.add_argument(
+        "--relationship-type",
+        default=None,
+        help="Filter by relationship type",
+    )
+    query.add_argument("--limit", type=int, default=None, help="Result limit")
+    query.add_argument(
+        "--rebuild-index",
+        action="store_true",
+        help="Rebuild query index from graph.json before lookup",
+    )
+    query.set_defaults(func=cmd_query)
 
     # BSG command
     bsg = sub.add_parser("bsg", help="Render BSG in various formats")

@@ -4,10 +4,21 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sqlite3
 
 import pytest
 
-from batho import cmd_index, cmd_invalidate, cmd_patch, cmd_stats, cmd_webhook
+from batho import (
+    cmd_index,
+    cmd_invalidate,
+    cmd_patch,
+    cmd_query,
+    cmd_stats,
+    cmd_storage_backfill,
+    cmd_storage_cleanup,
+    cmd_storage_verify,
+    cmd_webhook,
+)
 from batho_core.config import get_config_cached
 from batho_core.context.bsg_map import BSGMap
 from batho_core.context.codegraph import InMemoryGraph
@@ -690,3 +701,117 @@ class TestCmdPatch:
         assert summary.get("deleted", 0) >= 1
         assert "bsg_quality_warning_count" in payload
         assert isinstance(payload.get("bsg_quality_warnings"), list)
+
+
+class TestCmdStorageAndQuery:
+    def test_storage_backfill_and_verify_commands(
+        self,
+        simple_python_repo: Path,
+        capsys,
+    ):
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(idx_args) == 0
+
+        capsys.readouterr()
+
+        backfill_args = argparse.Namespace(root=str(simple_python_repo))
+        backfill_result = cmd_storage_backfill(backfill_args)
+        assert backfill_result == 0
+        backfill_payload = json.loads(capsys.readouterr().out)
+        assert backfill_payload.get("enabled") is True
+
+        verify_args = argparse.Namespace(root=str(simple_python_repo), repair=False)
+        verify_result = cmd_storage_verify(verify_args)
+        assert verify_result == 0
+        verify_payload = json.loads(capsys.readouterr().out)
+        assert "missing_on_disk" in verify_payload
+        assert "unregistered_on_disk" in verify_payload
+
+    def test_storage_cleanup_command_dry_run(
+        self,
+        simple_python_repo: Path,
+        capsys,
+    ):
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(idx_args) == 0
+
+        ctn_dir = simple_python_repo / ".ctn"
+        registry_db = ctn_dir / "artifact_registry.db"
+        with sqlite3.connect(str(registry_db)) as conn:
+            conn.execute("UPDATE artifacts SET updated_at = '2000-01-01T00:00:00+00:00'")
+            conn.commit()
+
+        capsys.readouterr()
+
+        cleanup_args = argparse.Namespace(root=str(simple_python_repo), apply=False)
+        cleanup_result = cmd_storage_cleanup(cleanup_args)
+        assert cleanup_result == 0
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload.get("dry_run") is True
+        assert "candidates" in payload
+
+    def test_query_command_entity_type(self, simple_python_repo: Path, capsys):
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(idx_args) == 0
+
+        capsys.readouterr()
+
+        query_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            index_id=None,
+            entity_type="function",
+            file_path=None,
+            relationship_type=None,
+            limit=20,
+            rebuild_index=False,
+        )
+        result = cmd_query(query_args)
+        assert result == 0
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload.get("mode") == "entities_by_type"
+        assert payload.get("index_id")
+        assert isinstance(payload.get("rows"), list)

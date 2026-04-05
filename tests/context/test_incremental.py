@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from batho_core.context.incremental import (
     GitDiffEntry,
     _parse_name_status_output,
+    get_head_commit,
     extract_snapshot_commit,
     get_changed_file_status_since,
     get_changed_files_since,
@@ -32,6 +33,31 @@ class TestSnapshotCommitParsing:
         commit = extract_snapshot_commit("batho_legacy_20260404T120000Z", snapshot_payload)
         assert commit == "abcdef1234567890abcdef1234567890abcdef12"
 
+    def test_parse_snapshot_commit_handles_nogit_and_blank(self):
+        assert parse_snapshot_commit("batho_repo_nogit_20260404T120000Z") is None
+        assert parse_snapshot_commit(" ") is None
+
+    def test_extract_snapshot_commit_payload_fallback_paths(self):
+        assert extract_snapshot_commit("snap", snapshot_payload="bad") is None
+
+        payload = {
+            "git": {"commit": "ABCDEF1"},
+            "commit_sha": "",
+        }
+        assert extract_snapshot_commit("snap", payload) == "abcdef1"
+
+
+class TestGitCommandHelpers:
+    def test_get_head_commit_handles_missing_and_empty(self, monkeypatch):
+        monkeypatch.setattr("batho_core.context.incremental._run_git", lambda *_a, **_k: None)
+        assert get_head_commit(Path(".")) is None
+
+        monkeypatch.setattr(
+            "batho_core.context.incremental._run_git",
+            lambda *_a, **_k: SimpleNamespace(stdout="\n"),
+        )
+        assert get_head_commit(Path(".")) is None
+
 
 class TestParseNameStatusOutput:
     def test_parse_name_status_handles_rename_as_delete_plus_add(self):
@@ -45,6 +71,12 @@ class TestParseNameStatusOutput:
         entries = _parse_name_status_output(output)
         assert GitDiffEntry(status="M", path="src/a.py") in entries
         assert all(entry.path != "unknown.txt" for entry in entries)
+
+    def test_parse_name_status_handles_copy_and_empty_targets(self):
+        output = "\nC100\toriginal.txt\tcopied.txt\nM\t\n"
+        entries = _parse_name_status_output(output)
+        assert GitDiffEntry(status="A", path="copied.txt") in entries
+        assert all(entry.path for entry in entries)
 
 
 class TestChangedFilesSince:
@@ -69,6 +101,21 @@ class TestChangedFilesSince:
         assert GitDiffEntry(status="M", path="src/a.py") in entries
         assert GitDiffEntry(status="A", path="src/b.py") in entries
 
+    def test_get_changed_file_status_since_missing_base_or_git_failure(self, monkeypatch):
+        monkeypatch.setattr("batho_core.context.incremental.is_git_repo", lambda _: True)
+        monkeypatch.setattr(
+            "batho_core.context.incremental.extract_snapshot_commit",
+            lambda *_args, **_kwargs: None,
+        )
+        assert get_changed_file_status_since("snap", Path("."), {}) is None
+
+        monkeypatch.setattr(
+            "batho_core.context.incremental.extract_snapshot_commit",
+            lambda *_args, **_kwargs: "abc1234",
+        )
+        monkeypatch.setattr("batho_core.context.incremental._run_git", lambda *_a, **_k: None)
+        assert get_changed_file_status_since("snap", Path("."), {}) is None
+
     def test_get_changed_files_since_returns_unique_paths(self, monkeypatch):
         monkeypatch.setattr(
             "batho_core.context.incremental.get_changed_file_status_since",
@@ -81,3 +128,10 @@ class TestChangedFilesSince:
 
         paths = get_changed_files_since("snap", Path("."), {})
         assert paths == ["src/a.py", "src/c.py"]
+
+    def test_get_changed_files_since_propagates_none(self, monkeypatch):
+        monkeypatch.setattr(
+            "batho_core.context.incremental.get_changed_file_status_since",
+            lambda *_args, **_kwargs: None,
+        )
+        assert get_changed_files_since("snap", Path("."), {}) is None

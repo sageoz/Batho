@@ -23,6 +23,8 @@ try:
 except Exception:  # pragma: no cover - handled by runtime error in validator init
     Draft202012Validator = None  # type: ignore[assignment]
 
+from batho_core.config import get_config_cached
+from batho_core.context.storage import register_artifact_for_path
 from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
 from batho_core.utils.logging import get_logger
 
@@ -336,13 +338,15 @@ def _hash_file(path: Path) -> str:
 
 
 def _rules_cache_path(root_path: Path) -> Path:
-    ctn_dir = root_path / ".ctn"
+    ctn_dir_name = str(get_config_cached().get("paths", {}).get("ctn_dir", ".ctn"))
+    ctn_dir = root_path / ctn_dir_name
     ctn_dir.mkdir(parents=True, exist_ok=True)
     return ctn_dir / _CACHE_FILENAME
 
 
 def _interception_stats_path(root_path: Path) -> Path:
-    ctn_dir = root_path / ".ctn"
+    ctn_dir_name = str(get_config_cached().get("paths", {}).get("ctn_dir", ".ctn"))
+    ctn_dir = root_path / ctn_dir_name
     ctn_dir.mkdir(parents=True, exist_ok=True)
     return ctn_dir / _INTERCEPTION_FILENAME
 
@@ -365,6 +369,13 @@ def _write_cache(cache_path: Path, payload: dict[str, Any]) -> None:
     tmp_path = cache_path.with_suffix(".tmp")
     tmp_path.write_bytes(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
     tmp_path.replace(cache_path)
+    register_artifact_for_path(
+        cache_path,
+        "rules_cache_binary",
+        producer="bsg.rules",
+        metadata={"schema_version": payload.get("schema_version", _CACHE_SCHEMA_VERSION)},
+        schema_version=_CACHE_SCHEMA_VERSION,
+    )
 
 
 def _plugin_display_name(plugin_id: str) -> str:
@@ -415,6 +426,13 @@ def _write_interception_stats(path: Path, payload: dict[str, Any]) -> None:
         encoding="utf-8",
     )
     tmp_path.replace(path)
+    register_artifact_for_path(
+        path,
+        "interception_stats_json",
+        producer="bsg.rules",
+        metadata={"schema_version": payload.get("schema_version", _INTERCEPTION_SCHEMA_VERSION)},
+        schema_version=_INTERCEPTION_SCHEMA_VERSION,
+    )
 
 
 def _record_interceptions(

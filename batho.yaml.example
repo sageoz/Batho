@@ -174,3 +174,30 @@ bsg:
     partial_parsing: false
     max_file_size_mb: 10
     skip_comments: false
+
+  query:
+    enabled: true
+    index_on_write: true
+    cache_enabled: true
+    cache_size: 256
+    default_limit: 200
+    query_timeout_ms: 5000
+
+  storage:
+    enabled: true
+    backend: sqlite          # sqlite
+    registry_path: .ctn/artifact_registry.db
+    content_scope: durable   # durable | all
+    strict_compatibility: true
+    cloud_sync_ready: true
+    track_content_ids: true
+    mmap_enabled: false
+    mmap_min_size_mb: 8
+    retention:
+      enabled: true
+      snapshot_ttl_days: 90
+      patch_ttl_days: 90
+      metrics_ttl_days: 30
+      context_ttl_days: 90
+      max_snapshots: 500
+      max_patches: 5000

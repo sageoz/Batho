@@ -1,6 +1,7 @@
 """Tests for batho_core.utils.ignore module."""
 from __future__ import annotations
 
+import builtins
 from pathlib import Path
 
 import pytest
@@ -71,6 +72,37 @@ class TestLoadIgnoreSpec:
         spec = load_ignore_spec(tmp_path, ignore_files=[".myignore"])
         assert is_ignored(tmp_path / "secret" / "key.pem", tmp_path, spec)
 
+    def test_custom_bathoignore_path_and_read_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        custom = tmp_path / "custom.ignore"
+        custom.write_text("cache/\n", encoding="utf-8")
+        spec = load_ignore_spec(tmp_path, bathoignore_path="custom.ignore")
+        assert is_ignored(tmp_path / "cache" / "x.py", tmp_path, spec)
+
+        original = Path.read_text
+
+        def _raise_once(self: Path, *args, **kwargs):
+            if self.name == ".gitignore":
+                raise OSError("boom")
+            return original(self, *args, **kwargs)
+
+        (tmp_path / ".gitignore").write_text("broken/\n", encoding="utf-8")
+        monkeypatch.setattr(Path, "read_text", _raise_once)
+        spec2 = load_ignore_spec(tmp_path)
+        assert spec2 is not None
+
+    def test_pathspec_import_fallback_to_list(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        original_import = builtins.__import__
+
+        def _import(name, *args, **kwargs):
+            if name == "pathspec":
+                raise ImportError("forced")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _import)
+        spec = load_ignore_spec(tmp_path, extra_patterns=["logs/"])
+        assert isinstance(spec, list)
+        assert any("logs/" == p for p in spec)
+
 
 # ---------------------------------------------------------------------------
 # is_ignored
@@ -98,6 +130,17 @@ class TestIsIgnored:
         spec = load_ignore_spec(tmp_path)
         # Already-relative path
         assert is_ignored(Path("__pycache__/foo.pyc"), tmp_path, spec)
+
+    def test_absolute_outside_root_returns_false(self, tmp_path: Path):
+        spec = load_ignore_spec(tmp_path)
+        outside = Path("/tmp/outside.py")
+        assert is_ignored(outside, tmp_path, spec) is False
+
+    def test_fnmatch_fallback_paths(self, tmp_path: Path):
+        spec = ["build/", "*.tmp", "src/*.py"]
+        assert is_ignored(tmp_path / "build" / "x.o", tmp_path, spec)
+        assert is_ignored(tmp_path / "a.tmp", tmp_path, spec)
+        assert is_ignored(tmp_path / "src" / "m.py", tmp_path, spec)
 
 
 # ---------------------------------------------------------------------------
@@ -157,3 +200,21 @@ class TestWalkFiltered:
         names = [p.name for p in results]
         assert "app.py" in names
         assert "m.pyc" not in names
+
+    def test_walk_and_rglob_with_explicit_spec(self, tmp_path: Path):
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "keep.txt").write_text("ok", encoding="utf-8")
+        (tmp_path / "data" / "drop.log").write_text("x", encoding="utf-8")
+
+        spec = ["*.log"]
+        walked = []
+        for dirpath, _, files in walk_ignored_filtered(tmp_path, spec=spec, skip_hidden=False):
+            for f in files:
+                walked.append((dirpath / f).name)
+
+        assert "keep.txt" in walked
+        assert "drop.log" not in walked
+
+        matches = list(rglob_ignored_filtered(tmp_path, "*.txt", spec=spec, skip_hidden=False))
+        assert len(matches) == 1
+        assert matches[0].name == "keep.txt"

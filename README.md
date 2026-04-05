@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="Batho" width="160" height="160" />
+  <img src="assets/batho.svg" alt="Batho" width="160" height="160" />
 </p>
 
 <h1 align="center">Batho</h1>

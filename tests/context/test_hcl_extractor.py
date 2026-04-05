@@ -11,6 +11,8 @@ Tests cover:
 - Error handling and edge cases
 """
 
+from types import SimpleNamespace
+
 import pytest
 from batho_core.context.languages.hcl import HCLExtractor
 from batho_core.context.schema import EntityType, RelationshipType, Entity, Relationship
@@ -26,6 +28,7 @@ class TestHCLExtractor:
         self.extractor = HCLExtractor.__new__(HCLExtractor)
         self.extractor._language_name = "hcl"
         self.extractor._block_entities = {}
+        self.extractor.logger = SimpleNamespace(debug=lambda *a, **k: None)
         
         # Add helper methods for entity/relationship creation
         def _create_entity(entity_type, name, filepath, start_line, end_line, start_byte, end_byte, metadata=None):
@@ -337,6 +340,49 @@ class TestHCLExtractor:
         # Should have CONTAINS relationships for document->blocks only
         contains_rels = [r for r in relationships if r.type == RelationshipType.CONTAINS]
         assert len(contains_rels) >= 3  # doc->3 blocks
+
+    def test_relationship_extraction_includes_var_and_module_refs(self):
+        hcl_content = b"""
+resource "aws_instance" "web" {
+  instance_type = var.instance_type
+}
+
+module "network" {
+  source = "./modules/network"
+}
+"""
+        entities = self.extractor._extract_elements(hcl_content, "refs.tf")
+        relationships = self.extractor._extract_references(hcl_content, "refs.tf", entities)
+
+        uses = [r for r in relationships if r.type == RelationshipType.USES]
+        refs = [r for r in relationships if r.type == RelationshipType.REFERENCES]
+        assert uses
+        assert refs
+
+    def test_extract_attributes_exclude_blocks_and_find_block_end_fallback(self):
+        entities = []
+        self.extractor._extract_attributes(
+            'name = "x"\nblock = { nested = 1 }\n',
+            "attrs.tf",
+            "root",
+            entities,
+            0,
+            lambda x: x + 1,
+            exclude_blocks=True,
+        )
+        names = [e.name for e in entities if e.type == EntityType.SETTING]
+        assert "name" in names
+        assert "block" not in names
+
+        # Unmatched brace should return end of content.
+        end = self.extractor._find_block_end("resource x {", 10, [("open", 10)])
+        assert end == len("resource x {")
+
+    def test_extract_elements_and_references_unicode_decode_errors(self):
+        bad = b"\xff\xfe\xfd"
+        entities = self.extractor._extract_elements(bad, "bad.tf")
+        assert entities == []
+        assert self.extractor._extract_references(bad, "bad.tf", entities) == []
 
     def test_empty_hcl(self):
         """Test handling of empty HCL files."""

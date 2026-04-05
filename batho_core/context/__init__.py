@@ -8,5 +8,15 @@ from .cache import ASTCache
 from .codegraph import CodeGraphIndexer
 from .extractor import ASTExtractor
 from .bsg_map import BSGMap
+from .query import QueryService
+from .storage import ArtifactRegistry, register_artifact
 
-__all__ = ["ASTCache", "CodeGraphIndexer", "BSGMap", "ASTExtractor"]
+__all__ = [
+	"ASTCache",
+	"CodeGraphIndexer",
+	"BSGMap",
+	"ASTExtractor",
+	"QueryService",
+	"ArtifactRegistry",
+	"register_artifact",
+]

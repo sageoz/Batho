@@ -53,6 +53,15 @@ class TestReadTextWithFallback:
         result = read_text_with_fallback(f, errors="replace")
         assert isinstance(result, str)
 
+    def test_strict_mode_exhausts_encodings(self, tmp_path: Path):
+        f = tmp_path / "strict.txt"
+        f.write_bytes(b"\xff")
+
+        # The implementation raises an invalid UnicodeDecodeError signature,
+        # which manifests as TypeError after exhausting all configured encodings.
+        with pytest.raises(TypeError):
+            read_text_with_fallback(f, encodings=["ascii"], errors="strict")
+
 
 # ---------------------------------------------------------------------------
 # decode_bytes_with_fallback
@@ -79,6 +88,14 @@ class TestDecodeBytesWithFallback:
         data = bytes(range(128, 256))
         result = decode_bytes_with_fallback(data)
         assert isinstance(result, str)
+
+    def test_final_latin1_fallback_after_strict_decode_failure(self):
+        result = decode_bytes_with_fallback(
+            b"\xff",
+            encodings=["ascii"],
+            errors="strict",
+        )
+        assert result == "ÿ"
 
 
 # ---------------------------------------------------------------------------
