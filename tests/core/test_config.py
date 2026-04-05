@@ -9,6 +9,7 @@ import pytest
 from batho.config import (
     Config,
     FlagsConfig,
+    HooksConfig,
     IndexerConfig,
     LoggingConfig,
     PathsConfig,
@@ -72,6 +73,7 @@ class TestPydanticModels:
         assert isinstance(cfg.paths, PathsConfig)
         assert isinstance(cfg.indexer, IndexerConfig)
         assert isinstance(cfg.flags, FlagsConfig)
+        assert isinstance(cfg.hooks, HooksConfig)
         assert isinstance(cfg.rules, RulesConfig)
         assert cfg.bsg.query.enabled is True
         assert cfg.bsg.storage.backend == "sqlite"
@@ -96,8 +98,15 @@ class TestGetConfig:
         assert "paths" in cfg
         assert "indexer" in cfg
         assert "flags" in cfg
+        assert "hooks" in cfg
         assert "rules" in cfg
         assert "bsg" in cfg
+
+    def test_hooks_defaults(self):
+        cfg = get_config()
+        hooks = cfg.get("hooks", {})
+        assert hooks.get("enabled") is True
+        assert hooks.get("include") is True
 
     def test_logging_level_is_int(self):
         cfg = get_config()
@@ -230,6 +239,16 @@ class TestConfigFileLoading:
         get_config_cached.cache_clear()
         cfg = get_config()
         assert cfg["logging"]["level"] == logging.ERROR
+
+    def test_root_yaml_hooks_pointer(self, tmp_path: Path, monkeypatch):
+        cfg_file = tmp_path / "batho.yaml"
+        cfg_file.write_text("hooks:\n  enabled: false\n  include: false\n")
+        monkeypatch.chdir(tmp_path)
+
+        get_config_cached.cache_clear()
+        cfg = get_config()
+        assert cfg["hooks"]["enabled"] is False
+        assert cfg["hooks"]["include"] is False
 
     def test_missing_root_config_uses_defaults(self, tmp_path: Path, monkeypatch):
         monkeypatch.chdir(tmp_path)

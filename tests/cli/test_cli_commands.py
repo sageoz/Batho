@@ -9,6 +9,11 @@ import sqlite3
 import pytest
 
 from batho_cli import (
+    cmd_hooks_install,
+    cmd_hooks_list,
+    cmd_hooks_remove,
+    cmd_hooks_run,
+    cmd_hooks_status,
     cmd_index,
     cmd_invalidate,
     cmd_patch,
@@ -924,3 +929,134 @@ class TestCmdStorageAndQuery:
         assert payload.get("mode") == "entities_by_type"
         assert payload.get("index_id")
         assert isinstance(payload.get("rows"), list)
+
+
+class TestCmdHooks:
+    @staticmethod
+    def _init_git_repo(root: Path) -> None:
+        (root / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _write_hooks_yaml(root: Path, content: str) -> None:
+        cfg_path = root / ".batho" / "hooks.yaml"
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(content, encoding="utf-8")
+
+    def test_hooks_list_and_status(self, tmp_path: Path, capsys):
+        root = tmp_path / "repo"
+        root.mkdir()
+        self._init_git_repo(root)
+        self._write_hooks_yaml(
+            root,
+            (
+                "version: hooks.v1\n"
+                "hooks:\n"
+                "  pre-commit:\n"
+                "    enabled: true\n"
+                "    stages:\n"
+                "      - run: echo pre-commit\n"
+                "  enterprise-nightly:\n"
+                "    enabled: true\n"
+                "    stages:\n"
+                "      - run: echo nightly\n"
+            ),
+        )
+
+        list_args = argparse.Namespace(root=str(root))
+        assert cmd_hooks_list(list_args) == 0
+        list_payload = json.loads(capsys.readouterr().out)
+        assert "pre-commit" in list_payload.get("configured_hooks", [])
+        assert "enterprise-nightly" in list_payload.get("configured_hooks", [])
+
+        status_args = argparse.Namespace(root=str(root), hook="pre-commit")
+        assert cmd_hooks_status(status_args) == 0
+        status_payload = json.loads(capsys.readouterr().out)
+        assert status_payload.get("hooks", [])[0].get("installed") is False
+
+    def test_hooks_install_bootstrap_and_run_custom(self, tmp_path: Path, capsys):
+        root = tmp_path / "repo"
+        root.mkdir()
+        self._init_git_repo(root)
+
+        install_args = argparse.Namespace(
+            root=str(root),
+            hook=None,
+            all=True,
+            force=False,
+            dry_run=False,
+        )
+        assert cmd_hooks_install(install_args) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert (root / ".batho" / "hooks.yaml").exists()
+        assert "pre-commit" in payload.get("installed", [])
+        assert any(
+            "enterprise-nightly" in warning
+            for warning in payload.get("warnings", [])
+        )
+
+        run_args = argparse.Namespace(
+            root=str(root),
+            hook="enterprise-nightly",
+            dry_run=True,
+            verbose=False,
+        )
+        assert cmd_hooks_run(run_args) == 0
+        run_payload = json.loads(capsys.readouterr().out)
+        assert run_payload.get("hook") == "enterprise-nightly"
+        assert run_payload.get("success") is True
+
+    def test_hooks_install_collision_and_force_remove(self, tmp_path: Path, capsys):
+        root = tmp_path / "repo"
+        root.mkdir()
+        self._init_git_repo(root)
+        self._write_hooks_yaml(
+            root,
+            (
+                "version: hooks.v1\n"
+                "hooks:\n"
+                "  pre-commit:\n"
+                "    enabled: true\n"
+                "    stages:\n"
+                "      - run: echo ok\n"
+            ),
+        )
+
+        unmanaged = root / ".git" / "hooks" / "pre-commit"
+        unmanaged.write_text("#!/usr/bin/env sh\necho unmanaged\n", encoding="utf-8")
+
+        no_force_args = argparse.Namespace(
+            root=str(root),
+            hook=None,
+            all=True,
+            force=False,
+            dry_run=False,
+        )
+        assert cmd_hooks_install(no_force_args) == 0
+        no_force_payload = json.loads(capsys.readouterr().out)
+        assert any(
+            item.get("reason") == "unmanaged_collision"
+            for item in no_force_payload.get("skipped", [])
+        )
+
+        force_args = argparse.Namespace(
+            root=str(root),
+            hook=None,
+            all=True,
+            force=True,
+            dry_run=False,
+        )
+        assert cmd_hooks_install(force_args) == 0
+        force_payload = json.loads(capsys.readouterr().out)
+        assert "pre-commit" in force_payload.get("installed", [])
+        assert "BATHO_MANAGED_HOOK" in unmanaged.read_text(encoding="utf-8")
+
+        remove_args = argparse.Namespace(
+            root=str(root),
+            hook=None,
+            all=True,
+            dry_run=False,
+        )
+        assert cmd_hooks_remove(remove_args) == 0
+        remove_payload = json.loads(capsys.readouterr().out)
+        assert "pre-commit" in remove_payload.get("removed", [])
+        assert not unmanaged.exists()

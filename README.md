@@ -43,6 +43,9 @@ batho index --root . --snapshot
 # Auto-detect and patch changes
 batho patch --root . --scan
 
+# Install Git hooks for automated checks
+batho hooks install --all
+
 # Show all commands
 batho --help
 
@@ -213,6 +216,7 @@ batho <command> --help
 | `cherry-pick` | Apply a patch to another snapshot |
 | `webhook` | Parse/process a webhook payload |
 | `webhook-server` | Start webhook server from `batho.yaml` |
+| `hooks` | Git client-side hook management (install/remove/run) |
 | `invalidate` | Clear index file cache |
 | `cache` | AST cache management (`stats`, `invalidate`, `clear`) |
 | `storage` | Persistent artifact registry tools (`backfill`, `verify`, `cleanup`, `stats`, `rebuild-indexes`) |
@@ -303,6 +307,57 @@ batho webhook --root /path/to/repo --payload '{...}' --headers '{...}'
 
 # Start webhook server from config
 batho webhook-server --root /path/to/repo
+```
+
+### Git Hooks Management
+
+YAML-driven Git client-side hook automation with enterprise reliability.
+
+```bash
+# List configured hooks and templates
+batho hooks list --root /path/to/repo
+
+# Check installation status
+batho hooks status --hook pre-commit
+
+# Install all enabled hooks (auto-bootstraps .batho/hooks.yaml if missing)
+batho hooks install --all
+
+# Install specific hook with force (overwrites unmanaged)
+batho hooks install --hook pre-commit --force
+
+# Remove managed hooks
+batho hooks remove --all
+
+# Run hook manually (supports custom hooks for CI/CD)
+batho hooks run --hook enterprise-nightly --verbose
+```
+
+Configuration in `.batho/hooks.yaml`:
+
+```yaml
+version: hooks.v1
+defaults:
+  shell: /bin/sh
+  timeout: 60
+hooks:
+  pre-commit:
+    enabled: true
+    stages:
+      - run: ruff check .
+      - run: pytest --co -q
+  pre-push:
+    enabled: true
+    stages:
+      - run: pytest -x --tb=short
+```
+
+Enable in `batho.yaml`:
+
+```yaml
+hooks:
+  enabled: true
+  include: true
 ```
 
 ### Index Flags
@@ -446,6 +501,7 @@ Configuration precedence:
 | `bsg.query` | `enabled`, `index_on_write`, `cache_enabled`, `cache_size`, `default_limit`, `query_timeout_ms` | Persistent query indexes |
 | `bsg.storage` | `enabled`, `backend`, `registry_path`, `content_scope`, `cloud_sync_ready`, `mmap_enabled`, `retention.*` | Durable artifact registry and retention |
 | `webhook` | `enabled`, `server.*`, `repository.*`, `processing.*`, `rate_limit.*` | Webhook server + event processing |
+| `hooks` | `enabled`, `include` | Git client-side hook automation pointer |
 
 ### Environment Variables (Common)
 

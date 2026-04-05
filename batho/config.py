@@ -133,6 +133,11 @@ class PluginsConfig(BaseModel):
     overrides: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
 
 
+class HooksConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    include: bool = Field(default=True)
+
+
 class BsgParallelConfig(BaseModel):
     enabled: bool = Field(default=True)
     max_workers: int = Field(default=16, ge=1, le=32)
@@ -262,6 +267,7 @@ class Config(BaseModel):
     flags: FlagsConfig = Field(default_factory=FlagsConfig)
     rules: RulesConfig = Field(default_factory=RulesConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
+    hooks: HooksConfig = Field(default_factory=HooksConfig)
     schemas: dict = Field(default_factory=dict)
     webhook: dict = Field(default_factory=dict)
     bsg: BsgConfig = Field(default_factory=BsgConfig)
@@ -380,6 +386,10 @@ def get_config() -> Dict[str, Any]:
         },
         "plugins": {
             "overrides": {},
+        },
+        "hooks": {
+            "enabled": True,
+            "include": True,
         },
         "schemas": {
             "graph": GRAPH_SCHEMA_VERSION,

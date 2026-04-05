@@ -104,6 +104,48 @@ class TestBuildParser:
         assert args.command == "webhook"
         assert args.payload == '{"event":"push"}'
 
+    def test_hooks_list_command(self, parser):
+        args = parser.parse_args(["hooks", "list", "--root", "/tmp/repo"])
+        assert args.command == "hooks"
+        assert args.hooks_command == "list"
+        assert args.root == "/tmp/repo"
+
+    def test_hooks_status_command(self, parser):
+        args = parser.parse_args(["hooks", "status", "--hook", "pre-commit"])
+        assert args.command == "hooks"
+        assert args.hooks_command == "status"
+        assert args.hook == "pre-commit"
+
+    def test_hooks_install_all_command(self, parser):
+        args = parser.parse_args(["hooks", "install", "--all", "--force", "--dry-run"])
+        assert args.command == "hooks"
+        assert args.hooks_command == "install"
+        assert args.all is True
+        assert args.force is True
+        assert args.dry_run is True
+
+    def test_hooks_remove_command(self, parser):
+        args = parser.parse_args(["hooks", "remove", "--hook", "pre-push", "--dry-run"])
+        assert args.command == "hooks"
+        assert args.hooks_command == "remove"
+        assert args.hook == "pre-push"
+        assert args.dry_run is True
+
+    def test_hooks_run_command(self, parser):
+        args = parser.parse_args([
+            "hooks",
+            "run",
+            "--hook",
+            "enterprise-nightly",
+            "--verbose",
+            "--dry-run",
+        ])
+        assert args.command == "hooks"
+        assert args.hooks_command == "run"
+        assert args.hook == "enterprise-nightly"
+        assert args.verbose is True
+        assert args.dry_run is True
+
     def test_invalidate_command(self, parser):
         args = parser.parse_args(["invalidate", "--root", "/tmp"])
         assert args.command == "invalidate"

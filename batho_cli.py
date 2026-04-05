@@ -27,6 +27,25 @@ from typing import Any, Iterable
 
 import batho as batho_api
 from batho.config import get_build_info, get_config_cached, reload_config
+from batho.hooks import (
+    HooksConfigError,
+    HookInstallError,
+    HookPlanningError,
+    configured_hook_names,
+    enabled_hook_names,
+    ensure_git_hooks_dir,
+    ensure_hooks_config,
+    execute_hook,
+    hook_status,
+    install_hooks,
+    list_template_catalog,
+    load_hooks_file,
+    remove_hooks,
+    resolve_hook_plan,
+    resolve_hooks_settings,
+    supported_git_hooks,
+)
+from batho.hooks.constants import BUILTIN_TEMPLATE_CATALOG
 from batho.context.codegraph import CodeGraphIndexer, InMemoryGraph
 from batho.context.incremental import (
     GitDiffEntry,
@@ -97,6 +116,11 @@ __all__ = [
     "cmd_cache_invalidate",
     "cmd_cache_stats",
     "cmd_cherry_pick",
+    "cmd_hooks_install",
+    "cmd_hooks_list",
+    "cmd_hooks_remove",
+    "cmd_hooks_run",
+    "cmd_hooks_status",
     "cmd_index",
     "cmd_patch_chain",
     "cmd_patch_info",
@@ -521,6 +545,252 @@ def _estimate_tokens(text: str) -> int:
     if not text:
         return 0
     return max(1, len(text.encode("utf-8")) // 4)
+
+
+def cmd_hooks_list(args: argparse.Namespace) -> int:
+    root = Path(getattr(args, "root", ".") or ".").resolve()
+    config_path, pointer_enabled = resolve_hooks_settings(root)
+    payload: dict[str, Any] = {
+        "root": str(root),
+        "pointer_enabled": pointer_enabled,
+        "config_path": str(config_path),
+        "config_exists": config_path.exists(),
+        "supported_git_hooks": supported_git_hooks(),
+        "configured_hooks": [],
+        "enabled_hooks": [],
+        "template_catalog": {
+            "builtin": sorted(BUILTIN_TEMPLATE_CATALOG.keys()),
+            "custom": [],
+        },
+    }
+
+    if config_path.exists():
+        try:
+            hooks_file = load_hooks_file(config_path)
+            payload["configured_hooks"] = configured_hook_names(hooks_file)
+            payload["enabled_hooks"] = enabled_hook_names(hooks_file)
+            payload["template_catalog"] = list_template_catalog(hooks_file)
+        except HooksConfigError as exc:
+            payload["error"] = str(exc)
+            print(json.dumps(payload, indent=2))
+            return 1
+
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_hooks_status(args: argparse.Namespace) -> int:
+    root = Path(getattr(args, "root", ".") or ".").resolve()
+    config_path, pointer_enabled = resolve_hooks_settings(root)
+    payload: dict[str, Any] = {
+        "root": str(root),
+        "pointer_enabled": pointer_enabled,
+        "config_path": str(config_path),
+        "config_exists": config_path.exists(),
+    }
+
+    try:
+        hooks_dir = ensure_git_hooks_dir(root)
+        payload["git_hooks_dir"] = str(hooks_dir)
+    except HookInstallError as exc:
+        payload["error"] = str(exc)
+        print(json.dumps(payload, indent=2))
+        return 1
+
+    if not config_path.exists():
+        payload["error"] = f"Hooks config not found: {config_path}"
+        print(json.dumps(payload, indent=2))
+        return 1
+
+    try:
+        hooks_file = load_hooks_file(config_path)
+    except HooksConfigError as exc:
+        payload["error"] = str(exc)
+        print(json.dumps(payload, indent=2))
+        return 1
+
+    if args.hook:
+        target_hooks = [args.hook]
+    else:
+        target_hooks = configured_hook_names(hooks_file)
+
+    hooks_payload: list[dict[str, Any]] = []
+    for hook_name in target_hooks:
+        state = hook_status(root, hook_name)
+        cfg = hooks_file.hooks.get(hook_name)
+        state["configured"] = cfg is not None
+        state["enabled"] = bool(cfg.enabled) if cfg else False
+        hooks_payload.append(state)
+
+    payload["hooks"] = hooks_payload
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_hooks_install(args: argparse.Namespace) -> int:
+    if args.hook and args.all:
+        print("❌ Cannot use both --hook and --all")
+        return 1
+
+    root = Path(getattr(args, "root", ".") or ".").resolve()
+    try:
+        ensure_git_hooks_dir(root)
+    except HookInstallError as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    _config_path, pointer_enabled = resolve_hooks_settings(root)
+    if not pointer_enabled:
+        print("❌ Hooks pointer is disabled in batho.yaml")
+        return 1
+
+    config_path, bootstrapped = ensure_hooks_config(root, dry_run=bool(args.dry_run))
+
+    try:
+        hooks_file = load_hooks_file(config_path)
+    except FileNotFoundError:
+        if bootstrapped and bool(args.dry_run):
+            print(
+                json.dumps(
+                    {
+                        "root": str(root),
+                        "config_path": str(config_path),
+                        "bootstrapped": True,
+                        "installed": [],
+                        "unchanged": [],
+                        "skipped": [],
+                        "warnings": [
+                            "Dry-run: starter hooks config would be created before install"
+                        ],
+                        "dry_run": True,
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+        print(f"❌ Hooks config not found: {config_path}")
+        return 1
+    except HooksConfigError as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    targets = [args.hook] if args.hook else enabled_hook_names(hooks_file)
+    if not targets:
+        print(
+            json.dumps(
+                {
+                    "root": str(root),
+                    "config_path": str(config_path),
+                    "bootstrapped": bootstrapped,
+                    "installed": [],
+                    "unchanged": [],
+                    "skipped": [],
+                    "warnings": ["No enabled hooks found in config"],
+                    "dry_run": bool(args.dry_run),
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    try:
+        result = install_hooks(
+            root,
+            targets,
+            force=bool(args.force),
+            dry_run=bool(args.dry_run),
+            skip_unsupported=True,
+        )
+    except HookInstallError as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    payload = {
+        "root": str(root),
+        "config_path": str(config_path),
+        "bootstrapped": bootstrapped,
+        **result,
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_hooks_remove(args: argparse.Namespace) -> int:
+    if args.hook and args.all:
+        print("❌ Cannot use both --hook and --all")
+        return 1
+
+    root = Path(getattr(args, "root", ".") or ".").resolve()
+    try:
+        ensure_git_hooks_dir(root)
+    except HookInstallError as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    config_path, _pointer_enabled = resolve_hooks_settings(root)
+
+    targets: list[str]
+    if args.hook:
+        targets = [args.hook]
+    else:
+        if not config_path.exists():
+            print(f"❌ Hooks config not found: {config_path}")
+            return 1
+        try:
+            hooks_file = load_hooks_file(config_path)
+        except HooksConfigError as exc:
+            print(f"❌ {exc}")
+            return 1
+        targets = enabled_hook_names(hooks_file) if args.all or not args.hook else [args.hook]
+
+    result = remove_hooks(root, targets, dry_run=bool(args.dry_run))
+    payload = {
+        "root": str(root),
+        "config_path": str(config_path),
+        **result,
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_hooks_run(args: argparse.Namespace) -> int:
+    root = Path(getattr(args, "root", ".") or ".").resolve()
+    config_path, pointer_enabled = resolve_hooks_settings(root)
+    if not pointer_enabled:
+        print("❌ Hooks pointer is disabled in batho.yaml")
+        return 1
+    if not config_path.exists():
+        print(f"❌ Hooks config not found: {config_path}")
+        return 1
+
+    try:
+        hooks_file = load_hooks_file(config_path)
+        _hook, stages = resolve_hook_plan(hooks_file, args.hook)
+    except (HooksConfigError, HookPlanningError) as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    try:
+        result = execute_hook(
+            hook_name=args.hook,
+            root=root,
+            stages=stages,
+            shell=hooks_file.defaults.shell,
+            dry_run=bool(args.dry_run),
+            verbose=bool(args.verbose),
+        )
+    except Exception as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    payload = {
+        "root": str(root),
+        "config_path": str(config_path),
+        "dry_run": bool(args.dry_run),
+        **result.to_dict(),
+    }
+    print(json.dumps(payload, indent=2))
+    return 0 if result.success else 1
 
 
 def _collect_repo_metrics(
@@ -2709,6 +2979,88 @@ def build_parser() -> argparse.ArgumentParser:
     cherry_pick.add_argument("--target-snapshot", required=True, help="Target snapshot ID")
     cherry_pick.add_argument("--dry-run", action="store_true", help="Preview without applying")
     cherry_pick.set_defaults(func=cmd_cherry_pick)
+
+    hooks = sub.add_parser("hooks", help="Manage git hooks from .batho/hooks.yaml")
+    hooks_sub = hooks.add_subparsers(dest="hooks_command", required=True)
+
+    hooks_list = hooks_sub.add_parser("list", help="List supported/configured hooks and templates")
+    hooks_list.add_argument(
+        "--root",
+        default=".",
+        help="Path to repository root (default: current directory)",
+    )
+    hooks_list.set_defaults(func=cmd_hooks_list)
+
+    hooks_status = hooks_sub.add_parser("status", help="Show hooks installation status")
+    hooks_status.add_argument("--hook", default=None, help="Optional hook name")
+    hooks_status.add_argument(
+        "--root",
+        default=".",
+        help="Path to repository root (default: current directory)",
+    )
+    hooks_status.set_defaults(func=cmd_hooks_status)
+
+    hooks_install = hooks_sub.add_parser("install", help="Install managed scripts into .git/hooks")
+    hooks_install.add_argument("--hook", default=None, help="Install one hook by name")
+    hooks_install.add_argument(
+        "--all",
+        action="store_true",
+        help="Install all enabled hooks from config",
+    )
+    hooks_install.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite unmanaged collisions",
+    )
+    hooks_install.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview install actions without writing files",
+    )
+    hooks_install.add_argument(
+        "--root",
+        default=".",
+        help="Path to repository root (default: current directory)",
+    )
+    hooks_install.set_defaults(func=cmd_hooks_install)
+
+    hooks_remove = hooks_sub.add_parser("remove", help="Remove managed scripts from .git/hooks")
+    hooks_remove.add_argument("--hook", default=None, help="Remove one hook by name")
+    hooks_remove.add_argument(
+        "--all",
+        action="store_true",
+        help="Remove all enabled hooks from config",
+    )
+    hooks_remove.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview removals without deleting files",
+    )
+    hooks_remove.add_argument(
+        "--root",
+        default=".",
+        help="Path to repository root (default: current directory)",
+    )
+    hooks_remove.set_defaults(func=cmd_hooks_remove)
+
+    hooks_run = hooks_sub.add_parser("run", help="Execute hook stages by hook name")
+    hooks_run.add_argument("--hook", required=True, help="Hook name to execute")
+    hooks_run.add_argument(
+        "--root",
+        default=".",
+        help="Path to repository root (default: current directory)",
+    )
+    hooks_run.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print execution plan without running commands",
+    )
+    hooks_run.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print stage-level execution status",
+    )
+    hooks_run.set_defaults(func=cmd_hooks_run)
 
     wh = sub.add_parser("webhook", help="Parse/process a webhook payload")
     wh.add_argument(
