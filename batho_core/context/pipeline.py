@@ -43,6 +43,7 @@ def process_file_worker(
     ttl_days: int,
     max_file_size_kb: int,
     bsg_cache_cfg: dict[str, Any],
+    snapshot_id: str | None = None,
 ) -> tuple[str, list[Entity], list[Relationship], bool] | None:
     """
     Worker function for parallel file processing.
@@ -74,7 +75,26 @@ def process_file_worker(
                 filepath, content_hash, current_mtime, size
             )
             if cached_entities is not None:
-                # Cache hit - return cached entities
+                # Cache hit - stamp snapshot_id on cached entities if provided
+                if snapshot_id:
+                    stamped_entities = []
+                    for entity in cached_entities:
+                        metadata = dict(entity.metadata or {})
+                        metadata["bsg.snapshot_id"] = snapshot_id
+                        stamped_entity = Entity(
+                            type=entity.type,
+                            name=entity.name,
+                            file=entity.file,
+                            start_line=entity.start_line,
+                            end_line=entity.end_line,
+                            start_byte=entity.start_byte,
+                            end_byte=entity.end_byte,
+                            signature=entity.signature,
+                            metadata=metadata,
+                            parent_id=entity.parent_id,
+                        )
+                        stamped_entities.append(stamped_entity)
+                    return (filepath, stamped_entities, [], True)
                 return (filepath, cached_entities, [], True)
 
         # Cache miss or cache disabled - parse the file
@@ -92,7 +112,7 @@ def process_file_worker(
         if not isinstance(file_extractor, ASTExtractor):
             return None
 
-        entities, relationships = file_extractor.parse_file(filepath, content)
+        entities, relationships = file_extractor.parse_file(filepath, content, snapshot_id=snapshot_id)
 
         # Cache the extracted entities if cache is enabled
         if cache_enabled:
@@ -121,6 +141,7 @@ def build_graph_parallel(
     configured_max_file_size_kb: int,
     bsg_cfg: dict[str, Any],
     extractor: ASTExtractor | None = None,
+    snapshot_id: str | None = None,
 ) -> tuple[list[tuple[str, list[Entity], list[Relationship], bool]], int]:
     """
     Process files in parallel using multiprocessing.Pool.
@@ -154,6 +175,7 @@ def build_graph_parallel(
             configured_max_file_size_kb,
             bsg_cfg,
             extractor,
+            snapshot_id=snapshot_id,
         )
 
     # Calculate worker count
@@ -212,6 +234,7 @@ def build_graph_parallel(
                 ttl_days,
                 configured_max_file_size_kb,
                 bsg_cache_cfg,
+                snapshot_id,
             )
         )
 
@@ -249,6 +272,7 @@ def build_graph_sequential(
     configured_max_file_size_kb: int,
     bsg_cfg: dict[str, Any],
     extractor: ASTExtractor | None = None,
+    snapshot_id: str | None = None,
 ) -> tuple[list[tuple[str, list[Entity], list[Relationship], bool]], int]:
     """
     Process files sequentially (fallback when multiprocessing unavailable).
@@ -307,6 +331,7 @@ def build_graph_sequential(
             ttl_days,
             configured_max_file_size_kb,
             bsg_cache_cfg,
+            snapshot_id=snapshot_id,
         )
 
         if result is None:

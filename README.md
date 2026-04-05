@@ -5,53 +5,51 @@
 <h1 align="center">Batho</h1>
 
 <p align="center">
-  <strong>Open-Source Code Intelligence for AI-Powered Development</strong><br>
-  Turn any codebase into structured knowledge your LLMs, agents, and tools can actually use.
+  <strong>Codebase Intelligence for AI-Powered Development</strong><br>
+  Turn any codebase into structured knowledge your LLMs, agents, and toovcvls can actually use.
 </p>
 
 <p align="center">
   <a href="https://pypi.org/project/batho/"><img src="https://img.shields.io/pypi/v/batho?color=blue" alt="PyPI"></a>
   <a href="https://github.com/batho-ai/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
   <a href="#supported-languages"><img src="https://img.shields.io/badge/languages-40+-orange" alt="Languages"></a>
-  <a href="https://github.com/batho-ai/batho/stargazers"><img src="https://img.shields.io/github/stars/batho-ai/batho?style=social" alt="Stars"></a>
-  <a href="#-v100-launched"><img src="https://img.shields.io/badge/version-1.0.0-brightgreen" alt="Version 1.0.0 Launched"></a>
 </p>
 
 <br>
 
-> **Batho** indexes 40+ programming languages via tree-sitter, compresses the result 10:1 for LLM context windows, and tracks changes over time — all without executing a single line of your code.
->
-> **✨ Version 1.0.0 is now LAUNCHED!** Production-ready with enterprise features, webhooks, CI/CD integration, and automated documentation generation.
+> **Batho** indexes your codebase, compresses the result for LLM context windows, and tracks changes over time.
+
 
 ---
-
 ## Quick Start
 
 Get running in 30 seconds:
 
 ```bash
 # Install
+uv add batho 
+# or
 pip install batho
 
 # Index your project
-batho index --root . --verbose
+batho index --root . --verbose --snapshot
 
-# Generate BSG in various formats
+# Generate compressed bsg for LLM injection
 batho bsg --root . --mode compressed --budget 12000
 
-# View results
-batho stats --root .
+# Create snapshot
+batho index --root . --snapshot  
 
-# Create and manage snapshots
-batho snapshots --root .
-batho diff-snapshots --root . SNAP_A SNAP_B
-
-# Incremental patching with tracking
+# Auto-detect and patch changes
 batho patch --root . --scan
-batho patches --root . --format timeline
+
+# Show all commands
+batho --help
+
 ```
 
 That's it. Batho scans your codebase, extracts every function, class, import, and relationship, and writes structured output to `.ctn/`.
+
 
 ---
 
@@ -71,24 +69,7 @@ Modern AI tools need **structured code understanding** — not just raw file con
 | **Automated documentation** | Generate SRS and OWASP docs from your codebase |
 | **Incremental patching** | 10-100x faster updates with complete lineage tracking |
 
----
-
-## ✨ What's New in v1.0.0
-
-- **🚀 Production Webhooks**: Full GitHub/GitLab integration with authentication and queueing
-- **🔄 CI/CD Pipeline Hooks**: Turnkey templates for GitHub Actions and GitLab CI
-- **📊 Automated Documentation**: Generate SRS and OWASP documentation
-- **⚡ Enhanced Incremental Patching**: 10-100x faster updates with complete patch lineage tracking
-- **🔒 Enterprise Security**: Memory monitoring, file locking, and path sanitization
-- **📈 Comprehensive Testing**: 637 tests with 100% pass rate
-
----
-
 ## How It Works
-
-```
-Your Code → [tree-sitter AST] → Code Graph → BSG → LLM / Agent / IDE
-```
 
 1. **Parse** — tree-sitter extracts functions, classes, variables, imports with full signatures
 2. **Graph** — Entities and relationships (IMPORTS, CALLS, USES, DEFINES) form a code graph

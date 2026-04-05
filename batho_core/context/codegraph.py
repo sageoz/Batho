@@ -417,6 +417,7 @@ class CodeGraphIndexer:
         max_file_size_kb: int | None = None,
         verbose: bool = False,
         metrics_callback: Callable[[str, Dict[str, Any]], None] | None = None,
+        snapshot_id: str | None = None,
     ) -> InMemoryGraph:
         """
         Walk *root* recursively, index every matching source file, and return
@@ -600,6 +601,7 @@ class CodeGraphIndexer:
                 configured_max_file_size_kb,
                 bsg_cfg,
                 extractor,
+                snapshot_id=snapshot_id,
             )
             errors += parallel_errors
 

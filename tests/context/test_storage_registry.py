@@ -390,6 +390,73 @@ def test_rebuild_query_index_generates_hash_when_relationship_id_missing(tmp_pat
     assert rels[0]["relationship_id"]
 
 
+def test_rebuild_query_index_deduplicates_explicit_duplicate_relationship_ids(tmp_path: Path) -> None:
+    ctn_dir = tmp_path / ".ctn"
+    ctn_dir.mkdir()
+    payload = {
+        "entities_by_id": {
+            "e1": {"id": "e1", "type": "FUNCTION", "name": "f1", "file": "a.py"},
+            "e2": {"id": "e2", "type": "FUNCTION", "name": "f2", "file": "b.py"},
+        },
+        "relationships": [
+            {
+                "id": "r1",
+                "type": "CALLS",
+                "source_id": "e1",
+                "target_id": "e2",
+                "metadata": {"line": 10},
+            },
+            {
+                "id": "r1",
+                "type": "CALLS",
+                "source_id": "e1",
+                "target_id": "e2",
+                "metadata": {"line": 20},
+            },
+        ],
+    }
+
+    stats = rebuild_query_index(ctn_dir, "idx-dup", payload)
+    assert stats["relationships_indexed"] == 1
+
+    rels = query_relationships(ctn_dir, index_id="idx-dup", relationship_type="calls", limit=10)
+    assert len(rels) == 1
+    assert rels[0]["relationship_id"] == "r1"
+
+
+def test_rebuild_query_index_deduplicates_computed_hash_duplicates(tmp_path: Path) -> None:
+    ctn_dir = tmp_path / ".ctn"
+    ctn_dir.mkdir()
+    payload = {
+        "entities_by_id": {
+            "e1": {"id": "e1", "type": "FUNCTION", "name": "f1", "file": "a.py"},
+            "e2": {"id": "e2", "type": "FUNCTION", "name": "f2", "file": "b.py"},
+        },
+        "relationships": [
+            {
+                "type": "CALLS",
+                "source_id": "e1",
+                "target_id": "e2",
+                "metadata": {"line": 10},
+            },
+            {
+                "type": "CALLS",
+                "source_id": "e1",
+                "target_id": "e2",
+                "metadata": {"line": 20},
+            },
+        ],
+    }
+
+    stats = rebuild_query_index(ctn_dir, "idx-hash-dup", payload)
+    assert stats["relationships_indexed"] == 1
+
+    rels = query_relationships(ctn_dir, index_id="idx-hash-dup", relationship_type="calls", limit=10)
+    assert len(rels) == 1
+    assert rels[0]["source_id"] == "e1"
+    assert rels[0]["target_id"] == "e2"
+
+
 def test_register_artifact_for_path_returns_false_when_no_ctn_ancestor(tmp_path: Path) -> None:
     artifact = tmp_path / "artifact.json"
     artifact.write_text("{}", encoding="utf-8")

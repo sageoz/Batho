@@ -287,6 +287,7 @@ class ASTExtractor(abc.ABC):
         self,
         filepath: str,
         content: bytes,
+        snapshot_id: str | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """
         Parse *content* and return extracted entities and relationships.
@@ -299,6 +300,7 @@ class ASTExtractor(abc.ABC):
             filepath: Repo-relative path stored as the ``file`` field on every
                       extracted Entity.
             content:  Raw source bytes.
+            snapshot_id: Optional snapshot ID to stamp on entities.
 
         Returns:
             A 2-tuple ``(entities, relationships)``, both sorted by source position.
@@ -355,7 +357,7 @@ class ASTExtractor(abc.ABC):
             if skip_comments:
                 raw_captures = self._filter_comment_captures(raw_captures)
             
-            entities, relationships = self._process_captures(raw_captures, content, filepath)
+            entities, relationships = self._process_captures(raw_captures, content, filepath, snapshot_id=snapshot_id)
         except Exception as exc:
             if error_recovery:
                 self.logger.warning(
@@ -419,6 +421,7 @@ class ASTExtractor(abc.ABC):
         captures: dict[str, list[Node]],
         source: bytes,
         filepath: str,
+        snapshot_id: str | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """
         Group raw captures into entity definitions + auxiliary metadata,
@@ -441,7 +444,7 @@ class ASTExtractor(abc.ABC):
             elif len(parts) == 2 and parts[0] in ("def", "ref"):
                 definition_nodes.setdefault(cap_name, []).extend(nodes)
 
-        entities = self._build_entities(definition_nodes, auxiliary_nodes, source, filepath)
+        entities = self._build_entities(definition_nodes, auxiliary_nodes, source, filepath, snapshot_id=snapshot_id)
         relationships = self._build_relationships(captures, entities, source, filepath)
         return entities, relationships
 
@@ -451,6 +454,7 @@ class ASTExtractor(abc.ABC):
         auxiliary_nodes: dict[tuple[str, str], list[Node]],
         source: bytes,
         filepath: str,
+        snapshot_id: str | None = None,
     ) -> list[Entity]:
         """Instantiate Entity models from grouped capture nodes."""
         entities: list[Entity] = []
@@ -473,6 +477,9 @@ class ASTExtractor(abc.ABC):
                 signature = self._build_signature(
                     name, base_key, decl_node, auxiliary_nodes, source
                 )
+
+                if snapshot_id:
+                    metadata["bsg.snapshot_id"] = snapshot_id
 
                 entity = Entity(
                     type=entity_type,
@@ -846,12 +853,32 @@ class MarkupConfigExtractor(ASTExtractor):
         self,
         filepath: str,
         content: bytes,
+        snapshot_id: str | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Parse a markup or configuration file."""
         t0 = time.perf_counter()
 
         try:
             entities = self._extract_elements(content, filepath)
+            if snapshot_id:
+                stamped_entities = []
+                for entity in entities:
+                    metadata = dict(entity.metadata or {})
+                    metadata["bsg.snapshot_id"] = snapshot_id
+                    stamped_entity = Entity(
+                        type=entity.type,
+                        name=entity.name,
+                        file=entity.file,
+                        start_line=entity.start_line,
+                        end_line=entity.end_line,
+                        start_byte=entity.start_byte,
+                        end_byte=entity.end_byte,
+                        signature=entity.signature,
+                        metadata=metadata,
+                        parent_id=entity.parent_id,
+                    )
+                    stamped_entities.append(stamped_entity)
+                entities = stamped_entities
             relationships = self._extract_references(content, filepath, entities)
             entities.sort(key=lambda e: e.start_byte)
         except Exception as exc:

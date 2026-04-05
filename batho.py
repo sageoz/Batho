@@ -1021,6 +1021,8 @@ def cmd_index(args: argparse.Namespace) -> int:
             print("❌ Incremental indexing unavailable and fallback_to_full is disabled.")
             return 1
 
+        index_id = _generate_index_id()
+
         try:
             indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
         except Exception as exc:
@@ -1041,8 +1043,11 @@ def cmd_index(args: argparse.Namespace) -> int:
             max_workers=args.max_workers,
             max_file_size_kb=args.max_file_size_kb,
             verbose=args.verbose,
+            snapshot_id=index_id,
         )
         bsg_map = BSGMap.build(graph, root=str(root), serialization_config=_get_serialization_config())
+    else:
+        index_id = _generate_index_id()
 
     if not graph.entities:
         print("⚠️  No entities extracted. Check source files and ignore patterns.")
@@ -1050,8 +1055,6 @@ def cmd_index(args: argparse.Namespace) -> int:
 
     stack_info = detect_stack(root)
     token_input_estimate = bsg_map.estimate_tokens()
-
-    index_id = _generate_index_id()
     versioned_dir = ctn_dir / index_id
     versioned_dir.mkdir(parents=True, exist_ok=True)
 

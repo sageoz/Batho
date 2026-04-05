@@ -1021,6 +1021,7 @@ class ArtifactRegistry:
                 )
 
         relationship_rows: list[tuple[str, str, str, str, str, str]] = []
+        relationship_keys_seen: set[tuple[str, str]] = set()
         for raw in graph_payload.get("relationships", []):
             if not isinstance(raw, dict):
                 continue
@@ -1032,6 +1033,12 @@ class ArtifactRegistry:
                 relationship_id = hashlib.sha256(
                     f"{source_id}:{target_id}:{relationship_type}".encode("utf-8")
                 ).hexdigest()
+            
+            key = (index_id, relationship_id)
+            if key in relationship_keys_seen:
+                continue
+            relationship_keys_seen.add(key)
+            
             metadata_value = raw.get("metadata")
             metadata = metadata_value if isinstance(metadata_value, dict) else {}
             relationship_rows.append(
