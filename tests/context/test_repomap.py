@@ -1,4 +1,4 @@
-"""Tests for batho_core.context.repomap module."""
+"""Tests for batho.context.repomap module."""
 from __future__ import annotations
 
 import json
@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from batho_core.context.codegraph import InMemoryGraph
-from batho_core.context.bsg_map import BSGMap as RepoMap, _text_tokens
-from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
+from batho.context.codegraph import InMemoryGraph
+from batho.context.bsg_map import BSGMap as RepoMap, _text_tokens
+from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 
 
 # ---------------------------------------------------------------------------

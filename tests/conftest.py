@@ -36,7 +36,7 @@ FILES_DIR = TESTDATA_DIR / "files"
 @pytest.fixture(autouse=True)
 def clean_config_cache():
     """Clear the LRU config cache before and after every test."""
-    from batho_core.config import get_config_cached
+    from batho.config import get_config_cached
 
     get_config_cached.cache_clear()
     yield
@@ -118,8 +118,8 @@ def flask_repo_metadata():
 @pytest.fixture
 def mock_graph():
     """Build a small InMemoryGraph with some entities and relationships."""
-    from batho_core.context.codegraph import InMemoryGraph
-    from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
+    from batho.context.codegraph import InMemoryGraph
+    from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 
     graph = InMemoryGraph()
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from batho_core.context.codegraph import InMemoryGraph
-from batho_core.context.graph_cache import get_cached_graph_stats, load_cached_graph
+from batho.context.codegraph import InMemoryGraph
+from batho.context.graph_cache import get_cached_graph_stats, load_cached_graph
 
 
 def test_load_cached_graph_returns_none_when_graph_missing(tmp_path: Path) -> None:

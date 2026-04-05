@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from batho_core.context.languages._common import (
+from batho.context.languages._common import (
     CallPatterns,
     CommonQueries,
     ImportPatterns,

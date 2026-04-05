@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from batho_core.context import mmap_storage
+from batho.context import mmap_storage
 
 
 def test_read_text_with_optional_mmap_disabled(tmp_path: Path) -> None:

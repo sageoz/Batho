@@ -62,11 +62,11 @@ Modern AI tools need **structured code understanding** — not just raw file con
 | **40+ language AST parsing** | One tool for polyglot repos — Python, TypeScript, Rust, Go, Java, and more |
 | **10:1 context compression** | Fit entire codebases into LLM context windows |
 | **Time Machine snapshots** | Track how your codebase evolves between releases |
-| **Zero code execution** | Safe to run in CI, pre-commit, or on untrusted repos |
-| **Enterprise-grade caching** | mtime+SHA skips unchanged files — re-indexes in seconds |
-| **Production webhooks** | GitHub/GitLab integration with authentication and queueing |
-| **CI/CD pipeline hooks** | Turnkey GitHub Actions and GitLab CI templates |
-| **Automated documentation** | Generate SRS and OWASP docs from your codebase |
+| **Zero Code Execution** | Safe to run in CI, pre-commit, or on untrusted repos |
+| **Caching** | mtime+SHA skips unchanged files — re-indexes in seconds |
+| **Production Webhooks** | GitHub/GitLab integration with authentication and queueing |
+| **CI/CD Pipeline Hooks** | Turnkey GitHub Actions and GitLab CI templates |
+| **Automated Documentation** | Generate docs/context from your codebase |
 | **Incremental patching** | 10-100x faster updates with complete lineage tracking |
 
 ## How It Works
@@ -92,28 +92,31 @@ Batho uses [tree-sitter](https://tree-sitter.github.io/tree-sitter/) for precise
 
 Relationships captured: `IMPORTS` · `CALLS` · `USES` · `DEFINES`
 
-### BSG Compression
+### BSG (Batho Structured Graph) Compression
 
-Transforms full code graphs into compact representations via CLI:
+Transforms full code graphs into compact representations:
 
 ```bash
-# Generate compressed bsg for LLM injection
-batho bsg --root . --mode compressed --budget 12000
 
 # Generate full bsg with signatures
 batho bsg --root . --mode full
 
 # Generate hierarchical directory view
 batho bsg --root . --mode hierarchical
+
+# Generate compressed bsg for LLM injection
+batho bsg --root . --mode compressed --budget 12000
+
 ```
 
 | Mode | Best for | Output File |
 |------|----------|-------------|
-| **Compressed** | LLM prompt injection (4K–40K tokens) | `bsg_compressed.json` |
 | **Full** | Developer reference with signatures + line numbers | `bsg_full.json` |
 | **Hierarchical** | Directory-tree overviews | `bsg_hierarchical.json` |
+| **Compressed** | LLM prompt injection (4K–40K tokens) | `bsg_compressed.json` |
 
-### Time Machine
+
+### Batho Time Machine
 
 ```bash
 batho index --root . --snapshot                    # Create snapshot

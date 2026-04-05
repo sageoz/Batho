@@ -50,11 +50,11 @@ webhooks = [
 ]
 
 [project.scripts]
-batho = "batho:main"
+batho = "batho_cli:main"
 
 [tool.hatch.build.targets.wheel.force-include]
-"batho.py" = "batho.py"
-"batho_core" = "batho_core"
+"batho_cli.py" = "batho_cli.py"
+"batho" = "batho"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -69,7 +69,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["batho_core", "batho"]
+source = ["batho", "batho_cli"]
 omit = ["tests/*", ".venv/*"]
 
 [tool.coverage.report]
@@ -82,6 +82,7 @@ dev = [
     "black>=26.3.1",
     "isort>=8.0.1",
     "psutil>=7.2.2",
+    "pytest-cov>=5.0.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "vulture>=2.15",

@@ -11,9 +11,9 @@ Tests cover:
 """
 
 import pytest
-from batho_core.context.languages.css import CSSExtractor
-from batho_core.context.schema import EntityType, RelationshipType, Entity, Relationship
-from batho_core.utils.hash import generate_entity_id, generate_relationship_id
+from batho.context.languages.css import CSSExtractor
+from batho.context.schema import EntityType, RelationshipType, Entity, Relationship
+from batho.utils.hash import generate_entity_id, generate_relationship_id
 
 
 class TestCSSExtractor:

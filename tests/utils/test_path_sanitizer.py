@@ -1,4 +1,4 @@
-"""Tests for batho_core.utils.path_sanitizer."""
+"""Tests for batho.utils.path_sanitizer."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from batho_core.utils.path_sanitizer import (
+from batho.utils.path_sanitizer import (
     PathSecurityError,
     is_safe_filename,
     safe_join,

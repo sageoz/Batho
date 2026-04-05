@@ -1,4 +1,4 @@
-"""Tests for batho_core.utils.file_lock."""
+"""Tests for batho.utils.file_lock."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from batho_core.utils.file_lock import FileLock, FileLockError, file_lock
+from batho.utils.file_lock import FileLock, FileLockError, file_lock
 
 
 class TestFileLockInternal:
@@ -51,7 +51,7 @@ class TestFileLockInternal:
         lock = FileLock(tmp_path / "x.lock")
 
         monkeypatch.setattr(
-            "batho_core.utils.file_lock.psutil.pid_exists",
+            "batho.utils.file_lock.psutil.pid_exists",
             lambda _pid: (_ for _ in ()).throw(ValueError("bad pid")),
         )
         assert lock._is_process_alive(1) is False
@@ -112,7 +112,7 @@ class TestFileLockAcquireRelease:
         lock = FileLock(tmp_path / "fail.lock", timeout=0.1, poll_interval=0.01)
 
         monkeypatch.setattr(
-            "batho_core.utils.file_lock.os.open",
+            "batho.utils.file_lock.os.open",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError(errno.EPERM, "denied")),
         )
 
@@ -137,7 +137,7 @@ class TestFileLockAcquireRelease:
         monkeypatch.setattr(lock, "_read_lock_info", lambda: (os.getpid(), 0.0))
         monkeypatch.setattr(lock, "_is_lock_stale", lambda _pid, _ts: True)
         monkeypatch.setattr(lock, "_cleanup_stale_lock", lambda: True)
-        monkeypatch.setattr("batho_core.utils.file_lock.os.open", _open)
+        monkeypatch.setattr("batho.utils.file_lock.os.open", _open)
 
         assert lock.acquire() is True
         lock.release()

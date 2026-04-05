@@ -1,4 +1,4 @@
-"""Tests for batho_core.config module."""
+"""Tests for batho.config module."""
 from __future__ import annotations
 
 import logging
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from batho_core.config import (
+from batho.config import (
     Config,
     FlagsConfig,
     IndexerConfig,

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from batho_core.context.codegraph import InMemoryGraph
-from batho_core.context.schema import Entity, EntityType
-from batho_core.context.symbol_index import SymbolIndex
+from batho.context.codegraph import InMemoryGraph
+from batho.context.schema import Entity, EntityType
+from batho.context.symbol_index import SymbolIndex
 
 
 class TestSymbolIndex:

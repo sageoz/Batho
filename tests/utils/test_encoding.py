@@ -1,11 +1,11 @@
-"""Tests for batho_core.utils.encoding module."""
+"""Tests for batho.utils.encoding module."""
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
 
-from batho_core.utils.encoding import (
+from batho.utils.encoding import (
     FALLBACK_ENCODINGS,
     decode_bytes_with_fallback,
     normalize_to_utf8,

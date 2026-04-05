@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from batho_core.context import pipeline
-from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
+from batho.context import pipeline
+from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 
 
 def _entity(file_path: str = "src/a.py") -> Entity:
@@ -74,8 +74,8 @@ def test_process_file_worker_returns_none_for_invalid_extractor(monkeypatch, tmp
 
     monkeypatch.setattr(pipeline, "ASTExtractor", _BaseExtractor)
     monkeypatch.setattr(pipeline, "ASTCache", _Cache)
-    monkeypatch.setattr("batho_core.context.languages.detector.default_detector", _Detector())
-    monkeypatch.setattr("batho_core.context.languages.registry.get_extractor", lambda _suffix: None)
+    monkeypatch.setattr("batho.context.languages.detector.default_detector", _Detector())
+    monkeypatch.setattr("batho.context.languages.registry.get_extractor", lambda _suffix: None)
 
     result = pipeline.process_file_worker(
         tmp_path / "invalid.py",
@@ -132,8 +132,8 @@ def test_process_file_worker_parses_and_caches(monkeypatch, tmp_path: Path) -> N
 
     monkeypatch.setattr(pipeline, "ASTExtractor", _BaseExtractor)
     monkeypatch.setattr(pipeline, "ASTCache", _Cache)
-    monkeypatch.setattr("batho_core.context.languages.detector.default_detector", _Detector())
-    monkeypatch.setattr("batho_core.context.languages.registry.get_extractor", lambda _suffix: None)
+    monkeypatch.setattr("batho.context.languages.detector.default_detector", _Detector())
+    monkeypatch.setattr("batho.context.languages.registry.get_extractor", lambda _suffix: None)
 
     result = pipeline.process_file_worker(
         tmp_path / "ok.py",
@@ -167,8 +167,8 @@ def test_process_file_worker_handles_exceptions(monkeypatch, tmp_path: Path) -> 
             return _BrokenExtractor()
 
     monkeypatch.setattr(pipeline, "ASTExtractor", _BaseExtractor)
-    monkeypatch.setattr("batho_core.context.languages.detector.default_detector", _Detector())
-    monkeypatch.setattr("batho_core.context.languages.registry.get_extractor", lambda _suffix: None)
+    monkeypatch.setattr("batho.context.languages.detector.default_detector", _Detector())
+    monkeypatch.setattr("batho.context.languages.registry.get_extractor", lambda _suffix: None)
 
     result = pipeline.process_file_worker(
         tmp_path / "broken.py",

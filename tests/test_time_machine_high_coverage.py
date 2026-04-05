@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import batho_core.time_machine as tm
-from batho_core.time_machine import (
+import batho.time_machine as tm
+from batho.time_machine import (
     FileChange,
     FileChangeType,
     PatchOperation,
@@ -164,8 +164,8 @@ def _configure_incremental_patch_success(
     else:
         monkeypatch.setattr(tm, "save_patch_operation", lambda *_a, **_k: None)
 
-    import batho_core.context.languages.detector as detector_mod
-    import batho_core.context.languages.registry as registry_mod
+    import batho.context.languages.detector as detector_mod
+    import batho.context.languages.registry as registry_mod
 
     if extractor_available:
         monkeypatch.setattr(detector_mod.default_detector, "get_extractor", lambda *_a, **_k: object())
@@ -769,7 +769,7 @@ def test_extract_patch_deltas_and_apply_deltas_paths(tmp_path: Path, monkeypatch
 
 
 def test_webhook_stub_header_inference_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import batho_core.webhook.parser as parser_mod
+    import batho.webhook.parser as parser_mod
 
     captured: dict[str, dict[str, str]] = {}
 

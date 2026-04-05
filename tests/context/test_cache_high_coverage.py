@@ -5,8 +5,8 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from batho_core.context.cache import ASTCache
-from batho_core.context.schema import Entity, EntityType
+from batho.context.cache import ASTCache
+from batho.context.schema import Entity, EntityType
 
 
 def _entity(file_path: str, name: str) -> Entity:

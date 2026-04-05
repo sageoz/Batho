@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-import batho_core.context.query as query_module
-from batho_core.context.query import QueryService
+import batho.context.query as query_module
+from batho.context.query import QueryService
 
 
 def _write_graph(ctn_dir: Path, index_id: str) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from batho_core.synthesizer import (
+from batho.synthesizer import (
     load_evolution_ledger,
     record_failure_rule,
     synthesize_failure_rule,

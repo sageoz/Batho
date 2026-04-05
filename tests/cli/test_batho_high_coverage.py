@@ -9,8 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import batho
-from batho import (
+import batho_cli as batho
+from batho_cli import (
     _collect_repo_metrics,
     _compute_repo_hash,
     _load_current_graph,
@@ -40,8 +40,8 @@ from batho import (
     cmd_webhook_server,
     extract_patch_deltas,
 )
-from batho_core.context.incremental import GitDiffEntry
-from batho_core.time_machine import FileChangeType
+from batho.context.incremental import GitDiffEntry
+from batho.time_machine import FileChangeType
 
 
 @dataclass
@@ -122,7 +122,7 @@ def test_files_from_diff_parses_formats_and_skips_unsafe(tmp_path: Path, monkeyp
         encoding="utf-8",
     )
 
-    from batho_core.utils.path_sanitizer import PathSecurityError
+    from batho.utils.path_sanitizer import PathSecurityError
 
     def _sanitize(path_str: str, root_path: Path) -> Path:
         if "evil" in path_str:
@@ -136,7 +136,7 @@ def test_files_from_diff_parses_formats_and_skips_unsafe(tmp_path: Path, monkeyp
             return Path("/tmp/outside.bin")
         return (root_path / cleaned).resolve()
 
-    monkeypatch.setattr("batho_core.utils.path_sanitizer.sanitize_diff_path", _sanitize)
+    monkeypatch.setattr("batho.utils.path_sanitizer.sanitize_diff_path", _sanitize)
 
     paths = _files_from_diff(diff, root)
     as_posix = [p.as_posix() for p in paths]
@@ -182,7 +182,7 @@ def test_files_from_diff_handles_io_error_and_security_patterns(
     )
 
     monkeypatch.setattr(
-        "batho_core.utils.path_sanitizer.sanitize_diff_path",
+        "batho.utils.path_sanitizer.sanitize_diff_path",
         lambda path_str, root_path: (root_path / path_str.removeprefix("b/")).resolve(),
     )
 
@@ -210,14 +210,14 @@ def test_files_from_diff_binary_and_similarity_branches(
         encoding="utf-8",
     )
 
-    from batho_core.utils.path_sanitizer import PathSecurityError
+    from batho.utils.path_sanitizer import PathSecurityError
 
     def _sanitize(path_str: str, root_path: Path) -> Path:
         if path_str == "bad.bin":
             raise PathSecurityError("unsafe")
         return (root_path / path_str).resolve()
 
-    monkeypatch.setattr("batho_core.utils.path_sanitizer.sanitize_diff_path", _sanitize)
+    monkeypatch.setattr("batho.utils.path_sanitizer.sanitize_diff_path", _sanitize)
 
     paths = _files_from_diff(diff, root)
     # Current parser keeps binary lines defensive and may skip malformed formats.
@@ -443,7 +443,7 @@ def test_cmd_cache_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cap
         invalidate_cache=lambda pattern=None: None,
     )
 
-    monkeypatch.setattr("batho_core.context.cache.ASTCache", lambda cache_path: cache_obj)
+    monkeypatch.setattr("batho.context.cache.ASTCache", lambda cache_path: cache_obj)
     monkeypatch.setattr(batho, "get_config_cached", lambda: {"bsg": {"cache": {"path": str(tmp_path / "c.db")}}})
 
     assert cmd_cache_stats(argparse.Namespace()) == 0
@@ -959,22 +959,22 @@ def test_patch_management_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         timestamp=datetime.now(timezone.utc),
     )
 
-    monkeypatch.setattr("batho_core.time_machine.list_patch_operations", lambda *_a, **_k: [patch])
+    monkeypatch.setattr("batho.time_machine.list_patch_operations", lambda *_a, **_k: [patch])
     assert cmd_patches(argparse.Namespace(root=str(root), operation_type=None, base_snapshot=None, format="timeline")) == 0
     assert cmd_patches(argparse.Namespace(root=str(root), operation_type=None, base_snapshot=None, format="json")) == 0
     assert cmd_patches(argparse.Namespace(root=str(root), operation_type="incremental", base_snapshot="s1", format="json")) == 0
 
-    monkeypatch.setattr("batho_core.time_machine.load_patch_operation", lambda *_a, **_k: None)
+    monkeypatch.setattr("batho.time_machine.load_patch_operation", lambda *_a, **_k: None)
     assert cmd_patch_info(argparse.Namespace(root=str(root), patch_id="missing", format="json")) == 1
 
-    monkeypatch.setattr("batho_core.time_machine.load_patch_operation", lambda *_a, **_k: patch)
+    monkeypatch.setattr("batho.time_machine.load_patch_operation", lambda *_a, **_k: patch)
     assert cmd_patch_info(argparse.Namespace(root=str(root), patch_id="op1", format="summary")) == 0
     assert cmd_patch_info(argparse.Namespace(root=str(root), patch_id="op1", format="json")) == 0
 
-    monkeypatch.setattr("batho_core.time_machine.get_patches_for_snapshot", lambda *_a, **_k: [])
+    monkeypatch.setattr("batho.time_machine.get_patches_for_snapshot", lambda *_a, **_k: [])
     assert cmd_patch_chain(argparse.Namespace(root=str(root), snapshot_id="s2", full=False)) == 1
 
-    monkeypatch.setattr("batho_core.time_machine.get_patches_for_snapshot", lambda *_a, **_k: [patch])
+    monkeypatch.setattr("batho.time_machine.get_patches_for_snapshot", lambda *_a, **_k: [patch])
     assert cmd_patch_chain(argparse.Namespace(root=str(root), snapshot_id="s2", full=False)) == 0
     assert cmd_patch_chain(argparse.Namespace(root=str(root), snapshot_id="s2", full=True)) == 0
 
@@ -984,7 +984,7 @@ def test_patch_management_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     diff_file = root / "ok.diff"
     diff_file.write_text("diff", encoding="utf-8")
-    monkeypatch.setattr("batho_core.time_machine.parse_unified_diff", lambda _d: [SimpleNamespace(path="a.py", change_type=SimpleNamespace(value="modified"))])
+    monkeypatch.setattr("batho.time_machine.parse_unified_diff", lambda _d: [SimpleNamespace(path="a.py", change_type=SimpleNamespace(value="modified"))])
     assert cmd_apply_patch(argparse.Namespace(root=str(root), diff_file=str(diff_file), patch_id=None, base_snapshot="s1", dry_run=True)) == 0
 
     monkeypatch.setattr(batho, "incremental_patch", lambda *_a, **_k: {"success": True, "new_snapshot_id": "s3"})
@@ -1006,16 +1006,16 @@ def test_patch_management_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     # patch-id branch.
     monkeypatch.setattr(Path, "read_text", Path.read_text)
-    monkeypatch.setattr("batho_core.time_machine.load_patch_operation", lambda *_a, **_k: None)
+    monkeypatch.setattr("batho.time_machine.load_patch_operation", lambda *_a, **_k: None)
     assert cmd_apply_patch(argparse.Namespace(root=str(root), diff_file=None, patch_id="missing", base_snapshot="s1", dry_run=False)) == 1
 
-    monkeypatch.setattr("batho_core.time_machine.load_patch_operation", lambda *_a, **_k: patch)
+    monkeypatch.setattr("batho.time_machine.load_patch_operation", lambda *_a, **_k: patch)
     assert cmd_apply_patch(argparse.Namespace(root=str(root), diff_file=None, patch_id="op1", base_snapshot="s1", dry_run=True)) == 0
 
-    monkeypatch.setattr("batho_core.time_machine.apply_deltas_to_snapshot", lambda *_a, **_k: "s4")
+    monkeypatch.setattr("batho.time_machine.apply_deltas_to_snapshot", lambda *_a, **_k: "s4")
     assert cmd_apply_patch(argparse.Namespace(root=str(root), diff_file=None, patch_id="op1", base_snapshot="s1", dry_run=False)) == 0
 
-    monkeypatch.setattr("batho_core.time_machine.apply_deltas_to_snapshot", lambda *_a, **_k: None)
+    monkeypatch.setattr("batho.time_machine.apply_deltas_to_snapshot", lambda *_a, **_k: None)
     assert cmd_apply_patch(argparse.Namespace(root=str(root), diff_file=None, patch_id="op1", base_snapshot="s1", dry_run=False)) == 1
 
     monkeypatch.setattr(batho, "record_failure_rule", lambda *_a, **_k: {"entry_id": "e3", "dont_rule": "rule3"})
@@ -1024,16 +1024,16 @@ def test_patch_management_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert cmd_apply_patch(argparse.Namespace(root=str(root), diff_file=None, patch_id=None, base_snapshot="s1", dry_run=False)) == 1
 
     # cmd_cherry_pick branches.
-    monkeypatch.setattr("batho_core.time_machine.load_patch_operation", lambda *_a, **_k: None)
+    monkeypatch.setattr("batho.time_machine.load_patch_operation", lambda *_a, **_k: None)
     assert cmd_cherry_pick(argparse.Namespace(root=str(root), patch_id="missing", target_snapshot="s9", dry_run=False)) == 1
 
-    monkeypatch.setattr("batho_core.time_machine.load_patch_operation", lambda *_a, **_k: patch)
+    monkeypatch.setattr("batho.time_machine.load_patch_operation", lambda *_a, **_k: patch)
     assert cmd_cherry_pick(argparse.Namespace(root=str(root), patch_id="op1", target_snapshot="s9", dry_run=True)) == 0
 
-    monkeypatch.setattr("batho_core.time_machine.apply_deltas_to_snapshot", lambda *_a, **_k: "s10")
+    monkeypatch.setattr("batho.time_machine.apply_deltas_to_snapshot", lambda *_a, **_k: "s10")
     assert cmd_cherry_pick(argparse.Namespace(root=str(root), patch_id="op1", target_snapshot="s9", dry_run=False)) == 0
 
-    monkeypatch.setattr("batho_core.time_machine.apply_deltas_to_snapshot", lambda *_a, **_k: None)
+    monkeypatch.setattr("batho.time_machine.apply_deltas_to_snapshot", lambda *_a, **_k: None)
     monkeypatch.setattr(batho, "record_failure_rule", lambda *_a, **_k: {"entry_id": "e2", "dont_rule": "rule2"})
     assert cmd_cherry_pick(argparse.Namespace(root=str(root), patch_id="op1", target_snapshot="s9", dry_run=False)) == 1
 

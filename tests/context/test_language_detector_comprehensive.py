@@ -11,8 +11,8 @@ Tests cover:
 """
 
 import pytest
-from batho_core.context.languages.detector import LanguageDetector
-from batho_core.context.languages.registry import get_extractor
+from batho.context.languages.detector import LanguageDetector
+from batho.context.languages.registry import get_extractor
 
 
 class TestLanguageDetectorComprehensive:

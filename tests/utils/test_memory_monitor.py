@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import batho_core.utils.memory_monitor as memory_monitor_module
+import batho.utils.memory_monitor as memory_monitor_module
 
 
 class _FakeProcess:

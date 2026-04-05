@@ -1,7 +1,7 @@
 """Tests for language extractor factory."""
 
 import pytest
-from batho_core.context.languages.factory import (
+from batho.context.languages.factory import (
     ConfigurableExtractor,
     create_extractor,
     get_extractor,
@@ -12,7 +12,7 @@ from batho_core.context.languages.factory import (
     PYTHON_QUERY,
     JAVASCRIPT_QUERY,
 )
-from batho_core.context.extractor import ASTExtractor
+from batho.context.extractor import ASTExtractor
 
 
 class TestConfigurableExtractor:

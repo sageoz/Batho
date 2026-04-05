@@ -1,4 +1,4 @@
-"""Tests for batho_core.utils.hash module."""
+"""Tests for batho.utils.hash module."""
 from __future__ import annotations
 
 import hashlib
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from batho_core.utils.hash import (
+from batho.utils.hash import (
     compute_bytes_hash,
     compute_file_hash,
     compute_file_hash_cached,

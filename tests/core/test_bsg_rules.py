@@ -6,10 +6,10 @@ import json
 import pickle
 from pathlib import Path
 
-from batho_core.bsg import apply_rule_plugins, load_effective_rules
-from batho_core.config import get_config_cached
-from batho_core.context.codegraph import InMemoryGraph
-from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
+from batho.bsg import apply_rule_plugins, load_effective_rules
+from batho.config import get_config_cached
+from batho.context.codegraph import InMemoryGraph
+from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 
 
 def _find_entity_by_name(graph, name: str):

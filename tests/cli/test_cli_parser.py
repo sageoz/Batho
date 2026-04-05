@@ -1,9 +1,9 @@
-"""Tests for CLI argument parsing (batho.build_parser)."""
+"""Tests for CLI argument parsing (batho_cli.build_parser)."""
 from __future__ import annotations
 
 import pytest
 
-from batho import build_parser
+from batho_cli import build_parser
 
 
 # ---------------------------------------------------------------------------

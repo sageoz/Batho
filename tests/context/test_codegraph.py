@@ -1,4 +1,4 @@
-"""Tests for batho_core.context.codegraph module."""
+"""Tests for batho.context.codegraph module."""
 
 from __future__ import annotations
 
@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from batho_core.context.codegraph import (
+from batho.context.codegraph import (
     CodeGraphIndexer,
     InMemoryGraph,
 )
-from batho_core.context.cache import ASTCache
-from batho_core.context.symbol_index import SymbolIndex
-from batho_core.utils.file_io import _read_file_content
-from batho_core.utils.hash import _calculate_shannon_entropy, _is_binary
-from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
+from batho.context.cache import ASTCache
+from batho.context.symbol_index import SymbolIndex
+from batho.utils.file_io import _read_file_content
+from batho.utils.hash import _calculate_shannon_entropy, _is_binary
+from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,9 @@
-"""Tests for batho_core.context.schema module."""
+"""Tests for batho.context.schema module."""
 from __future__ import annotations
 
 import pytest
 
-from batho_core.context.schema import (
+from batho.context.schema import (
     Entity,
     EntityType,
     Relationship,

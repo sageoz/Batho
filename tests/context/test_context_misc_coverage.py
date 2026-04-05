@@ -3,18 +3,18 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
-import batho_core.context.categorizer as categorizer_module
-import batho_core.context.languages.css as css_module
-import batho_core.context.languages.detector as detector_module
-import batho_core.context.languages.hcl as hcl_module
-import batho_core.context.languages.json as json_module
-import batho_core.context.languages.registry as registry_module
-import batho_core.context.languages.toml as toml_module
-import batho_core.context.languages.yaml as yaml_module
-from batho_core.context.categorizer import FileCategorizer
-from batho_core.context.codegraph import InMemoryGraph
-from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
-from batho_core.context.symbol_index import SymbolIndex
+import batho.context.categorizer as categorizer_module
+import batho.context.languages.css as css_module
+import batho.context.languages.detector as detector_module
+import batho.context.languages.hcl as hcl_module
+import batho.context.languages.json as json_module
+import batho.context.languages.registry as registry_module
+import batho.context.languages.toml as toml_module
+import batho.context.languages.yaml as yaml_module
+from batho.context.categorizer import FileCategorizer
+from batho.context.codegraph import InMemoryGraph
+from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
+from batho.context.symbol_index import SymbolIndex
 
 
 def _wire_markup_extractor(extractor):

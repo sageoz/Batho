@@ -1,4 +1,4 @@
-"""Tests for batho_core.utils.dependencies module."""
+"""Tests for batho.utils.dependencies module."""
 from __future__ import annotations
 
 import builtins
@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-import batho_core.utils.dependencies as deps_module
-from batho_core.utils.dependencies import (
+import batho.utils.dependencies as deps_module
+from batho.utils.dependencies import (
     _detect_node_package_manager,
     extract_all_dependencies,
     extract_dependency_names,

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from batho_core.context.extractor import _expand_import_targets, _normalize_import_target
-from batho_core.context.languages.python import PythonExtractor
-from batho_core.context.languages.r import RExtractor
+from batho.context.extractor import _expand_import_targets, _normalize_import_target
+from batho.context.languages.python import PythonExtractor
+from batho.context.languages.r import RExtractor
 
 
 class TestImportNormalization:

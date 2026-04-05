@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import batho_core.webhook.server as server_module
-from batho_core.webhook.config import WebhookConfig
-from batho_core.webhook.server import WebhookServer, create_webhook_app
+import batho.webhook.server as server_module
+from batho.webhook.config import WebhookConfig
+from batho.webhook.server import WebhookServer, create_webhook_app
 
 
 class _DummyHandler:

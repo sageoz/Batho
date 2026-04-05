@@ -14,9 +14,9 @@ Usage:
 """
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
-from pathlib import Path
 
 
 def main() -> int:
@@ -63,17 +63,25 @@ def main() -> int:
     if no_cov:
         args.remove("--no-cov")
     else:
-        pytest_args.extend([
-            "--cov=batho_core",
-            "--cov=batho",
-            "--cov-report=term-missing",
-            "--cov-report=html:htmlcov",
-        ])
-        if ci_mode:
+        if importlib.util.find_spec("pytest_cov") is None:
+            print(
+                "Warning: pytest-cov is not installed; running tests without coverage. "
+                "Install with `uv sync --group dev` (after adding pytest-cov) or "
+                "`uv add --group dev pytest-cov`.",
+                file=sys.stderr,
+            )
+        else:
             pytest_args.extend([
-                "--cov-report=xml:coverage.xml",
-                "--cov-fail-under=80",
+                "--cov=batho",
+                "--cov=batho_cli",
+                "--cov-report=term-missing",
+                "--cov-report=html:htmlcov",
             ])
+            if ci_mode:
+                pytest_args.extend([
+                    "--cov-report=xml:coverage.xml",
+                    "--cov-fail-under=80",
+                ])
 
     # Pass remaining args through to pytest
     pytest_args.extend(args)

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from batho_core.webhook.config import RepositoryConfig, WebhookConfig
-from batho_core.webhook.handler import WebhookHandler, WebhookResult
+from batho.webhook.config import RepositoryConfig, WebhookConfig
+from batho.webhook.handler import WebhookHandler, WebhookResult
 
 
 def _handler(tmp_path: Path) -> WebhookHandler:
@@ -174,11 +174,11 @@ def test_handler_start_stop_and_verify_wrappers(tmp_path: Path, monkeypatch: pyt
     )
 
     monkeypatch.setattr(
-        "batho_core.webhook.handler.verify_github_signature",
+        "batho.webhook.handler.verify_github_signature",
         lambda _payload, _signature, secret: bool(secret),
     )
     monkeypatch.setattr(
-        "batho_core.webhook.handler.verify_gitlab_token",
+        "batho.webhook.handler.verify_gitlab_token",
         lambda token, secret: token == secret,
     )
 

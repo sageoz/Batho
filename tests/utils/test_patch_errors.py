@@ -3,8 +3,8 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
-import batho_core.config as config_module
-import batho_core.utils.patch_errors as patch_errors_module
+import batho.config as config_module
+import batho.utils.patch_errors as patch_errors_module
 
 
 def test_patch_error_classes_capture_context() -> None:

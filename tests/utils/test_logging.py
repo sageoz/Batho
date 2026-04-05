@@ -1,4 +1,4 @@
-"""Tests for batho_core.utils.logging module."""
+"""Tests for batho.utils.logging module."""
 from __future__ import annotations
 
 import logging
@@ -6,7 +6,7 @@ import logging
 import pytest
 import structlog
 
-from batho_core.utils.logging import (
+from batho.utils.logging import (
     configure_logging,
     get_context_logger,
     get_logger,

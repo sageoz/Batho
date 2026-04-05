@@ -14,9 +14,9 @@ Tests cover:
 from types import SimpleNamespace
 
 import pytest
-from batho_core.context.languages.hcl import HCLExtractor
-from batho_core.context.schema import EntityType, RelationshipType, Entity, Relationship
-from batho_core.utils.hash import generate_entity_id, generate_relationship_id
+from batho.context.languages.hcl import HCLExtractor
+from batho.context.schema import EntityType, RelationshipType, Entity, Relationship
+from batho.utils.hash import generate_entity_id, generate_relationship_id
 
 
 class TestHCLExtractor:

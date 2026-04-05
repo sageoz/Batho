@@ -10,7 +10,7 @@ from typing import Dict, Any
 
 import pytest
 
-from batho import main
+from batho_cli import main
 
 
 @pytest.mark.slow
@@ -162,7 +162,7 @@ class TestPerformance:
 
     def test_scalability_with_increasing_file_counts(self, tmp_path: Path):
         """Test scalability with increasing file counts."""
-        from batho_core.context.codegraph import CodeGraphIndexer
+        from batho.context.codegraph import CodeGraphIndexer
         
         # Create test repositories with different sizes
         sizes = [10, 25, 50]

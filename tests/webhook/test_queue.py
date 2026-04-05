@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import batho_core.webhook.queue as queue_module
-from batho_core.webhook.config import ProcessingConfig
-from batho_core.webhook.queue import QueueItem, WebhookQueue
+import batho.webhook.queue as queue_module
+from batho.webhook.config import ProcessingConfig
+from batho.webhook.queue import QueueItem, WebhookQueue
 
 
 def test_queue_item_payload_roundtrip() -> None:

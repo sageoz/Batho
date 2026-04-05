@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from batho_core.context.languages.registry import get_extractor, get_extractor_for_language
-from batho_core.context.schema import EntityType
+from batho.context.languages.registry import get_extractor, get_extractor_for_language
+from batho.context.schema import EntityType
 
 
 class TestObjectiveCExtractorRegistry:

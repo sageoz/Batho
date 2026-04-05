@@ -4,14 +4,14 @@ import json
 import pytest
 from pathlib import Path
 
-from batho_core.webhook import (
+from batho.webhook import (
     WebhookConfig,
     WebhookEvent,
     parse_webhook_event,
     verify_github_signature,
     verify_gitlab_token,
 )
-from batho_core.webhook.auth import verify_github_signature, verify_gitlab_token
+from batho.webhook.auth import verify_github_signature, verify_gitlab_token
 
 
 class TestWebhookConfig:

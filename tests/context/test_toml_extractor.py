@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import batho_core.context.languages.toml as toml_module
-from batho_core.context.languages.toml import TOMLExtractor
-from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
+import batho.context.languages.toml as toml_module
+from batho.context.languages.toml import TOMLExtractor
+from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 
 
 class TestTOMLExtractor:

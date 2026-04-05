@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from batho import main
+from batho_cli import main
 
 
 # ---------------------------------------------------------------------------

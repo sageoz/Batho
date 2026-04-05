@@ -1,8 +1,8 @@
 """Tests for HTML language extractor."""
 
 import pytest
-from batho_core.context.languages.html import HTMLExtractor
-from batho_core.context.schema import EntityType, RelationshipType
+from batho.context.languages.html import HTMLExtractor
+from batho.context.schema import EntityType, RelationshipType
 
 
 class TestHTMLExtractor:

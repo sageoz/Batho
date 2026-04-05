@@ -1,4 +1,4 @@
-"""Tests for batho_core.utils.ignore module."""
+"""Tests for batho.utils.ignore module."""
 from __future__ import annotations
 
 import builtins
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from batho_core.utils.ignore import (
+from batho.utils.ignore import (
     DEFAULT_IGNORE_PATTERNS,
     WATCH_IGNORE_PATTERNS,
     is_ignored,

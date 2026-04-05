@@ -5,7 +5,7 @@ import inspect
 
 import pytest
 
-from batho_core.context.extractor import ASTExtractor
+from batho.context.extractor import ASTExtractor
 
 
 TINY_LANGUAGE_MODULES = [
@@ -43,7 +43,7 @@ def test_tiny_extractors_initialize_and_return_query(
     # Avoid parser initialization overhead; this test validates module glue code.
     monkeypatch.setattr(ASTExtractor, "__init__", lambda self, *_args, **_kwargs: None)
 
-    module = importlib.import_module(f"batho_core.context.languages.{module_name}")
+    module = importlib.import_module(f"batho.context.languages.{module_name}")
     extractor_classes = [
         obj
         for _, obj in inspect.getmembers(module, inspect.isclass)

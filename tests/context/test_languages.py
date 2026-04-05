@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from batho_core.context.languages.registry import get_extractor
-from batho_core.context.languages.detector import default_detector
+from batho.context.languages.registry import get_extractor
+from batho.context.languages.detector import default_detector
 
 
 # ---------------------------------------------------------------------------

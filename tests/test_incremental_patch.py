@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch, mock_open
 
-from batho_core.time_machine import (
+from batho.time_machine import (
     FileChange,
     FileChangeType,
     FileChangeSummary,
@@ -26,9 +26,9 @@ from batho_core.time_machine import (
     PatchSnapshotError,
     PatchFileError,
 )
-from batho_core.context.codegraph import InMemoryGraph
-from batho_core.context.repomap import RepoMap
-from batho_core.utils.hash import compute_bytes_hash
+from batho.context.codegraph import InMemoryGraph
+from batho.context.repomap import RepoMap
+from batho.utils.hash import compute_bytes_hash
 
 
 class TestFileChangeAndFileChangeSummary:
@@ -415,7 +415,7 @@ class TestIncrementalGraphUpdater:
         with (
             patch("pathlib.Path.exists", return_value=True),
             patch(
-                "batho_core.context.codegraph._read_file_content",
+                "batho.context.codegraph._read_file_content",
                 return_value=b"def test():\n    pass",
             ),
         ):
@@ -551,23 +551,23 @@ class TestIncrementalPatchFunction:
 
         with (
             patch(
-                "batho_core.time_machine.get_config_cached",
+                "batho.time_machine.get_config_cached",
                 return_value={"patch": {"timeout_seconds": 30, "max_changes": 1000}},
             ),
-            patch("batho_core.time_machine.load_snapshot", return_value=base_snap),
+            patch("batho.time_machine.load_snapshot", return_value=base_snap),
             patch(
-                "batho_core.time_machine.InMemoryGraph.from_dict",
+                "batho.time_machine.InMemoryGraph.from_dict",
                 return_value=MagicMock(),
             ),
             patch(
-                "batho_core.time_machine.RepoMap.from_dict", return_value=MagicMock()
+                "batho.time_machine.RepoMap.from_dict", return_value=MagicMock()
             ),
             patch(
-                "batho_core.time_machine.create_snapshot", return_value="new_snap_123"
+                "batho.time_machine.create_snapshot", return_value="new_snap_123"
             ),
-            patch("batho_core.time_machine.aggregate_changes", return_value=changes),
+            patch("batho.time_machine.aggregate_changes", return_value=changes),
             patch(
-                "batho_core.time_machine.IncrementalGraphUpdater"
+                "batho.time_machine.IncrementalGraphUpdater"
             ) as mock_updater_cls,
         ):
             mock_updater = MagicMock()
@@ -585,7 +585,7 @@ class TestIncrementalPatchFunction:
         """Test patch with validation failure."""
         base_snap, _ = mock_base_snapshot
         changes = []  # Empty changes, but let's mock a failure
-        with patch("batho_core.time_machine.check_patch_limits") as mock_check:
+        with patch("batho.time_machine.check_patch_limits") as mock_check:
             mock_check.side_effect = PatchValidationError(
                 "Too many changes", {"count": 2000}
             )
@@ -611,12 +611,12 @@ class TestIncrementalPatchFunction:
 
         with (
             patch(
-                "batho_core.time_machine.get_config_cached",
+                "batho.time_machine.get_config_cached",
                 return_value={"patch": {"timeout_seconds": 0.001, "max_changes": 1000}},
             ),
-            patch("batho_core.time_machine.load_snapshot", return_value=base_snap),
+            patch("batho.time_machine.load_snapshot", return_value=base_snap),
             patch(
-                "batho_core.time_machine.timeout_context",
+                "batho.time_machine.timeout_context",
                 side_effect=PatchTimeoutError("Operation timed out", 0),
             ),
         ):
@@ -634,20 +634,20 @@ class TestIncrementalPatchFunction:
 
         with (
             patch(
-                "batho_core.time_machine.get_config_cached",
+                "batho.time_machine.get_config_cached",
                 return_value={"patch": {"timeout_seconds": 30, "max_changes": 1000}},
             ),
-            patch("batho_core.time_machine.load_snapshot", return_value=base_snap),
+            patch("batho.time_machine.load_snapshot", return_value=base_snap),
             patch(
-                "batho_core.time_machine.InMemoryGraph.from_dict",
+                "batho.time_machine.InMemoryGraph.from_dict",
                 return_value=MagicMock(),
             ),
             patch(
-                "batho_core.time_machine.RepoMap.from_dict", return_value=MagicMock()
+                "batho.time_machine.RepoMap.from_dict", return_value=MagicMock()
             ),
-            patch("batho_core.time_machine.aggregate_changes", return_value=changes),
+            patch("batho.time_machine.aggregate_changes", return_value=changes),
             patch(
-                "batho_core.time_machine.IncrementalGraphUpdater"
+                "batho.time_machine.IncrementalGraphUpdater"
             ) as mock_updater_cls,
         ):
             mock_updater = MagicMock()
@@ -710,12 +710,12 @@ class TestIncrementalPatchExceptionHandling:
 
         with (
             patch(
-                "batho_core.time_machine.get_config_cached",
+                "batho.time_machine.get_config_cached",
                 return_value={"patch": {"timeout_seconds": 30, "max_changes": 1000}},
             ),
-            patch("batho_core.time_machine.load_snapshot", return_value=base_snap),
+            patch("batho.time_machine.load_snapshot", return_value=base_snap),
             patch(
-                "batho_core.time_machine.InMemoryGraph.from_dict",
+                "batho.time_machine.InMemoryGraph.from_dict",
                 side_effect=exception_class("Test error"),
             ),
         ):

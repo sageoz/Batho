@@ -1,8 +1,8 @@
 """Tests for Markdown language extractor."""
 
 import pytest
-from batho_core.context.languages.markdown import MarkdownExtractor
-from batho_core.context.schema import EntityType, RelationshipType
+from batho.context.languages.markdown import MarkdownExtractor
+from batho.context.schema import EntityType, RelationshipType
 
 
 class TestMarkdownExtractor:

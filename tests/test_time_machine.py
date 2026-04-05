@@ -1,4 +1,4 @@
-"""Tests for batho_core.time_machine module."""
+"""Tests for batho.time_machine module."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from batho_core.context.codegraph import InMemoryGraph
-from batho_core.context.repomap import RepoMap
-from batho_core.context.schema import Entity, EntityType
-from batho_core.time_machine import (
+from batho.context.codegraph import InMemoryGraph
+from batho.context.repomap import RepoMap
+from batho.context.schema import Entity, EntityType
+from batho.time_machine import (
     compute_staleness,
     create_snapshot,
     diff_snapshots,
@@ -314,7 +314,7 @@ class TestFileChangeTrackerEdgeCases:
 
     def test_large_file_skip(self, tmp_path: Path):
         """Test that very large files are skipped with custom size limit."""
-        from batho_core.time_machine import FileTrackingConfig
+        from batho.time_machine import FileTrackingConfig
 
         tracker = FileChangeTracker(tmp_path)
         large_file = tmp_path / "large.bin"
@@ -331,7 +331,7 @@ class TestFileChangeTrackerEdgeCases:
 
     def test_binary_file_warning(self, tmp_path: Path, caplog):
         """Test that large binary files trigger warnings."""
-        from batho_core.time_machine import FileTrackingConfig
+        from batho.time_machine import FileTrackingConfig
 
         tracker = FileChangeTracker(tmp_path)
         binary_file = tmp_path / "large_binary.bin"
@@ -352,7 +352,7 @@ class TestFileChangeTrackerEdgeCases:
 
     def test_permission_error_logging(self, tmp_path: Path, caplog):
         """Test permission error handling and logging."""
-        from batho_core.time_machine import FileTrackingConfig
+        from batho.time_machine import FileTrackingConfig
 
         tracker = FileChangeTracker(tmp_path)
         no_perm_file = tmp_path / "no_perm.txt"

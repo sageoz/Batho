@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from batho_core.utils import file_io
+from batho.utils import file_io
 
 
 def test_read_file_bytes_uses_config_default_limit(tmp_path: Path, monkeypatch) -> None:
@@ -34,7 +34,7 @@ def test_read_file_text_returns_none_for_binary_content(tmp_path: Path) -> None:
 def test_read_file_text_uses_decode_fallback(monkeypatch) -> None:
     monkeypatch.setattr(file_io, "read_file_bytes", lambda *_args, **_kwargs: b"\xff\xfe")
     monkeypatch.setattr(
-        "batho_core.utils.encoding.decode_bytes_with_fallback",
+        "batho.utils.encoding.decode_bytes_with_fallback",
         lambda _data, errors="replace": f"fallback:{errors}",
     )
 

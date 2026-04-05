@@ -1,4 +1,4 @@
-"""Tests for batho_core.context.stack_detector module."""
+"""Tests for batho.context.stack_detector module."""
 from __future__ import annotations
 
 import json
@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-import batho_core.context.stack_detector as stack_detector_module
-from batho_core.context.stack_detector import (
+import batho.context.stack_detector as stack_detector_module
+from batho.context.stack_detector import (
     _match_framework,
     _detect_package_manager,
     _detect_build_tool,

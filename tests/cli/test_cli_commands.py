@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from batho import (
+from batho_cli import (
     cmd_index,
     cmd_invalidate,
     cmd_patch,
@@ -21,12 +21,12 @@ from batho import (
     cmd_storage_verify,
     cmd_webhook,
 )
-from batho_core.config import get_config_cached
-from batho_core.context.bsg_map import BSGMap
-from batho_core.context.codegraph import InMemoryGraph
-from batho_core.context.incremental import GitDiffEntry
-from batho_core.context.schema import Entity, EntityType
-from batho_core.time_machine import FileChangeTracker, create_snapshot
+from batho.config import get_config_cached
+from batho.context.bsg_map import BSGMap
+from batho.context.codegraph import InMemoryGraph
+from batho.context.incremental import GitDiffEntry
+from batho.context.schema import Entity, EntityType
+from batho.time_machine import FileChangeTracker, create_snapshot
 
 
 # ---------------------------------------------------------------------------
@@ -598,7 +598,7 @@ class TestCmdWebhook:
 
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(
-            "batho_core.webhook.processor.incremental_patch",
+            "batho.webhook.processor.incremental_patch",
             lambda _ctn, _snapshot, _changes: {
                 "success": True,
                 "new_snapshot_id": f"{snapshot_id}-next",

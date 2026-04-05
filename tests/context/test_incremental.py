@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from batho_core.context.incremental import (
+from batho.context.incremental import (
     GitDiffEntry,
     _parse_name_status_output,
     get_head_commit,
@@ -49,11 +49,11 @@ class TestSnapshotCommitParsing:
 
 class TestGitCommandHelpers:
     def test_get_head_commit_handles_missing_and_empty(self, monkeypatch):
-        monkeypatch.setattr("batho_core.context.incremental._run_git", lambda *_a, **_k: None)
+        monkeypatch.setattr("batho.context.incremental._run_git", lambda *_a, **_k: None)
         assert get_head_commit(Path(".")) is None
 
         monkeypatch.setattr(
-            "batho_core.context.incremental._run_git",
+            "batho.context.incremental._run_git",
             lambda *_a, **_k: SimpleNamespace(stdout="\n"),
         )
         assert get_head_commit(Path(".")) is None
@@ -81,18 +81,18 @@ class TestParseNameStatusOutput:
 
 class TestChangedFilesSince:
     def test_get_changed_file_status_since_returns_none_when_not_git(self, monkeypatch):
-        monkeypatch.setattr("batho_core.context.incremental.is_git_repo", lambda _: False)
+        monkeypatch.setattr("batho.context.incremental.is_git_repo", lambda _: False)
         result = get_changed_file_status_since("batho_x_y_z", Path("."), {})
         assert result is None
 
     def test_get_changed_file_status_since_returns_entries(self, monkeypatch):
-        monkeypatch.setattr("batho_core.context.incremental.is_git_repo", lambda _: True)
+        monkeypatch.setattr("batho.context.incremental.is_git_repo", lambda _: True)
         monkeypatch.setattr(
-            "batho_core.context.incremental.extract_snapshot_commit",
+            "batho.context.incremental.extract_snapshot_commit",
             lambda *_args, **_kwargs: "abc1234",
         )
         monkeypatch.setattr(
-            "batho_core.context.incremental._run_git",
+            "batho.context.incremental._run_git",
             lambda *_args, **_kwargs: SimpleNamespace(stdout="M\tsrc/a.py\nA\tsrc/b.py\n"),
         )
 
@@ -102,23 +102,23 @@ class TestChangedFilesSince:
         assert GitDiffEntry(status="A", path="src/b.py") in entries
 
     def test_get_changed_file_status_since_missing_base_or_git_failure(self, monkeypatch):
-        monkeypatch.setattr("batho_core.context.incremental.is_git_repo", lambda _: True)
+        monkeypatch.setattr("batho.context.incremental.is_git_repo", lambda _: True)
         monkeypatch.setattr(
-            "batho_core.context.incremental.extract_snapshot_commit",
+            "batho.context.incremental.extract_snapshot_commit",
             lambda *_args, **_kwargs: None,
         )
         assert get_changed_file_status_since("snap", Path("."), {}) is None
 
         monkeypatch.setattr(
-            "batho_core.context.incremental.extract_snapshot_commit",
+            "batho.context.incremental.extract_snapshot_commit",
             lambda *_args, **_kwargs: "abc1234",
         )
-        monkeypatch.setattr("batho_core.context.incremental._run_git", lambda *_a, **_k: None)
+        monkeypatch.setattr("batho.context.incremental._run_git", lambda *_a, **_k: None)
         assert get_changed_file_status_since("snap", Path("."), {}) is None
 
     def test_get_changed_files_since_returns_unique_paths(self, monkeypatch):
         monkeypatch.setattr(
-            "batho_core.context.incremental.get_changed_file_status_since",
+            "batho.context.incremental.get_changed_file_status_since",
             lambda *_args, **_kwargs: [
                 GitDiffEntry(status="M", path="src/a.py"),
                 GitDiffEntry(status="A", path="src/a.py"),
@@ -131,7 +131,7 @@ class TestChangedFilesSince:
 
     def test_get_changed_files_since_propagates_none(self, monkeypatch):
         monkeypatch.setattr(
-            "batho_core.context.incremental.get_changed_file_status_since",
+            "batho.context.incremental.get_changed_file_status_since",
             lambda *_args, **_kwargs: None,
         )
         assert get_changed_files_since("snap", Path("."), {}) is None

@@ -1,17 +1,17 @@
-"""Tests for batho_core.context.extractor module."""
+"""Tests for batho.context.extractor module."""
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
 
-from batho_core.context.extractor import (
+from batho.context.extractor import (
     ASTExtractor,
     MarkupConfigExtractor,
     _clean_docstring,
 )
-from batho_core.utils.file_io import _read_file_bytes
-from batho_core.context.schema import Entity, EntityType, Relationship, RelationshipType
+from batho.utils.file_io import _read_file_bytes
+from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +76,7 @@ class TestASTExtractorParseFile:
 
     def test_python_extraction(self):
         """Parse a simple Python source and verify entities are extracted."""
-        from batho_core.context.languages.registry import get_extractor
+        from batho.context.languages.registry import get_extractor
 
         extractor = get_extractor(".py")
         assert extractor is not None
@@ -96,7 +96,7 @@ class Person:
         assert "Person" in names
 
     def test_empty_content(self):
-        from batho_core.context.languages.registry import get_extractor
+        from batho.context.languages.registry import get_extractor
 
         extractor = get_extractor(".py")
         entities, rels = extractor.parse_file("empty.py", b"")
@@ -104,7 +104,7 @@ class Person:
 
     def test_malformed_content(self):
         """Malformed content should return empty, not raise."""
-        from batho_core.context.languages.registry import get_extractor
+        from batho.context.languages.registry import get_extractor
 
         extractor = get_extractor(".py")
         # This is technically parseable by tree-sitter (error-tolerant)
@@ -112,7 +112,7 @@ class Person:
         # Should not raise — error isolation
 
     def test_entities_have_file_field(self):
-        from batho_core.context.languages.registry import get_extractor
+        from batho.context.languages.registry import get_extractor
 
         extractor = get_extractor(".py")
         content = b"def foo(): pass\n"
@@ -121,7 +121,7 @@ class Person:
             assert e.file == "src/main.py"
 
     def test_parse_file_twice_is_stable(self):
-        from batho_core.context.languages.registry import get_extractor
+        from batho.context.languages.registry import get_extractor
 
         extractor = get_extractor(".py")
         assert extractor is not None
@@ -143,7 +143,7 @@ class Person:
 class TestMarkupConfigExtractor:
 
     def test_json_extraction(self):
-        from batho_core.context.languages.registry import get_extractor
+        from batho.context.languages.registry import get_extractor
 
         extractor = get_extractor(".json")
         if extractor is None:
@@ -157,7 +157,7 @@ class TestMarkupConfigExtractor:
         assert len(doc_entities) == 1
 
     def test_toml_extraction(self):
-        from batho_core.context.languages.registry import get_extractor
+        from batho.context.languages.registry import get_extractor
 
         extractor = get_extractor(".toml")
         if extractor is None:
@@ -174,7 +174,7 @@ class TestMarkupConfigExtractor:
         assert len(doc_entities) == 1
 
     def test_markup_entities_include_language_metadata(self):
-        from batho_core.context.languages.registry import get_extractor
+        from batho.context.languages.registry import get_extractor
 
         extractor = get_extractor(".json")
         if extractor is None:
