@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Codebase Intelligence for AI-Powered Development</strong><br>
-  Turn any codebase into structured knowledge your LLMs, agents, and toovcvls can actually use.
+  Turn any codebase into structured knowledge your LLMs, agents, and tools can actually use.
 </p>
 
 <p align="center">
@@ -467,7 +467,7 @@ Configuration precedence:
 | `BATHO_BSG_QUERY_INDEX_ON_WRITE` | `true` | Build query index at write time |
 | `BATHO_BSG_QUERY_CACHE_SIZE` | `256` | Query service cache size |
 
-> For the complete env override set, see `batho_core/config.py`.
+> For the complete env override set, see `batho/config.py`.
 
 ### Config File
 
@@ -701,7 +701,83 @@ for rel in graph.relationships:
         source = graph.get_entity(rel.source_id)
         print(f"{source.name} → authenticate  ({source.file})")
 ```
+---
+## Use Batho as a Python Library (Custom Scripts)
 
+Batho is not only a CLI. You can import it as a Python library to build custom automation scripts, CI workflows, and internal developer tools.
+
+### Public Python API
+
+The `batho` package exports core APIs directly:
+
+- Indexing and graph: `CodeGraphIndexer`, `InMemoryGraph`, `BSGMap`
+- Time Machine: `create_snapshot`, `list_snapshots`, `load_snapshot`, `diff_snapshots`
+- Incremental patching: `FileChange`, `FileChangeType`, `FileChangeTracker`, `incremental_patch`
+- Git-aware change discovery: `get_changed_file_status_since`
+- Query layer: `QueryService`
+- Webhook processing: `WebhookConfig`, `WebhookProcessor`, `WebhookServer`, `parse_webhook_event`
+
+### Example: Index + Snapshot from a Script
+
+```python
+from pathlib import Path
+
+from batho import BSGMap, CodeGraphIndexer, create_snapshot
+
+root = Path(".").resolve()
+ctn_dir = root / ".ctn"
+ctn_dir.mkdir(parents=True, exist_ok=True)
+
+indexer = CodeGraphIndexer(cache_path=str(ctn_dir / "file_cache.json"), root=str(root))
+graph = indexer.build_graph(root=str(root), snapshot_id="script-run")
+
+bsg = BSGMap.build(graph, root=str(root))
+snapshot_id = create_snapshot(ctn_dir, root, graph, bsg, label="nightly-script")
+
+print({"entities": len(graph.entities), "relationships": len(graph.relationships), "snapshot": snapshot_id})
+```
+
+### Example: Incremental Patch in Automation
+
+```python
+from pathlib import Path
+
+from batho import FileChangeTracker, incremental_patch
+
+root = Path(".").resolve()
+ctn_dir = root / ".ctn"
+base_snapshot_id = "<existing_snapshot_id>"
+
+tracker = FileChangeTracker(root)
+hash_cache_path = ctn_dir / "file_hashes.json"
+tracker.load(hash_cache_path)
+changes = tracker.scan_for_changes(max_file_size_kb=500)
+tracker.save(hash_cache_path)
+
+if changes:
+    result = incremental_patch(ctn_dir, base_snapshot_id, changes)
+    print(result)
+else:
+    print("No changes detected")
+```
+
+### Example: Query Indexed Data Programmatically
+
+```python
+from pathlib import Path
+
+from batho import QueryService
+
+ctn_dir = Path(".ctn")
+query = QueryService(ctn_dir)
+
+functions = query.entities_by_type("function", limit=20)
+for row in functions:
+    print(f"{row['name']} -> {row['file']}")
+```
+
+
+---
 ### Impact Analysis (Pre-Refactoring)
 
 ```python
@@ -833,19 +909,22 @@ pip install pip-licenses && pip-licenses --allow-only MIT
 
 ```
 batho/
-├── batho.py                      # CLI entry point
-└── batho_core/
-    ├── config.py                 # Pydantic-validated configuration
-    ├── time_machine.py           # Snapshots, diffs, staleness
+├── batho_cli.py                  # CLI command entrypoints
+└── batho/
+    ├── __init__.py               # Public Python API exports
+    ├── config.py                 # Configuration and env overrides
+    ├── time_machine.py           # Snapshots, diffs, incremental patching
     ├── context/
-    │   ├── codegraph.py          # Parallel code graph indexer
+    │   ├── codegraph.py          # Graph indexing and extraction pipeline
+    │   ├── pipeline.py           # Parallel worker orchestration
     │   ├── bsg_map.py            # Multi-format BSG renderer
-    │   ├── stack_detector.py     # Tech stack detection
+    │   ├── query.py              # Query service over persisted artifacts
     │   └── languages/            # Per-language tree-sitter extractors
+    ├── webhook/                  # Webhook parsing, processing, queue/server
     └── utils/
-        ├── logging.py            # Structured logging (structlog)
-        ├── hash.py               # SHA-256 utilities
-        └── ignore.py             # .gitignore / .bathoignore
+        ├── logging.py            # Structured logging
+        ├── hash.py               # SHA-256 helpers
+        └── ignore.py             # .gitignore / .bathoignore handling
 ```
 
 ---
