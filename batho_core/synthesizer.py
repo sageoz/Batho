@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from batho_core.context.storage import register_artifact
+from batho_core.context.storage import persist_json
 from batho_core.utils.logging import get_logger
 
 logger = get_logger(__name__, component="synthesizer")
@@ -67,14 +67,12 @@ def _save_ledger(path: Path, payload: dict[str, Any]) -> None:
     payload["schema_version"] = _LEDGER_SCHEMA_VERSION
     payload["updated_at"] = _now_iso()
 
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp_path.replace(path)
     ctn_dir = path.parent
-    register_artifact(
+    persist_json(
         ctn_dir,
         path,
-        "evolution_ledger_json",
+        payload,
+        artifact_type="evolution_ledger_json",
         producer="synthesizer",
         metadata={"entry_count": len(payload.get("entries") or [])},
         schema_version=_LEDGER_SCHEMA_VERSION,

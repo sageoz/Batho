@@ -16,6 +16,8 @@ from batho import (
     cmd_stats,
     cmd_storage_backfill,
     cmd_storage_cleanup,
+    cmd_storage_rebuild_indexes,
+    cmd_storage_stats,
     cmd_storage_verify,
     cmd_webhook,
 )
@@ -355,6 +357,62 @@ class TestCmdIndex:
         assert "edges" in bsg_payload
         assert isinstance(bsg_payload.get("quality_warnings"), list)
         get_config_cached.cache_clear()
+
+    def test_index_reuses_persisted_graph_when_hash_scan_finds_no_changes(
+        self,
+        tmp_path: Path,
+    ):
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / "a.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+
+        first_args = argparse.Namespace(
+            root=str(root),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            full=False,
+            base_snapshot=None,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(first_args) == 0
+
+        ctn_dir = root / ".ctn"
+        tracker = FileChangeTracker(root)
+        tracker.scan_for_changes(max_file_size_kb=500)
+        tracker.save(ctn_dir / "file_hashes.json")
+
+        second_args = argparse.Namespace(
+            root=str(root),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=False,
+            full=False,
+            base_snapshot=None,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(second_args) == 0
+
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        stats = index_payload.get("indexes", {}).get(current_id, {}).get("stats", {})
+        assert stats.get("reused_persisted_graph") is True
 
 
 # ---------------------------------------------------------------------------
@@ -778,6 +836,57 @@ class TestCmdStorageAndQuery:
         payload = json.loads(capsys.readouterr().out)
         assert payload.get("dry_run") is True
         assert "candidates" in payload
+
+    def test_storage_stats_command(self, simple_python_repo: Path, capsys):
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(idx_args) == 0
+
+        capsys.readouterr()
+        stats_args = argparse.Namespace(root=str(simple_python_repo), index_id=None)
+        assert cmd_storage_stats(stats_args) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload.get("registry", {}).get("artifact_count", 0) >= 1
+        assert "graph_cache" in payload
+
+    def test_storage_rebuild_indexes_command(self, simple_python_repo: Path, capsys):
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(idx_args) == 0
+
+        capsys.readouterr()
+        rebuild_args = argparse.Namespace(root=str(simple_python_repo), index_id=None)
+        assert cmd_storage_rebuild_indexes(rebuild_args) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload.get("index_id")
+        assert "entities_indexed" in payload
+        assert "relationships_indexed" in payload
 
     def test_query_command_entity_type(self, simple_python_repo: Path, capsys):
         idx_args = argparse.Namespace(

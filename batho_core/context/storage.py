@@ -66,6 +66,16 @@ def _json_dumps(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=True, sort_keys=True)
 
 
+def _safe_json_loads(payload: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(payload)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if isinstance(parsed, dict):
+        return parsed
+    return {}
+
+
 def _safe_parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -284,6 +294,12 @@ class ArtifactRegistry:
         }
         if "run_id" not in columns:
             conn.execute("ALTER TABLE artifacts ADD COLUMN run_id TEXT")
+        if "sync_status" not in columns:
+            conn.execute("ALTER TABLE artifacts ADD COLUMN sync_status TEXT")
+        if "cloud_content_id" not in columns:
+            conn.execute("ALTER TABLE artifacts ADD COLUMN cloud_content_id TEXT")
+        if "last_sync_at" not in columns:
+            conn.execute("ALTER TABLE artifacts ADD COLUMN last_sync_at TEXT")
 
     def _ensure_query_tables(self, conn: sqlite3.Connection) -> None:
         conn.execute(
@@ -346,6 +362,9 @@ class ArtifactRegistry:
                         schema_version TEXT NOT NULL,
                         producer TEXT NOT NULL,
                         run_id TEXT,
+                        sync_status TEXT,
+                        cloud_content_id TEXT,
+                        last_sync_at TEXT,
                         retention_class TEXT NOT NULL,
                         metadata_json TEXT NOT NULL,
                         created_at TEXT NOT NULL,
@@ -354,6 +373,7 @@ class ArtifactRegistry:
                     )
                     """
                 )
+                self._migrate_schema(conn)
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type, updated_at DESC)"
                 )
@@ -362,6 +382,9 @@ class ArtifactRegistry:
                 )
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_artifacts_retention_class ON artifacts(retention_class, updated_at DESC)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_artifacts_sync_status ON artifacts(sync_status, updated_at DESC)"
                 )
                 conn.execute(
                     """
@@ -378,7 +401,6 @@ class ArtifactRegistry:
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS registry_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
                 )
-                self._migrate_schema(conn)
                 self._ensure_query_tables(conn)
                 conn.execute(
                     "INSERT OR REPLACE INTO registry_meta(key, value) VALUES (?, ?)",
@@ -499,6 +521,10 @@ class ArtifactRegistry:
         if run_id:
             payload.setdefault("run_id", run_id)
 
+        sync_status = "pending" if self.cloud_sync_ready else "local_only"
+        cloud_content_id = str(payload.get("cloud_content_id") or "") or None
+        last_sync_at = str(payload.get("last_sync_at") or "") or None
+
         now = _utc_now_iso()
 
         try:
@@ -516,12 +542,15 @@ class ArtifactRegistry:
                         schema_version,
                         producer,
                         run_id,
+                        sync_status,
+                        cloud_content_id,
+                        last_sync_at,
                         retention_class,
                         metadata_json,
                         created_at,
                         updated_at,
                         deleted
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                     ON CONFLICT(artifact_id) DO UPDATE SET
                         content_id=excluded.content_id,
                         artifact_type=excluded.artifact_type,
@@ -529,8 +558,12 @@ class ArtifactRegistry:
                         physical_path=excluded.physical_path,
                         checksum=excluded.checksum,
                         size_bytes=excluded.size_bytes,
+                        schema_version=excluded.schema_version,
                         producer=excluded.producer,
                         run_id=excluded.run_id,
+                        sync_status=excluded.sync_status,
+                        cloud_content_id=excluded.cloud_content_id,
+                        last_sync_at=excluded.last_sync_at,
                         retention_class=excluded.retention_class,
                         metadata_json=excluded.metadata_json,
                         updated_at=excluded.updated_at,
@@ -547,6 +580,9 @@ class ArtifactRegistry:
                         resolved_schema_version,
                         producer,
                         run_id or None,
+                        sync_status,
+                        cloud_content_id,
+                        last_sync_at,
                         retention_class,
                         _json_dumps(payload),
                         now,
@@ -622,6 +658,115 @@ class ArtifactRegistry:
                 summary["failed"] += 1
 
         return summary
+
+    def stats(self) -> dict[str, Any]:
+        """Return storage registry and cloud-sync readiness statistics."""
+        summary = {
+            "enabled": bool(self.enabled and self._ready),
+            "registry_path": str(self.registry_path),
+            "backend": self.backend,
+            "content_scope": self.content_scope,
+            "cloud_sync_ready": self.cloud_sync_ready,
+            "artifact_count": 0,
+            "deleted_artifact_count": 0,
+            "content_blob_count": 0,
+            "query_entities_count": 0,
+            "query_relationships_count": 0,
+            "sync_status": {
+                "pending": 0,
+                "synced": 0,
+                "conflict": 0,
+                "local_only": 0,
+            },
+            "artifact_types": {},
+            "db_size_bytes": 0,
+        }
+        if not self.enabled or not self._ready:
+            return summary
+
+        try:
+            summary["db_size_bytes"] = int(self.registry_path.stat().st_size)
+        except OSError:
+            summary["db_size_bytes"] = 0
+
+        with self._connect(row_factory=True) as conn:
+            artifact_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM artifacts WHERE deleted = 0"
+            ).fetchone()
+            deleted_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM artifacts WHERE deleted = 1"
+            ).fetchone()
+            blob_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM content_blobs"
+            ).fetchone()
+            entity_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM query_entities"
+            ).fetchone()
+            relationship_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM query_relationships"
+            ).fetchone()
+
+            summary["artifact_count"] = int(artifact_count["count"] if artifact_count else 0)
+            summary["deleted_artifact_count"] = int(deleted_count["count"] if deleted_count else 0)
+            summary["content_blob_count"] = int(blob_count["count"] if blob_count else 0)
+            summary["query_entities_count"] = int(entity_count["count"] if entity_count else 0)
+            summary["query_relationships_count"] = int(
+                relationship_count["count"] if relationship_count else 0
+            )
+
+            type_rows = conn.execute(
+                """
+                SELECT artifact_type, COUNT(*) AS count
+                FROM artifacts
+                WHERE deleted = 0
+                GROUP BY artifact_type
+                ORDER BY count DESC, artifact_type ASC
+                """
+            ).fetchall()
+            summary["artifact_types"] = {
+                str(row["artifact_type"]): int(row["count"])
+                for row in type_rows
+            }
+
+            sync_rows = conn.execute(
+                """
+                SELECT COALESCE(sync_status, 'local_only') AS sync_status, COUNT(*) AS count
+                FROM artifacts
+                WHERE deleted = 0
+                GROUP BY COALESCE(sync_status, 'local_only')
+                """
+            ).fetchall()
+            sync_status = dict(summary["sync_status"])
+            for row in sync_rows:
+                key = str(row["sync_status"])
+                sync_status[key] = int(row["count"])
+            summary["sync_status"] = sync_status
+
+        return summary
+
+    def mark_synced(
+        self,
+        artifact_id: str,
+        *,
+        cloud_content_id: str,
+        synced_at: str | None = None,
+    ) -> bool:
+        """Mark an artifact as synced for future cloud replication flows."""
+        if not self.enabled or not self._ready:
+            return False
+
+        timestamp = synced_at or _utc_now_iso()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE artifacts
+                SET sync_status = ?, cloud_content_id = ?, last_sync_at = ?, updated_at = ?
+                WHERE artifact_id = ? AND deleted = 0
+                """,
+                ("synced", cloud_content_id, timestamp, timestamp, artifact_id),
+            )
+            conn.commit()
+            return int(cur.rowcount) > 0
 
     def _active_artifacts(self) -> list[dict[str, Any]]:
         if not self.enabled or not self._ready:
@@ -1137,6 +1282,11 @@ def cleanup_registry(
 ) -> dict[str, Any]:
     registry = get_artifact_registry(ctn_dir)
     return registry.cleanup(dry_run=dry_run)
+
+
+def get_registry_stats(ctn_dir: Path) -> dict[str, Any]:
+    registry = get_artifact_registry(ctn_dir)
+    return registry.stats()
 
 
 def rebuild_query_index(

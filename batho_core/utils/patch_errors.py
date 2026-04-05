@@ -14,7 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from batho_core.context.storage import register_artifact_for_path
+from batho_core.context.storage import (
+    infer_ctn_dir_for_path,
+    persist_json,
+    register_artifact_for_path,
+)
 from batho_core.utils.logging import get_logger
 from batho_core.config import get_config_cached
 
@@ -187,16 +191,29 @@ class PatchAuditLogger:
                 ],
             }
 
-            self.log_file.write_text(
-                json.dumps(audit_data, indent=2, ensure_ascii=False)
-            )
-            register_artifact_for_path(
-                self.log_file,
-                "patch_audit_log_json",
-                producer="patch_errors",
-                metadata={"entry_count": len(audit_data.get("entries") or [])},
-                schema_version="patch-audit-log.v1",
-            )
+            inferred_ctn = infer_ctn_dir_for_path(self.log_file)
+            if inferred_ctn is not None:
+                persist_json(
+                    inferred_ctn,
+                    self.log_file,
+                    audit_data,
+                    artifact_type="patch_audit_log_json",
+                    producer="patch_errors",
+                    metadata={"entry_count": len(audit_data.get("entries") or [])},
+                    schema_version="patch-audit-log.v1",
+                    retention_class="patch",
+                )
+            else:
+                self.log_file.write_text(
+                    json.dumps(audit_data, indent=2, ensure_ascii=False)
+                )
+                register_artifact_for_path(
+                    self.log_file,
+                    "patch_audit_log_json",
+                    producer="patch_errors",
+                    metadata={"entry_count": len(audit_data.get("entries") or [])},
+                    schema_version="patch-audit-log.v1",
+                )
         except Exception as exc:
             logger.warning("failed_to_write_audit_log", error=str(exc))
 

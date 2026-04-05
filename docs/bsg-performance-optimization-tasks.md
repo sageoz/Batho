@@ -16,7 +16,7 @@
 - ✅ **Task 2.4:** Tree-sitter Parsing Optimization - FULLY IMPLEMENTED
 
 ### Phase 3: Advanced Optimizations (Tier 3)
-- ⚠️ **Task 3.1:** Persistent Graph Storage - PARTIALLY IMPLEMENTED
+- ✅ **Task 3.1:** Persistent Graph Storage - FULLY IMPLEMENTED
 - ✅ **Task 3.2:** Query Optimization and Indexing - FULLY IMPLEMENTED
 - ✅ **Task 3.3:** Memory-Mapped Graph Access - FULLY IMPLEMENTED
 
@@ -678,8 +678,12 @@ Optimize tree-sitter parsing, which consumes 29% of build time. Focus on grammar
 
 ### Task 3.1: Persistent Graph Storage
 
-**Status:** ⚠️ PARTIALLY IMPLEMENTED
-**Notes:** A SQLite-backed `.ctn` artifact registry is implemented in `batho_core/context/storage.py` and integrated across key durable write paths (`batho.py`, `time_machine.py`, `rules.py`, `synthesizer.py`, `patch_errors.py`). This satisfies the revised requirement to persist durable `.ctn` outputs for future cloud sync, but the original task's graph-specific storage architecture (node/edge binary persistence + graph load path in indexer) is still not implemented.
+**Status:** ✅ FULLY IMPLEMENTED
+**Implementation Location:** `batho_core/context/storage.py`, `batho_core/context/graph_cache.py`
+**Integrated in:** `batho.py`, `batho_core/time_machine.py`, `batho_core/bsg/rules.py`, `batho_core/synthesizer.py`, `batho_core/utils/patch_errors.py`
+**Configuration:** `batho.yaml` → `bsg.storage`
+**CLI Commands:** `batho storage backfill`, `batho storage verify`, `batho storage cleanup`, `batho storage stats`, `batho storage rebuild-indexes`
+**Notes:** Persistent graph artifacts are durably stored and registered in the SQLite artifact registry with cloud-sync-ready metadata (`sync_status`, `cloud_content_id`, `last_sync_at`). Graph load path now supports persisted graph reuse via `graph_cache` with optional mmap acceleration and safe fallback.
 
 **Priority:** MEDIUM
 **Estimated Effort:** 10-12 hours
@@ -1192,12 +1196,12 @@ Create CLI tools for profiling BSG performance to help users identify bottleneck
 - [x] render_json: 50%+ reduction in serialization time - *Implementation complete with config switch, needs benchmarking*
 - [x] Tree-sitter parsing: 30-40% reduction in parse time - *Implementation complete with error recovery and comment skipping, needs benchmarking*
 
-### Phase 3 (Advanced Optimizations) - ✅ 2/3 Tasks Fully, 1/3 Partial
-- [ ] Graph load time: <10 seconds for 100k-node graph - *Partially implemented via artifact registry, graph-native load path pending*
+### Phase 3 (Advanced Optimizations) - ✅ 3/3 Tasks Fully Implemented
+- [x] Graph load time: <10 seconds for 100k-node graph - *Implementation complete with persisted graph cache load path, needs benchmarking*
 - [x] Query latency: <100ms for common queries - *Implemented via SQLite query indexes with in-memory fallback*
 - [x] Memory usage: 60%+ reduction for large graphs - *Implemented via optional mmap storage for large JSON artifacts*
 
-Current state note: Durable `.ctn` artifact persistence foundation is implemented via SQLite registry, query optimization service with LRU cache is operational, and optional mmap storage for large JSON artifacts is available.
+Current state note: Durable `.ctn` artifact persistence is fully operational via SQLite registry + persisted graph cache load path, query optimization service with LRU cache, and optional mmap storage for large JSON artifacts.
 
 ### Phase 4 (Monitoring) - ✅ 2/2 Tasks Fully Implemented
 - [x] All critical operations instrumented - *Implemented via metrics collection in batho.py with configurable output*

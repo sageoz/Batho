@@ -206,46 +206,136 @@ pip install -e .           # development (editable)
 ## CLI Reference
 
 ```bash
-# Index a repository
+# Show all commands
+batho --help
+
+# Show command-specific help
+batho <command> --help
+```
+
+### Command Matrix
+
+| Command | Purpose |
+|------|---------|
+| `index` | Build/update graph + BSG artifacts for a repo |
+| `stats` | Show current index metadata and health summary |
+| `snapshots` | List stored snapshots |
+| `diff-snapshots` | Diff two snapshots |
+| `patch` | Apply incremental updates from scan/diff/files |
+| `patches` | List patch operations |
+| `patch-info` | Show patch operation details |
+| `patch-chain` | Show chain of patches for a snapshot |
+| `apply-patch` | Apply patch by diff file or patch id |
+| `cherry-pick` | Apply a patch to another snapshot |
+| `webhook` | Parse/process a webhook payload |
+| `webhook-server` | Start webhook server from `batho.yaml` |
+| `invalidate` | Clear index file cache |
+| `cache` | AST cache management (`stats`, `invalidate`, `clear`) |
+| `storage` | Persistent artifact registry tools (`backfill`, `verify`, `cleanup`, `stats`, `rebuild-indexes`) |
+| `query` | Query persisted entity/relationship indexes |
+| `bsg` | Render BSG outputs (`compressed`, `full`, `hierarchical`) |
+
+### Indexing & Snapshots
+
+```bash
+# Full index
 batho index --root /path/to/repo --verbose
 
-# Generate BSG in various formats
+# Force full rebuild (disable incremental path)
+batho index --root /path/to/repo --full
+
+# Index and create snapshot
+batho index --root /path/to/repo --snapshot --snapshot-label "release-candidate"
+
+# Snapshot inspection
+batho snapshots --root /path/to/repo
+batho diff-snapshots --root /path/to/repo --snapshot-a SNAP_A --snapshot-b SNAP_B
+```
+
+### Patch Lifecycle
+
+```bash
+# Auto-detect file changes and patch
+batho patch --root /path/to/repo --scan
+
+# Patch from unified diff
+batho patch --root /path/to/repo --diff /path/to/changes.diff
+
+# Patch specific files
+batho patch --root /path/to/repo src/a.py src/b.py
+
+# Patch history and details
+batho patches --root /path/to/repo --format timeline
+batho patch-info --root /path/to/repo --patch-id PATCH_ID --format summary
+batho patch-chain --root /path/to/repo --snapshot-id SNAP_ID --full
+
+# Advanced patch operations
+batho apply-patch --root /path/to/repo --base-snapshot SNAP_ID --diff-file /path/to/changes.diff
+batho cherry-pick --root /path/to/repo --patch-id PATCH_ID --target-snapshot SNAP_ID
+```
+
+### BSG Rendering & Querying
+
+```bash
+# Render BSG formats
 batho bsg --root /path/to/repo --mode compressed --budget 12000
 batho bsg --root /path/to/repo --mode full
 batho bsg --root /path/to/repo --mode hierarchical
 
-# View index stats
-batho stats --root /path/to/repo
-
-# Reindex changed files from a diff
-batho patch --root /path/to/repo --diff /path/to/pr.diff
-
-# Reindex specific files
-batho patch --root /path/to/repo file1.py dir/file2.ts
-
-# Snapshots & diff
-batho index --root /path/to/repo --snapshot
-batho snapshots --root /path/to/repo
-batho diff-snapshots --root /path/to/repo SNAP_A SNAP_B
-
-# Patch management
-batho patches --root /path/to/repo --format timeline
-batho patch-info --root /path/to/repo --patch-id ID
-batho cherry-pick --root /path/to/repo --patch-id ID --target-snapshot ID
-
-# Clear cache (force full re-parse)
-batho invalidate --root /path/to/repo
+# Query persisted graph indexes
+batho query --root /path/to/repo --entity-type function --limit 50
+batho query --root /path/to/repo --file-path src/api.py
+batho query --root /path/to/repo --relationship-type calls --rebuild-index
 ```
 
-### Index Options
+### Cache & Storage Operations
+
+```bash
+# Index cache cleanup
+batho invalidate --root /path/to/repo
+
+# AST cache management
+batho cache stats
+batho cache invalidate "**/*.py"
+batho cache clear
+
+# Persistent storage management
+batho storage backfill --root /path/to/repo
+batho storage verify --root /path/to/repo --repair
+batho storage cleanup --root /path/to/repo          # dry-run
+batho storage cleanup --root /path/to/repo --apply  # execute cleanup
+batho storage stats --root /path/to/repo
+batho storage rebuild-indexes --root /path/to/repo
+```
+
+### Webhook Operations
+
+```bash
+# Parse/process one webhook payload
+batho webhook --payload '{"event":"push"}' --headers '{"X-GitHub-Event":"push"}'
+
+# Process webhook with repository context
+batho webhook --root /path/to/repo --payload '{...}' --headers '{...}'
+
+# Start webhook server from config
+batho webhook-server --root /path/to/repo
+```
+
+### Index Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--max-workers` | `0` (auto) | Worker threads — 0 uses CPU × 2, capped at 32 |
 | `--max-file-size-kb` | `500` | Skip files larger than this |
+| `--extensions` | all supported | Restrict indexing to selected extensions |
+| `--full` | off | Disable incremental reuse and force full rebuild |
+| `--base-snapshot` | auto | Prefer this snapshot for incremental indexing |
+| `--output-json` | none | Optional override path for graph JSON output |
+| `--metrics-output` | from config | Write metrics JSON to explicit path |
 | `--log-json` | off | JSON structured logs (useful in CI) |
 | `--verbose` | off | Print progress to stdout |
 | `--snapshot` | off | Create snapshot after indexing |
+| `--snapshot-label` | none | Attach label to generated snapshot |
 
 ### BSG Options
 
@@ -262,6 +352,8 @@ batho invalidate --root /path/to/repo
 | `--dry-run` | off | Preview changes without applying |
 | `--base-snapshot` | auto | Use specific snapshot as base |
 | `--force-index-patch` | off | Force traditional index-based patching |
+| `--diff` | none | Apply patch from unified diff |
+| `files...` | none | Patch explicit changed files |
 
 ---
 
@@ -269,20 +361,30 @@ batho invalidate --root /path/to/repo
 
 ```
 .ctn/
-├── index.json               # Index metadata + staleness score
-├── file_cache.json          # mtime + SHA cache for fast re-runs
-├── metrics.json             # Performance metrics
-├── snapshots/               # Time Machine snapshots
-│   └── batho_<uuid>_<ts>.json
-├── patches/                 # Patch operation history
-│   └── patch_<uuid>_<ts>.json
+├── index.json                   # Index metadata + staleness + persistence model
+├── artifact_registry.db         # SQLite artifact registry (durable outputs)
+├── file_cache.json              # Index file cache
+├── file_hashes.json             # Content-hash tracker for incremental scans
+├── metrics.json                 # Optional metrics output
+├── interception_stats.json      # Rule interception matrix
+├── evolution_ledger.json        # Failure synthesis ledger
+├── snapshots/                   # Time Machine snapshots
+│   └── batho_<project>_<sha>_<ts>.json
+├── patches/                     # Patch operation history
+│   ├── index.json
+│   └── patch_<operation_id>.json
 └── <index_id>/
-    ├── graph.json           # All entities + relationships
-    ├── bsg.json             # Structured symbol index
-    ├── bsg_compressed.json  # LLM-ready compressed view
-    ├── bsg_full.json        # Complete symbol index with signatures
-    ├── bsg_hierarchical.json # Directory tree view
-    └── architecture.md      # Human-readable summary
+    ├── graph.json               # Entities + relationships
+    ├── bsg.json                 # Structured symbol graph
+    ├── bsg_compressed.json      # LLM-ready compressed output
+    ├── bsg_full.json            # Full textual BSG output
+    ├── bsg_hierarchical.json    # Hierarchical textual BSG output
+    └── context/
+        ├── overview.md
+        ├── architecture.md
+        ├── tests.md
+        ├── docs.md
+        └── config.md
 ```
 
 <details>
@@ -333,9 +435,35 @@ batho invalidate --root /path/to/repo
 
 ## Configuration
 
-Batho works out of the box with zero config. For advanced use, configure via environment variables and the unified root config file `./batho.yaml`.
+Batho works out of the box with zero config. For production use, configure with the unified root config file `./batho.yaml` (or start from `batho.yaml.example`) plus optional environment overrides.
 
-### Environment Variables
+Configuration precedence:
+
+1. Built-in defaults
+2. `./batho.yaml`
+3. Environment variables (override file values)
+4. CLI flags (override for a specific run)
+
+### Core Config Areas
+
+| Area | Keys | What it controls |
+|----------|------|------------------|
+| `logging` | `level`, `json_format` | Console/JSON logging behavior |
+| `paths` | `ctn_dir` | Artifact output directory |
+| `indexer` | `max_file_size_kb`, `max_workers`, `max_indexed_files`, `ignore_*`, `metrics_output` | Base indexing limits and outputs |
+| `rules` | `enabled`, `builtin_plugins`, `custom_rules_*`, `strict_validation` | Rule plugins and metadata enrichment |
+| `bsg.parallel` | `enabled`, `max_workers`, `chunk_size` | Parallel file extraction |
+| `bsg.ignore` | `enabled`, `file` | `.bathoignore` integration |
+| `bsg.cache` | `enabled`, `path`, `max_size_mb`, `ttl_days` | AST cache behavior |
+| `bsg.incremental` | `enabled`, `fallback_to_full`, `auto_detect_git` | Incremental indexing strategy |
+| `bsg.symbol_resolution` | `enabled`, `fuzzy_matching`, `cache_symbols` | Cross-file symbol resolution |
+| `bsg.serialization` | `method`, `compression`, `batch_size` | BSG render strategy |
+| `bsg.parsing` | `error_recovery`, `partial_parsing`, `max_file_size_mb`, `skip_comments` | Parser behavior |
+| `bsg.query` | `enabled`, `index_on_write`, `cache_enabled`, `cache_size`, `default_limit`, `query_timeout_ms` | Persistent query indexes |
+| `bsg.storage` | `enabled`, `backend`, `registry_path`, `content_scope`, `cloud_sync_ready`, `mmap_enabled`, `retention.*` | Durable artifact registry and retention |
+| `webhook` | `enabled`, `server.*`, `repository.*`, `processing.*`, `rate_limit.*` | Webhook server + event processing |
+
+### Environment Variables (Common)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -344,10 +472,18 @@ Batho works out of the box with zero config. For advanced use, configure via env
 | `BATHO_MAX_FILE_SIZE_KB` | `500` | Max file size to parse |
 | `BATHO_MAX_INDEXED_FILES` | `200000` | Hard cap on indexed files |
 | `BATHO_INDEX_WORKERS` | `0` | Worker threads (0 = auto) |
-| `BATHO_RULES_ENABLED` | `false` | Enable BSG rule plugin stage |
+| `BATHO_METRICS_OUTPUT` | `.ctn/metrics.json` | Metrics output path |
+| `BATHO_RULES_ENABLED` | config value | Enable BSG rule plugin stage |
 | `BATHO_RULES_CUSTOM_RULES_PATH` | unset | YAML file containing custom BSG rules |
 | `BATHO_RULES_BUILTIN_PLUGINS` | `bsg_core` | Comma-separated built-in plugin names |
 | `BATHO_RULES_DISABLED_RULES` | unset | Comma-separated rule names to disable |
+| `BATHO_BSG_STORAGE_ENABLED` | `true` | Enable durable artifact registry |
+| `BATHO_BSG_STORAGE_REGISTRY_PATH` | `.ctn/artifact_registry.db` | Registry database path |
+| `BATHO_BSG_STORAGE_MMAP_ENABLED` | `false` | Enable mmap reads for large persisted JSON |
+| `BATHO_BSG_QUERY_INDEX_ON_WRITE` | `true` | Build query index at write time |
+| `BATHO_BSG_QUERY_CACHE_SIZE` | `256` | Query service cache size |
+
+> For the complete env override set, see `batho_core/config.py`.
 
 ### Config File
 
@@ -386,6 +522,136 @@ rules:
   # Validation controls
   strict_validation: false
   fail_on_rule_error: false
+
+bsg:
+  parallel:
+    enabled: true
+    max_workers: 16
+    chunk_size: 50
+  cache:
+    enabled: true
+    path: ~/.batho/ast_cache.db
+    max_size_mb: 1024
+    ttl_days: 30
+  query:
+    enabled: true
+    index_on_write: true
+    cache_enabled: true
+    cache_size: 256
+    default_limit: 200
+  storage:
+    enabled: true
+    backend: sqlite
+    registry_path: .ctn/artifact_registry.db
+    content_scope: durable
+    cloud_sync_ready: true
+    mmap_enabled: false
+    retention:
+      enabled: true
+      snapshot_ttl_days: 90
+      patch_ttl_days: 90
+      metrics_ttl_days: 30
+      context_ttl_days: 90
+```
+
+### Scenario Playbooks
+
+#### 1) Local Dev (fast feedback)
+
+```yaml
+indexer:
+  max_workers: 0
+  max_file_size_kb: 500
+bsg:
+  incremental:
+    enabled: true
+  cache:
+    enabled: true
+```
+
+```bash
+batho index --root .
+batho patch --root . --scan
+batho bsg --root . --mode compressed --budget 12000
+```
+
+#### 2) Large Monorepo (throughput)
+
+```yaml
+indexer:
+  max_file_size_kb: 2000
+bsg:
+  parallel:
+    enabled: true
+    max_workers: 16
+  ignore:
+    enabled: true
+    file: .bathoignore
+  storage:
+    mmap_enabled: true
+```
+
+```bash
+batho index --root /repo --snapshot
+batho storage stats --root /repo
+batho query --root /repo --relationship-type calls --limit 200
+```
+
+#### 3) CI/CD (deterministic + observable)
+
+```yaml
+logging:
+  level: INFO
+  json_format: true
+indexer:
+  metrics_output: .ctn/metrics.json
+bsg:
+  storage:
+    enabled: true
+```
+
+```bash
+batho index --root . --log-json --snapshot
+batho stats --root .
+batho storage verify --root .
+```
+
+#### 4) Webhook Runtime
+
+```yaml
+webhook:
+  enabled: true
+  server:
+    host: 0.0.0.0
+    port: 8080
+  repository:
+    name: your-org/your-repo
+    platform: github
+    secret: ${WEBHOOK_SECRET}
+```
+
+```bash
+batho webhook-server --root .
+```
+
+#### 5) Persistent Storage Hygiene (cloud-sync-ready v1)
+
+```bash
+# register existing artifacts
+batho storage backfill --root .
+
+# verify and repair drift
+batho storage verify --root . --repair
+
+# inspect registry + graph cache health
+batho storage stats --root .
+
+# rebuild query indexes
+batho storage rebuild-indexes --root .
+
+# retention dry-run / apply
+batho storage cleanup --root .
+batho storage cleanup --root . --apply
 ```
 
 ### BSG Rule Plugins

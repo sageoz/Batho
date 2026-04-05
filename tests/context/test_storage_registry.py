@@ -10,6 +10,7 @@ from batho_core.context.storage import (
     backfill_registry,
     cleanup_registry,
     describe_artifact,
+    get_registry_stats,
     infer_ctn_dir_for_path,
     persist_bytes,
     persist_json,
@@ -411,3 +412,25 @@ def test_persist_wrappers_write_and_register(tmp_path: Path) -> None:
     registry_db = ctn_dir / "artifact_registry.db"
     assert registry_db.exists()
     assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts WHERE deleted = 0") >= 3
+
+
+def test_get_registry_stats_reports_sync_and_artifact_counts(tmp_path: Path) -> None:
+    ctn_dir = tmp_path / ".ctn"
+    ctn_dir.mkdir()
+
+    payload_path = ctn_dir / "metrics.json"
+    payload_path.write_text('{"ok": true}', encoding="utf-8")
+    assert register_artifact(
+        ctn_dir,
+        payload_path,
+        "metrics_json",
+        producer="test",
+        schema_version="metrics.v1",
+    )
+
+    stats = get_registry_stats(ctn_dir)
+    assert stats.get("enabled") is True
+    assert stats.get("artifact_count", 0) >= 1
+    assert stats.get("content_blob_count", 0) >= 1
+    sync_status = stats.get("sync_status", {})
+    assert sync_status.get("pending", 0) >= 1

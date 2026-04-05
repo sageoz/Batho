@@ -36,10 +36,12 @@ from batho_core.context.languages.registry import (
     get_extractor as registry_get_extractor,
 )
 from batho_core.context.bsg_map import BSGMap
+from batho_core.context.graph_cache import get_cached_graph_stats, load_cached_graph
 from batho_core.context.query import QueryService
 from batho_core.context.storage import (
     backfill_registry,
     cleanup_registry,
+    get_registry_stats,
     rebuild_query_index,
     register_artifact,
     verify_registry,
@@ -567,14 +569,111 @@ def _compute_repo_hash(root: Path) -> str:
 
 
 def _load_current_graph(ctn_dir: Path, index_id: str) -> InMemoryGraph | None:
-    graph_path = ctn_dir / index_id / "graph.json"
-    if not graph_path.exists():
+    return load_cached_graph(ctn_dir, index_id)
+
+
+def _try_reuse_persisted_graph(
+    root: Path,
+    ctn_dir: Path,
+    max_file_size_kb: int | None,
+    *,
+    force_full: bool,
+) -> tuple[InMemoryGraph, BSGMap, dict[str, Any]] | None:
+    """Reuse current persisted graph when file-hash tracking confirms no changes."""
+    if force_full:
         return None
+
+    cfg = get_config_cached()
+    bsg_cfg = cfg.get("bsg", {}) if isinstance(cfg, dict) else {}
+    storage_cfg = bsg_cfg.get("storage", {}) if isinstance(bsg_cfg, dict) else {}
+    if not bool(storage_cfg.get("enabled", True)):
+        return None
+
+    metadata = _load_index_metadata(ctn_dir)
+    current_index_id = str(metadata.get("current_index_id") or "").strip()
+    if not current_index_id:
+        return None
+
+    tracker = FileChangeTracker(root)
+    hash_cache_path = ctn_dir / "file_hashes.json"
+    if not tracker.load(hash_cache_path):
+        LOGGER.info(
+            "index_cache_reuse_unavailable",
+            reason="file_hash_cache_missing",
+            cache_path=str(hash_cache_path),
+        )
+        return None
+
+    configured_max_file_size_kb = (
+        max_file_size_kb
+        if max_file_size_kb is not None
+        else cfg.get("indexer", {}).get("max_file_size_kb", 500)
+    )
+
     try:
-        data = json.loads(graph_path.read_text(encoding="utf-8"))
-        return InMemoryGraph.from_dict(data)
-    except (json.JSONDecodeError, OSError):
+        changes = tracker.scan_for_changes(max_file_size_kb=configured_max_file_size_kb)
+    except Exception as exc:
+        LOGGER.warning(
+            "index_cache_reuse_scan_failed",
+            error=str(exc),
+            base_index_id=current_index_id,
+        )
         return None
+
+    tracker.save(hash_cache_path)
+    if hash_cache_path.exists():
+        register_artifact(
+            ctn_dir,
+            hash_cache_path,
+            "file_hashes_json",
+            producer="cli.index",
+            metadata={"base_index_id": current_index_id},
+            schema_version="file-hashes.v1",
+        )
+
+    if changes:
+        LOGGER.info(
+            "index_cache_reuse_skipped",
+            base_index_id=current_index_id,
+            changes=len(changes),
+        )
+        return None
+
+    graph = _load_current_graph(ctn_dir, current_index_id)
+    if graph is None:
+        LOGGER.warning(
+            "index_cache_reuse_failed",
+            base_index_id=current_index_id,
+            reason="graph_not_loadable",
+        )
+        return None
+
+    bsg_map = BSGMap.build(
+        graph,
+        root=str(root),
+        serialization_config=_get_serialization_config(),
+    )
+    stats = {
+        "incremental": True,
+        "reused_persisted_graph": True,
+        "base_index_id": current_index_id,
+        "changes_applied": 0,
+        "files_candidates": 0,
+        "files_parsed": 0,
+        "files_cached": 0,
+        "files_skipped": 0,
+        "errors": 0,
+        "workers_used": 0,
+        "entity_count": len(graph.entities),
+        "relationship_count": len(graph.relationships),
+    }
+    LOGGER.info(
+        "index_cache_reused",
+        base_index_id=current_index_id,
+        entity_count=len(graph.entities),
+        relationship_count=len(graph.relationships),
+    )
+    return graph, bsg_map, stats
 
 
 def _strip_files(
@@ -905,6 +1004,17 @@ def cmd_index(args: argparse.Namespace) -> int:
                         base_snapshot_id=base_snapshot_id,
                         reason="git_or_snapshot_commit_unavailable",
                     )
+
+    if graph is None or bsg_map is None:
+        reused = _try_reuse_persisted_graph(
+            root,
+            ctn_dir,
+            args.max_file_size_kb,
+            force_full=force_full,
+        )
+        if reused is not None:
+            graph, bsg_map, reused_stats = reused
+            incremental_stats = {**incremental_stats, **reused_stats}
 
     if graph is None or bsg_map is None:
         if incremental_enabled and not fallback_to_full:
@@ -2247,6 +2357,49 @@ def cmd_storage_cleanup(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_storage_stats(args: argparse.Namespace) -> int:
+    """Show storage registry and graph-cache statistics."""
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    registry_stats = get_registry_stats(ctn_dir)
+    graph_stats = get_cached_graph_stats(ctn_dir, index_id=getattr(args, "index_id", None))
+    payload = {
+        "registry": registry_stats,
+        "graph_cache": graph_stats,
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_storage_rebuild_indexes(args: argparse.Namespace) -> int:
+    """Rebuild persisted query indexes for an existing graph artifact."""
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    metadata = _load_index_metadata(ctn_dir)
+    index_id = str(args.index_id or metadata.get("current_index_id") or "").strip()
+    if not index_id:
+        print("❌ No index found. Run 'batho index' first.")
+        return 1
+
+    graph = _load_current_graph(ctn_dir, index_id)
+    if graph is None:
+        print(f"❌ graph.json missing or invalid for index: {index_id}")
+        return 1
+
+    stats = rebuild_query_index(ctn_dir, index_id, graph.to_dict())
+    print(
+        json.dumps(
+            {
+                "index_id": index_id,
+                "entities_indexed": int(stats.get("entities_indexed", 0)),
+                "relationships_indexed": int(stats.get("relationships_indexed", 0)),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def cmd_query(args: argparse.Namespace) -> int:
     """Query persisted graph indexes with automatic in-memory fallback."""
     root = Path(args.root).resolve()
@@ -2564,6 +2717,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Apply deletions (default prints dry-run candidates)",
     )
     storage_cleanup.set_defaults(func=cmd_storage_cleanup)
+
+    storage_stats = storage_sub.add_parser(
+        "stats",
+        help="Show registry and persisted graph cache statistics",
+    )
+    storage_stats.add_argument("--root", required=True, help="Path to repo root")
+    storage_stats.add_argument(
+        "--index-id",
+        default=None,
+        help="Optional index id for graph cache stats",
+    )
+    storage_stats.set_defaults(func=cmd_storage_stats)
+
+    storage_rebuild_indexes = storage_sub.add_parser(
+        "rebuild-indexes",
+        help="Rebuild persisted query indexes from graph.json",
+    )
+    storage_rebuild_indexes.add_argument("--root", required=True, help="Path to repo root")
+    storage_rebuild_indexes.add_argument(
+        "--index-id",
+        default=None,
+        help="Optional index id to rebuild (default: current index)",
+    )
+    storage_rebuild_indexes.set_defaults(func=cmd_storage_rebuild_indexes)
 
     query = sub.add_parser("query", help="Query persisted graph indexes")
     query.add_argument("--root", required=True, help="Path to repo root")
