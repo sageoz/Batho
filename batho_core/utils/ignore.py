@@ -17,6 +17,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from batho_core.utils.logging import get_logger
+
+logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Default ignore patterns — applied even if ignore files don't exist
 # ---------------------------------------------------------------------------
@@ -83,15 +86,19 @@ DEFAULT_IGNORE_PATTERNS: list[str] = [
     ".roo/",
     ".cline/",
     ".kilo/",
-    # Test fixture data (not source-of-truth code)
-    "testdata/",
-    "test_data/",
-    "fixtures/",
-    "mock_data/",
-    "**/testdata/**",
-    "**/test_data/**",
-    "**/fixtures/**",
-    "**/mock_data/**",
+    # (not source-of-truth code)
+    "*.mod.c",  # Kernel module metadata — auto-generated
+    "*.mod.h",
+    ".config",  # Kconfig output — binary-ish
+    "vmlinux.symvers",  # Linker symbol table
+    "*.order",  # Build order files
+    "*.a",  # Static libs
+    "*.ko",  # Compiled modules
+    "scripts/kconfig/*",  # Kconfig parser — not user code
+    "Documentation/**/*.rst",  # Optional: skip docs for code-only graph
+    "tools/testing/**",  # Optional: skip kernel selftests
+    "arch/*/boot/compressed/",  # Compressed boot stubs
+
 ]
 
 # Patterns that should always be ignored for file watching
@@ -152,6 +159,7 @@ def load_ignore_spec(
     root: Path,
     extra_patterns: list[str] | None = None,
     ignore_files: list[str] | None = None,
+    bathoignore_path: str | None = None,
 ) -> Any:
     """
     Load combined ignore patterns using pathspec.
@@ -159,14 +167,15 @@ def load_ignore_spec(
     Always includes default exclusions for common directories like .venv,
     node_modules, __pycache__, etc. to prevent indexing dependencies.
 
-    Optionally loads patterns from ignore files (.gitignore, .bathoignore, etc.)
-    and applies any extra patterns provided.
+    If .bathoignore exists at repo root, merges its patterns with global patterns.
+    If .bathoignore does NOT exist, uses only global patterns.
 
     Args:
         root: The workspace root path.
         extra_patterns: Additional patterns to include.
         ignore_files: List of ignore file names to load (relative to root).
-                      Defaults to [".gitignore", ".ctn/.bathoignore", ".bathoignore"]
+                      Defaults to [".gitignore", ".bathoignore"].
+        bathoignore_path: Optional custom path to .bathoignore file.
 
     Returns:
         A pathspec PathSpec object, or a list of patterns as fallback.
@@ -178,11 +187,11 @@ def load_ignore_spec(
 
     # Default ignore files to check
     if ignore_files is None:
-        ignore_files = [
-            ".gitignore",
-            ".ctn/.bathoignore",
-            ".bathoignore",
-        ]
+        ignore_files = [".gitignore", ".bathoignore"]
+
+    # If custom bathoignore path is provided, use it instead of default
+    if bathoignore_path:
+        ignore_files = [bathoignore_path]
 
     for ignore_file_name in ignore_files:
         ignore_file = root / ignore_file_name
@@ -193,11 +202,17 @@ def load_ignore_spec(
                     line = line.strip()
                     if line and not line.startswith("#"):
                         patterns.append(line)
+                logger.debug(
+                    "ignore_file_loaded",
+                    ignore_file=str(ignore_file),
+                    patterns_added=len(text.splitlines()),
+                )
             except OSError as read_exc:
-                # Log at debug level - ignore file is optional
-                logger.debug("ignore_file_read_failed", 
-                           ignore_file=str(ignore_file), 
-                           error=str(read_exc))
+                logger.debug(
+                    "ignore_file_read_failed",
+                    ignore_file=str(ignore_file),
+                    error=str(read_exc),
+                )
                 pass  # Continue without this ignore file
 
     try:

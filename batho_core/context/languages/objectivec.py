@@ -15,14 +15,16 @@ Capture coverage:
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..extractor import ASTExtractor
 
 
 class ObjectiveCExtractor(ASTExtractor):
     """Tree-sitter based extractor for Objective-C source files."""
 
-    def __init__(self) -> None:
-        super().__init__("objc")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("objc", parsing_config)
 
     def _query_source(self) -> str:
         return r"""

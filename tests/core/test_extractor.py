@@ -120,6 +120,21 @@ class Person:
         for e in entities:
             assert e.file == "src/main.py"
 
+    def test_parse_file_twice_is_stable(self):
+        from batho_core.context.languages.registry import get_extractor
+
+        extractor = get_extractor(".py")
+        assert extractor is not None
+
+        content = b"def foo(x: int) -> int:\n    return x\n"
+        first_entities, first_rels = extractor.parse_file("src/a.py", content)
+        second_entities, second_rels = extractor.parse_file("src/a.py", content)
+
+        assert [entity.name for entity in first_entities] == [
+            entity.name for entity in second_entities
+        ]
+        assert len(first_rels) == len(second_rels)
+
 
 # ---------------------------------------------------------------------------
 # MarkupConfigExtractor helpers

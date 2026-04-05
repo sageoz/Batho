@@ -4,12 +4,27 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sqlite3
 
 import pytest
 
-from batho import cmd_index, cmd_invalidate, cmd_patch, cmd_stats, cmd_webhook
+from batho import (
+    cmd_index,
+    cmd_invalidate,
+    cmd_patch,
+    cmd_query,
+    cmd_stats,
+    cmd_storage_backfill,
+    cmd_storage_cleanup,
+    cmd_storage_rebuild_indexes,
+    cmd_storage_stats,
+    cmd_storage_verify,
+    cmd_webhook,
+)
+from batho_core.config import get_config_cached
 from batho_core.context.bsg_map import BSGMap
 from batho_core.context.codegraph import InMemoryGraph
+from batho_core.context.incremental import GitDiffEntry
 from batho_core.context.schema import Entity, EntityType
 from batho_core.time_machine import FileChangeTracker, create_snapshot
 
@@ -107,6 +122,36 @@ class TestCmdIndex:
         assert payload.get("index_id")
         assert payload.get("stats")
 
+    def test_index_persists_bsg_quality_warning_stats(self, simple_python_repo: Path):
+        args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        result = cmd_index(args)
+        assert result == 0
+
+        ctn_dir = simple_python_repo / ".ctn"
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        entry = index_payload.get("indexes", {}).get(current_id, {})
+        stats = entry.get("stats", {})
+        bsg_payload = json.loads((ctn_dir / current_id / "bsg.json").read_text(encoding="utf-8"))
+
+        assert "bsg_quality_warnings" in stats
+        assert stats["bsg_quality_warnings"] == len(bsg_payload.get("quality_warnings", []))
+        assert "bsg_quality_warning_samples" in stats
+
     def test_index_overview_includes_evolution_ledger_insights(
         self,
         simple_python_repo: Path,
@@ -155,6 +200,219 @@ class TestCmdIndex:
         overview = overview_path.read_text(encoding="utf-8")
         assert "Evolution Ledger Insights" in overview
         assert "Don't patch without a valid base snapshot" in overview
+
+    def test_index_auto_incremental_reuses_snapshot_when_no_git_changes(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        root = tmp_path / "repo"
+        root.mkdir()
+        src = root / "a.py"
+        src.write_text("def alpha():\n    return 1\n", encoding="utf-8")
+
+        ctn_dir = root / ".ctn"
+        ctn_dir.mkdir()
+
+        graph = InMemoryGraph()
+        graph.add_entity(
+            Entity(
+                type=EntityType.FUNCTION,
+                name="alpha",
+                file="a.py",
+                start_line=1,
+                end_line=2,
+                metadata={"language": "python"},
+            )
+        )
+        bsg_map = BSGMap.build(graph, root=str(root))
+        snapshot_id = create_snapshot(ctn_dir, root, graph, bsg_map, label="base")
+
+        monkeypatch.setattr(
+            "batho.get_changed_file_status_since",
+            lambda *_args, **_kwargs: [],
+        )
+
+        args = argparse.Namespace(
+            root=str(root),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=False,
+            full=False,
+            base_snapshot=snapshot_id,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        result = cmd_index(args)
+        assert result == 0
+
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        entry = index_payload.get("indexes", {}).get(current_id, {})
+        assert entry.get("stats", {}).get("incremental") is True
+        assert entry.get("stats", {}).get("changes_applied") == 0
+
+    def test_index_auto_incremental_applies_patch_for_git_changes(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        root = tmp_path / "repo"
+        root.mkdir()
+        src = root / "a.py"
+        src.write_text("def alpha():\n    return 1\n", encoding="utf-8")
+
+        ctn_dir = root / ".ctn"
+        ctn_dir.mkdir()
+
+        graph = InMemoryGraph()
+        graph.add_entity(
+            Entity(
+                type=EntityType.FUNCTION,
+                name="alpha",
+                file="a.py",
+                start_line=1,
+                end_line=2,
+                metadata={"language": "python"},
+            )
+        )
+        bsg_map = BSGMap.build(graph, root=str(root))
+        snapshot_id = create_snapshot(ctn_dir, root, graph, bsg_map, label="base")
+
+        monkeypatch.setattr(
+            "batho.get_changed_file_status_since",
+            lambda *_args, **_kwargs: [GitDiffEntry(status="M", path="a.py")],
+        )
+        monkeypatch.setattr(
+            "batho.incremental_patch",
+            lambda *_args, **_kwargs: {
+                "success": True,
+                "new_snapshot_id": snapshot_id,
+                "applied_changes": 1,
+            },
+        )
+
+        args = argparse.Namespace(
+            root=str(root),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=False,
+            full=False,
+            base_snapshot=snapshot_id,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        result = cmd_index(args)
+        assert result == 0
+
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        entry = index_payload.get("indexes", {}).get(current_id, {})
+        assert entry.get("stats", {}).get("incremental") is True
+        assert entry.get("stats", {}).get("changes_applied") == 1
+
+    def test_index_streaming_serialization_mode(self, simple_python_repo: Path, monkeypatch):
+        monkeypatch.setenv("BATHO_BSG_SERIALIZATION_METHOD", "streaming")
+        get_config_cached.cache_clear()
+
+        args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            full=False,
+            base_snapshot=None,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        result = cmd_index(args)
+        assert result == 0
+
+        ctn_dir = simple_python_repo / ".ctn"
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        bsg_payload = json.loads((ctn_dir / current_id / "bsg.json").read_text(encoding="utf-8"))
+        assert "nodes" in bsg_payload
+        assert "edges" in bsg_payload
+        assert isinstance(bsg_payload.get("quality_warnings"), list)
+        get_config_cached.cache_clear()
+
+    def test_index_reuses_persisted_graph_when_hash_scan_finds_no_changes(
+        self,
+        tmp_path: Path,
+    ):
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / "a.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+
+        first_args = argparse.Namespace(
+            root=str(root),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            full=False,
+            base_snapshot=None,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(first_args) == 0
+
+        ctn_dir = root / ".ctn"
+        tracker = FileChangeTracker(root)
+        tracker.scan_for_changes(max_file_size_kb=500)
+        tracker.save(ctn_dir / "file_hashes.json")
+
+        second_args = argparse.Namespace(
+            root=str(root),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=False,
+            full=False,
+            base_snapshot=None,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(second_args) == 0
+
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        stats = index_payload.get("indexes", {}).get(current_id, {}).get("stats", {})
+        assert stats.get("reused_persisted_graph") is True
 
 
 # ---------------------------------------------------------------------------
@@ -499,3 +757,170 @@ class TestCmdPatch:
         summary = payload.get("summary", {})
         assert summary.get("added", 0) >= 1
         assert summary.get("deleted", 0) >= 1
+        assert "bsg_quality_warning_count" in payload
+        assert isinstance(payload.get("bsg_quality_warnings"), list)
+
+
+class TestCmdStorageAndQuery:
+    def test_storage_backfill_and_verify_commands(
+        self,
+        simple_python_repo: Path,
+        capsys,
+    ):
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(idx_args) == 0
+
+        capsys.readouterr()
+
+        backfill_args = argparse.Namespace(root=str(simple_python_repo))
+        backfill_result = cmd_storage_backfill(backfill_args)
+        assert backfill_result == 0
+        backfill_payload = json.loads(capsys.readouterr().out)
+        assert backfill_payload.get("enabled") is True
+
+        verify_args = argparse.Namespace(root=str(simple_python_repo), repair=False)
+        verify_result = cmd_storage_verify(verify_args)
+        assert verify_result == 0
+        verify_payload = json.loads(capsys.readouterr().out)
+        assert "missing_on_disk" in verify_payload
+        assert "unregistered_on_disk" in verify_payload
+
+    def test_storage_cleanup_command_dry_run(
+        self,
+        simple_python_repo: Path,
+        capsys,
+    ):
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(idx_args) == 0
+
+        ctn_dir = simple_python_repo / ".ctn"
+        registry_db = ctn_dir / "artifact_registry.db"
+        with sqlite3.connect(str(registry_db)) as conn:
+            conn.execute("UPDATE artifacts SET updated_at = '2000-01-01T00:00:00+00:00'")
+            conn.commit()
+
+        capsys.readouterr()
+
+        cleanup_args = argparse.Namespace(root=str(simple_python_repo), apply=False)
+        cleanup_result = cmd_storage_cleanup(cleanup_args)
+        assert cleanup_result == 0
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload.get("dry_run") is True
+        assert "candidates" in payload
+
+    def test_storage_stats_command(self, simple_python_repo: Path, capsys):
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(idx_args) == 0
+
+        capsys.readouterr()
+        stats_args = argparse.Namespace(root=str(simple_python_repo), index_id=None)
+        assert cmd_storage_stats(stats_args) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload.get("registry", {}).get("artifact_count", 0) >= 1
+        assert "graph_cache" in payload
+
+    def test_storage_rebuild_indexes_command(self, simple_python_repo: Path, capsys):
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(idx_args) == 0
+
+        capsys.readouterr()
+        rebuild_args = argparse.Namespace(root=str(simple_python_repo), index_id=None)
+        assert cmd_storage_rebuild_indexes(rebuild_args) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload.get("index_id")
+        assert "entities_indexed" in payload
+        assert "relationships_indexed" in payload
+
+    def test_query_command_entity_type(self, simple_python_repo: Path, capsys):
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(idx_args) == 0
+
+        capsys.readouterr()
+
+        query_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            index_id=None,
+            entity_type="function",
+            file_path=None,
+            relationship_type=None,
+            limit=20,
+            rebuild_index=False,
+        )
+        result = cmd_query(query_args)
+        assert result == 0
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload.get("mode") == "entities_by_type"
+        assert payload.get("index_id")
+        assert isinstance(payload.get("rows"), list)

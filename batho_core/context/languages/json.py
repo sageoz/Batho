@@ -24,8 +24,8 @@ from ..schema import Entity, EntityMetadata, EntityType, Relationship, Relations
 class JSONExtractor(MarkupConfigExtractor):
     """Extractor for JSON configuration files."""
 
-    def __init__(self) -> None:
-        super().__init__("json")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("json", parsing_config)
 
     def _extract_elements(
         self,

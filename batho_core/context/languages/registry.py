@@ -31,7 +31,7 @@ import importlib
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tree_sitter_language_pack import get_language
 
@@ -260,13 +260,14 @@ def is_language_available(language: str) -> bool:
     ts_identifier = _TREE_SITTER_LANGUAGES.get(language, language)
 
     try:
-        # Try to get the language parser
+        # Try to get the language parser.
+        # Cache only successful checks so transient failures (e.g., temporary
+        # monkeypatches in tests) do not permanently poison future lookups.
         get_language(ts_identifier)
         _language_available_cache[language] = True
         _logger.debug("language_available", lang=language, ts_identifier=ts_identifier)
         return True
     except Exception as e:
-        _language_available_cache[language] = False
         _logger.warning(
             "language_not_available",
             lang=language,
@@ -366,8 +367,32 @@ def _build_class_map() -> None:
 # Instance cache — each language extractor is a stateless singleton.
 _instances: dict[str, ASTExtractor] = {}
 
+# Global parsing config (set by the caller before getting extractors)
+_parsing_config: dict[str, Any] = {}
+
 # Auto-discovery flag
 _auto_discovery_done: bool = False
+
+
+def set_parsing_config(config: dict[str, Any]) -> None:
+    """
+    Set the global parsing configuration for all extractors.
+    
+    This should be called before any extractors are instantiated.
+    
+    Args:
+        config: Parsing configuration dict with keys:
+            - error_recovery: bool (default True)
+            - partial_parsing: bool (default False)
+            - skip_comments: bool (default False)
+    """
+    global _parsing_config
+    _parsing_config = config
+
+
+def get_parsing_config() -> dict[str, Any]:
+    """Get the current global parsing configuration."""
+    return _parsing_config
 
 
 def _get_extractor_instance(language: str) -> ASTExtractor | None:
@@ -404,7 +429,8 @@ def _get_extractor_instance(language: str) -> ASTExtractor | None:
                 lang=language,
             )
             return None
-        _instances[language] = cls()
+        # Pass parsing_config when instantiating
+        _instances[language] = cls(parsing_config=_parsing_config)
 
     return _instances[language]
 

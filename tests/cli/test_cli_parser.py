@@ -34,8 +34,17 @@ class TestBuildParser:
         assert args.max_workers == 0
         assert args.max_file_size_kb is None
         assert args.force is False
+        assert args.full is False
+        assert args.base_snapshot is None
         assert args.metrics_output is None
         assert args.verbose is False
+
+    def test_index_full_and_base_snapshot(self, parser):
+        args = parser.parse_args(
+            ["index", "--root", "/tmp", "--full", "--base-snapshot", "snap-123"]
+        )
+        assert args.full is True
+        assert args.base_snapshot == "snap-123"
 
     def test_index_snapshot(self, parser):
         args = parser.parse_args(["index", "--root", "/tmp", "--snapshot", "--snapshot-label", "v1"])
@@ -58,6 +67,37 @@ class TestBuildParser:
     def test_patch_with_diff(self, parser):
         args = parser.parse_args(["patch", "--root", "/tmp", "--diff", "changes.diff"])
         assert args.diff == "changes.diff"
+
+    def test_storage_backfill_command(self, parser):
+        args = parser.parse_args(["storage", "backfill", "--root", "/tmp"])
+        assert args.command == "storage"
+        assert args.storage_command == "backfill"
+
+    def test_storage_verify_command(self, parser):
+        args = parser.parse_args(["storage", "verify", "--root", "/tmp", "--repair"])
+        assert args.command == "storage"
+        assert args.storage_command == "verify"
+        assert args.repair is True
+
+    def test_storage_cleanup_command(self, parser):
+        args = parser.parse_args(["storage", "cleanup", "--root", "/tmp", "--apply"])
+        assert args.command == "storage"
+        assert args.storage_command == "cleanup"
+        assert args.apply is True
+
+    def test_query_command(self, parser):
+        args = parser.parse_args([
+            "query",
+            "--root",
+            "/tmp",
+            "--entity-type",
+            "function",
+            "--limit",
+            "10",
+        ])
+        assert args.command == "query"
+        assert args.entity_type == "function"
+        assert args.limit == 10
 
     def test_webhook_command(self, parser):
         args = parser.parse_args(["webhook", "--payload", '{"event":"push"}'])

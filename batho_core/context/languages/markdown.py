@@ -26,8 +26,8 @@ from ..schema import Entity, EntityType, Relationship, RelationshipType
 class MarkdownExtractor(MarkupConfigExtractor):
     """Extractor for Markdown files."""
 
-    def __init__(self) -> None:
-        super().__init__("markdown")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("markdown", parsing_config)
 
     def _extract_elements(
         self,

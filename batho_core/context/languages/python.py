@@ -16,14 +16,16 @@ functions use ``@def.function.*``; class-body functions use
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..extractor import ASTExtractor
 
 
 class PythonExtractor(ASTExtractor):
     """Tree-sitter based extractor for Python source files."""
 
-    def __init__(self) -> None:
-        super().__init__("python")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("python", parsing_config)
 
     def _query_source(self) -> str:
         return r"""

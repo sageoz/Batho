@@ -6,9 +6,22 @@ from pathlib import Path
 
 import pytest
 
+import batho_core.context.stack_detector as stack_detector_module
 from batho_core.context.stack_detector import (
     _match_framework,
     _detect_package_manager,
+    _detect_build_tool,
+    _detect_dotnet,
+    _detect_go,
+    _detect_infra,
+    _detect_java,
+    _detect_mobile,
+    _detect_php,
+    _detect_ruby,
+    _detect_rust,
+    _detect_special_files,
+    _extract_python_version_from_requires_python,
+    _find_all_node_stacks,
     detect_python_stack,
     detect_stack,
     detect_node_stack,
@@ -278,3 +291,223 @@ dependencies = [
         frameworks = result.get("frameworks", [])
         assert "Django" in frameworks
         # Should detect multiple frameworks if applicable
+
+
+class TestStackDetectorInternalHelpers:
+
+    def test_extract_python_version_from_requires_python(self):
+        assert _extract_python_version_from_requires_python(">=3.12") == "Python 3.12"
+        assert _extract_python_version_from_requires_python("^3.11") == "Python 3.11"
+        assert _extract_python_version_from_requires_python("") == "Python"
+
+    def test_detect_build_tool_from_build_backend_and_tool_sections(self):
+        assert _detect_build_tool({"build-system": {"build-backend": "poetry.core.masonry.api"}}) == "Poetry"
+        assert _detect_build_tool({"build-system": {"build-backend": "setuptools.build_meta"}}) == "Setuptools"
+        assert _detect_build_tool({"tool": {"pdm": {}}}) == "PDM"
+        assert _detect_build_tool({"tool": {"hatch": {}}}) == "Hatchling"
+        assert _detect_build_tool({}) is None
+
+    def test_detect_java_from_pom_xml(self, tmp_path: Path):
+        (tmp_path / "pom.xml").write_text(
+            """
+<project>
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter</artifactId>
+    </dependency>
+  </dependencies>
+</project>
+            """
+        )
+        result = _detect_java(tmp_path)
+        assert result is not None
+        assert result["language"] == "Java"
+        assert result["build_tool"] == "Maven"
+        assert "Spring Boot" in result["frameworks"]
+
+    def test_detect_java_from_gradle(self, tmp_path: Path):
+        (tmp_path / "build.gradle").write_text(
+            """
+dependencies {
+    implementation 'org.springframework:spring-web'
+}
+            """
+        )
+        result = _detect_java(tmp_path)
+        assert result is not None
+        assert result["build_tool"] == "Gradle"
+        assert "Spring Web" in result["frameworks"]
+
+    def test_detect_dotnet_from_csproj(self, tmp_path: Path):
+        (tmp_path / "app.csproj").write_text(
+            """
+<Project>
+  <ItemGroup>
+        <PackageReference Include="aspnetcore" Version="8.0.0" />
+  </ItemGroup>
+</Project>
+            """
+        )
+        result = _detect_dotnet(tmp_path)
+        assert result is not None
+        assert result["language"] == ".NET"
+        assert result["build_tool"] == "dotnet"
+        assert ".NET ASP.NET Core" in result["frameworks"]
+
+    def test_detect_go_from_go_mod(self, tmp_path: Path):
+        (tmp_path / "go.mod").write_text(
+            """
+module example.com/test
+
+require github.com/gin-gonic/gin v1.9.1
+            """
+        )
+        result = _detect_go(tmp_path)
+        assert result is not None
+        assert result["language"] == "Go"
+        assert result["build_tool"] == "go modules"
+        assert "Gin" in result["frameworks"]
+
+    def test_detect_php_from_composer_json_and_invalid_json(self, tmp_path: Path):
+        composer = {
+            "require": {"laravel/framework": "^10.0"},
+            "require-dev": {"phpunit/phpunit": "^10.0"},
+        }
+        (tmp_path / "composer.json").write_text(json.dumps(composer))
+        result = _detect_php(tmp_path)
+        assert result is not None
+        assert result["language"] == "PHP"
+        assert result["build_tool"] == "composer"
+        assert "Laravel" in result["frameworks"]
+
+        (tmp_path / "composer.json").write_text("{broken")
+        result_invalid = _detect_php(tmp_path)
+        assert result_invalid is not None
+        assert result_invalid["frameworks"] == []
+
+    def test_detect_ruby_from_gemfile(self, tmp_path: Path):
+        (tmp_path / "Gemfile").write_text("gem 'rails'\ngem 'sinatra'\n")
+        result = _detect_ruby(tmp_path)
+        assert result is not None
+        assert result["language"] == "Ruby"
+        assert result["build_tool"] == "bundler"
+        assert "Rails" in result["frameworks"]
+        assert "Sinatra" in result["frameworks"]
+
+    def test_detect_rust_success_and_exception_fallback(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        (tmp_path / "Cargo.toml").write_text("[package]\nname='x'\n")
+
+        monkeypatch.setattr(
+            stack_detector_module,
+            "parse_cargo_toml_file",
+            lambda _path: {
+                "dependencies": ["actix-web"],
+                "dev_dependencies": ["tokio"],
+                "build_dependencies": [],
+            },
+        )
+        result = _detect_rust(tmp_path)
+        assert result is not None
+        assert result["language"] == "Rust"
+        assert result["build_tool"] == "cargo"
+        assert "Actix Web" in result["frameworks"]
+        assert "Tokio" in result["frameworks"]
+
+        def _raise(_path: Path) -> dict[str, list[str]]:
+            raise ValueError("broken")
+
+        monkeypatch.setattr(stack_detector_module, "parse_cargo_toml_file", _raise)
+        result_fallback = _detect_rust(tmp_path)
+        assert result_fallback is not None
+        assert result_fallback["frameworks"] == []
+
+    def test_detect_mobile_and_infra(self, tmp_path: Path):
+        (tmp_path / "AndroidManifest.xml").write_text("<manifest/>")
+        (tmp_path / "Podfile").write_text("platform :ios, '16.0'\n")
+        mobile = _detect_mobile(tmp_path)
+        assert mobile is not None
+        assert mobile["language"] == "Mobile"
+        assert "Android" in mobile["frameworks"]
+        assert "iOS" in mobile["frameworks"]
+
+        (tmp_path / "Dockerfile").write_text("FROM python:3.12\n")
+        (tmp_path / "k8s").mkdir()
+        (tmp_path / "k8s" / "deployment.yaml").write_text("apiVersion: apps/v1\n")
+        infra = _detect_infra(tmp_path)
+        assert "docker" in infra
+        assert "k8s" in infra
+
+    def test_find_all_node_stacks_scans_subdirs_and_skips_node_modules(self, tmp_path: Path):
+        (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"react": "^18"}}))
+        app = tmp_path / "apps" / "web"
+        app.mkdir(parents=True)
+        (app / "package.json").write_text(json.dumps({"dependencies": {"next": "^14"}}))
+
+        nm = tmp_path / "node_modules"
+        nm.mkdir()
+        (nm / "package.json").write_text(json.dumps({"dependencies": {"vue": "^3"}}))
+
+        stacks = _find_all_node_stacks(tmp_path)
+        assert len(stacks) == 1
+        assert stacks[0]["language"].startswith("Node.js")
+
+    def test_detect_special_files_adds_build_and_framework_markers(self, tmp_path: Path):
+        (tmp_path / "Makefile").write_text("all:\n\techo ok\n")
+        (tmp_path / "docker-compose.yml").write_text("services: {}\n")
+        (tmp_path / ".env").write_text("X=1\n")
+
+        languages: list[str] = []
+        frameworks: set[str] = set()
+        build_tools: list[str] = []
+        _detect_special_files(tmp_path, languages, frameworks, build_tools)
+
+        assert "Make" in build_tools
+        assert "Docker Compose" in frameworks
+        assert "Environment Variables" in frameworks
+
+    def test_detect_stack_unknown_when_nothing_detected(self, tmp_path: Path):
+        result = detect_stack(tmp_path)
+        assert result == {
+            "languages": ["Unknown"],
+            "frameworks": [],
+            "build_tools": ["unknown"],
+            "package_managers": [],
+            "infra": [],
+        }
+
+    def test_detect_stack_dedupes_and_filters_unknown_build_tool(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(
+            stack_detector_module,
+            "detect_python_stack",
+            lambda _p: {"language": "Python 3.12", "frameworks": ["Flask"], "build_tool": "unknown"},
+        )
+        monkeypatch.setattr(
+            stack_detector_module,
+            "_find_all_node_stacks",
+            lambda _p: [
+                {"language": "Node.js", "frameworks": ["React"], "build_tool": "npm"},
+                {"language": "Node.js", "frameworks": ["React"], "build_tool": "npm"},
+            ],
+        )
+        monkeypatch.setattr(stack_detector_module, "_detect_java", lambda _p: None)
+        monkeypatch.setattr(stack_detector_module, "_detect_dotnet", lambda _p: None)
+        monkeypatch.setattr(stack_detector_module, "_detect_go", lambda _p: None)
+        monkeypatch.setattr(stack_detector_module, "_detect_php", lambda _p: None)
+        monkeypatch.setattr(stack_detector_module, "_detect_ruby", lambda _p: None)
+        monkeypatch.setattr(stack_detector_module, "_detect_rust", lambda _p: None)
+        monkeypatch.setattr(stack_detector_module, "_detect_mobile", lambda _p: None)
+        monkeypatch.setattr(stack_detector_module, "_detect_package_manager", lambda _p: ["npm"])
+        monkeypatch.setattr(stack_detector_module, "_detect_infra", lambda _p: ["docker"])
+
+        result = detect_stack(tmp_path)
+        assert result["languages"] == ["Python 3.12", "Node.js"]
+        assert result["build_tools"] == ["npm"]
+        assert "Flask" in result["frameworks"]
+        assert "React" in result["frameworks"]
+        assert result["package_managers"] == ["npm"]
+        assert result["infra"] == ["docker"]

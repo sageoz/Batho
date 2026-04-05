@@ -73,6 +73,11 @@ class TestPydanticModels:
         assert isinstance(cfg.indexer, IndexerConfig)
         assert isinstance(cfg.flags, FlagsConfig)
         assert isinstance(cfg.rules, RulesConfig)
+        assert cfg.bsg.query.enabled is True
+        assert cfg.bsg.storage.backend == "sqlite"
+        assert cfg.bsg.storage.content_scope == "durable"
+        assert cfg.bsg.storage.cloud_sync_ready is True
+        assert cfg.bsg.storage.mmap_enabled is False
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +97,7 @@ class TestGetConfig:
         assert "indexer" in cfg
         assert "flags" in cfg
         assert "rules" in cfg
+        assert "bsg" in cfg
 
     def test_logging_level_is_int(self):
         cfg = get_config()
@@ -150,6 +156,64 @@ class TestGetConfig:
         cfg = get_config()
         assert cfg["rules"]["builtin_plugins"] == ["bsg_core", "custom_pack"]
         assert cfg["rules"]["disabled_rules"] == ["rule_one", "rule_two"]
+
+    def test_bsg_phase2_defaults(self):
+        cfg = get_config()
+        bsg = cfg.get("bsg", {})
+        assert bsg.get("incremental", {}).get("enabled") is True
+        assert bsg.get("symbol_resolution", {}).get("enabled") is True
+        assert bsg.get("serialization", {}).get("method") in {"legacy", "streaming"}
+        assert bsg.get("parsing", {}).get("max_file_size_mb") >= 1
+
+    def test_bsg_query_defaults(self):
+        cfg = get_config()
+        query = cfg.get("bsg", {}).get("query", {})
+        assert query.get("enabled") is True
+        assert query.get("index_on_write") is True
+        assert query.get("cache_enabled") is True
+        assert int(query.get("cache_size", 0)) >= 1
+
+    def test_bsg_storage_defaults(self):
+        cfg = get_config()
+        storage = cfg.get("bsg", {}).get("storage", {})
+        assert storage.get("enabled") is True
+        assert storage.get("backend") == "sqlite"
+        assert storage.get("registry_path") == ".ctn/artifact_registry.db"
+        assert storage.get("content_scope") == "durable"
+        assert storage.get("strict_compatibility") is True
+        assert storage.get("cloud_sync_ready") is True
+        assert storage.get("mmap_enabled") is False
+        assert storage.get("mmap_min_size_mb") == 8
+        assert storage.get("retention", {}).get("snapshot_ttl_days") == 90
+
+    def test_bsg_incremental_env_override(self, monkeypatch):
+        monkeypatch.setenv("BATHO_BSG_INCREMENTAL_ENABLED", "false")
+        monkeypatch.setenv("BATHO_BSG_INCREMENTAL_FALLBACK_TO_FULL", "false")
+        cfg = get_config()
+        assert cfg["bsg"]["incremental"]["enabled"] is False
+        assert cfg["bsg"]["incremental"]["fallback_to_full"] is False
+
+    def test_bsg_storage_env_override(self, monkeypatch):
+        monkeypatch.setenv("BATHO_BSG_STORAGE_ENABLED", "false")
+        monkeypatch.setenv("BATHO_BSG_STORAGE_CONTENT_SCOPE", "all")
+        monkeypatch.setenv("BATHO_BSG_STORAGE_REGISTRY_PATH", "tmp/registry.db")
+        monkeypatch.setenv("BATHO_BSG_STORAGE_RETENTION_MAX_SNAPSHOTS", "42")
+        monkeypatch.setenv("BATHO_BSG_STORAGE_MMAP_ENABLED", "true")
+        cfg = get_config()
+        assert cfg["bsg"]["storage"]["enabled"] is False
+        assert cfg["bsg"]["storage"]["content_scope"] == "all"
+        assert cfg["bsg"]["storage"]["registry_path"] == "tmp/registry.db"
+        assert cfg["bsg"]["storage"]["mmap_enabled"] is True
+        assert cfg["bsg"]["storage"]["retention"]["max_snapshots"] == 42
+
+    def test_bsg_query_env_override(self, monkeypatch):
+        monkeypatch.setenv("BATHO_BSG_QUERY_ENABLED", "false")
+        monkeypatch.setenv("BATHO_BSG_QUERY_CACHE_SIZE", "64")
+        monkeypatch.setenv("BATHO_BSG_QUERY_INDEX_ON_WRITE", "false")
+        cfg = get_config()
+        assert cfg["bsg"]["query"]["enabled"] is False
+        assert cfg["bsg"]["query"]["cache_size"] == 64
+        assert cfg["bsg"]["query"]["index_on_write"] is False
 
 
 # ---------------------------------------------------------------------------

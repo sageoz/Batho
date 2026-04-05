@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
+import subprocess
 import time
 import uuid
 from contextlib import contextmanager
@@ -22,8 +24,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from batho_core.config import SNAPSHOT_SCHEMA_VERSION, get_config_cached
+from batho_core.context.incremental import get_head_commit, is_git_repo
 from batho_core.context.codegraph import InMemoryGraph, IncrementalGraphUpdater
 from batho_core.context.bsg_map import BSGMap
+from batho_core.context.storage import register_artifact
 from batho_core.utils.hash import compute_bytes_hash, compute_file_hash
 from batho_core.utils.ignore import is_ignored, load_ignore_spec
 from batho_core.utils.logging import get_logger
@@ -38,6 +42,12 @@ from batho_core.utils.patch_errors import (
 )
 
 logger = get_logger(__name__, component="time_machine")
+
+
+def _get_serialization_config() -> dict[str, Any]:
+    """Get BSG serialization config from cached config."""
+    return get_config_cached().get("bsg", {}).get("serialization", {})
+
 
 # Backward compatibility for legacy tests/mocks that patch
 # batho_core.time_machine.RepoMap.
@@ -446,9 +456,43 @@ def _snapshot_dir(ctn_dir: Path) -> Path:
     return p
 
 
-def generate_snapshot_id() -> str:
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"batho_{uuid.uuid4().hex}_{ts}"
+def _sanitize_project_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or "project"
+
+
+def _git_branch_name(root: Path) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+    branch = result.stdout.strip()
+    return branch or None
+
+
+def generate_snapshot_id(root: Path | None = None) -> str:
+    """
+    Generate snapshot IDs.
+
+    - Legacy/default mode (root is None): batho_<uuid>_<timestamp>
+    - Repo-aware mode (root provided): batho_<project>_<sha32|nogit>_<timestamp>
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    if root is None:
+        return f"batho_{uuid.uuid4().hex}_{ts}"
+
+    repo_root = root.resolve()
+    project = _sanitize_project_slug(repo_root.name)
+    commit = get_head_commit(repo_root) if is_git_repo(repo_root) else None
+    commit_fragment = (commit[:32].lower() if commit else "nogit")
+    return f"batho_{project}_{commit_fragment}_{ts}"
 
 
 def create_snapshot(
@@ -459,19 +503,29 @@ def create_snapshot(
     label: str | None = None,
 ) -> str:
     """Persist a snapshot of the current graph/bsg to JSON."""
-    snapshot_id = generate_snapshot_id()
+    repo_root = root.resolve()
+    snapshot_id = generate_snapshot_id(repo_root)
     snap_path = _snapshot_dir(ctn_dir) / f"{snapshot_id}.json"
+
+    git_repo = is_git_repo(repo_root)
+    head_commit = get_head_commit(repo_root) if git_repo else None
+    git_metadata = {
+        "is_git_repo": git_repo,
+        "commit_sha": head_commit,
+        "branch": _git_branch_name(repo_root) if git_repo else None,
+    }
 
     data = {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "snapshot_id": snapshot_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "root": str(root),
+        "root": str(repo_root),
         "label": label or "",
+        "git_metadata": git_metadata,
         "graph": graph.to_dict(),
         "bsg": bsg_map.render_json(
             default_snapshot_id=snapshot_id,
-            default_service_tag=root.name,
+            default_service_tag=repo_root.name,
         ),
         "stats": {
             "entity_count": len(graph.entities),
@@ -487,6 +541,15 @@ def create_snapshot(
     tmp = snap_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     tmp.replace(snap_path)
+    register_artifact(
+        ctn_dir,
+        snap_path,
+        "snapshot_json",
+        producer="time_machine.create_snapshot",
+        metadata={"snapshot_id": snapshot_id, "label": label or ""},
+        schema_version=SNAPSHOT_SCHEMA_VERSION,
+        retention_class="snapshot",
+    )
     logger.info("snapshot_created", snapshot_id=snapshot_id, path=str(snap_path))
     return snapshot_id
 
@@ -753,7 +816,7 @@ def incremental_patch(
 
             # Reconstruct base graph and bsg map
             base_graph = InMemoryGraph.from_dict(base_snapshot["graph"])
-            base_bsg = BSGMap.from_dict(base_snapshot["bsg"])
+            base_bsg = BSGMap.from_dict(base_snapshot["bsg"], serialization_config=_get_serialization_config())
             base_bsg._root = base_snapshot["root"]  # Set the root path
 
             # Initialize updater
@@ -1085,6 +1148,19 @@ def save_patch_operation(ctn_dir: Path, operation: PatchOperation) -> None:
     patch_file = patches_dir / f"patch_{operation.operation_id}.json"
     patch_data = operation.serialize()
     patch_file.write_text(json.dumps(patch_data, indent=2), encoding="utf-8")
+    register_artifact(
+        ctn_dir,
+        patch_file,
+        "patch_operation_json",
+        producer="time_machine.save_patch_operation",
+        metadata={
+            "operation_id": operation.operation_id,
+            "operation_type": operation.operation_type,
+            "base_snapshot_id": operation.base_snapshot_id,
+            "new_snapshot_id": operation.new_snapshot_id,
+        },
+        retention_class="patch",
+    )
     
     # Update index
     update_patch_index(ctn_dir, operation)
@@ -1152,6 +1228,14 @@ def update_patch_index(ctn_dir: Path, operation: PatchOperation) -> None:
     
     # Save index
     index_file.write_text(json.dumps(index_data, indent=2), encoding="utf-8")
+    register_artifact(
+        ctn_dir,
+        index_file,
+        "patch_index_json",
+        producer="time_machine.update_patch_index",
+        metadata={"last_operation_id": operation.operation_id},
+        retention_class="patch",
+    )
     logger.debug("patch_index_updated", operation_id=operation.operation_id)
 
 

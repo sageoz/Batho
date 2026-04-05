@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import abc
 import re
+import threading
 import time
 from typing import Any
 
@@ -229,18 +230,40 @@ class ASTExtractor(abc.ABC):
         @ref.import               — import reference
     """
 
-    def __init__(self, language: str) -> None:
+    def __init__(self, language: str, parsing_config: dict[str, Any] | None = None) -> None:
         """
         Initialise the extractor for *language*.
 
         Args:
             language: Language identifier accepted by tree-sitter-language-pack
                       (e.g. "python", "typescript", "rust").
+            parsing_config: Optional parsing configuration dict with keys:
+                - error_recovery: bool (default True)
+                - partial_parsing: bool (default False)
+                - skip_comments: bool (default False)
         """
         self._language_name: str = language
         self._ts_parser = get_parser(language)  # type: ignore[arg-type]
         self._ts_language: Language = get_language(language)  # type: ignore[arg-type]
+        self._compiled_query: Query | None = None
+        self._query_lock = threading.Lock()
+        self._parsing_config: dict[str, Any] = parsing_config or {}
         self.logger = get_logger(__name__, operation="ast_extract").bind(language=language)
+
+    def _get_compiled_query(self) -> Query | None:
+        """Compile and cache the tree-sitter query once per extractor instance."""
+        if self._compiled_query is not None:
+            return self._compiled_query
+
+        with self._query_lock:
+            if self._compiled_query is not None:
+                return self._compiled_query
+            try:
+                self._compiled_query = Query(self._ts_language, self._query_source())
+            except (TypeError, ValueError) as exc:
+                self.logger.debug("query_creation_failed", error=str(exc))
+                self._compiled_query = None
+            return self._compiled_query
 
     # ------------------------------------------------------------------
     # Subclass contract
@@ -282,37 +305,73 @@ class ASTExtractor(abc.ABC):
         """
         t0 = time.perf_counter()
 
+        # Check if error recovery is enabled
+        error_recovery = self._parsing_config.get("error_recovery", True)
+
         try:
             tree = self._ts_parser.parse(content)
         except (TypeError, ValueError) as exc:
-            self.logger.warning(
-                "parse_failed",
-                filepath=filepath,
-                error=str(exc),
-            )
-            return [], []
+            if error_recovery:
+                # Try to parse with error recovery by using the old tree
+                # tree-sitter's parser will still produce a tree even with syntax errors
+                try:
+                    tree = self._ts_parser.parse(content)
+                    self.logger.warning(
+                        "parse_error_recovery_attempt",
+                        filepath=filepath,
+                        error=str(exc),
+                    )
+                except Exception:
+                    self.logger.warning(
+                        "parse_failed",
+                        filepath=filepath,
+                        error=str(exc),
+                    )
+                    return [], []
+            else:
+                self.logger.warning(
+                    "parse_failed",
+                    filepath=filepath,
+                    error=str(exc),
+                )
+                return [], []
 
-        try:
-            query = Query(self._ts_language, self._query_source())
-        except (TypeError, ValueError) as exc:
+        # Check if we should skip comment nodes
+        skip_comments = self._parsing_config.get("skip_comments", False)
+
+        query = self._get_compiled_query()
+        if query is None:
             self.logger.debug(
-                "query_creation_failed",
+                "query_unavailable",
                 filepath=filepath,
-                error=str(exc),
             )
             return [], []
 
         try:
             cursor = QueryCursor(query)
+            # If skip_comments is enabled, we'll filter during capture processing
             raw_captures: dict[str, list[Node]] = cursor.captures(tree.root_node)
+            
+            if skip_comments:
+                raw_captures = self._filter_comment_captures(raw_captures)
+            
             entities, relationships = self._process_captures(raw_captures, content, filepath)
         except Exception as exc:
-            self.logger.warning(
-                "capture_processing_failed",
-                filepath=filepath,
-                error=str(exc),
-            )
-            return [], []
+            if error_recovery:
+                self.logger.warning(
+                    "capture_processing_failed_with_recovery",
+                    filepath=filepath,
+                    error=str(exc),
+                )
+                # Return empty results but don't fail the entire build
+                return [], []
+            else:
+                self.logger.warning(
+                    "capture_processing_failed",
+                    filepath=filepath,
+                    error=str(exc),
+                )
+                return [], []
 
         parse_ms = round((time.perf_counter() - t0) * 1000, 2)
         self.logger.debug(
@@ -321,8 +380,35 @@ class ASTExtractor(abc.ABC):
             parse_ms=parse_ms,
             entity_count=len(entities),
             relationship_count=len(relationships),
+            error_recovery=error_recovery,
+            skip_comments=skip_comments,
         )
         return entities, relationships
+
+    def _filter_comment_captures(self, captures: dict[str, list[Node]]) -> dict[str, list[Node]]:
+        """
+        Filter out comment-related captures when skip_comments is enabled.
+        
+        This removes captures that are primarily comment nodes, reducing AST size
+        and processing time for comment-heavy files.
+        """
+        filtered: dict[str, list[Node]] = {}
+        for key, nodes in captures.items():
+            # Filter out nodes that are comment types
+            # Common comment node types across languages
+            filtered_nodes = [
+                node for node in nodes
+                if node.type not in {
+                    "comment",
+                    "line_comment",
+                    "block_comment",
+                    "doc_comment",
+                    "docstring",
+                }
+            ]
+            if filtered_nodes:
+                filtered[key] = filtered_nodes
+        return filtered
 
     # ------------------------------------------------------------------
     # Internal — capture processing
@@ -728,10 +814,11 @@ class MarkupConfigExtractor(ASTExtractor):
     - _extract_references(): Extract references/relationships between elements
     """
 
-    def __init__(self, language: str) -> None:
+    def __init__(self, language: str, parsing_config: dict[str, Any] | None = None) -> None:
         self._language_name = language
         self._ts_parser = None
         self._ts_language = None
+        self._parsing_config: dict[str, Any] = parsing_config or {}
         self.logger = get_logger(__name__, operation="markup_extract").bind(language=language)
 
     def _query_source(self) -> str:

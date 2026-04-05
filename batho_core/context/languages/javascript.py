@@ -15,6 +15,8 @@ auxiliary captures are simply absent from this query.
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..extractor import ASTExtractor
 from ._common import CommonQueries
 
@@ -22,8 +24,8 @@ from ._common import CommonQueries
 class JavaScriptExtractor(ASTExtractor):
     """Tree-sitter based extractor for JavaScript source files."""
 
-    def __init__(self) -> None:
-        super().__init__("javascript")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("javascript", parsing_config)
 
     def _query_source(self) -> str:
         # Use common entry point patterns for JavaScript/TypeScript

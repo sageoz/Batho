@@ -26,8 +26,8 @@ from ..schema import Entity, EntityType, Relationship, RelationshipType
 class CSSExtractor(MarkupConfigExtractor):
     """Extractor for CSS, SCSS, SASS, and LESS files."""
 
-    def __init__(self) -> None:
-        super().__init__("css")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("css", parsing_config)
 
     def _extract_elements(
         self,

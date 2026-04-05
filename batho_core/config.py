@@ -47,6 +47,13 @@ DEFAULT_PATCH_TIMEOUT_SECONDS = 300  # 5 minutes
 DEFAULT_MAX_PATCH_CHANGES = 10000  # Max changes in a single patch
 DEFAULT_PATCH_HISTORY_DAYS = 90  # Retention policy for patches
 DEFAULT_PATCH_COUNT = 1000  # Alternative retention limit
+DEFAULT_STORAGE_REGISTRY_PATH = ".ctn/artifact_registry.db"
+DEFAULT_STORAGE_RETENTION_SNAPSHOT_DAYS = 90
+DEFAULT_STORAGE_RETENTION_PATCH_DAYS = 90
+DEFAULT_STORAGE_RETENTION_METRICS_DAYS = 30
+DEFAULT_STORAGE_RETENTION_CONTEXT_DAYS = 90
+DEFAULT_STORAGE_RETENTION_MAX_SNAPSHOTS = 500
+DEFAULT_STORAGE_RETENTION_MAX_PATCHES = 5000
 
 GRAPH_SCHEMA_VERSION = "graph.v1"
 BSG_SCHEMA_VERSION = "bsg.v1"
@@ -126,6 +133,127 @@ class PluginsConfig(BaseModel):
     overrides: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
 
 
+class BsgParallelConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    max_workers: int = Field(default=16, ge=1, le=32)
+    chunk_size: int = Field(default=50, ge=1)
+
+
+class BsgIgnoreConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    file: str = Field(default=".bathoignore")
+
+
+class BsgCacheConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    path: str = Field(default="~/.batho/ast_cache.db")
+    max_size_mb: int = Field(default=1024, ge=1)
+    ttl_days: int = Field(default=30, ge=1)
+
+
+class BsgIncrementalConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    fallback_to_full: bool = Field(default=True)
+    auto_detect_git: bool = Field(default=True)
+
+
+class BsgSymbolResolutionConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    fuzzy_matching: bool = Field(default=False)
+    cache_symbols: bool = Field(default=True)
+
+
+class BsgSerializationConfig(BaseModel):
+    method: str = Field(default="legacy")
+    compression: bool = Field(default=False)
+    batch_size: int = Field(default=1000, ge=1)
+
+    @field_validator("method")
+    @classmethod
+    def _validate_method(cls, value: str) -> str:  # noqa: B902
+        normalized = value.strip().lower()
+        if normalized not in {"legacy", "streaming"}:
+            return "legacy"
+        return normalized
+
+
+class BsgParsingConfig(BaseModel):
+    error_recovery: bool = Field(default=True)
+    partial_parsing: bool = Field(default=False)
+    max_file_size_mb: int = Field(default=10, ge=1)
+    skip_comments: bool = Field(default=False)
+
+
+class BsgQueryConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    index_on_write: bool = Field(default=True)
+    cache_enabled: bool = Field(default=True)
+    cache_size: int = Field(default=256, ge=1)
+    default_limit: int = Field(default=200, ge=1)
+    query_timeout_ms: int = Field(default=5000, ge=1)
+
+
+class BsgStorageRetentionConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    snapshot_ttl_days: int = Field(
+        default=DEFAULT_STORAGE_RETENTION_SNAPSHOT_DAYS, ge=1
+    )
+    patch_ttl_days: int = Field(default=DEFAULT_STORAGE_RETENTION_PATCH_DAYS, ge=1)
+    metrics_ttl_days: int = Field(
+        default=DEFAULT_STORAGE_RETENTION_METRICS_DAYS, ge=1
+    )
+    context_ttl_days: int = Field(
+        default=DEFAULT_STORAGE_RETENTION_CONTEXT_DAYS, ge=1
+    )
+    max_snapshots: int = Field(default=DEFAULT_STORAGE_RETENTION_MAX_SNAPSHOTS, ge=1)
+    max_patches: int = Field(default=DEFAULT_STORAGE_RETENTION_MAX_PATCHES, ge=1)
+
+
+class BsgStorageConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    backend: str = Field(default="sqlite")
+    registry_path: str = Field(default=DEFAULT_STORAGE_REGISTRY_PATH)
+    content_scope: str = Field(default="durable")
+    strict_compatibility: bool = Field(default=True)
+    cloud_sync_ready: bool = Field(default=True)
+    track_content_ids: bool = Field(default=True)
+    mmap_enabled: bool = Field(default=False)
+    mmap_min_size_mb: int = Field(default=8, ge=1)
+    retention: BsgStorageRetentionConfig = Field(
+        default_factory=BsgStorageRetentionConfig
+    )
+
+    @field_validator("backend")
+    @classmethod
+    def _validate_backend(cls, value: str) -> str:  # noqa: B902
+        normalized = value.strip().lower()
+        if normalized not in {"sqlite"}:
+            return "sqlite"
+        return normalized
+
+    @field_validator("content_scope")
+    @classmethod
+    def _validate_scope(cls, value: str) -> str:  # noqa: B902
+        normalized = value.strip().lower()
+        if normalized not in {"durable", "all"}:
+            return "durable"
+        return normalized
+
+
+class BsgConfig(BaseModel):
+    parallel: BsgParallelConfig = Field(default_factory=BsgParallelConfig)
+    ignore: BsgIgnoreConfig = Field(default_factory=BsgIgnoreConfig)
+    cache: BsgCacheConfig = Field(default_factory=BsgCacheConfig)
+    incremental: BsgIncrementalConfig = Field(default_factory=BsgIncrementalConfig)
+    symbol_resolution: BsgSymbolResolutionConfig = Field(
+        default_factory=BsgSymbolResolutionConfig
+    )
+    serialization: BsgSerializationConfig = Field(default_factory=BsgSerializationConfig)
+    parsing: BsgParsingConfig = Field(default_factory=BsgParsingConfig)
+    query: BsgQueryConfig = Field(default_factory=BsgQueryConfig)
+    storage: BsgStorageConfig = Field(default_factory=BsgStorageConfig)
+
+
 class Config(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
@@ -136,6 +264,7 @@ class Config(BaseModel):
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     schemas: dict = Field(default_factory=dict)
     webhook: dict = Field(default_factory=dict)
+    bsg: BsgConfig = Field(default_factory=BsgConfig)
 
     @field_validator("logging")
     @classmethod
@@ -291,6 +420,72 @@ def get_config() -> Dict[str, Any]:
             "gitlab_token": None,
             "allowed_ips": [],
         },
+        "bsg": {
+            "parallel": {
+                "enabled": True,
+                "max_workers": 16,
+                "chunk_size": 50,
+            },
+            "ignore": {
+                "enabled": True,
+                "file": ".bathoignore",
+            },
+            "cache": {
+                "enabled": True,
+                "path": "~/.batho/ast_cache.db",
+                "max_size_mb": 1024,
+                "ttl_days": 30,
+            },
+            "incremental": {
+                "enabled": True,
+                "fallback_to_full": True,
+                "auto_detect_git": True,
+            },
+            "symbol_resolution": {
+                "enabled": True,
+                "fuzzy_matching": False,
+                "cache_symbols": True,
+            },
+            "serialization": {
+                "method": "legacy",
+                "compression": False,
+                "batch_size": 1000,
+            },
+            "parsing": {
+                "error_recovery": True,
+                "partial_parsing": False,
+                "max_file_size_mb": 10,
+                "skip_comments": False,
+            },
+            "query": {
+                "enabled": True,
+                "index_on_write": True,
+                "cache_enabled": True,
+                "cache_size": 256,
+                "default_limit": 200,
+                "query_timeout_ms": 5000,
+            },
+            "storage": {
+                "enabled": True,
+                "backend": "sqlite",
+                "registry_path": DEFAULT_STORAGE_REGISTRY_PATH,
+                "content_scope": "durable",
+                "strict_compatibility": True,
+                "cloud_sync_ready": True,
+                "track_content_ids": True,
+                "mmap_enabled": False,
+                "mmap_min_size_mb": 8,
+                "retention": {
+                    "enabled": True,
+                    "snapshot_ttl_days": DEFAULT_STORAGE_RETENTION_SNAPSHOT_DAYS,
+                    "patch_ttl_days": DEFAULT_STORAGE_RETENTION_PATCH_DAYS,
+                    "metrics_ttl_days": DEFAULT_STORAGE_RETENTION_METRICS_DAYS,
+                    "context_ttl_days": DEFAULT_STORAGE_RETENTION_CONTEXT_DAYS,
+                    "max_snapshots": DEFAULT_STORAGE_RETENTION_MAX_SNAPSHOTS,
+                    "max_patches": DEFAULT_STORAGE_RETENTION_MAX_PATCHES,
+                },
+            },
+        },
     }
 
     # Root config override from ./batho.yaml only
@@ -389,6 +584,171 @@ def get_config() -> Dict[str, Any]:
     env_audit_log_path = _env("BATHO_PATCH_AUDIT_LOG_PATH")
     if env_audit_log_path:
         base_cfg["patch"]["audit_log_path"] = env_audit_log_path
+
+    # BSG configuration environment variables
+    base_cfg["bsg"]["parallel"]["enabled"] = _env_bool(
+        "BATHO_BSG_PARALLEL_ENABLED", base_cfg["bsg"]["parallel"]["enabled"]
+    )
+    base_cfg["bsg"]["parallel"]["max_workers"] = _env_int(
+        "BATHO_BSG_MAX_WORKERS", base_cfg["bsg"]["parallel"]["max_workers"]
+    )
+    base_cfg["bsg"]["parallel"]["chunk_size"] = _env_int(
+        "BATHO_BSG_CHUNK_SIZE", base_cfg["bsg"]["parallel"]["chunk_size"]
+    )
+    base_cfg["bsg"]["ignore"]["enabled"] = _env_bool(
+        "BATHO_BSG_IGNORE_ENABLED", base_cfg["bsg"]["ignore"]["enabled"]
+    )
+    env_bathoignore_file = _env("BATHO_BSG_IGNORE_FILE")
+    if env_bathoignore_file:
+        base_cfg["bsg"]["ignore"]["file"] = env_bathoignore_file
+    base_cfg["bsg"]["cache"]["enabled"] = _env_bool(
+        "BATHO_BSG_CACHE_ENABLED", base_cfg["bsg"]["cache"]["enabled"]
+    )
+    env_cache_path = _env("BATHO_BSG_CACHE_PATH")
+    if env_cache_path:
+        base_cfg["bsg"]["cache"]["path"] = env_cache_path
+    base_cfg["bsg"]["cache"]["max_size_mb"] = _env_int(
+        "BATHO_BSG_CACHE_MAX_SIZE_MB", base_cfg["bsg"]["cache"]["max_size_mb"]
+    )
+    base_cfg["bsg"]["cache"]["ttl_days"] = _env_int(
+        "BATHO_BSG_CACHE_TTL_DAYS", base_cfg["bsg"]["cache"]["ttl_days"]
+    )
+    base_cfg["bsg"]["incremental"]["enabled"] = _env_bool(
+        "BATHO_BSG_INCREMENTAL_ENABLED",
+        base_cfg["bsg"]["incremental"]["enabled"],
+    )
+    base_cfg["bsg"]["incremental"]["fallback_to_full"] = _env_bool(
+        "BATHO_BSG_INCREMENTAL_FALLBACK_TO_FULL",
+        base_cfg["bsg"]["incremental"]["fallback_to_full"],
+    )
+    base_cfg["bsg"]["incremental"]["auto_detect_git"] = _env_bool(
+        "BATHO_BSG_INCREMENTAL_AUTO_DETECT_GIT",
+        base_cfg["bsg"]["incremental"]["auto_detect_git"],
+    )
+    base_cfg["bsg"]["symbol_resolution"]["enabled"] = _env_bool(
+        "BATHO_BSG_SYMBOL_RESOLUTION_ENABLED",
+        base_cfg["bsg"]["symbol_resolution"]["enabled"],
+    )
+    base_cfg["bsg"]["symbol_resolution"]["fuzzy_matching"] = _env_bool(
+        "BATHO_BSG_SYMBOL_RESOLUTION_FUZZY",
+        base_cfg["bsg"]["symbol_resolution"]["fuzzy_matching"],
+    )
+    base_cfg["bsg"]["symbol_resolution"]["cache_symbols"] = _env_bool(
+        "BATHO_BSG_SYMBOL_RESOLUTION_CACHE_SYMBOLS",
+        base_cfg["bsg"]["symbol_resolution"]["cache_symbols"],
+    )
+    env_serialization_method = _env("BATHO_BSG_SERIALIZATION_METHOD")
+    if env_serialization_method:
+        base_cfg["bsg"]["serialization"]["method"] = env_serialization_method
+    base_cfg["bsg"]["serialization"]["compression"] = _env_bool(
+        "BATHO_BSG_SERIALIZATION_COMPRESSION",
+        base_cfg["bsg"]["serialization"]["compression"],
+    )
+    base_cfg["bsg"]["serialization"]["batch_size"] = _env_int(
+        "BATHO_BSG_SERIALIZATION_BATCH_SIZE",
+        base_cfg["bsg"]["serialization"]["batch_size"],
+    )
+    base_cfg["bsg"]["parsing"]["error_recovery"] = _env_bool(
+        "BATHO_BSG_PARSING_ERROR_RECOVERY",
+        base_cfg["bsg"]["parsing"]["error_recovery"],
+    )
+    base_cfg["bsg"]["parsing"]["partial_parsing"] = _env_bool(
+        "BATHO_BSG_PARSING_PARTIAL",
+        base_cfg["bsg"]["parsing"]["partial_parsing"],
+    )
+    base_cfg["bsg"]["parsing"]["max_file_size_mb"] = _env_int(
+        "BATHO_BSG_PARSING_MAX_FILE_SIZE_MB",
+        base_cfg["bsg"]["parsing"]["max_file_size_mb"],
+    )
+    base_cfg["bsg"]["parsing"]["skip_comments"] = _env_bool(
+        "BATHO_BSG_PARSING_SKIP_COMMENTS",
+        base_cfg["bsg"]["parsing"]["skip_comments"],
+    )
+    base_cfg["bsg"]["query"]["enabled"] = _env_bool(
+        "BATHO_BSG_QUERY_ENABLED",
+        base_cfg["bsg"]["query"]["enabled"],
+    )
+    base_cfg["bsg"]["query"]["index_on_write"] = _env_bool(
+        "BATHO_BSG_QUERY_INDEX_ON_WRITE",
+        base_cfg["bsg"]["query"]["index_on_write"],
+    )
+    base_cfg["bsg"]["query"]["cache_enabled"] = _env_bool(
+        "BATHO_BSG_QUERY_CACHE_ENABLED",
+        base_cfg["bsg"]["query"]["cache_enabled"],
+    )
+    base_cfg["bsg"]["query"]["cache_size"] = _env_int(
+        "BATHO_BSG_QUERY_CACHE_SIZE",
+        base_cfg["bsg"]["query"]["cache_size"],
+    )
+    base_cfg["bsg"]["query"]["default_limit"] = _env_int(
+        "BATHO_BSG_QUERY_DEFAULT_LIMIT",
+        base_cfg["bsg"]["query"]["default_limit"],
+    )
+    base_cfg["bsg"]["query"]["query_timeout_ms"] = _env_int(
+        "BATHO_BSG_QUERY_TIMEOUT_MS",
+        base_cfg["bsg"]["query"]["query_timeout_ms"],
+    )
+    base_cfg["bsg"]["storage"]["enabled"] = _env_bool(
+        "BATHO_BSG_STORAGE_ENABLED",
+        base_cfg["bsg"]["storage"]["enabled"],
+    )
+    env_storage_backend = _env("BATHO_BSG_STORAGE_BACKEND")
+    if env_storage_backend:
+        base_cfg["bsg"]["storage"]["backend"] = env_storage_backend
+    env_storage_registry_path = _env("BATHO_BSG_STORAGE_REGISTRY_PATH")
+    if env_storage_registry_path:
+        base_cfg["bsg"]["storage"]["registry_path"] = env_storage_registry_path
+    env_storage_scope = _env("BATHO_BSG_STORAGE_CONTENT_SCOPE")
+    if env_storage_scope:
+        base_cfg["bsg"]["storage"]["content_scope"] = env_storage_scope
+    base_cfg["bsg"]["storage"]["strict_compatibility"] = _env_bool(
+        "BATHO_BSG_STORAGE_STRICT_COMPATIBILITY",
+        base_cfg["bsg"]["storage"]["strict_compatibility"],
+    )
+    base_cfg["bsg"]["storage"]["cloud_sync_ready"] = _env_bool(
+        "BATHO_BSG_STORAGE_CLOUD_SYNC_READY",
+        base_cfg["bsg"]["storage"]["cloud_sync_ready"],
+    )
+    base_cfg["bsg"]["storage"]["track_content_ids"] = _env_bool(
+        "BATHO_BSG_STORAGE_TRACK_CONTENT_IDS",
+        base_cfg["bsg"]["storage"]["track_content_ids"],
+    )
+    base_cfg["bsg"]["storage"]["mmap_enabled"] = _env_bool(
+        "BATHO_BSG_STORAGE_MMAP_ENABLED",
+        base_cfg["bsg"]["storage"]["mmap_enabled"],
+    )
+    base_cfg["bsg"]["storage"]["mmap_min_size_mb"] = _env_int(
+        "BATHO_BSG_STORAGE_MMAP_MIN_SIZE_MB",
+        base_cfg["bsg"]["storage"]["mmap_min_size_mb"],
+    )
+    base_cfg["bsg"]["storage"]["retention"]["enabled"] = _env_bool(
+        "BATHO_BSG_STORAGE_RETENTION_ENABLED",
+        base_cfg["bsg"]["storage"]["retention"]["enabled"],
+    )
+    base_cfg["bsg"]["storage"]["retention"]["snapshot_ttl_days"] = _env_int(
+        "BATHO_BSG_STORAGE_RETENTION_SNAPSHOT_TTL_DAYS",
+        base_cfg["bsg"]["storage"]["retention"]["snapshot_ttl_days"],
+    )
+    base_cfg["bsg"]["storage"]["retention"]["patch_ttl_days"] = _env_int(
+        "BATHO_BSG_STORAGE_RETENTION_PATCH_TTL_DAYS",
+        base_cfg["bsg"]["storage"]["retention"]["patch_ttl_days"],
+    )
+    base_cfg["bsg"]["storage"]["retention"]["metrics_ttl_days"] = _env_int(
+        "BATHO_BSG_STORAGE_RETENTION_METRICS_TTL_DAYS",
+        base_cfg["bsg"]["storage"]["retention"]["metrics_ttl_days"],
+    )
+    base_cfg["bsg"]["storage"]["retention"]["context_ttl_days"] = _env_int(
+        "BATHO_BSG_STORAGE_RETENTION_CONTEXT_TTL_DAYS",
+        base_cfg["bsg"]["storage"]["retention"]["context_ttl_days"],
+    )
+    base_cfg["bsg"]["storage"]["retention"]["max_snapshots"] = _env_int(
+        "BATHO_BSG_STORAGE_RETENTION_MAX_SNAPSHOTS",
+        base_cfg["bsg"]["storage"]["retention"]["max_snapshots"],
+    )
+    base_cfg["bsg"]["storage"]["retention"]["max_patches"] = _env_int(
+        "BATHO_BSG_STORAGE_RETENTION_MAX_PATCHES",
+        base_cfg["bsg"]["storage"]["retention"]["max_patches"],
+    )
 
     try:
         cfg = Config.model_validate(base_cfg)

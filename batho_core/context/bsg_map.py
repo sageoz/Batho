@@ -30,6 +30,10 @@ from .categorizer import FileCategorizer
 from .schema import Entity, EntityType
 
 _FILE_CATEGORIZER = FileCategorizer()
+_CATEGORY_ALIASES: dict[str, str] = {
+    "DOCS": "DOC",
+    "DOCUMENTATION": "DOC",
+}
 
 if TYPE_CHECKING:
     from batho_core.time_machine import FileChange
@@ -65,6 +69,7 @@ class BSGMap:
         _root: Absolute workspace root used to normalise all paths at build time.
         _by_file: Mapping of relative_file_path → list[Entity] sorted by start_line.
         _dependencies: Mapping of relative_file_path → list[dep_module_or_rel_path].
+        _serialization_config: Config dict for serialization method selection.
     """
 
     _root: str = field(default="", repr=False)
@@ -72,6 +77,7 @@ class BSGMap:
     _dependencies: dict[str, list[str]] = field(default_factory=dict, repr=False)
     _relationships: list[Any] = field(default_factory=list, repr=False)
     _serialized_bsg: dict[str, Any] | None = field(default=None, repr=False)
+    _serialization_config: dict[str, Any] = field(default_factory=dict, repr=False)
     _logger: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -93,7 +99,7 @@ class BSGMap:
             changes: List of FileChange objects representing what changed
             graph: Updated InMemoryGraph with the changes applied
         """
-        rebuilt = BSGMap.build(graph=graph, root=self._root)
+        rebuilt = BSGMap.build(graph=graph, root=self._root, serialization_config=self._serialization_config)
         self._by_file = rebuilt._by_file
         self._dependencies = rebuilt._dependencies
         self._relationships = rebuilt._relationships
@@ -111,12 +117,13 @@ class BSGMap:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "BSGMap":
+    def from_dict(cls, data: dict[str, Any], serialization_config: dict[str, Any] | None = None) -> "BSGMap":
         """
         Reconstruct a BSGMap from serialized data.
 
         Args:
             data: Dict from render_json() or snapshot
+            serialization_config: Optional serialization config dict.
 
         Returns:
             Reconstructed BSGMap instance
@@ -156,53 +163,37 @@ class BSGMap:
                 entities.sort(key=lambda e: e.start_line)
 
             serialized_bsg = data
-            return cls(
-                _root=root_value,
-                _by_file=by_file,
-                _dependencies=dependencies,
-                _relationships=[],
-                _serialized_bsg=serialized_bsg,
-            )
-
-        # Legacy fallback payload
-        dependencies = data.get("dependencies", {}) or {}
-        for file_path, entities_data in (data.get("files", {}) or {}).items():
-            entities: list[Entity] = []
-            for ent_data in entities_data:
-                type_str = str(ent_data.get("type", "VARIABLE")).upper()
-                entity_type = (
-                    EntityType[type_str]
-                    if type_str in EntityType.__members__
-                    else EntityType.VARIABLE
-                )
-                lines = ent_data.get("lines", [0, 0])
-                start_line = int(lines[0] if isinstance(lines, list) and lines else 0)
-                end_line = int(lines[1] if isinstance(lines, list) and len(lines) > 1 else start_line)
-                metadata: dict[str, Any] = {}
-                if ent_data.get("docstring"):
-                    metadata["docstring"] = ent_data.get("docstring")
-                entity = Entity(
-                    type=entity_type,
-                    name=str(ent_data.get("name", "")),
-                    file=file_path,
-                    start_line=start_line,
-                    end_line=end_line,
-                    signature=ent_data.get("signature"),
-                    metadata=metadata,
-                )
-                entities.append(entity)
-            by_file[file_path] = entities
+        else:
+            # Legacy format
+            for file_path, entities_data in data.items():
+                if not isinstance(entities_data, list):
+                    continue
+                entities = [
+                    Entity(
+                        type=EntityType.VARIABLE,
+                        name=str(e.get("name", "")),
+                        file=file_path,
+                        start_line=int(e.get("start_line", 0) or 0),
+                        end_line=int(e.get("end_line", 0) or 0),
+                        signature=e.get("signature"),
+                        metadata=dict(e.get("metadata", {}) or {}),
+                    )
+                    for e in entities_data
+                    if isinstance(e, dict)
+                ]
+                by_file[file_path] = entities
 
         return cls(
             _root=root_value,
             _by_file=by_file,
             _dependencies=dependencies,
             _relationships=[],
-            _serialized_bsg=None,
+            _serialized_bsg=serialized_bsg,
+            _serialization_config=serialization_config or {},
         )
 
     @classmethod
-    def build(cls, graph: "object", root: str) -> "BSGMap":
+    def build(cls, graph: "object", root: str, serialization_config: dict[str, Any] | None = None) -> "BSGMap":
         """
         Build a BSGMap from an InMemoryGraph.
 
@@ -213,6 +204,7 @@ class BSGMap:
         Args:
             graph: An InMemoryGraph populated by CodeGraphIndexer.
             root: Absolute workspace root (output of ``Path.cwd().resolve()``).
+            serialization_config: Optional serialization config dict.
 
         Returns:
             A fresh BSGMap instance with relative-path keys.
@@ -270,6 +262,7 @@ class BSGMap:
             _by_file=sorted_map,
             _dependencies=sorted_deps,
             _relationships=list(graph.relationships),
+            _serialization_config=serialization_config or {},
         )
         instance._logger.debug(
             "bsg_built",
@@ -369,33 +362,13 @@ class BSGMap:
         }
         return "\n".join(lines), stats
 
-    def render_json(
+    def _build_render_components(
         self,
         build_ms: int | None = None,
         default_snapshot_id: str | None = None,
         default_service_tag: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Render the structural graph as a bsg.v1 dictionary.
-
-        Args:
-            build_ms: Optional build latency in milliseconds for stats payload.
-            default_snapshot_id: Fallback snapshot identifier to stamp nodes when
-                metadata does not already provide one.
-            default_service_tag: Optional service tag fallback when derivation
-                from file path yields no service.
-
-        Returns:
-            JSON-serialisable bsg.v1 payload.
-        """
-        if (
-            self._serialized_bsg is not None
-            and build_ms is None
-            and default_snapshot_id is None
-            and default_service_tag is None
-        ):
-            return json.loads(json.dumps(self._serialized_bsg))
-
+        """Build reusable render components for JSON outputs."""
         resolved_default_snapshot = (default_snapshot_id or "").strip() or None
         resolved_default_service = (
             (default_service_tag or "").strip() if default_service_tag is not None else ""
@@ -407,24 +380,57 @@ class BSGMap:
         nodes: list[dict[str, Any]] = []
         node_by_id: dict[str, dict[str, Any]] = {}
         rule_names: set[str] = set()
+        quality_warnings: list[str] = []
+        autofilled_snapshot_ids = 0
+        missing_snapshot_ids = 0
+        autofilled_service_tags = 0
+        missing_service_tags = 0
+        normalized_categories = 0
+
+        if resolved_build_ms == 0:
+            quality_warnings.append(
+                "build_ms is 0; verify build timing capture for this run"
+            )
 
         for file_path in sorted(self._by_file.keys()):
             entities = self._by_file[file_path]
             for entity in sorted(entities, key=lambda item: (item.start_line, item.id)):
                 metadata = dict(entity.metadata or {})
                 scope_tier = str(metadata.get("bsg.scope_tier") or self._derive_scope_tier(entity))
-                category = str(metadata.get("bsg.category") or self._derive_category(file_path)).upper()
-                service_tag = str(
-                    metadata.get("bsg.service_tag")
-                    or self._derive_service_tag(file_path)
-                    or resolved_default_service
+                raw_category = str(
+                    metadata.get("bsg.category") or self._derive_category(file_path)
                 )
+                category = self._normalize_category(raw_category)
+                if raw_category.strip().upper() != category:
+                    normalized_categories += 1
+
+                raw_service_tag = metadata.get("bsg.service_tag")
+                service_tag = str(raw_service_tag or "").strip()
+                if not service_tag:
+                    service_tag = str(
+                        self._derive_service_tag(file_path) or resolved_default_service
+                    ).strip()
+                    if service_tag:
+                        autofilled_service_tags += 1
+                if not service_tag:
+                    missing_service_tags += 1
+
                 language = self._derive_language(entity, file_path)
-                snapshot_id = (
+                raw_snapshot_id = (
                     metadata.get("bsg.snapshot_id")
                     or metadata.get("snapshot_id")
-                    or resolved_default_snapshot
                 )
+                snapshot_id_text = (
+                    str(raw_snapshot_id).strip()
+                    if raw_snapshot_id is not None
+                    else ""
+                )
+                if not snapshot_id_text and resolved_default_snapshot:
+                    snapshot_id_text = resolved_default_snapshot
+                    autofilled_snapshot_ids += 1
+                if not snapshot_id_text:
+                    missing_snapshot_ids += 1
+                snapshot_id = snapshot_id_text or None
 
                 rules = metadata.get("bsg.rules")
                 if isinstance(rules, list):
@@ -611,51 +617,217 @@ class BSGMap:
             and len(node.get("metadata", {}).get("bsg.rules", [])) > 0
         )
 
-        payload = {
-            "schema_version": BSG_SCHEMA_VERSION,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "root": self._root,
-            "stats": {
-                "total_files": len(nodes_by_file),
-                "total_entities": len(nodes),
-                "total_relationships": len(edges),
-                "build_ms": resolved_build_ms,
-                "rules_loaded": len(rule_names),
-                "rules_applied": rules_applied,
+        if autofilled_snapshot_ids:
+            quality_warnings.append(
+                "auto-filled snapshot_id for "
+                f"{autofilled_snapshot_ids} nodes from default_snapshot_id"
+            )
+        if missing_snapshot_ids:
+            quality_warnings.append(
+                f"{missing_snapshot_ids} nodes missing snapshot_id after fallback"
+            )
+        if autofilled_service_tags:
+            quality_warnings.append(
+                f"auto-derived service_tag for {autofilled_service_tags} nodes"
+            )
+        if missing_service_tags:
+            quality_warnings.append(
+                f"{missing_service_tags} nodes missing service_tag after fallback"
+            )
+        if normalized_categories:
+            quality_warnings.append(
+                "normalized bsg.category values for "
+                f"{normalized_categories} nodes (e.g. DOCS -> DOC)"
+            )
+
+        stats_payload = {
+            "total_files": len(nodes_by_file),
+            "total_entities": len(nodes),
+            "total_relationships": len(edges),
+            "build_ms": resolved_build_ms,
+            "rules_loaded": len(rule_names),
+            "rules_applied": rules_applied,
+            "quality_warnings": len(quality_warnings),
+            "autofilled_snapshot_ids": autofilled_snapshot_ids,
+            "missing_snapshot_ids": missing_snapshot_ids,
+            "autofilled_service_tags": autofilled_service_tags,
+            "missing_service_tags": missing_service_tags,
+            "category_normalizations": normalized_categories,
+        }
+
+        indexes_payload = {
+            "nodes_by_file": _sorted_index(nodes_by_file),
+            "nodes_by_type": _sorted_index(nodes_by_type),
+            "nodes_by_scope": _sorted_index(nodes_by_scope),
+            "nodes_by_category": _sorted_index(nodes_by_category),
+            "nodes_by_service": _sorted_index(nodes_by_service),
+            "inbound_edges": sorted_inbound_edges,
+            "outbound_edges": sorted_outbound_edges,
+            "cross_boundaries": cross_boundaries,
+        }
+        views_payload = {
+            "agent": {
+                "top_files_by_node_count": [
+                    {"file": file_path, "count": count}
+                    for file_path, count in files_ranked[:25]
+                ],
+                "cross_boundary_count": len(cross_boundaries),
             },
-            "nodes": nodes,
-            "edges": edges,
-            "indexes": {
-                "nodes_by_file": _sorted_index(nodes_by_file),
-                "nodes_by_type": _sorted_index(nodes_by_type),
-                "nodes_by_scope": _sorted_index(nodes_by_scope),
-                "nodes_by_category": _sorted_index(nodes_by_category),
-                "nodes_by_service": _sorted_index(nodes_by_service),
-                "inbound_edges": sorted_inbound_edges,
-                "outbound_edges": sorted_outbound_edges,
-                "cross_boundaries": cross_boundaries,
-            },
-            "views": {
-                "agent": {
-                    "top_files_by_node_count": [
-                        {"file": file_path, "count": count}
-                        for file_path, count in files_ranked[:25]
-                    ],
-                    "cross_boundary_count": len(cross_boundaries),
+            "human": {
+                "categories": {
+                    key: len(value)
+                    for key, value in sorted(nodes_by_category.items())
                 },
-                "human": {
-                    "categories": {
-                        key: len(value)
-                        for key, value in sorted(nodes_by_category.items())
-                    },
-                    "services": {
-                        key: len(value)
-                        for key, value in sorted(nodes_by_service.items())
-                    },
+                "services": {
+                    key: len(value)
+                    for key, value in sorted(nodes_by_service.items())
                 },
             },
         }
-        return payload
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "stats": stats_payload,
+            "nodes": nodes,
+            "edges": edges,
+            "quality_warnings": quality_warnings,
+            "indexes": indexes_payload,
+            "views": views_payload,
+        }
+
+    def render_json(
+        self,
+        build_ms: int | None = None,
+        default_snapshot_id: str | None = None,
+        default_service_tag: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Render the structural graph as a bsg.v1 dictionary.
+
+        Args:
+            build_ms: Optional build latency in milliseconds for stats payload.
+            default_snapshot_id: Fallback snapshot identifier to stamp nodes when
+                metadata does not already provide one.
+            default_service_tag: Optional service tag fallback when derivation
+                from file path yields no service.
+
+        Returns:
+            JSON-serialisable bsg.v1 payload.
+        """
+        # Check serialization config to determine method
+        method = self._serialization_config.get("method", "streaming")
+        
+        if method == "streaming":
+            # For streaming mode, we need to materialize the full dict from the streaming generator
+            # This maintains the API contract while using streaming internally
+            chunks = []
+            for chunk in self.render_json_streaming(
+                build_ms=build_ms,
+                default_snapshot_id=default_snapshot_id,
+                default_service_tag=default_service_tag,
+            ):
+                chunks.append(chunk)
+            return json.loads("".join(chunks))
+        
+        # Legacy mode - use original implementation
+        if (
+            self._serialized_bsg is not None
+            and build_ms is None
+            and default_snapshot_id is None
+            and default_service_tag is None
+        ):
+            return json.loads(json.dumps(self._serialized_bsg))
+
+        components = self._build_render_components(
+            build_ms=build_ms,
+            default_snapshot_id=default_snapshot_id,
+            default_service_tag=default_service_tag,
+        )
+
+        return {
+            "schema_version": BSG_SCHEMA_VERSION,
+            "generated_at": components["generated_at"],
+            "root": self._root,
+            "stats": components["stats"],
+            "nodes": components["nodes"],
+            "edges": components["edges"],
+            "quality_warnings": components["quality_warnings"],
+            "indexes": components["indexes"],
+            "views": components["views"],
+        }
+
+    def render_json_streaming(
+        self,
+        build_ms: int | None = None,
+        default_snapshot_id: str | None = None,
+        default_service_tag: str | None = None,
+        extra_fields: dict[str, Any] | None = None,
+    ):
+        """Yield JSON chunks without allocating a full top-level payload dict."""
+        if (
+            self._serialized_bsg is not None
+            and build_ms is None
+            and default_snapshot_id is None
+            and default_service_tag is None
+            and not extra_fields
+        ):
+            encoder = json.JSONEncoder(ensure_ascii=False)
+            for chunk in encoder.iterencode(self._serialized_bsg):
+                yield chunk
+            return
+
+        components = self._build_render_components(
+            build_ms=build_ms,
+            default_snapshot_id=default_snapshot_id,
+            default_service_tag=default_service_tag,
+        )
+
+        base_items: list[tuple[str, Any]] = [
+            ("schema_version", BSG_SCHEMA_VERSION),
+            ("generated_at", components["generated_at"]),
+            ("root", self._root),
+            ("stats", components["stats"]),
+            ("nodes", components["nodes"]),
+            ("edges", components["edges"]),
+            ("quality_warnings", components["quality_warnings"]),
+            ("indexes", components["indexes"]),
+            ("views", components["views"]),
+        ]
+
+        overrides: dict[str, Any] = {}
+        additions: list[tuple[str, Any]] = []
+        if extra_fields:
+            base_keys = {key for key, _ in base_items}
+            for key, value in extra_fields.items():
+                if key in base_keys:
+                    overrides[key] = value
+                else:
+                    additions.append((key, value))
+
+        encoder = json.JSONEncoder(ensure_ascii=False)
+        first = True
+        yield "{"
+
+        for key, value in base_items:
+            resolved_value = overrides[key] if key in overrides else value
+            if not first:
+                yield ","
+            first = False
+            yield encoder.encode(key)
+            yield ":"
+            for chunk in encoder.iterencode(resolved_value):
+                yield chunk
+
+        for key, value in additions:
+            if not first:
+                yield ","
+            first = False
+            yield encoder.encode(key)
+            yield ":"
+            for chunk in encoder.iterencode(value):
+                yield chunk
+
+        yield "}"
 
     def _derive_scope_tier(self, entity: Entity) -> str:
         if entity.type in {
@@ -729,6 +901,12 @@ class BSGMap:
 
     def _derive_category(self, rel_file_path: str) -> str:
         return _FILE_CATEGORIZER.categorize(rel_file_path).upper()
+
+    def _normalize_category(self, raw_category: str) -> str:
+        candidate = str(raw_category or "").strip().upper()
+        if not candidate:
+            return "SOURCE"
+        return _CATEGORY_ALIASES.get(candidate, candidate)
 
     def _derive_language(self, entity: Entity, rel_file_path: str) -> str:
         metadata = entity.metadata or {}

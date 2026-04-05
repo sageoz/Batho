@@ -24,8 +24,8 @@ from ..schema import Entity, EntityType, Relationship, RelationshipType
 class HCLExtractor(MarkupConfigExtractor):
     """Extractor for HCL and Terraform files."""
 
-    def __init__(self) -> None:
-        super().__init__("hcl")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("hcl", parsing_config)
 
     def _extract_elements(
         self,

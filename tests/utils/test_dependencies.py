@@ -1,20 +1,28 @@
 """Tests for batho_core.utils.dependencies module."""
 from __future__ import annotations
 
+import builtins
 import json
 from pathlib import Path
 
 import pytest
 
+import batho_core.utils.dependencies as deps_module
 from batho_core.utils.dependencies import (
+    _detect_node_package_manager,
     extract_all_dependencies,
     extract_dependency_names,
     extract_package_name,
     parse_cargo_toml,
+    parse_cargo_toml_file,
     parse_package_json,
+    parse_package_json_file,
     parse_pyproject_toml,
+    parse_pyproject_toml_file,
     parse_requirements_txt,
+    parse_requirements_txt_file,
     parse_setup_py,
+    parse_setup_py_file,
 )
 
 
@@ -77,6 +85,21 @@ class TestParseRequirementsTxt:
     def test_empty_content(self):
         assert parse_requirements_txt("") == []
 
+    def test_parse_requirements_file_success_and_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        req = tmp_path / "requirements.txt"
+        req.write_text("requests>=2\n", encoding="utf-8")
+        assert parse_requirements_txt_file(req) == ["requests"]
+
+        original = Path.read_text
+
+        def _raise(self: Path, *args, **kwargs):
+            if self == req:
+                raise OSError("nope")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _raise)
+        assert parse_requirements_txt_file(req) == []
+
 
 # ---------------------------------------------------------------------------
 # parse_pyproject_toml
@@ -121,6 +144,42 @@ build-backend = "poetry.core.masonry.api"
         assert "fastapi" in result["dependencies"]
         assert result["build_tool"] == "poetry"
 
+    def test_parse_pyproject_regex_fallback_without_toml_lib(self, monkeypatch: pytest.MonkeyPatch):
+        original_import = builtins.__import__
+
+        def _import(name, *args, **kwargs):
+            if name == "tomllib":
+                raise ImportError("forced")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _import)
+        monkeypatch.setattr(deps_module, "tomli", None)
+
+        result = parse_pyproject_toml(
+            """
+name = "x"
+requests = "*"
+version = "1.0"
+"""
+        )
+        assert "requests" in result["dependencies"]
+
+    def test_parse_pyproject_file_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname='x'\n", encoding="utf-8")
+        assert isinstance(parse_pyproject_toml_file(pyproject), dict)
+
+        original = Path.read_text
+
+        def _raise(self: Path, *args, **kwargs):
+            if self == pyproject:
+                raise OSError("read fail")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _raise)
+        fallback = parse_pyproject_toml_file(pyproject)
+        assert fallback["dependencies"] == []
+
 
 # ---------------------------------------------------------------------------
 # parse_setup_py
@@ -146,6 +205,22 @@ setup(
         content = "from setuptools import setup\nsetup(name='x')\n"
         result = parse_setup_py(content)
         assert result["dependencies"] == []
+
+    def test_parse_setup_py_file_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        setup_py = tmp_path / "setup.py"
+        setup_py.write_text("setup(name='x')\n", encoding="utf-8")
+        assert isinstance(parse_setup_py_file(setup_py), dict)
+
+        original = Path.read_text
+
+        def _raise(self: Path, *args, **kwargs):
+            if self == setup_py:
+                raise OSError("read fail")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _raise)
+        fallback = parse_setup_py_file(setup_py)
+        assert fallback == {"dependencies": [], "python_requires": None}
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +249,28 @@ class TestParsePackageJson:
         result = parse_package_json("not json {{{")
         assert result["dependencies"] == {}
 
+    def test_parse_package_json_file_and_package_manager_detection(self, tmp_path: Path):
+        pkg = tmp_path / "package.json"
+        pkg.write_text(json.dumps({"dependencies": {"react": "^18"}}), encoding="utf-8")
+        (tmp_path / "pnpm-lock.yaml").write_text("lock", encoding="utf-8")
+        data = parse_package_json_file(pkg)
+        assert data["package_manager"] == "pnpm"
+
+    def test_parse_package_json_file_invalid_json_still_detects_lock(self, tmp_path: Path):
+        pkg = tmp_path / "package.json"
+        pkg.write_text("{broken", encoding="utf-8")
+        (tmp_path / "yarn.lock").write_text("lock", encoding="utf-8")
+        data = parse_package_json_file(pkg)
+        assert data["package_manager"] == "yarn"
+
+    def test_detect_node_package_manager_variants(self, tmp_path: Path):
+        assert _detect_node_package_manager(tmp_path) is None
+        (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
+        assert _detect_node_package_manager(tmp_path) == "npm"
+        (tmp_path / "package-lock.json").unlink()
+        (tmp_path / "bun.lockb").write_text("x", encoding="utf-8")
+        assert _detect_node_package_manager(tmp_path) == "bun"
+
 
 # ---------------------------------------------------------------------------
 # parse_cargo_toml
@@ -194,6 +291,45 @@ criterion = "0.5"
         assert "serde" in result["dependencies"]
         assert "tokio" in result["dependencies"]
         assert "criterion" in result["dev_dependencies"]
+
+    def test_parse_cargo_regex_fallback_and_file_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        original_import = builtins.__import__
+
+        def _import(name, *args, **kwargs):
+            if name == "tomllib":
+                raise ImportError("forced")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _import)
+        monkeypatch.setattr(deps_module, "tomli", None)
+        parsed = parse_cargo_toml(
+            """
+serde = "1.0"
+workspace = true
+tokio = "1"
+"""
+        )
+        assert "serde" in parsed["dependencies"]
+        assert "tokio" in parsed["dependencies"]
+
+        cargo_file = tmp_path / "Cargo.toml"
+        cargo_file.write_text("[dependencies]\nserde='1'\n", encoding="utf-8")
+        assert isinstance(parse_cargo_toml_file(cargo_file), dict)
+
+        original = Path.read_text
+
+        def _raise(self: Path, *args, **kwargs):
+            if self == cargo_file:
+                raise OSError("read fail")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _raise)
+        fallback = parse_cargo_toml_file(cargo_file)
+        assert fallback == {"dependencies": [], "dev_dependencies": [], "build_dependencies": []}
 
 
 # ---------------------------------------------------------------------------

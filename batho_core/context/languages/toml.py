@@ -36,8 +36,8 @@ except ImportError:
 class TOMLExtractor(MarkupConfigExtractor):
     """Extractor for TOML configuration files."""
 
-    def __init__(self) -> None:
-        super().__init__("toml")
+    def __init__(self, parsing_config: dict[str, Any] | None = None) -> None:
+        super().__init__("toml", parsing_config)
 
     def _extract_elements(
         self,

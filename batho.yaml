@@ -36,6 +36,54 @@ schemas:
   index_metadata: index-metadata.v1
   file_cache: file-cache.v1
 
+bsg:
+  parallel:
+    enabled: true
+    max_workers: 16
+    chunk_size: 50
+  ignore:
+    enabled: true
+    file: .bathoignore
+  cache:
+    enabled: true
+    path: ~/.batho/ast_cache.db
+    max_size_mb: 1024
+    ttl_days: 30
+  serialization:
+    method: streaming
+    compression: false
+    batch_size: 1000
+  parsing:
+    error_recovery: true
+    partial_parsing: false
+    max_file_size_mb: 10
+    skip_comments: false
+  query:
+    enabled: true
+    index_on_write: true
+    cache_enabled: true
+    cache_size: 256
+    default_limit: 200
+    query_timeout_ms: 5000
+  storage:
+    enabled: true
+    backend: sqlite
+    registry_path: .ctn/artifact_registry.db
+    content_scope: durable
+    strict_compatibility: true
+    cloud_sync_ready: true
+    track_content_ids: true
+    mmap_enabled: false
+    mmap_min_size_mb: 8
+    retention:
+      enabled: true
+      snapshot_ttl_days: 90
+      patch_ttl_days: 90
+      metrics_ttl_days: 30
+      context_ttl_days: 90
+      max_snapshots: 500
+      max_patches: 5000
+
 webhook:
   enabled: false
   server:
