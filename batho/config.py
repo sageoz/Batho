@@ -21,6 +21,8 @@ from typing import Any, Dict, Optional
 import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from batho.cloud_sync.config import CloudSyncConfig
+
 DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_CTN_DIR = ".ctn"
 DEFAULT_MAX_FILE_SIZE_KB = 500
@@ -270,6 +272,7 @@ class Config(BaseModel):
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     schemas: dict = Field(default_factory=dict)
     webhook: dict = Field(default_factory=dict)
+    cloud_sync: CloudSyncConfig = Field(default_factory=CloudSyncConfig)
     bsg: BsgConfig = Field(default_factory=BsgConfig)
 
     @field_validator("logging")
@@ -429,6 +432,16 @@ def get_config() -> Dict[str, Any]:
             "github_secret": None,
             "gitlab_token": None,
             "allowed_ips": [],
+        },
+        "cloud_sync": {
+            "enabled": False,
+            "endpoint": "",
+            "api_key": "",
+            "organization_id": "",
+            "project_id": "",
+            "timeout_seconds": 300,
+            "max_retries": 3,
+            "batch_size": 10,
         },
         "bsg": {
             "parallel": {
@@ -594,6 +607,32 @@ def get_config() -> Dict[str, Any]:
     env_audit_log_path = _env("BATHO_PATCH_AUDIT_LOG_PATH")
     if env_audit_log_path:
         base_cfg["patch"]["audit_log_path"] = env_audit_log_path
+
+    # Cloud sync configuration environment variables
+    base_cfg["cloud_sync"]["enabled"] = _env_bool(
+        "BATHO_CLOUD_SYNC_ENABLED", base_cfg["cloud_sync"]["enabled"]
+    )
+    env_cloud_endpoint = _env("BATHO_CLOUD_ENDPOINT")
+    if env_cloud_endpoint is not None:
+        base_cfg["cloud_sync"]["endpoint"] = env_cloud_endpoint
+    env_cloud_api_key = _env("BATHO_CLOUD_API_KEY")
+    if env_cloud_api_key is not None:
+        base_cfg["cloud_sync"]["api_key"] = env_cloud_api_key
+    env_cloud_org_id = _env("BATHO_CLOUD_ORG_ID")
+    if env_cloud_org_id is not None:
+        base_cfg["cloud_sync"]["organization_id"] = env_cloud_org_id
+    env_cloud_project_id = _env("BATHO_CLOUD_PROJECT_ID")
+    if env_cloud_project_id is not None:
+        base_cfg["cloud_sync"]["project_id"] = env_cloud_project_id
+    base_cfg["cloud_sync"]["timeout_seconds"] = _env_int(
+        "BATHO_CLOUD_TIMEOUT_SECONDS", base_cfg["cloud_sync"]["timeout_seconds"]
+    )
+    base_cfg["cloud_sync"]["max_retries"] = _env_int(
+        "BATHO_CLOUD_MAX_RETRIES", base_cfg["cloud_sync"]["max_retries"]
+    )
+    base_cfg["cloud_sync"]["batch_size"] = _env_int(
+        "BATHO_CLOUD_BATCH_SIZE", base_cfg["cloud_sync"]["batch_size"]
+    )
 
     # BSG configuration environment variables
     base_cfg["bsg"]["parallel"]["enabled"] = _env_bool(

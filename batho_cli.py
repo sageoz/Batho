@@ -126,6 +126,7 @@ __all__ = [
     "cmd_patch_info",
     "cmd_patches",
     "cmd_query",
+    "cmd_sync",
     "cmd_webhook",
     "cmd_webhook_server",
     "extract_patch_deltas",
@@ -178,6 +179,18 @@ def _ensure_ctn_dir(root: Path) -> Path:
 def _get_serialization_config() -> dict[str, Any]:
     """Get BSG serialization config from cached config."""
     return get_config_cached().get("bsg", {}).get("serialization", {})
+
+
+def _format_bytes(size_bytes: int) -> str:
+    value = float(max(0, int(size_bytes)))
+    units = ["B", "KB", "MB", "GB", "TB"]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
+    return f"{int(size_bytes)} B"
 
 
 def _extract_change_paths(changes: Iterable[Any]) -> list[str]:
@@ -2698,6 +2711,107 @@ def cmd_storage_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sync(args: argparse.Namespace) -> int:
+    """Sync artifacts to configured cloud endpoint."""
+    from batho.cloud_sync.config import CloudSyncConfig
+    from batho.cloud_sync.uploader import CloudSyncUploader
+
+    root = Path(args.root or ".").resolve()
+    if not root.exists() or not root.is_dir():
+        print(f"❌ Root does not exist or is not a directory: {root}")
+        return 1
+
+    ctn_dir = _ensure_ctn_dir(root)
+    cfg = reload_config()
+    cloud_payload = cfg.get("cloud_sync")
+    cloud_data = cloud_payload if isinstance(cloud_payload, dict) else {}
+
+    try:
+        cloud_cfg = CloudSyncConfig.model_validate(cloud_data)
+    except Exception as exc:
+        print(f"❌ Invalid cloud_sync configuration: {exc}")
+        return 1
+
+    uploader = CloudSyncUploader(cloud_cfg)
+
+    if bool(args.status):
+        status_payload = uploader.get_sync_status(ctn_dir)
+        project_id = status_payload.get("project_id") or root.name
+        print(f"Sync Status for project '{project_id}':")
+        print(f"  Pending: {int(status_payload.get('pending', 0))}")
+        print(f"  Synced: {int(status_payload.get('synced', 0))}")
+        print(f"  Failed: {int(status_payload.get('failed', 0))}")
+        print(f"  Local only: {int(status_payload.get('local_only', 0))}")
+        return 0
+
+    requires_upload = not bool(args.dry_run)
+    if requires_upload and not cloud_cfg.enabled:
+        print("❌ Cloud sync is disabled. Set cloud_sync.enabled=true in batho.yaml or BATHO_CLOUD_SYNC_ENABLED=1")
+        return 1
+    if requires_upload and not cloud_cfg.endpoint:
+        print("❌ cloud_sync.endpoint is required for sync uploads")
+        return 1
+    if requires_upload and not cloud_cfg.resolved_api_key():
+        print("❌ cloud_sync.api_key is required for sync uploads")
+        return 1
+
+    artifact_types = [str(value).strip() for value in (args.artifact_types or []) if str(value).strip()]
+
+    def _progress(index: int, total: int, payload: dict[str, Any]) -> None:
+        if not bool(args.verbose) or total <= 0:
+            return
+        pct = int((index / total) * 100)
+        filled = min(20, int((index / total) * 20))
+        bar = ("█" * filled) + ("░" * (20 - filled))
+        artifact_id = str(payload.get("artifact_id") or "")
+        print(f"[{bar}] {index}/{total} - {pct}% {artifact_id}")
+
+    if bool(args.retry_failed):
+        summary = uploader.retry_failed(
+            ctn_dir,
+            dry_run=bool(args.dry_run),
+            progress_callback=_progress if bool(args.verbose) else None,
+        )
+    else:
+        summary = uploader.sync_pending_artifacts(
+            ctn_dir,
+            dry_run=bool(args.dry_run),
+            artifact_types=artifact_types or None,
+            progress_callback=_progress if bool(args.verbose) else None,
+        )
+
+    if bool(args.dry_run):
+        print(f"Found {summary.total} artifacts to sync:")
+        for artifact_type in sorted(summary.by_type.keys()):
+            bucket = summary.by_type[artifact_type]
+            count = int(bucket.get("count", 0))
+            size_bytes = int(bucket.get("size_bytes", 0))
+            print(f"  - {count} {artifact_type} files ({_format_bytes(size_bytes)})")
+        return 0
+
+    if bool(args.retry_failed):
+        print(f"Retrying failed artifact uploads to {cloud_cfg.endpoint}...")
+    else:
+        print(f"Syncing {summary.total} artifacts to {cloud_cfg.endpoint}...")
+
+    if summary.total > 0 and not bool(args.verbose):
+        print(f"[{'█' * 20}] {summary.total}/{summary.total} - 100%")
+
+    print()
+    print("Results:")
+    print(f"  Uploaded: {summary.uploaded}")
+    print(f"  Failed: {summary.failed}")
+    print(f"  Duration: {summary.duration_seconds:.1f}s")
+
+    if summary.failed > 0 and bool(args.verbose):
+        for failure in summary.failures[:10]:
+            artifact_id = str(failure.get("artifact_id") or "")
+            error = str(failure.get("error") or "upload_failed")
+            print(f"  - {artifact_id}: {error}")
+
+    return 0 if summary.failed == 0 else 1
+
+
 def cmd_storage_rebuild_indexes(args: argparse.Namespace) -> int:
     """Rebuild persisted query indexes for an existing graph artifact."""
     root = Path(args.root).resolve()
@@ -3074,6 +3188,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional JSON headers (e.g. {'X-GitHub-Event':'push'})",
     )
     wh.set_defaults(func=cmd_webhook)
+
+    sync = sub.add_parser("sync", help="Sync artifacts to cloud endpoint")
+    sync.add_argument(
+        "--root",
+        default=".",
+        help="Path to repository root (default: current directory)",
+    )
+    sync.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be synced without uploading",
+    )
+    sync.add_argument(
+        "--type",
+        dest="artifact_types",
+        action="append",
+        default=None,
+        help="Filter by artifact types (can specify multiple times)",
+    )
+    sync.add_argument(
+        "--status",
+        action="store_true",
+        help="Show sync status and exit",
+    )
+    sync.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Retry previously failed uploads",
+    )
+    sync.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show detailed upload progress",
+    )
+    sync.set_defaults(func=cmd_sync)
 
     inv = sub.add_parser("invalidate", help="Clear file cache")
     inv.add_argument("--root", required=True, help="Path to repo root")

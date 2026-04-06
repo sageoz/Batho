@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from batho.cloud_sync.config import CloudSyncConfig
 from batho.config import (
     Config,
     FlagsConfig,
@@ -75,11 +76,23 @@ class TestPydanticModels:
         assert isinstance(cfg.flags, FlagsConfig)
         assert isinstance(cfg.hooks, HooksConfig)
         assert isinstance(cfg.rules, RulesConfig)
+        assert isinstance(cfg.cloud_sync, CloudSyncConfig)
         assert cfg.bsg.query.enabled is True
         assert cfg.bsg.storage.backend == "sqlite"
         assert cfg.bsg.storage.content_scope == "durable"
         assert cfg.bsg.storage.cloud_sync_ready is True
         assert cfg.bsg.storage.mmap_enabled is False
+
+    def test_cloud_sync_config_defaults(self):
+        cfg = CloudSyncConfig()
+        assert cfg.enabled is False
+        assert cfg.endpoint == ""
+        assert cfg.api_key == ""
+        assert cfg.organization_id == ""
+        assert cfg.project_id == ""
+        assert cfg.timeout_seconds == 300
+        assert cfg.max_retries == 3
+        assert cfg.batch_size == 10
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +113,7 @@ class TestGetConfig:
         assert "flags" in cfg
         assert "hooks" in cfg
         assert "rules" in cfg
+        assert "cloud_sync" in cfg
         assert "bsg" in cfg
 
     def test_hooks_defaults(self):
@@ -194,6 +208,32 @@ class TestGetConfig:
         assert storage.get("mmap_enabled") is False
         assert storage.get("mmap_min_size_mb") == 8
         assert storage.get("retention", {}).get("snapshot_ttl_days") == 90
+
+    def test_cloud_sync_defaults(self):
+        cfg = get_config()
+        cloud_sync = cfg.get("cloud_sync", {})
+        assert cloud_sync.get("enabled") is False
+        assert cloud_sync.get("endpoint") == ""
+        assert cloud_sync.get("api_key") == ""
+        assert cloud_sync.get("organization_id") == ""
+        assert cloud_sync.get("project_id") == ""
+        assert cloud_sync.get("timeout_seconds") == 300
+        assert cloud_sync.get("max_retries") == 3
+        assert cloud_sync.get("batch_size") == 10
+
+    def test_cloud_sync_env_override(self, monkeypatch):
+        monkeypatch.setenv("BATHO_CLOUD_SYNC_ENABLED", "true")
+        monkeypatch.setenv("BATHO_CLOUD_ENDPOINT", "https://sync.example/v1")
+        monkeypatch.setenv("BATHO_CLOUD_API_KEY", "key_123")
+        monkeypatch.setenv("BATHO_CLOUD_ORG_ID", "org_abc")
+        monkeypatch.setenv("BATHO_CLOUD_PROJECT_ID", "repo_one")
+        cfg = get_config()
+        cloud_sync = cfg.get("cloud_sync", {})
+        assert cloud_sync.get("enabled") is True
+        assert cloud_sync.get("endpoint") == "https://sync.example/v1"
+        assert cloud_sync.get("api_key") == "key_123"
+        assert cloud_sync.get("organization_id") == "org_abc"
+        assert cloud_sync.get("project_id") == "repo_one"
 
     def test_bsg_incremental_env_override(self, monkeypatch):
         monkeypatch.setenv("BATHO_BSG_INCREMENTAL_ENABLED", "false")

@@ -216,6 +216,7 @@ batho <command> --help
 | `cherry-pick` | Apply a patch to another snapshot |
 | `webhook` | Parse/process a webhook payload |
 | `webhook-server` | Start webhook server from `batho.yaml` |
+| `sync` | Sync pending artifacts to configured cloud endpoint |
 | `hooks` | Git client-side hook management (install/remove/run) |
 | `invalidate` | Clear index file cache |
 | `cache` | AST cache management (`stats`, `invalidate`, `clear`) |
@@ -294,6 +295,25 @@ batho storage cleanup --root /path/to/repo          # dry-run
 batho storage cleanup --root /path/to/repo --apply  # execute cleanup
 batho storage stats --root /path/to/repo
 batho storage rebuild-indexes --root /path/to/repo
+```
+
+### Cloud Sync Operations
+
+```bash
+# Preview pending artifacts (no upload)
+batho sync --root /path/to/repo --dry-run
+
+# Sync pending artifacts to cloud endpoint
+export BATHO_CLOUD_SYNC_ENABLED=true
+export BATHO_CLOUD_ENDPOINT="https://sync.batho.dev/v1"
+export BATHO_CLOUD_API_KEY="batho_live_xxxxx"
+batho sync --root /path/to/repo
+
+# Retry only failed artifact uploads
+batho sync --root /path/to/repo --retry-failed
+
+# Show local sync status summary
+batho sync --root /path/to/repo --status
 ```
 
 ### Webhook Operations

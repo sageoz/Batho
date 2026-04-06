@@ -300,6 +300,10 @@ class ArtifactRegistry:
             conn.execute("ALTER TABLE artifacts ADD COLUMN cloud_content_id TEXT")
         if "last_sync_at" not in columns:
             conn.execute("ALTER TABLE artifacts ADD COLUMN last_sync_at TEXT")
+        if "sync_error" not in columns:
+            conn.execute("ALTER TABLE artifacts ADD COLUMN sync_error TEXT")
+        if "retry_count" not in columns:
+            conn.execute("ALTER TABLE artifacts ADD COLUMN retry_count INTEGER DEFAULT 0")
 
     def _ensure_query_tables(self, conn: sqlite3.Connection) -> None:
         conn.execute(
@@ -365,6 +369,8 @@ class ArtifactRegistry:
                         sync_status TEXT,
                         cloud_content_id TEXT,
                         last_sync_at TEXT,
+                        sync_error TEXT,
+                        retry_count INTEGER DEFAULT 0,
                         retention_class TEXT NOT NULL,
                         metadata_json TEXT NOT NULL,
                         created_at TEXT NOT NULL,
@@ -524,6 +530,8 @@ class ArtifactRegistry:
         sync_status = "pending" if self.cloud_sync_ready else "local_only"
         cloud_content_id = str(payload.get("cloud_content_id") or "") or None
         last_sync_at = str(payload.get("last_sync_at") or "") or None
+        sync_error = None
+        retry_count = 0
 
         now = _utc_now_iso()
 
@@ -545,12 +553,14 @@ class ArtifactRegistry:
                         sync_status,
                         cloud_content_id,
                         last_sync_at,
+                        sync_error,
+                        retry_count,
                         retention_class,
                         metadata_json,
                         created_at,
                         updated_at,
                         deleted
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                     ON CONFLICT(artifact_id) DO UPDATE SET
                         content_id=excluded.content_id,
                         artifact_type=excluded.artifact_type,
@@ -564,6 +574,8 @@ class ArtifactRegistry:
                         sync_status=excluded.sync_status,
                         cloud_content_id=excluded.cloud_content_id,
                         last_sync_at=excluded.last_sync_at,
+                        sync_error=excluded.sync_error,
+                        retry_count=excluded.retry_count,
                         retention_class=excluded.retention_class,
                         metadata_json=excluded.metadata_json,
                         updated_at=excluded.updated_at,
@@ -583,6 +595,8 @@ class ArtifactRegistry:
                         sync_status,
                         cloud_content_id,
                         last_sync_at,
+                        sync_error,
+                        retry_count,
                         retention_class,
                         _json_dumps(payload),
                         now,
@@ -675,6 +689,7 @@ class ArtifactRegistry:
             "sync_status": {
                 "pending": 0,
                 "synced": 0,
+                "failed": 0,
                 "conflict": 0,
                 "local_only": 0,
             },
@@ -760,13 +775,153 @@ class ArtifactRegistry:
             cur = conn.execute(
                 """
                 UPDATE artifacts
-                SET sync_status = ?, cloud_content_id = ?, last_sync_at = ?, updated_at = ?
+                SET sync_status = ?, cloud_content_id = ?, last_sync_at = ?, sync_error = NULL, retry_count = 0, updated_at = ?
                 WHERE artifact_id = ? AND deleted = 0
                 """,
                 ("synced", cloud_content_id, timestamp, timestamp, artifact_id),
             )
             conn.commit()
             return int(cur.rowcount) > 0
+
+    def get_pending_artifacts(
+        self,
+        artifact_types: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get artifacts that are pending cloud sync upload."""
+        if not self.enabled or not self._ready:
+            return []
+
+        clauses = ["deleted = 0", "COALESCE(sync_status, 'local_only') = 'pending'"]
+        params: list[Any] = []
+
+        normalized_types = [
+            str(value).strip()
+            for value in (artifact_types or [])
+            if str(value).strip()
+        ]
+        if normalized_types:
+            placeholders = ", ".join("?" for _ in normalized_types)
+            clauses.append(f"artifact_type IN ({placeholders})")
+            params.extend(normalized_types)
+
+        query = (
+            "SELECT artifact_id, content_id, artifact_type, logical_path, physical_path, checksum, "
+            "size_bytes, schema_version, producer, run_id, sync_status, cloud_content_id, "
+            "last_sync_at, sync_error, retry_count, retention_class, metadata_json, created_at, updated_at "
+            "FROM artifacts "
+            f"WHERE {' AND '.join(clauses)} "
+            "ORDER BY updated_at ASC"
+        )
+
+        if limit is not None:
+            query = f"{query} LIMIT ?"
+            params.append(max(1, int(limit)))
+
+        with self._connect(row_factory=True) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+
+        payload: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["metadata"] = _safe_json_loads(str(item.get("metadata_json") or "{}"))
+            item["retry_count"] = int(item.get("retry_count") or 0)
+            payload.append(item)
+        return payload
+
+    def get_failed_artifacts(
+        self,
+        max_retries: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Get artifacts with sync failures that can still be retried."""
+        if not self.enabled or not self._ready:
+            return []
+
+        retries = max(0, int(max_retries))
+        with self._connect(row_factory=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT artifact_id, content_id, artifact_type, logical_path, physical_path, checksum,
+                       size_bytes, schema_version, producer, run_id, sync_status, cloud_content_id,
+                       last_sync_at, sync_error, retry_count, retention_class, metadata_json,
+                       created_at, updated_at
+                FROM artifacts
+                WHERE deleted = 0
+                  AND COALESCE(sync_status, 'local_only') = 'failed'
+                  AND COALESCE(retry_count, 0) < ?
+                ORDER BY updated_at ASC
+                """,
+                (retries,),
+            ).fetchall()
+
+        payload: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["metadata"] = _safe_json_loads(str(item.get("metadata_json") or "{}"))
+            item["retry_count"] = int(item.get("retry_count") or 0)
+            payload.append(item)
+        return payload
+
+    def mark_sync_failed(
+        self,
+        artifact_id: str,
+        error: str,
+        retry_count: int = 0,
+    ) -> bool:
+        """Mark an artifact as failed during cloud sync upload."""
+        if not self.enabled or not self._ready:
+            return False
+
+        now = _utc_now_iso()
+        error_text = str(error or "upload_failed").strip() or "upload_failed"
+        if len(error_text) > 1024:
+            error_text = error_text[:1024]
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE artifacts
+                SET sync_status = ?, sync_error = ?, retry_count = ?, last_sync_at = ?, updated_at = ?
+                WHERE artifact_id = ? AND deleted = 0
+                """,
+                ("failed", error_text, max(0, int(retry_count)), now, now, artifact_id),
+            )
+            conn.commit()
+            return int(cur.rowcount) > 0
+
+    def get_sync_summary(self) -> dict[str, Any]:
+        """Return counts by sync status for active artifacts."""
+        summary = {
+            "pending": 0,
+            "synced": 0,
+            "failed": 0,
+            "conflict": 0,
+            "local_only": 0,
+            "total": 0,
+        }
+        if not self.enabled or not self._ready:
+            return summary
+
+        with self._connect(row_factory=True) as conn:
+            total_row = conn.execute(
+                "SELECT COUNT(*) AS count FROM artifacts WHERE deleted = 0"
+            ).fetchone()
+            summary["total"] = int(total_row["count"] if total_row else 0)
+
+            rows = conn.execute(
+                """
+                SELECT COALESCE(sync_status, 'local_only') AS sync_status, COUNT(*) AS count
+                FROM artifacts
+                WHERE deleted = 0
+                GROUP BY COALESCE(sync_status, 'local_only')
+                """
+            ).fetchall()
+
+        for row in rows:
+            key = str(row["sync_status"])
+            summary[key] = int(row["count"])
+
+        return summary
 
     def _active_artifacts(self) -> list[dict[str, Any]]:
         if not self.enabled or not self._ready:
@@ -1294,6 +1449,42 @@ def cleanup_registry(
 def get_registry_stats(ctn_dir: Path) -> dict[str, Any]:
     registry = get_artifact_registry(ctn_dir)
     return registry.stats()
+
+
+def get_pending_artifacts(
+    ctn_dir: Path,
+    artifact_types: list[str] | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    registry = get_artifact_registry(ctn_dir)
+    return registry.get_pending_artifacts(artifact_types=artifact_types, limit=limit)
+
+
+def get_failed_artifacts(
+    ctn_dir: Path,
+    max_retries: int = 3,
+) -> list[dict[str, Any]]:
+    registry = get_artifact_registry(ctn_dir)
+    return registry.get_failed_artifacts(max_retries=max_retries)
+
+
+def mark_sync_failed(
+    ctn_dir: Path,
+    artifact_id: str,
+    error: str,
+    retry_count: int = 0,
+) -> bool:
+    registry = get_artifact_registry(ctn_dir)
+    return registry.mark_sync_failed(
+        artifact_id=artifact_id,
+        error=error,
+        retry_count=retry_count,
+    )
+
+
+def get_sync_summary(ctn_dir: Path) -> dict[str, Any]:
+    registry = get_artifact_registry(ctn_dir)
+    return registry.get_sync_summary()
 
 
 def rebuild_query_index(

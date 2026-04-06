@@ -10,6 +10,7 @@ from batho.context.storage import (
     backfill_registry,
     cleanup_registry,
     describe_artifact,
+    get_artifact_registry,
     get_registry_stats,
     infer_ctn_dir_for_path,
     persist_bytes,
@@ -501,3 +502,58 @@ def test_get_registry_stats_reports_sync_and_artifact_counts(tmp_path: Path) -> 
     assert stats.get("content_blob_count", 0) >= 1
     sync_status = stats.get("sync_status", {})
     assert sync_status.get("pending", 0) >= 1
+
+
+def test_registry_sync_failure_lifecycle_methods(tmp_path: Path) -> None:
+    ctn_dir = tmp_path / ".ctn"
+    ctn_dir.mkdir()
+
+    payload_path = ctn_dir / "graph.json"
+    payload_path.write_text('{"ok": true}', encoding="utf-8")
+    assert register_artifact(
+        ctn_dir,
+        payload_path,
+        "graph_json",
+        producer="test",
+        schema_version="graph.v1",
+    )
+
+    registry = get_artifact_registry(ctn_dir)
+    pending = registry.get_pending_artifacts()
+    assert len(pending) == 1
+    artifact_id = str(pending[0].get("artifact_id"))
+
+    assert registry.mark_sync_failed(artifact_id, "network timeout", retry_count=1)
+
+    failed = registry.get_failed_artifacts(max_retries=3)
+    assert len(failed) == 1
+    assert failed[0].get("artifact_id") == artifact_id
+    assert failed[0].get("retry_count") == 1
+    assert failed[0].get("sync_error") == "network timeout"
+
+    summary = registry.get_sync_summary()
+    assert summary.get("failed", 0) == 1
+    assert summary.get("pending", 0) == 0
+    assert summary.get("total", 0) == 1
+
+
+def test_get_failed_artifacts_respects_max_retries(tmp_path: Path) -> None:
+    ctn_dir = tmp_path / ".ctn"
+    ctn_dir.mkdir()
+
+    payload_path = ctn_dir / "metrics.json"
+    payload_path.write_text('{"ok": true}', encoding="utf-8")
+    assert register_artifact(
+        ctn_dir,
+        payload_path,
+        "metrics_json",
+        producer="test",
+        schema_version="metrics.v1",
+    )
+
+    registry = get_artifact_registry(ctn_dir)
+    artifact_id = registry.get_pending_artifacts()[0]["artifact_id"]
+    assert registry.mark_sync_failed(str(artifact_id), "retry exhausted", retry_count=3)
+
+    failed = registry.get_failed_artifacts(max_retries=3)
+    assert failed == []

@@ -85,6 +85,39 @@ class TestBuildParser:
         assert args.storage_command == "cleanup"
         assert args.apply is True
 
+    def test_sync_command_defaults(self, parser):
+        args = parser.parse_args(["sync"])
+        assert args.command == "sync"
+        assert args.root == "."
+        assert args.dry_run is False
+        assert args.status is False
+        assert args.retry_failed is False
+        assert args.verbose is False
+
+    def test_sync_command_options(self, parser):
+        args = parser.parse_args(
+            [
+                "sync",
+                "--root",
+                "/tmp/repo",
+                "--dry-run",
+                "--status",
+                "--retry-failed",
+                "--type",
+                "graph_json",
+                "--type",
+                "snapshot_json",
+                "--verbose",
+            ]
+        )
+        assert args.command == "sync"
+        assert args.root == "/tmp/repo"
+        assert args.dry_run is True
+        assert args.status is True
+        assert args.retry_failed is True
+        assert args.artifact_types == ["graph_json", "snapshot_json"]
+        assert args.verbose is True
+
     def test_query_command(self, parser):
         args = parser.parse_args([
             "query",

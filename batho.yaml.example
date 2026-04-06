@@ -138,6 +138,16 @@ webhook:
   gitlab_token: null        # Optional top-level token override
   allowed_ips: []           # Optional global allowlist (IPs/CIDRs)
 
+cloud_sync:
+  enabled: false
+  endpoint: https://sync.batho.dev/v1
+  api_key: ${BATHO_CLOUD_API_KEY}
+  organization_id: ""
+  project_id: ""           # Defaults to repo folder name when empty
+  timeout_seconds: 300
+  max_retries: 3
+  batch_size: 10
+
 bsg:
   parallel:
     enabled: true
