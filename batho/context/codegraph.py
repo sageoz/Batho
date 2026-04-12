@@ -37,6 +37,7 @@ from batho.utils.hash import compute_bytes_hash
 from batho.utils.ignore import is_ignored, load_ignore_spec
 from batho.utils.logging import get_logger
 from batho.utils.memory_monitor import memory_monitor, force_garbage_collection
+import batho.utils.memory_monitor
 
 from .cache import ASTCache
 from .extractor import ASTExtractor
@@ -565,7 +566,7 @@ class CodeGraphIndexer:
         if monitor and hasattr(monitor, "get_memory_stats"):
             final_stats = monitor.get_memory_stats()
             if final_stats.rss_mb > 500:  # If memory usage is high
-                gc_result = force_garbage_collection()
+                gc_result = batho.utils.memory_monitor.force_garbage_collection()
                 self.logger.info(
                     "memory_cleanup_performed",
                     memory_before_mb=f"{final_stats.rss_mb:.1f}",
@@ -745,7 +746,7 @@ class CodeGraphIndexer:
 
         # Force garbage collection for large operations
         if len(candidates) > 1000:
-            gc_stats = force_garbage_collection()
+            gc_stats = batho.utils.memory_monitor.force_garbage_collection()
             self.logger.info("gc_completed", **gc_stats)
 
         return graph
