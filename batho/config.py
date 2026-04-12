@@ -69,6 +69,20 @@ class LoggingConfig(BaseModel):
     json_format: Optional[bool] = Field(
         default=None, description="Force JSON logs when True, console when False"
     )
+    quiet: bool = Field(default=False, description="Suppress all non-error output")
+    file: Optional[str] = Field(default=None, description="Optional log file path")
+    format: str = Field(default="%(message)s", description="Log format string")
+
+    @field_validator("quiet", mode="before")
+    @classmethod
+    def _normalize_quiet(cls, value: Any) -> bool:  # noqa: B902
+        if value is None:
+            return False
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
     @property
     def std_level(self) -> int:
@@ -80,6 +94,12 @@ class LoggingConfig(BaseModel):
             "ERROR": logging.ERROR,
             "CRITICAL": logging.CRITICAL,
         }.get(name, logging.INFO)
+
+    @property
+    def effective_level(self) -> int:
+        if self.quiet:
+            return logging.ERROR
+        return self.std_level
 
 
 class PathsConfig(BaseModel):
@@ -206,12 +226,8 @@ class BsgStorageRetentionConfig(BaseModel):
         default=DEFAULT_STORAGE_RETENTION_SNAPSHOT_DAYS, ge=1
     )
     patch_ttl_days: int = Field(default=DEFAULT_STORAGE_RETENTION_PATCH_DAYS, ge=1)
-    metrics_ttl_days: int = Field(
-        default=DEFAULT_STORAGE_RETENTION_METRICS_DAYS, ge=1
-    )
-    context_ttl_days: int = Field(
-        default=DEFAULT_STORAGE_RETENTION_CONTEXT_DAYS, ge=1
-    )
+    metrics_ttl_days: int = Field(default=DEFAULT_STORAGE_RETENTION_METRICS_DAYS, ge=1)
+    context_ttl_days: int = Field(default=DEFAULT_STORAGE_RETENTION_CONTEXT_DAYS, ge=1)
     max_snapshots: int = Field(default=DEFAULT_STORAGE_RETENTION_MAX_SNAPSHOTS, ge=1)
     max_patches: int = Field(default=DEFAULT_STORAGE_RETENTION_MAX_PATCHES, ge=1)
 
@@ -255,7 +271,9 @@ class BsgConfig(BaseModel):
     symbol_resolution: BsgSymbolResolutionConfig = Field(
         default_factory=BsgSymbolResolutionConfig
     )
-    serialization: BsgSerializationConfig = Field(default_factory=BsgSerializationConfig)
+    serialization: BsgSerializationConfig = Field(
+        default_factory=BsgSerializationConfig
+    )
     parsing: BsgParsingConfig = Field(default_factory=BsgParsingConfig)
     query: BsgQueryConfig = Field(default_factory=BsgQueryConfig)
     storage: BsgStorageConfig = Field(default_factory=BsgStorageConfig)
@@ -355,7 +373,13 @@ def get_config() -> Dict[str, Any]:
     """Return validated config as a plain dict sourced from ./batho.yaml."""
 
     base_cfg: Dict[str, Any] = {
-        "logging": {"level": DEFAULT_LOG_LEVEL, "json_format": None},
+        "logging": {
+            "level": DEFAULT_LOG_LEVEL,
+            "json_format": None,
+            "quiet": False,
+            "file": None,
+            "format": "%(message)s",
+        },
         "paths": {"ctn_dir": DEFAULT_CTN_DIR},
         "indexer": {
             "max_file_size_kb": DEFAULT_MAX_FILE_SIZE_KB,
@@ -525,6 +549,19 @@ def get_config() -> Dict[str, Any]:
         _env("BATHO_LOG_LEVEL", base_cfg["logging"]["level"])
         or base_cfg["logging"]["level"]
     )
+    base_cfg["logging"]["quiet"] = _env_bool(
+        "BATHO_LOG_QUIET", base_cfg["logging"].get("quiet", False)
+    )
+    env_log_json = os.getenv("BATHO_LOG_JSON")
+    if env_log_json is not None:
+        base_cfg["logging"]["json_format"] = env_log_json.lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+    env_log_file = _env("BATHO_LOG_FILE")
+    if env_log_file is not None:
+        base_cfg["logging"]["file"] = env_log_file
     base_cfg["paths"]["ctn_dir"] = (
         _env("BATHO_CTN_DIR", base_cfg["paths"]["ctn_dir"])
         or base_cfg["paths"]["ctn_dir"]

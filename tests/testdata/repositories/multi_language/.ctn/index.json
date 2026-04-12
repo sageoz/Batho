@@ -1,5 +1,5 @@
 {
-  "current_index_id": "batho_64fea1f30cc64a9991f97b24ad3b3b3b_20260405T174820Z",
+  "current_index_id": "batho_b2d72731aba34252bd7e3abb2de7dce2_20260412T050235Z",
   "indexes": {
     "batho_374a4d05ce494fa59fc7248faa9f24af_20260403T181856Z": {
       "id": "batho_374a4d05ce494fa59fc7248faa9f24af_20260403T181856Z",
@@ -4413,9 +4413,139 @@
         "query_index_on_write": true,
         "mmap_enabled": false
       }
+    },
+    "batho_b2d72731aba34252bd7e3abb2de7dce2_20260412T050235Z": {
+      "id": "batho_b2d72731aba34252bd7e3abb2de7dce2_20260412T050235Z",
+      "timestamp": "2026-04-12T05:02:36.015715+00:00",
+      "root": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language",
+      "file_count": 6,
+      "entity_count": 35,
+      "relationship_count": 2,
+      "repo_hash": "7d4a296e4d99cce879b57a151d879936fae011aba2135aaf1b06d1fed0b1f0b8",
+      "staleness_score": 0.5,
+      "stack": {
+        "languages": [
+          "Python",
+          "Node.js"
+        ],
+        "frameworks": [
+          "Docker",
+          "React",
+          "React DOM",
+          "TypeScript",
+          "Vite"
+        ],
+        "build_tools": [
+          "npm"
+        ],
+        "package_managers": [],
+        "infra": [
+          "docker"
+        ]
+      },
+      "outputs": {
+        "graph_json": ".ctn/batho_b2d72731aba34252bd7e3abb2de7dce2_20260412T050235Z/graph.json",
+        "bsg_json": ".ctn/batho_b2d72731aba34252bd7e3abb2de7dce2_20260412T050235Z/bsg.json",
+        "overview_md": ".ctn/batho_b2d72731aba34252bd7e3abb2de7dce2_20260412T050235Z/context/overview.md",
+        "architecture_md": ".ctn/batho_b2d72731aba34252bd7e3abb2de7dce2_20260412T050235Z/context/architecture.md",
+        "tests_md": ".ctn/batho_b2d72731aba34252bd7e3abb2de7dce2_20260412T050235Z/context/tests.md",
+        "docs_md": ".ctn/batho_b2d72731aba34252bd7e3abb2de7dce2_20260412T050235Z/context/docs.md",
+        "config_md": ".ctn/batho_b2d72731aba34252bd7e3abb2de7dce2_20260412T050235Z/context/config.md"
+      },
+      "stats": {
+        "files_candidates": 6,
+        "files_parsed": 6,
+        "files_skipped": 0,
+        "files_cached": 6,
+        "errors": 0,
+        "entity_count": 35,
+        "relationship_count": 2,
+        "elapsed_seconds": 0.18000006675720215,
+        "workers_used": 4,
+        "symbol_resolution_enabled": true,
+        "symbol_resolution_fuzzy": false,
+        "symbol_index_size": 48,
+        "derived_hierarchy_edges": 2,
+        "derived_overrides_edges": 0,
+        "semantic_tags_added": 3,
+        "semantic_edges_added": 0,
+        "rules_enabled": true,
+        "rules_loaded": 15,
+        "rules_applied": 4,
+        "entities_rule_tagged": 35,
+        "rules": {
+          "enabled": true,
+          "cache_hit": true,
+          "cache_path": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language/.ctn/rules_cache.bin",
+          "builtin_plugins_requested": 10,
+          "builtin_plugins_loaded": 10,
+          "rules_loaded": 15,
+          "rules_disabled": 0,
+          "custom_inline_count": 0,
+          "custom_file_count": 0,
+          "overrides_applied": 0,
+          "shadowed_rules": [],
+          "errors": [],
+          "entities_updated": 35,
+          "rules_applied": 4,
+          "semantic_tags_added": 0,
+          "semantic_edges_added": 0,
+          "plugin_hits": {
+            "bsg_graph_foundation": 60,
+            "bsg_schema_migration_enforcer": 3
+          },
+          "rule_hits": {
+            "bsg-category-config": 21,
+            "bsg-derive-scope-tier": 35,
+            "bsg-derive-service-tag": 4,
+            "orm-schema-migration-risk": 3
+          },
+          "interception_totals": {
+            "bsg_graph_foundation": 2100,
+            "bsg_schema_migration_enforcer": 105
+          },
+          "interception_stats_path": "/Users/rishirajsharma/Sageoz/batho/tests/testdata/repositories/multi_language/.ctn/interception_stats.json"
+        },
+        "loc_total": 113,
+        "repo_size_bytes": 2087,
+        "file_count_total": 8,
+        "text_files_count": 8,
+        "skipped_files_count": 0,
+        "bsg_quality_warnings": 1,
+        "bsg_quality_warning_samples": [
+          "auto-derived service_tag for 31 nodes"
+        ],
+        "query_entities_indexed": 35,
+        "query_relationships_indexed": 2
+      },
+      "metrics": {
+        "file_count_total": 8,
+        "repo_size_bytes": 2087,
+        "loc_total": 113,
+        "text_files_count": 8,
+        "skipped_files_count": 0,
+        "token_input_estimate": 403,
+        "cache_hit_rate": 0.5
+      },
+      "build": {
+        "version": "0.1.0",
+        "build": ""
+      },
+      "schemas": {
+        "graph": "graph.v1",
+        "bsg": "bsg.v1",
+        "snapshot": "snapshot.v1",
+        "index_metadata": "index-metadata.v1",
+        "file_cache": "file-cache.v1"
+      },
+      "persistence": {
+        "model": "ctn-artifact-registry.v1",
+        "query_index_on_write": true,
+        "mmap_enabled": false
+      }
     }
   },
   "schema_version": "index-metadata.v1",
-  "_checksum": "20703a4f42a60ef458029792a36e88322118f46669cd0d626267908bc37de6e8",
+  "_checksum": "7cc2240536200d51f38a21cd3df3814fc5cc6856861bdcbb142e0db6fa4b2372",
   "persistence_model": "ctn-artifact-registry.v1"
 }

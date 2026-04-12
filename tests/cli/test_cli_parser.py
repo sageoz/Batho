@@ -21,6 +21,25 @@ class TestBuildParser:
         assert args.command == "index"
         assert args.root == "/tmp/repo"
 
+    def test_global_logging_flags(self, parser):
+        args = parser.parse_args(
+            [
+                "--log-level",
+                "DEBUG",
+                "--quiet",
+                "--log-json",
+                "--log-file",
+                "logs/batho.log",
+                "stats",
+                "--root",
+                "/tmp/repo",
+            ]
+        )
+        assert args.log_level == "DEBUG"
+        assert args.quiet is True
+        assert args.log_json is True
+        assert args.log_file == "logs/batho.log"
+
     def test_index_with_extensions(self, parser):
         args = parser.parse_args(["index", "--root", "/tmp", "--extensions", ".py", ".ts"])
         assert args.extensions == [".py", ".ts"]

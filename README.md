@@ -190,6 +190,73 @@ pip install -e .           # development (editable)
 
 ---
 
+## Developer Setup (uv)
+
+Use this section when you want to contribute to Batho locally, run tests, and verify the CLI from source.
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/batho-ai/batho.git
+cd batho
+```
+
+### 2. Install project dependencies for development and testing
+
+```bash
+uv sync --all-groups --all-extras
+```
+
+This creates and syncs the project environment with runtime, test, and dev dependencies.
+
+### 3. Run tests
+
+```bash
+# Full suite
+uv run pytest
+
+# Optional: focused checks while iterating
+uv run pytest tests/core/test_config.py -q
+uv run pytest tests/utils/test_logging.py -q
+```
+
+### 4. Run the CLI directly from local source
+
+This path is best during development because it always uses your current working tree.
+
+```bash
+uv run python -m batho_cli --help
+uv run python -m batho_cli index --root .
+```
+
+### 5. Reinstall the global batho command from your local source
+
+Use this when you want the plain batho command to reflect your latest local code.
+
+```bash
+uv tool install --reinstall .
+hash -r
+batho index --root .
+```
+
+### 6. Quick troubleshooting
+
+If behavior differs between local and global runs, compare both paths:
+
+```bash
+uv run python -m batho_cli index --root .
+batho index --root .
+```
+
+If they differ, reinstall the tool again:
+
+```bash
+uv tool install --reinstall .
+hash -r
+```
+
+---
+
 ## CLI Reference
 
 ```bash
@@ -391,10 +458,18 @@ hooks:
 | `--base-snapshot` | auto | Prefer this snapshot for incremental indexing |
 | `--output-json` | none | Optional override path for graph JSON output |
 | `--metrics-output` | from config | Write metrics JSON to explicit path |
-| `--log-json` | off | JSON structured logs (useful in CI) |
 | `--verbose` | off | Print progress to stdout |
 | `--snapshot` | off | Create snapshot after indexing |
 | `--snapshot-label` | none | Attach label to generated snapshot |
+
+### Global Logging Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--log-level` | from config | Override logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) |
+| `-q`, `--quiet` | from config | Suppress non-error CLI output and log events below `ERROR` |
+| `--log-json` | off | Force JSON log output (useful in CI) |
+| `--log-file` | from config | Write logs to the specified file path |
 
 ### BSG Options
 
@@ -503,11 +578,16 @@ Configuration precedence:
 3. Environment variables (override file values)
 4. CLI flags (override for a specific run)
 
+Output behavior:
+
+- User-facing command output is written to stdout.
+- Warnings/errors and operational logs are written to stderr.
+
 ### Core Config Areas
 
 | Area | Keys | What it controls |
 |----------|------|------------------|
-| `logging` | `level`, `json_format` | Console/JSON logging behavior |
+| `logging` | `level`, `json_format`, `quiet`, `file`, `format` | Process-wide logging and CLI verbosity behavior |
 | `paths` | `ctn_dir` | Artifact output directory |
 | `indexer` | `max_file_size_kb`, `max_workers`, `max_indexed_files`, `ignore_*`, `metrics_output` | Base indexing limits and outputs |
 | `rules` | `enabled`, `builtin_plugins`, `custom_rules_*`, `strict_validation` | Rule plugins and metadata enrichment |
@@ -528,6 +608,9 @@ Configuration precedence:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BATHO_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `BATHO_LOG_JSON` | `null` | Force JSON logs (`true`) or leave auto mode (`unset`) |
+| `BATHO_LOG_QUIET` | `false` | Suppress non-error output globally |
+| `BATHO_LOG_FILE` | unset | Optional log file path |
 | `BATHO_CTN_DIR` | `.ctn` | Output directory |
 | `BATHO_MAX_FILE_SIZE_KB` | `500` | Max file size to parse |
 | `BATHO_MAX_INDEXED_FILES` | `200000` | Hard cap on indexed files |
@@ -552,6 +635,9 @@ Configuration precedence:
 logging:
   level: DEBUG
   json_format: true
+  quiet: false
+  file: .ctn/batho.log
+  format: "%(message)s"
 
 indexer:
   max_file_size_kb: 1000

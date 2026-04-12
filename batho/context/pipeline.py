@@ -21,9 +21,22 @@ from batho.context.cache import ASTCache
 from batho.context.extractor import ASTExtractor
 from batho.context.schema import Entity, Relationship
 from batho.utils.file_io import _read_file_content
-from batho.utils.logging import get_logger
+from batho.utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__, component="pipeline")
+_WORKER_LOGGING_INITIALIZED = False
+
+
+def _initialize_worker_logging(log_config: dict[str, Any] | None) -> None:
+    """Apply configured logging once per worker process."""
+
+    global _WORKER_LOGGING_INITIALIZED
+
+    if _WORKER_LOGGING_INITIALIZED:
+        return
+
+    configure_logging(log_config or {})
+    _WORKER_LOGGING_INITIALIZED = True
 
 
 # ---------------------------------------------------------------------------
@@ -250,9 +263,15 @@ def build_graph_parallel(
 
     # Use multiprocessing for parallel processing
     try:
+        from batho.config import get_config_cached
         from multiprocessing import Pool
 
-        with Pool(processes=actual_workers) as pool:
+        worker_log_config = dict(get_config_cached().get("logging", {}))
+        with Pool(
+            processes=actual_workers,
+            initializer=_initialize_worker_logging,
+            initargs=(worker_log_config,),
+        ) as pool:
             results = pool.starmap(process_file_worker, work_items, chunksize=chunk_size)
     except ImportError:
         logger.warning("multiprocessing_unavailable", fallback="sequential")

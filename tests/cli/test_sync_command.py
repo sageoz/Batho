@@ -64,7 +64,7 @@ def test_cmd_sync_requires_enabled_for_upload(tmp_path: Path, monkeypatch: pytes
 
     result = cmd_sync(_base_args(root, dry_run=False))
     assert result == 1
-    assert "Cloud sync is disabled" in capsys.readouterr().out
+    assert "Cloud sync is disabled" in capsys.readouterr().err
 
 
 def test_cmd_sync_dry_run_uses_uploader_summary(

@@ -537,7 +537,10 @@ class CodeGraphIndexer:
                     break
 
             if verbose:
-                print(f"  📁 Found {len(candidates)} candidate files")
+                self.logger.info(
+                    "index_candidates_discovered",
+                    candidates=len(candidates),
+                )
 
             # --- Parallel extraction (single pass: cache skips parse) ---
             if configured_max_workers > 0:
@@ -732,9 +735,12 @@ class CodeGraphIndexer:
                 pass
 
         if verbose:
-            print(
-                f"  ✓ Indexed {files_parsed} files → {len(graph.entities)} entities "
-                f"(skipped {files_skipped}, cached {files_cached})"
+            self.logger.info(
+                "index_verbose_summary",
+                files_parsed=files_parsed,
+                entity_count=len(graph.entities),
+                files_skipped=files_skipped,
+                files_cached=files_cached,
             )
 
         # Force garbage collection for large operations

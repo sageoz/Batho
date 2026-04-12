@@ -8,6 +8,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from batho.hooks.planner import ResolvedStage
+from batho.utils.logging import get_logger
+
+
+LOGGER = get_logger(__name__, component="hooks_runner")
 
 
 class HookExecutionError(RuntimeError):
@@ -112,9 +116,13 @@ def execute_hook(
         stage_results.append(stage_result)
 
         if verbose:
-            print(
-                f"[{hook_name}] {stage.name}: {outcome}"
-                f" (rc={stage_result.returncode}, timeout={stage.timeout_seconds}s)"
+            LOGGER.info(
+                "hook_stage_executed",
+                hook=hook_name,
+                stage=stage.name,
+                outcome=outcome,
+                returncode=stage_result.returncode,
+                timeout_seconds=stage.timeout_seconds,
             )
 
         if stage_result.returncode == 0:
@@ -123,9 +131,11 @@ def execute_hook(
         if stage.on_failure == "continue":
             continue
         if stage.on_failure == "warn":
-            print(
-                f"⚠️  Stage '{stage.name}' failed for hook '{hook_name}'"
-                f" with rc={stage_result.returncode}"
+            LOGGER.warning(
+                "hook_stage_failed_warn",
+                hook=hook_name,
+                stage=stage.name,
+                returncode=stage_result.returncode,
             )
             continue
 

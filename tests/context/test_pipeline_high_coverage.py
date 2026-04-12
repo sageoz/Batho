@@ -217,8 +217,11 @@ def test_build_graph_parallel_collects_valid_results(tmp_path: Path, monkeypatch
     monkeypatch.setattr(pipeline.os, "cpu_count", lambda: 0)
 
     class _Pool:
-        def __init__(self, processes: int):
+        def __init__(self, processes: int, initializer=None, initargs=()):
             self.processes = processes
+            assert callable(initializer)
+            assert isinstance(initargs, tuple)
+            assert isinstance(initargs[0], dict)
 
         def __enter__(self):
             return self
@@ -255,8 +258,10 @@ def test_build_graph_parallel_falls_back_when_pool_is_unavailable(
     monkeypatch.setattr(pipeline, "_read_file_content", lambda *_args, **_kwargs: b"x")
 
     class _ImportErrorPool:
-        def __init__(self, processes: int):
+        def __init__(self, processes: int, initializer=None, initargs=()):
             self.processes = processes
+            self.initializer = initializer
+            self.initargs = initargs
 
         def __enter__(self):
             raise ImportError("multiprocessing unavailable")
@@ -276,6 +281,19 @@ def test_build_graph_parallel_falls_back_when_pool_is_unavailable(
     )
 
     assert result == sentinel
+
+
+def test_initialize_worker_logging_is_idempotent(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    monkeypatch.setattr(pipeline, "configure_logging", lambda cfg: calls.append(cfg))
+    pipeline._WORKER_LOGGING_INITIALIZED = False
+
+    pipeline._initialize_worker_logging({"level": "ERROR"})
+    pipeline._initialize_worker_logging({"level": "DEBUG"})
+
+    assert calls == [{"level": "ERROR"}]
+    pipeline._WORKER_LOGGING_INITIALIZED = False
 
 
 def test_build_graph_sequential_counts_errors_and_success(tmp_path: Path, monkeypatch) -> None:

@@ -35,10 +35,17 @@ class TestPydanticModels:
         cfg = LoggingConfig()
         assert cfg.level == "INFO"
         assert cfg.json_format is None
+        assert cfg.quiet is False
+        assert cfg.file is None
+        assert cfg.format == "%(message)s"
 
     def test_logging_std_level(self):
         cfg = LoggingConfig(level="DEBUG")
         assert cfg.std_level == logging.DEBUG
+
+    def test_logging_quiet_none_normalized(self):
+        cfg = LoggingConfig(quiet=None)
+        assert cfg.quiet is False
 
     def test_paths_config_defaults(self):
         cfg = PathsConfig()
@@ -137,6 +144,18 @@ class TestGetConfig:
         monkeypatch.setenv("BATHO_LOG_LEVEL", "DEBUG")
         cfg = get_config()
         assert cfg["logging"]["level"] == logging.DEBUG
+
+    def test_env_override_log_quiet(self, monkeypatch):
+        monkeypatch.setenv("BATHO_LOG_QUIET", "true")
+        cfg = get_config()
+        assert cfg["logging"]["quiet"] is True
+
+    def test_env_override_log_json_and_file(self, monkeypatch):
+        monkeypatch.setenv("BATHO_LOG_JSON", "true")
+        monkeypatch.setenv("BATHO_LOG_FILE", "logs/batho.log")
+        cfg = get_config()
+        assert cfg["logging"]["json_format"] is True
+        assert cfg["logging"]["file"] == "logs/batho.log"
 
     def test_env_override_ctn_dir(self, monkeypatch):
         monkeypatch.setenv("BATHO_CTN_DIR", ".custom_ctn")
@@ -279,6 +298,16 @@ class TestConfigFileLoading:
         get_config_cached.cache_clear()
         cfg = get_config()
         assert cfg["logging"]["level"] == logging.ERROR
+
+    def test_root_yaml_config_quiet_null_does_not_fallback(self, tmp_path: Path, monkeypatch):
+        cfg_file = tmp_path / "batho.yaml"
+        cfg_file.write_text("logging:\n  level: ERROR\n  quiet: null\n")
+        monkeypatch.chdir(tmp_path)
+
+        get_config_cached.cache_clear()
+        cfg = get_config()
+        assert cfg["logging"]["level"] == logging.ERROR
+        assert cfg["logging"]["quiet"] is False
 
     def test_root_yaml_hooks_pointer(self, tmp_path: Path, monkeypatch):
         cfg_file = tmp_path / "batho.yaml"

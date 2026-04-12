@@ -4,6 +4,9 @@
 logging:
   level: INFO               # DEBUG | INFO | WARNING | ERROR | CRITICAL
   json_format: null         # true = JSON logs, false = console logs, null = auto
+  quiet: false              # Suppress all non-error output
+  file: null                # Optional log file path (e.g. .ctn/batho.log)
+  format: "%(message)s"     # Log format string
 
 paths:
   ctn_dir: .ctn             # Output/index directory
