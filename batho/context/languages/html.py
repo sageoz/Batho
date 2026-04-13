@@ -76,25 +76,8 @@ class HTMLExtractor(MarkupConfigExtractor):
                 start_line = get_line_from_offset(start_byte)
                 end_line = get_line_from_offset(end_byte)
 
-                # Create element entity
-                element = self._create_entity(
-                    entity_type=EntityType.ELEMENT,
-                    name=tag_name,
-                    filepath=filepath,
-                    start_line=start_line,
-                    end_line=end_line,
-                    start_byte=start_byte,
-                    end_byte=end_byte,
-                    metadata={
-                        "language": "html",
-                        "tag_name": tag_name,
-                        "self_closing": is_self_closing,
-                    },
-                )
-                entities.append(element)
-                self._entity_ids[f"{tag_name}:{start_byte}"] = element
-
-                # Extract attributes
+                # Parse attributes into dict
+                element_attributes = {}
                 if attrs_str:
                     attr_pattern = re.compile(
                         r"([a-zA-Z][a-zA-Z0-9\-:]*)"  # Attribute name
@@ -107,22 +90,28 @@ class HTMLExtractor(MarkupConfigExtractor):
                         attr_value = (
                             attr_match.group(2) or attr_match.group(3) or attr_match.group(4) or ""
                         )
+                        element_attributes[attr_name] = attr_value
 
-                        attr_entity = self._create_entity(
-                            entity_type=EntityType.ATTRIBUTE,
-                            name=f"{tag_name}.{attr_name}",
-                            filepath=filepath,
-                            start_line=start_line,
-                            end_line=end_line,
-                            start_byte=start_byte,
-                            end_byte=end_byte,
-                            metadata={
-                                "language": "html",
-                                "attribute_name": attr_name,
-                                "attribute_value": attr_value,
-                            },
-                        )
-                        entities.append(attr_entity)
+                # Create element entity with attributes in metadata
+                element = self._create_entity(
+                    entity_type=EntityType.ELEMENT,
+                    name=tag_name,
+                    filepath=filepath,
+                    start_line=start_line,
+                    end_line=end_line,
+                    start_byte=start_byte,
+                    end_byte=end_byte,
+                    metadata={
+                        "language": "html",
+                        "tag_name": tag_name,
+                        "self_closing": is_self_closing,
+                        "attributes": element_attributes,
+                    },
+                )
+                entities.append(element)
+                self._entity_ids[f"{tag_name}:{start_byte}"] = element
+                
+                # DO NOT create separate ATTRIBUTE entities - stored in metadata
 
             # Also track the document itself
             doc_entity = self._create_entity(
@@ -170,26 +159,10 @@ class HTMLExtractor(MarkupConfigExtractor):
 
             # Build entity lookup
             elements = {e.name: e for e in entities if e.type == EntityType.ELEMENT}
-            attributes = {e.name: e for e in entities if e.type == EntityType.ATTRIBUTE}
             documents = {e.name: e for e in entities if e.type == EntityType.DOCUMENT}
             doc = documents.get("document")
 
-            # Create HAS_ATTRIBUTE relationships (element → attribute)
-            for attr_entity in [e for e in entities if e.type == EntityType.ATTRIBUTE]:
-                # Parse element name from attribute name
-                parts = attr_entity.name.split(".", 1)
-                if len(parts) == 2:
-                    element_name = parts[0]
-                    element = elements.get(element_name)
-                    if element:
-                        relationships.append(
-                            self._create_relationship(
-                                source_id=element.id,
-                                target_id=attr_entity.id,
-                                rel_type=RelationshipType.HAS_ATTRIBUTE,
-                                line=attr_entity.start_line,
-                            )
-                        )
+            # No HAS_ATTRIBUTE relationships - attributes are in element metadata
 
             # Create CONTAINS relationships (document → elements)
             if doc:

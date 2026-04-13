@@ -1,0 +1,184 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_token_optimization
+name: BSG Token Optimization
+version: 1.0.0
+enabled: true
+description: |
+  Token reduction and semantic normalization rules for BSG graph compression.
+  Implements docstring truncation, test fixture detection, entry point normalization,
+  and metadata cleanup to reduce token bloat by 60-80%.
+
+rules:
+  # ============================================================================
+  # Docstring Truncation
+  # ============================================================================
+  - rule_id: bsg-truncate-long-docstrings
+    name: Truncate Long Docstrings
+    description: Truncate docstrings exceeding max_docstring_length to prevent token bloat
+    severity: info
+    priority: 300
+    enabled: true
+    matchers:
+      entity_types:
+        - FUNCTION
+        - METHOD
+        - CLASS
+        - MODULE
+      metadata_conditions:
+        - key: docstring
+          operator: length_gt
+          value: 150  # configurable via config.bsg.parsing.max_docstring_length
+    actions:
+      truncate_docstring: true
+      max_docstring_length: 150
+      add_usn_tags:
+        - DocstringTruncated
+
+  # ============================================================================
+  # Test Fixture Detection
+  # ============================================================================
+  - rule_id: bsg-omit-test-fixtures
+    name: Omit Test Fixture Docstrings
+    description: |
+      Replace large test fixture docstrings with placeholder to prevent
+      JSON/YAML/HTML test data from polluting the graph
+    severity: info
+    priority: 310
+    enabled: true
+    matchers:
+      file_patterns:
+        - tests/**
+        - '**/tests/**'
+        - '**/test_*.py'
+        - '**/*_test.py'
+        - '**/*.spec.ts'
+        - '**/*.spec.js'
+        - '**/*_test.go'
+      entity_types:
+        - FUNCTION
+        - METHOD
+        - CLASS
+      metadata_conditions:
+        - key: docstring
+          operator: length_gt
+          value: 100
+        - key: docstring
+          operator: contains_any
+          value: ['"""', "---", "{", "[", "<"]
+    actions:
+      metadata:
+        docstring: "[Test Fixture Omitted]"
+      add_usn_tags:
+        - TestFixtureOmitted
+
+  # ============================================================================
+  # Entry Point Normalization
+  # ============================================================================
+  - rule_id: bsg-normalize-entry-points
+    name: Normalize Entry Point Names
+    description: |
+      Normalize all entry point names to __main__ for deduplication.
+      Preserves original invocation snippet in metadata.
+    severity: info
+    priority: 320
+    enabled: true
+    matchers:
+      entity_types:
+        - ENTRY_POINT
+    actions:
+      normalize_entry_point: true
+      add_usn_tags:
+        - EntryPoint
+
+  # ============================================================================
+  # Array/List Content Rollup Markers
+  # ============================================================================
+  - rule_id: bsg-mark-array-sections
+    name: Mark Array Sections for Rollup
+    description: Tag JSON/YAML array sections that have been rolled up
+    severity: info
+    priority: 290
+    enabled: true
+    matchers:
+      entity_types:
+        - SECTION
+      file_patterns:
+        - '**/*.json'
+        - '**/*.yaml'
+        - '**/*.yml'
+      metadata_conditions:
+        - key: value_type
+          operator: in
+          value: ["array", "sequence"]
+        - key: array_contents
+          operator: exists
+    actions:
+      add_usn_tags:
+        - ArrayRollup
+      metadata:
+        bsg.optimization: array_rollup
+
+  # ============================================================================
+  # Markdown Content Rollup Markers
+  # ============================================================================
+  - rule_id: bsg-mark-markdown-rollup
+    name: Mark Markdown Content Rollup
+    description: Tag markdown headers that have rolled-up list content
+    severity: info
+    priority: 280
+    enabled: true
+    matchers:
+      entity_types:
+        - ELEMENT
+      file_patterns:
+        - '**/*.md'
+        - '**/*.markdown'
+      metadata_conditions:
+        - key: content_rollup
+          operator: exists
+    actions:
+      add_usn_tags:
+        - MarkdownRollup
+      metadata:
+        bsg.optimization: content_rollup
+
+  # ============================================================================
+  # HTML Attribute Cleanup Markers
+  # ============================================================================
+  - rule_id: bsg-mark-html-attributes
+    name: Mark HTML Elements with Attributes
+    description: Tag HTML elements that have attributes in metadata
+    severity: info
+    priority: 270
+    enabled: true
+    matchers:
+      entity_types:
+        - ELEMENT
+      file_patterns:
+        - '**/*.html'
+        - '**/*.htm'
+      metadata_conditions:
+        - key: attributes
+          operator: exists
+    actions:
+      add_usn_tags:
+        - HTMLAttributeRollup
+      metadata:
+        bsg.optimization: attribute_rollup
+
+  # ============================================================================
+  # Compression Statistics
+  # ============================================================================
+  - rule_id: bsg-track-optimization-stats
+    name: Track Optimization Statistics
+    description: Add metadata to track which optimizations were applied
+    severity: info
+    priority: 260
+    enabled: true
+    matchers:
+      entity_types:
+        - DOCUMENT
+    actions:
+      derive_metadata:
+        bsg.optimization_version: "1.0.0"
+        bsg.optimization_enabled: true

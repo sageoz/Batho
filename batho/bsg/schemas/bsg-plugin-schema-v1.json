@@ -118,8 +118,34 @@
             "minLength": 1
           }
         },
+        "metadata_conditions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metadataCondition"
+          }
+        },
         "ast_edges": {
           "$ref": "#/$defs/astEdgeGroup"
+        }
+      }
+    },
+    "metadataCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "operator"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Metadata key to check"
+        },
+        "operator": {
+          "type": "string",
+          "enum": ["exists", "length_gt", "contains_any", "in", "eq"],
+          "description": "Comparison operator"
+        },
+        "value": {
+          "description": "Value to compare against (type depends on operator)"
         }
       }
     },
@@ -214,6 +240,20 @@
         },
         "derive_service_tag": {
           "type": "boolean"
+        },
+        "truncate_docstring": {
+          "type": "boolean",
+          "description": "Truncate docstrings to max_docstring_length"
+        },
+        "max_docstring_length": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 150,
+          "description": "Maximum docstring length before truncation"
+        },
+        "normalize_entry_point": {
+          "type": "boolean",
+          "description": "Normalize entry point names to __main__"
         }
       }
     }

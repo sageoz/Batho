@@ -228,6 +228,14 @@ class ASTEdgeMatcher:
 
 
 @dataclass(frozen=True)
+class MetadataCondition:
+    """Condition for matching entity metadata."""
+    key: str
+    operator: str  # exists, length_gt, contains_any, in, eq
+    value: Any = None
+
+
+@dataclass(frozen=True)
 class RuleMatch:
     entity_types: tuple[str, ...] = ()
     name_patterns: tuple[str, ...] = ()
@@ -235,6 +243,7 @@ class RuleMatch:
     usn_tags_any: tuple[str, ...] = ()
     ast_edges_any: tuple[ASTEdgeMatcher, ...] = ()
     ast_edges_all: tuple[ASTEdgeMatcher, ...] = ()
+    metadata_conditions: tuple[MetadataCondition, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -243,6 +252,10 @@ class RuleActions:
     add_usn_tags: tuple[str, ...] = ()
     derive_scope_tier: bool = False
     derive_service_tag: bool = False
+    # BSG Optimization transformations
+    truncate_docstring: bool = False
+    max_docstring_length: int = 150
+    normalize_entry_point: bool = False
 
 
 @dataclass(frozen=True)
@@ -271,6 +284,10 @@ class RuleDefinition:
                 "name_patterns": list(self.match.name_patterns),
                 "file_patterns": list(self.match.file_patterns),
                 "usn_tags_any": list(self.match.usn_tags_any),
+                "metadata_conditions": [
+                    {"key": c.key, "operator": c.operator, "value": c.value}
+                    for c in self.match.metadata_conditions
+                ],
                 "ast_edges": {
                     "any": [_edge_matcher_to_dict(item) for item in self.match.ast_edges_any],
                     "all": [_edge_matcher_to_dict(item) for item in self.match.ast_edges_all],
@@ -281,6 +298,9 @@ class RuleDefinition:
                 "add_usn_tags": list(self.actions.add_usn_tags),
                 "derive_scope_tier": self.actions.derive_scope_tier,
                 "derive_service_tag": self.actions.derive_service_tag,
+                "truncate_docstring": self.actions.truncate_docstring,
+                "max_docstring_length": self.actions.max_docstring_length,
+                "normalize_entry_point": self.actions.normalize_entry_point,
             },
         }
 
@@ -577,6 +597,7 @@ def _normalize_matchers(raw_matchers: Any) -> dict[str, Any]:
         "name_patterns": _as_str_list(raw_matchers.get("name_patterns"), "name_patterns"),
         "file_patterns": _as_str_list(raw_matchers.get("file_patterns"), "file_patterns"),
         "usn_tags_any": _as_str_list(raw_matchers.get("usn_tags_any"), "usn_tags_any"),
+        "metadata_conditions": raw_matchers.get("metadata_conditions", []),  # Keep as list for schema validation
         "ast_edges": _normalize_ast_edges(raw_matchers.get("ast_edges")),
     }
 
@@ -600,6 +621,10 @@ def _normalize_actions(raw_actions: Any) -> dict[str, Any]:
         "add_usn_tags": _as_str_list(raw_actions.get("add_usn_tags"), "add_usn_tags"),
         "derive_scope_tier": bool(raw_actions.get("derive_scope_tier", False)),
         "derive_service_tag": bool(raw_actions.get("derive_service_tag", False)),
+        # BSG Optimization transformations
+        "truncate_docstring": bool(raw_actions.get("truncate_docstring", False)),
+        "max_docstring_length": int(raw_actions.get("max_docstring_length", 150)),
+        "normalize_entry_point": bool(raw_actions.get("normalize_entry_point", False)),
     }
 
 
@@ -752,6 +777,18 @@ def _validate_plugin_document(
 def _rule_from_plugin_rule(plugin_name: str, raw_rule: dict[str, Any]) -> RuleDefinition:
     matchers = raw_rule.get("matchers", {})
     ast_edges = matchers.get("ast_edges", {})
+    
+    # Parse metadata_conditions
+    metadata_conditions = []
+    for cond in matchers.get("metadata_conditions", []):
+        if isinstance(cond, dict):
+            metadata_conditions.append(
+                MetadataCondition(
+                    key=str(cond.get("key", "")),
+                    operator=str(cond.get("operator", "exists")),
+                    value=cond.get("value"),
+                )
+            )
 
     return RuleDefinition(
         rule_id=str(raw_rule["rule_id"]),
@@ -766,6 +803,7 @@ def _rule_from_plugin_rule(plugin_name: str, raw_rule: dict[str, Any]) -> RuleDe
             name_patterns=tuple(matchers.get("name_patterns", [])),
             file_patterns=tuple(matchers.get("file_patterns", [])),
             usn_tags_any=tuple(item.lower() for item in matchers.get("usn_tags_any", [])),
+            metadata_conditions=tuple(metadata_conditions),
             ast_edges_any=tuple(_edge_matcher_from_dict(item) for item in ast_edges.get("any", [])),
             ast_edges_all=tuple(_edge_matcher_from_dict(item) for item in ast_edges.get("all", [])),
         ),
@@ -774,6 +812,9 @@ def _rule_from_plugin_rule(plugin_name: str, raw_rule: dict[str, Any]) -> RuleDe
             add_usn_tags=tuple(raw_rule.get("actions", {}).get("add_usn_tags", [])),
             derive_scope_tier=bool(raw_rule.get("actions", {}).get("derive_scope_tier", False)),
             derive_service_tag=bool(raw_rule.get("actions", {}).get("derive_service_tag", False)),
+            truncate_docstring=bool(raw_rule.get("actions", {}).get("truncate_docstring", False)),
+            max_docstring_length=int(raw_rule.get("actions", {}).get("max_docstring_length", 150)),
+            normalize_entry_point=bool(raw_rule.get("actions", {}).get("normalize_entry_point", False)),
         ),
     )
 
@@ -1662,6 +1703,40 @@ def _matches_ast_edges(
     return True
 
 
+def _matches_metadata_conditions(
+    entity: Entity,
+    conditions: tuple[MetadataCondition, ...],
+) -> bool:
+    """Check if entity metadata matches all conditions."""
+    metadata = entity.metadata or {}
+    
+    for cond in conditions:
+        value = metadata.get(cond.key)
+        
+        if cond.operator == "exists":
+            if value is None:
+                return False
+        elif cond.operator == "length_gt":
+            if not isinstance(value, str) or len(value) <= cond.value:
+                return False
+        elif cond.operator == "contains_any":
+            if not isinstance(value, str):
+                return False
+            if not any(str(marker) in value for marker in cond.value):
+                return False
+        elif cond.operator == "in":
+            if value not in cond.value:
+                return False
+        elif cond.operator == "eq":
+            if value != cond.value:
+                return False
+        else:
+            # Unknown operator - fail safe
+            return False
+    
+    return True
+
+
 def _matches_rule(
     rule: RuleDefinition,
     entity_id: str,
@@ -1689,6 +1764,10 @@ def _matches_rule(
 
     if not _matches_ast_edges(entity_id, rule.match, graph, outbound, inbound):
         return False
+
+    if rule.match.metadata_conditions:
+        if not _matches_metadata_conditions(entity, rule.match.metadata_conditions):
+            return False
 
     return True
 
@@ -1846,6 +1925,26 @@ def apply_rule_plugins(
                     metadata["bsg.service_tag"] = service_tag
                     changed = True
 
+            # BSG Optimization: Truncate docstring
+            if rule.actions.truncate_docstring:
+                docstring = metadata.get("docstring")
+                if docstring and isinstance(docstring, str):
+                    max_len = rule.actions.max_docstring_length
+                    if len(docstring) > max_len:
+                        metadata["docstring"] = docstring[:max_len] + "..."
+                        changed = True
+
+            # BSG Optimization: Normalize entry point
+            if rule.actions.normalize_entry_point and entity.type == EntityType.ENTRY_POINT:
+                if entity.name != "__main__":
+                    # Store original name in metadata
+                    metadata["invocation_snippet"] = entity.name
+                    # Update entity name - need to track this for later update
+                    # Note: We can't modify entity.name directly since it's frozen
+                    # We'll need to track this in metadata and handle in a post-processing step
+                    metadata["bsg.normalized_name"] = "__main__"
+                    changed = True
+
         if matched_rules:
             existing_rules = metadata.get("bsg.rules")
             existing_list = existing_rules if isinstance(existing_rules, list) else []
@@ -1857,6 +1956,13 @@ def apply_rule_plugins(
         if changed:
             graph.entities[entity_id] = entity.model_copy(update={"metadata": metadata})
             updated_entities += 1
+
+    # Post-processing: Apply entry point name normalization
+    # (Must be done after metadata updates since entity names are frozen)
+    for entity_id, entity in list(graph.entities.items()):
+        normalized_name = entity.metadata.get("bsg.normalized_name") if entity.metadata else None
+        if normalized_name and entity.name != normalized_name:
+            graph.entities[entity_id] = entity.model_copy(update={"name": normalized_name})
 
     applied_count = sum(1 for count in rule_hits.values() if count > 0)
     plugin_hits: dict[str, int] = {}

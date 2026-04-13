@@ -71,8 +71,9 @@ class MarkdownExtractor(MarkupConfigExtractor):
                 )
                 entities.append(frontmatter_entity)
 
-            # Track headers for hierarchy
-            headers: list[tuple[int, str, int, int]] = []
+            # Track headers for hierarchy and content rollup
+            headers: list[tuple[int, str, int, int, Entity]] = []
+            content_buffer: dict[str, list[str]] = {}  # entity_id -> content pieces
 
             # Extract headers (# H1, ## H2, etc.)
             header_pattern = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
@@ -102,7 +103,8 @@ class MarkdownExtractor(MarkupConfigExtractor):
                     },
                 )
                 entities.append(header_entity)
-                headers.append((level, text, start_line, end_line))
+                headers.append((level, text, start_line, end_line, header_entity))
+                content_buffer[header_entity.id] = []
 
             # Extract code blocks
             code_block_pattern = re.compile(
@@ -135,35 +137,24 @@ class MarkdownExtractor(MarkupConfigExtractor):
                 )
                 entities.append(code_entity)
 
-            # Extract lists (ordered and unordered)
+            # Roll up lists into parent headers (no individual list item nodes)
             list_pattern = re.compile(r"^(\s*[-*+]\s+|\s*\d+\.\s+)(.+)$", re.MULTILINE)
 
             for match in list_pattern.finditer(content):
-                prefix = match.group(1)
                 text = match.group(2).strip()
-
-                # Determine list type
-                list_type = "unordered" if prefix.strip() in ("-", "*", "+") else "ordered"
-
-                start_byte = match.start()
-                end_byte = match.end()
-                start_line = get_line_from_offset(start_byte)
-
-                list_entity = self._create_entity(
-                    entity_type=EntityType.ELEMENT,
-                    name=f"list_item_{list_type}",
-                    filepath=filepath,
-                    start_line=start_line,
-                    end_line=start_line,
-                    start_byte=start_byte,
-                    end_byte=end_byte,
-                    metadata={
-                        "language": "markdown",
-                        "list_type": list_type,
-                        "item_text": text[:50],  # Truncate for metadata
-                    },
-                )
-                entities.append(list_entity)
+                start_line = get_line_from_offset(match.start())
+                
+                # Find nearest parent header
+                parent_header = None
+                for level, htext, hstart, hend, hentity in reversed(headers):
+                    if hstart < start_line:
+                        parent_header = hentity
+                        break
+                
+                # Roll up content to parent header or document
+                if parent_header and parent_header.id in content_buffer:
+                    content_buffer[parent_header.id].append(f"- {text}")
+                # If no header, we'll attach to document later
 
             # Extract tables
             table_pattern = re.compile(
@@ -199,6 +190,16 @@ class MarkdownExtractor(MarkupConfigExtractor):
                     },
                 )
                 entities.append(table_entity)
+
+            # Attach rolled-up content to headers
+            for entity in entities:
+                if entity.id in content_buffer and content_buffer[entity.id]:
+                    # Update entity metadata with content_rollup
+                    updated_metadata = dict(entity.metadata or {})
+                    updated_metadata["content_rollup"] = "\n".join(content_buffer[entity.id])
+                    # Replace entity in list with updated version
+                    idx = entities.index(entity)
+                    entities[idx] = entity.model_copy(update={"metadata": updated_metadata})
 
             # Document entity
             doc_entity = self._create_entity(

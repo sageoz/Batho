@@ -671,7 +671,7 @@ class ASTExtractor(abc.ABC):
         if not metadata.get("docstring"):
             fallback_doc = self._extract_leading_doc_comment(decl_node=decl_node, source=source)
             if fallback_doc:
-                metadata["docstring"] = fallback_doc
+                metadata["docstring"] = _clean_docstring(fallback_doc)
 
         # implements: comma-separated list
         impl_nodes = auxiliary_nodes.get((base_key, "implements"), [])
