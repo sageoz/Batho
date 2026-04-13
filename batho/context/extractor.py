@@ -46,6 +46,7 @@ _META_SUFFIXES: frozenset[str] = frozenset(
         "return_type",
         "visibility",
         "docstring",
+        "invocation",
         "bases",
         "implements",
         "extends",
@@ -96,6 +97,12 @@ def _node_text(node: Node, source: bytes) -> str:
 def _clean_docstring(text: str) -> str:
     """Strip surrounding quote characters from docstrings."""
     t = text.strip()
+
+    # Handle Python-prefixed literals captured as docstrings (e.g. b"""...""").
+    prefix_match = re.match(r"(?i)^(?:br|rb|fr|rf|b|r|f|u)(?=[\"'])", t)
+    if prefix_match:
+        t = t[prefix_match.end() :].lstrip()
+
     for q in ('"""', "'''", '"', "'"):
         if t.startswith(q) and t.endswith(q) and len(t) >= 2 * len(q):
             return t[len(q) : -len(q)].strip()
@@ -481,9 +488,24 @@ class ASTExtractor(abc.ABC):
                 if snapshot_id:
                     metadata["bsg.snapshot_id"] = snapshot_id
 
+                normalized_name = name
+                if entity_type == EntityType.ENTRY_POINT:
+                    raw_snippet_value = metadata.get("invocation_snippet")
+                    raw_snippet = (
+                        str(raw_snippet_value)
+                        if isinstance(raw_snippet_value, str) and raw_snippet_value.strip()
+                        else name
+                    )
+                    if (
+                        "__name__" in raw_snippet
+                        and "__main__" in raw_snippet
+                    ) or name == "__name__":
+                        normalized_name = "__main__"
+                        metadata["invocation_snippet"] = raw_snippet
+
                 entity = Entity(
                     type=entity_type,
-                    name=name,
+                    name=normalized_name,
                     file=filepath,
                     start_line=decl_node.start_point[0] + 1,
                     end_line=decl_node.end_point[0] + 1,
@@ -652,6 +674,7 @@ class ASTExtractor(abc.ABC):
 
         suffix_key_map: list[tuple[str, str]] = [
             ("visibility", "visibility"),
+            ("invocation", "invocation_snippet"),
             ("docstring", "docstring"),
             ("bases", "bases"),
             ("extends", "extends"),

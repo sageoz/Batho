@@ -92,5 +92,5 @@ class PythonExtractor(ASTExtractor):
     "=="
     (string) @def.entry_point.value)
   (#eq? @def.entry_point.name "__name__")
-  (#eq? @def.entry_point.value "\"__main__\"")) @def.entry_point
+  (#match? @def.entry_point.value "['\"]__main__['\"]")) @def.entry_point.invocation
 """

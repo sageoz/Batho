@@ -14,6 +14,7 @@ JSON structure:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -124,14 +125,12 @@ class JSONExtractor(MarkupConfigExtractor):
 
         elif isinstance(value, list):
             # Array → SECTION with rollup
-            import hashlib
-            
             # Serialize array contents
             serialized = json.dumps(value)
             if len(serialized) > 500:
                 # Truncate and add hash
                 truncated = serialized[:500]
-                array_hash = hashlib.sha256(serialized.encode()).hexdigest()[:8]
+                array_hash = hashlib.md5(serialized.encode()).hexdigest()[:8]
                 content = f"{truncated}... (array[{len(value)}] truncated, hash: {array_hash})"
             else:
                 content = serialized
@@ -152,8 +151,9 @@ class JSONExtractor(MarkupConfigExtractor):
                 },
             )
             entities.append(entity)
-            
+
             # DO NOT process individual array items - rollup complete
+            return
 
         else:
             # Primitive value → SETTING

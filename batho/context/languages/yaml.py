@@ -14,6 +14,7 @@ YAML structure:
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from ..extractor import MarkupConfigExtractor
@@ -168,14 +169,12 @@ class YAMLExtractor(MarkupConfigExtractor):
 
         elif isinstance(value, list):
             # Sequence → SECTION with rollup
-            import hashlib
-            
             # Serialize sequence contents
             serialized = yaml.dump(value, default_flow_style=True).strip()
             if len(serialized) > 500:
                 # Truncate and add hash
                 truncated = serialized[:500]
-                array_hash = hashlib.sha256(serialized.encode()).hexdigest()[:8]
+                array_hash = hashlib.md5(serialized.encode()).hexdigest()[:8]
                 content = f"{truncated}... (sequence[{len(value)}] truncated, hash: {array_hash})"
             else:
                 content = serialized
@@ -196,8 +195,9 @@ class YAMLExtractor(MarkupConfigExtractor):
                 },
             )
             entities.append(entity)
-            
+
             # DO NOT process individual sequence items - rollup complete
+            return
 
         else:
             # Scalar → SETTING

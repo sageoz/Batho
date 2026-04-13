@@ -108,3 +108,22 @@ values = [1, 2]
         rels = self.extractor._extract_references(b"", "x.toml", [doc, root_section, deep_setting])
         contains = [r for r in rels if r.type == RelationshipType.CONTAINS]
         assert contains
+
+    def test_toml_arrays_are_rolled_up_without_indexed_children(self):
+        source = b"""
+[tool]
+values = [1, 2, 3]
+"""
+        entities = self.extractor._extract_elements(source, "pyproject.toml")
+
+        array_sections = [
+            e
+            for e in entities
+            if e.type == EntityType.SECTION and e.metadata.get("value_type") == "array"
+        ]
+        assert array_sections
+        assert all("array_contents" in s.metadata for s in array_sections)
+        assert all(s.metadata.get("item_count") == 3 for s in array_sections)
+
+        indexed_children = [e for e in entities if ".[" in e.name]
+        assert indexed_children == []

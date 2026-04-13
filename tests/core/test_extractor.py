@@ -67,6 +67,18 @@ class TestCleanDocstring:
     def test_whitespace_stripping(self):
         assert _clean_docstring('"""  spaced  """') == "spaced"
 
+    def test_byte_prefixed_triple_quotes(self):
+        assert _clean_docstring('b"""Hello"""') == "Hello"
+
+    def test_raw_prefixed_single_quotes(self):
+        assert _clean_docstring("r'Hello'") == "Hello"
+
+    def test_formatted_prefixed_double_quotes(self):
+        assert _clean_docstring('f"Hello {name}"') == "Hello {name}"
+
+    def test_combined_prefix(self):
+        assert _clean_docstring('Br"""Hello"""') == "Hello"
+
 
 # ---------------------------------------------------------------------------
 # ASTExtractor.parse_file (via Python extractor)

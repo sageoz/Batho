@@ -300,6 +300,12 @@ batho index --root /path/to/repo --verbose
 # Force full rebuild (disable incremental path)
 batho index --root /path/to/repo --full
 
+# Force cache reset before indexing (clears file cache + AST cache)
+batho index --root /path/to/repo --force
+
+# Deterministic fresh parse run (bypass AST cache for this invocation)
+batho index --root /path/to/repo --force --no-ast-cache --verbose
+
 # Index and create snapshot
 batho index --root /path/to/repo --snapshot --snapshot-label "release-candidate"
 
@@ -455,6 +461,8 @@ hooks:
 | `--max-file-size-kb` | `500` | Skip files larger than this |
 | `--extensions` | all supported | Restrict indexing to selected extensions |
 | `--full` | off | Disable incremental reuse and force full rebuild |
+| `--force` | off | Clear index file cache and AST cache before indexing |
+| `--no-ast-cache` | off | Bypass AST cache for the current indexing run |
 | `--base-snapshot` | auto | Prefer this snapshot for incremental indexing |
 | `--output-json` | none | Optional override path for graph JSON output |
 | `--metrics-output` | from config | Write metrics JSON to explicit path |
@@ -520,6 +528,8 @@ hooks:
         ├── docs.md
         └── config.md
 ```
+
+Default AST cache database location: `~/.batho/ast_cache.db` (configured by `bsg.cache.path`).
 
 <details>
 <summary><strong>graph.json example</strong></summary>

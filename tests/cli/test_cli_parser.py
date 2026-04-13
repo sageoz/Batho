@@ -48,11 +48,16 @@ class TestBuildParser:
         args = parser.parse_args(["index", "--root", "/tmp", "--force"])
         assert args.force is True
 
+    def test_index_with_no_ast_cache(self, parser):
+        args = parser.parse_args(["index", "--root", "/tmp", "--no-ast-cache"])
+        assert args.no_ast_cache is True
+
     def test_index_defaults(self, parser):
         args = parser.parse_args(["index", "--root", "/tmp"])
         assert args.max_workers == 0
         assert args.max_file_size_kb is None
         assert args.force is False
+        assert args.no_ast_cache is False
         assert args.full is False
         assert args.base_snapshot is None
         assert args.metrics_output is None

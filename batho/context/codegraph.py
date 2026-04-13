@@ -432,6 +432,7 @@ class CodeGraphIndexer:
         verbose: bool = False,
         metrics_callback: Callable[[str, Dict[str, Any]], None] | None = None,
         snapshot_id: str | None = None,
+        ast_cache_enabled: bool | None = None,
     ) -> InMemoryGraph:
         """
         Walk *root* recursively, index every matching source file, and return
@@ -450,6 +451,7 @@ class CodeGraphIndexer:
             max_file_size_kb: Skip files larger than this (KB). Default 500KB.
             verbose: Print progress to stdout.
             metrics_callback: Optional callback for metrics collection.
+            ast_cache_enabled: Optional override for AST cache usage in this run.
 
         Returns:
             Populated InMemoryGraph.
@@ -508,6 +510,11 @@ class CodeGraphIndexer:
 
             # Load BSG configuration for ignore settings
             bsg_cfg = cfg.get("bsg", {})
+            if ast_cache_enabled is not None:
+                bsg_cfg = dict(bsg_cfg)
+                cache_cfg = dict(bsg_cfg.get("cache", {}))
+                cache_cfg["enabled"] = bool(ast_cache_enabled)
+                bsg_cfg["cache"] = cache_cfg
             bsg_ignore_cfg = bsg_cfg.get("ignore", {})
             bathoignore_path = (
                 bsg_ignore_cfg.get("file") if bsg_ignore_cfg.get("enabled") else None

@@ -14,6 +14,8 @@ TOML structure:
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from ..extractor import MarkupConfigExtractor
@@ -145,7 +147,15 @@ class TOMLExtractor(MarkupConfigExtractor):
                 )
 
         elif isinstance(value, list):
-            # Array → SECTION
+            # Array → SECTION with rollup
+            serialized = json.dumps(value, default=str)
+            if len(serialized) > 500:
+                truncated = serialized[:500]
+                array_hash = hashlib.md5(serialized.encode()).hexdigest()[:8]
+                content = f"{truncated}... (array[{len(value)}] truncated, hash: {array_hash})"
+            else:
+                content = serialized
+
             entity = self._create_entity(
                 entity_type=EntityType.SECTION,
                 name=path,
@@ -158,21 +168,13 @@ class TOMLExtractor(MarkupConfigExtractor):
                     "language": "toml",
                     "value_type": "array",
                     "item_count": len(value),
+                    "array_contents": content,
                 },
             )
             entities.append(entity)
 
-            # Process each item
-            for i, item in enumerate(value):
-                self._process_value(
-                    item,
-                    filepath,
-                    f"[{i}]",
-                    entities,
-                    line_offset,
-                    source,
-                    parent_path=path,
-                )
+            # DO NOT process individual array items - rollup complete
+            return
 
         else:
             # Primitive value → SETTING

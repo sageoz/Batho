@@ -1936,12 +1936,14 @@ def apply_rule_plugins(
 
             # BSG Optimization: Normalize entry point
             if rule.actions.normalize_entry_point and entity.type == EntityType.ENTRY_POINT:
-                if entity.name != "__main__":
-                    # Store original name in metadata
-                    metadata["invocation_snippet"] = entity.name
-                    # Update entity name - need to track this for later update
-                    # Note: We can't modify entity.name directly since it's frozen
-                    # We'll need to track this in metadata and handle in a post-processing step
+                raw_value = metadata.get("invocation_snippet")
+                raw_snippet = str(raw_value) if isinstance(raw_value, str) and raw_value.strip() else entity.name
+                normalized_snippet = raw_snippet.replace("'", '"')
+                if (
+                    ("__name__" in normalized_snippet and '"__main__"' in normalized_snippet)
+                    or raw_snippet == "__name__"
+                ) and entity.name != "__main__":
+                    metadata["invocation_snippet"] = raw_snippet
                     metadata["bsg.normalized_name"] = "__main__"
                     changed = True
 

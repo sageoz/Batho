@@ -1244,6 +1244,7 @@ def cmd_index(args: argparse.Namespace) -> int:
 
     cache_path = ctn_dir / "file_cache.json"
     build_start = time.perf_counter()
+    no_ast_cache = bool(getattr(args, "no_ast_cache", False))
 
     force_full = bool(getattr(args, "full", False)) or bool(args.force)
     requested_base_snapshot = getattr(args, "base_snapshot", None)
@@ -1271,6 +1272,25 @@ def cmd_index(args: argparse.Namespace) -> int:
                 error=str(exc),
             )
             print(f"⚠️  Could not clear file cache (may be in use): {exc}")
+
+    if args.force:
+        try:
+            from batho.context.cache import ASTCache
+
+            bsg_cache_cfg = bsg_cfg.get("cache", {}) if isinstance(bsg_cfg, dict) else {}
+            ast_cache_path = str(bsg_cache_cfg.get("path", "~/.batho/ast_cache.db"))
+            ast_cache = ASTCache(cache_path=ast_cache_path)
+            try:
+                ast_cache.invalidate_cache(pattern=None)
+            finally:
+                ast_cache.close()
+            print("⚡ --force: cleared AST cache")
+        except Exception as exc:
+            LOGGER.warning(
+                "force_ast_cache_clear_failed",
+                error=str(exc),
+            )
+            print(f"⚠️  Could not clear AST cache: {exc}")
 
     if incremental_enabled:
         base_snapshot_id = requested_base_snapshot or _get_latest_snapshot(ctn_dir)
@@ -1418,6 +1438,7 @@ def cmd_index(args: argparse.Namespace) -> int:
                 max_file_size_kb=args.max_file_size_kb,
                 verbose=args.verbose,
                 snapshot_id=index_id,
+                ast_cache_enabled=(not no_ast_cache),
             )
             bsg_map = BSGMap.build(
                 graph, root=str(root), serialization_config=_get_serialization_config()
@@ -3094,6 +3115,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-file-size-kb", type=int, default=None, help="Max file size KB"
     )
     idx.add_argument("--force", action="store_true", help="Clear cache before indexing")
+    idx.add_argument(
+        "--no-ast-cache",
+        action="store_true",
+        help="Bypass AST cache for this run",
+    )
     idx.add_argument(
         "--full",
         action="store_true",

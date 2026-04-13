@@ -150,14 +150,22 @@ class TestYAMLExtractor:
         """
         
         entities = self.extractor._extract_elements(yaml_content, "arrays.yaml")
-        
+
         section_entities = [e for e in entities if e.type == EntityType.SECTION]
-        # Should extract some sections (YAML extractor may not extract all)
-        assert len(section_entities) >= 0
-        
-        # Check array sections
-        array_sections = [s for s in section_entities if s.metadata.get("section_type") == "array"]
-        assert len(array_sections) >= 0  # May not extract arrays as separate sections  # tags, matrix
+        assert section_entities
+
+        sequence_sections = [
+          s
+          for s in section_entities
+          if s.metadata.get("value_type") == "sequence"
+        ]
+        assert sequence_sections
+        assert all("array_contents" in s.metadata for s in sequence_sections)
+        assert all("item_count" in s.metadata for s in sequence_sections)
+
+        # Arrays should be rolled up and not expanded as indexed children.
+        indexed_children = [e for e in entities if ".[" in e.name]
+        assert indexed_children == []
 
     def test_yaml_anchors_and_references(self):
         """Test extraction of YAML anchors and references."""

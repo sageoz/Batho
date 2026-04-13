@@ -7,6 +7,7 @@ import pytest
 
 from batho.context.languages.registry import get_extractor
 from batho.context.languages.detector import default_detector
+from batho.context.schema import EntityType
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +119,33 @@ class Dog(Animal):
         # Should have import relationships
         import_rels = [r for r in rels if r.type.name == "IMPORTS"]
         assert len(import_rels) >= 0  # tree-sitter query may vary
+
+    def test_extracts_multiline_main_entrypoint(self):
+        ext = get_extractor(".py")
+        content = (
+            b"import sys\n"
+            b"\n"
+            b"if __name__ == \"__main__\":\n"
+            b"    sys.exit(main())\n"
+        )
+        entities, _ = ext.parse_file("main.py", content)
+        entry_points = [e for e in entities if e.type == EntityType.ENTRY_POINT]
+
+        assert entry_points
+        assert any(e.name == "__main__" for e in entry_points)
+        assert any(
+            "sys.exit(main())" in str(e.metadata.get("invocation_snippet", ""))
+            for e in entry_points
+        )
+
+    def test_extracts_single_quote_main_entrypoint(self):
+        ext = get_extractor(".py")
+        content = b"if __name__ == '__main__':\n    main()\n"
+        entities, _ = ext.parse_file("single_quote_main.py", content)
+        entry_points = [e for e in entities if e.type == EntityType.ENTRY_POINT]
+
+        assert entry_points
+        assert any(e.name == "__main__" for e in entry_points)
 
 
 # ---------------------------------------------------------------------------
