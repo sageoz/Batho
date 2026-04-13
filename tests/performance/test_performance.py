@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 import psutil
 import threading
@@ -11,6 +12,21 @@ from typing import Dict, Any
 import pytest
 
 from batho_cli import main
+
+
+def _windows_retry_rmtree(path, max_retries=3, delay=0.5):
+    """Retry rmtree on Windows to handle SQLite file locking."""
+    import shutil
+    for attempt in range(max_retries):
+        try:
+            shutil.rmtree(path)
+            return True
+        except (PermissionError, OSError) as e:
+            if sys.platform == "win32" and attempt < max_retries - 1:
+                time.sleep(delay)
+            else:
+                raise
+    return False
 
 
 @pytest.mark.slow
@@ -108,8 +124,7 @@ class TestPerformance:
         for repo in repos:
             ctn_dir = repo / ".ctn"
             if ctn_dir.exists():
-                import shutil
-                shutil.rmtree(ctn_dir)
+                _windows_retry_rmtree(ctn_dir)
         
         # Test parallel processing
         def parallel_index():
@@ -196,7 +211,10 @@ class Class_{i}:
                 cache_path = test_repo / ".ctn" / "file_cache.json"
                 cache_path.parent.mkdir(exist_ok=True)
                 indexer = CodeGraphIndexer(str(cache_path), str(test_repo))
-                return indexer.build_graph(str(test_repo))
+                try:
+                    return indexer.build_graph(str(test_repo))
+                finally:
+                    indexer.close()
             
             _, exec_time = self.measure_execution_time(index_repo)
             times.append(exec_time)
@@ -204,8 +222,7 @@ class Class_{i}:
             # Clean up
             ctn_dir = test_repo / ".ctn"
             if ctn_dir.exists():
-                import shutil
-                shutil.rmtree(ctn_dir)
+                _windows_retry_rmtree(ctn_dir)
         
         # Check that scaling is reasonable (not exponential)
         # Time should scale roughly linearly with file count

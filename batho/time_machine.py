@@ -14,6 +14,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -63,13 +64,27 @@ def timeout_context(timeout_seconds: float):
             f"Operation timed out after {timeout_seconds} seconds", timeout_seconds
         )
 
-    old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(int(timeout_seconds))
-    try:
-        yield
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
+    # Windows doesn't support SIGALRM, use threading.Timer as fallback
+    if sys.platform == "win32":
+        import threading
+        timer = None
+        try:
+            timer = threading.Timer(timeout_seconds, lambda: (_ for _ in ()).throw(PatchTimeoutError(
+                f"Operation timed out after {timeout_seconds} seconds", timeout_seconds
+            )))
+            timer.start()
+            yield
+        finally:
+            if timer:
+                timer.cancel()
+    else:
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(int(timeout_seconds))
+        try:
+            yield
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
 
 
 def check_patch_limits(changes: list[FileChange], max_changes: int) -> None:

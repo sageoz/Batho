@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -272,6 +273,13 @@ class ArtifactRegistry:
     def repo_root(self) -> Path:
         return self.ctn_dir.parent
 
+    def close(self) -> None:
+        """Close the registry database connection to release file locks."""
+        # SQLite connections are created per-call in _connect, so we just
+        # need to ensure no lingering connections. This is a no-op for the
+        # current implementation but provides a cleanup hook for future changes.
+        pass
+
     def _resolve_registry_path(self, configured_path: str) -> Path:
         candidate = Path(configured_path).expanduser()
         if candidate.is_absolute():
@@ -280,7 +288,11 @@ class ArtifactRegistry:
 
     def _connect(self, *, row_factory: bool = False) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.registry_path), timeout=5)
-        conn.execute("PRAGMA journal_mode=WAL")
+        # Disable WAL mode on Windows to prevent file locking issues
+        if sys.platform == "win32":
+            conn.execute("PRAGMA journal_mode=DELETE")
+        else:
+            conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         if row_factory:
             conn.row_factory = sqlite3.Row
@@ -1100,7 +1112,7 @@ class ArtifactRegistry:
                     if _is_under(physical_path, self.ctn_dir) and self._is_durable_artifact(physical_path):
                         physical_path.unlink()
                         summary["deleted_files"] += 1
-                except OSError as exc:
+                except (PermissionError, OSError) as exc:
                     summary["errors"].append(
                         {
                             "artifact_id": artifact_id,
