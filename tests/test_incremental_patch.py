@@ -522,6 +522,21 @@ class TestIncrementalPatchFunction:
             ctn_dir = Path(tmpdir) / ".ctn"
             ctn_dir.mkdir()
             yield ctn_dir
+            # Windows-specific cleanup for SQLite file locking
+            import shutil
+            import sys
+            import time
+            if sys.platform == "win32" and ctn_dir.exists():
+                for attempt in range(3):
+                    try:
+                        shutil.rmtree(ctn_dir)
+                        break
+                    except (PermissionError, OSError):
+                        if attempt < 2:
+                            time.sleep(0.5)
+                        else:
+                            # Final attempt, let it fail if still locked
+                            pass
 
     @pytest.fixture
     def mock_base_snapshot(self, temp_ctn_dir):
@@ -670,6 +685,21 @@ class TestIncrementalPatchExceptionHandling:
             ctn_dir = Path(tmpdir) / ".ctn"
             ctn_dir.mkdir()
             yield ctn_dir
+            # Windows-specific cleanup for SQLite file locking
+            import shutil
+            import sys
+            import time
+            if sys.platform == "win32" and ctn_dir.exists():
+                for attempt in range(3):
+                    try:
+                        shutil.rmtree(ctn_dir)
+                        break
+                    except (PermissionError, OSError):
+                        if attempt < 2:
+                            time.sleep(0.5)
+                        else:
+                            # Final attempt, let it fail if still locked
+                            pass
 
     @pytest.fixture
     def mock_base_snapshot(self, temp_ctn_dir):

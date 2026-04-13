@@ -103,24 +103,24 @@ class FileLock:
     def _cleanup_stale_lock(self) -> bool:
         """
         Clean up stale lock file if present.
-        
+
         Returns:
             True if stale lock was cleaned up, False otherwise
         """
         lock_info = self._read_lock_info()
         if lock_info is None:
             return False
-            
+
         pid, timestamp = lock_info
         if self._is_lock_stale(pid, timestamp):
             try:
                 self.lock_path.unlink()
                 logger.info("cleaned_stale_lock", lock_path=str(self.lock_path), pid=pid)
                 return True
-            except OSError as e:
+            except (PermissionError, OSError) as e:
                 logger.warning("failed_to_clean_stale_lock", lock_path=str(self.lock_path), error=str(e))
                 return False
-                
+
         return False
     
     def acquire(self) -> bool:
@@ -196,22 +196,25 @@ class FileLock:
         """Release the file lock."""
         if not self._locked:
             return  # Not locked by this instance
-            
+
         try:
             # Verify we own the lock
             lock_info = self._read_lock_info()
             if lock_info:
                 pid, _ = lock_info
                 if pid == os.getpid():
-                    self.lock_path.unlink()
+                    try:
+                        self.lock_path.unlink()
+                    except (PermissionError, OSError) as e:
+                        logger.warning("lock_unlink_failed", lock_path=str(self.lock_path), error=str(e))
                     logger.debug("lock_released", lock_path=str(self.lock_path), pid=pid)
                 else:
-                    logger.warning("lock_not_owned", lock_path=str(self.lock_path), 
+                    logger.warning("lock_not_owned", lock_path=str(self.lock_path),
                                  owner_pid=pid, our_pid=os.getpid())
             else:
                 logger.warning("lock_file_disappeared", lock_path=str(self.lock_path))
-                
-        except OSError as e:
+
+        except (PermissionError, OSError) as e:
             logger.error("lock_release_failed", lock_path=str(self.lock_path), error=str(e))
         finally:
             self._locked = False

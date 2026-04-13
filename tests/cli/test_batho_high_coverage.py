@@ -838,6 +838,9 @@ def test_cmd_index_early_failure_paths(tmp_path: Path, monkeypatch: pytest.Monke
         def build_graph(self, **_kwargs):
             return SimpleNamespace(entities={}, relationships=[])
 
+        def close(self):
+            pass
+
     class _Map:
         _by_file = {}
         entity_count = 0
@@ -863,6 +866,9 @@ def test_cmd_index_early_failure_paths(tmp_path: Path, monkeypatch: pytest.Monke
 
         def build_graph(self, **_kwargs):
             return SimpleNamespace(entities={}, relationships=[])
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(batho, "CodeGraphIndexer", _IndexerRetry)
     assert cmd_index(args) == 1

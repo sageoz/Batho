@@ -121,7 +121,12 @@ def remove_hooks(root: Path, hook_names: list[str], *, dry_run: bool = False) ->
             removed.append(hook_name)
             continue
 
-        target.unlink()
+        try:
+            target.unlink()
+        except (PermissionError, OSError) as exc:
+            skipped.append({"hook": hook_name, "reason": f"permission_error: {exc}"})
+            continue
+
         removed.append(hook_name)
 
     return {

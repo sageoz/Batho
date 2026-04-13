@@ -405,6 +405,19 @@ class CodeGraphIndexer:
         self._root: Path | None = root_path
         self.stats: Dict[str, Any] = {}
 
+    def close(self) -> None:
+        """Close the cache database connection to release file locks."""
+        self._cache.close()
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures cache is closed."""
+        self.close()
+        return False
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -175,6 +176,7 @@ def _configure_incremental_patch_success(
         monkeypatch.setattr(registry_mod, "get_extractor", lambda *_a, **_k: None)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="signal.alarm not available on Windows")
 def test_timeout_context_raises_and_restores_signal(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, int | object]] = []
     holder: dict[str, object] = {}

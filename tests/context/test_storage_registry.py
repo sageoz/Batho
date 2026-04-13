@@ -173,10 +173,12 @@ def test_backfill_registry_registers_existing_durable_files(tmp_path: Path) -> N
         row[0]
         for row in _values(registry_db, "SELECT logical_path FROM artifacts WHERE deleted = 0")
     }
-    assert ".ctn/index.json" not in logical_paths
-    assert "index.json" in logical_paths
-    assert "batho_test/graph.json" in logical_paths
-    assert "ctn.lock" not in logical_paths
+    # Normalize paths for cross-platform comparison
+    logical_paths_normalized = {Path(p).as_posix() for p in logical_paths}
+    assert ".ctn/index.json" not in logical_paths_normalized
+    assert "index.json" in logical_paths_normalized
+    assert "batho_test/graph.json" in logical_paths_normalized
+    assert "ctn.lock" not in logical_paths_normalized
 
 
 def test_verify_registry_reports_and_repairs_drift(tmp_path: Path) -> None:

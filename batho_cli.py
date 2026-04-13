@@ -1261,8 +1261,16 @@ def cmd_index(args: argparse.Namespace) -> int:
     incremental_stats: dict[str, Any] = {}
 
     if args.force and cache_path.exists():
-        cache_path.unlink()
-        print("⚡ --force: cleared file cache")
+        try:
+            cache_path.unlink()
+            print("⚡ --force: cleared file cache")
+        except (PermissionError, OSError) as exc:
+            LOGGER.warning(
+                "force_cache_clear_failed",
+                cache_path=str(cache_path),
+                error=str(exc),
+            )
+            print(f"⚠️  Could not clear file cache (may be in use): {exc}")
 
     if incremental_enabled:
         base_snapshot_id = requested_base_snapshot or _get_latest_snapshot(ctn_dir)
@@ -1385,7 +1393,14 @@ def cmd_index(args: argparse.Namespace) -> int:
             indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
         except Exception as exc:
             if cache_path.exists() and "not a database" in str(exc).lower():
-                cache_path.unlink(missing_ok=True)
+                try:
+                    cache_path.unlink(missing_ok=True)
+                except (PermissionError, OSError) as unlink_exc:
+                    LOGGER.warning(
+                        "index_cache_delete_failed",
+                        cache_path=str(cache_path),
+                        error=str(unlink_exc),
+                    )
                 LOGGER.warning(
                     "index_cache_recreated",
                     cache_path=str(cache_path),
@@ -1395,17 +1410,21 @@ def cmd_index(args: argparse.Namespace) -> int:
             else:
                 raise
 
-        graph = indexer.build_graph(
-            root=str(root),
-            extensions=args.extensions,
-            max_workers=args.max_workers,
-            max_file_size_kb=args.max_file_size_kb,
-            verbose=args.verbose,
-            snapshot_id=index_id,
-        )
-        bsg_map = BSGMap.build(
-            graph, root=str(root), serialization_config=_get_serialization_config()
-        )
+        try:
+            graph = indexer.build_graph(
+                root=str(root),
+                extensions=args.extensions,
+                max_workers=args.max_workers,
+                max_file_size_kb=args.max_file_size_kb,
+                verbose=args.verbose,
+                snapshot_id=index_id,
+            )
+            bsg_map = BSGMap.build(
+                graph, root=str(root), serialization_config=_get_serialization_config()
+            )
+        finally:
+            if indexer is not None:
+                indexer.close()
     else:
         index_id = _generate_index_id()
 
@@ -2013,6 +2032,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         affected_files = sorted({change.path for change in changes})
         if not files and deleted_count == 0:
             print("No changes detected.")
+            indexer.close()
             return 0
         tracker.save(hash_cache_path)
         if hash_cache_path.exists():
@@ -2044,12 +2064,14 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
 
     if not files:
         print("No files to patch.")
+        indexer.close()
         return 1
 
     if args.dry_run:
         print("Dry run mode - would apply changes to these files:")
         for f in files:
             print(f"  {f.relative_to(root)}")
+        indexer.close()
         return 0
 
     patch_start = time.perf_counter()
@@ -2310,6 +2332,8 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         unchanged=0,
         affected_files=affected_files,
     )
+
+    indexer.close()
 
     print(
         json.dumps(
@@ -2644,8 +2668,17 @@ def cmd_invalidate(args: argparse.Namespace) -> int:
     ctn_dir = _ensure_ctn_dir(root)
     cache_path = ctn_dir / "file_cache.json"
     if cache_path.exists():
-        cache_path.unlink()
-        print("✅ Cleared file cache")
+        try:
+            cache_path.unlink()
+            print("✅ Cleared file cache")
+        except (PermissionError, OSError) as exc:
+            LOGGER.warning(
+                "invalidate_cache_failed",
+                cache_path=str(cache_path),
+                error=str(exc),
+            )
+            print(f"⚠️  Could not clear file cache (may be in use): {exc}")
+            return 1
     else:
         print("(cache already clear)")
     return 0
