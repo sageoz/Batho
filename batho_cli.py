@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import batho as batho_api
-from batho.config import get_build_info, get_config_cached, reload_config
+from batho.config import get_build_info, get_config_cached, get_config_cached_for_root, get_default_batho_yaml_content, reload_config
 from batho.hooks import (
     HooksConfigError,
     HookInstallError,
@@ -955,7 +955,10 @@ def _try_reuse_persisted_graph(
     *,
     force_full: bool,
 ) -> tuple[InMemoryGraph, BSGMap, dict[str, Any]] | None:
-    """Reuse current persisted graph when file-hash tracking confirms no changes."""
+    """Deprecated: Legacy file-hash based graph reuse. Always returns None.
+    
+    SQLite cache now handles incremental indexing through content hashing.
+    """
     if force_full:
         return None
 
@@ -978,42 +981,6 @@ def _try_reuse_persisted_graph(
         message="SQLite cache handles incremental indexing through content hashing",
     )
     return None
-
-    graph = _load_current_graph(ctn_dir, current_index_id)
-    if graph is None:
-        LOGGER.warning(
-            "index_cache_reuse_failed",
-            base_index_id=current_index_id,
-            reason="graph_not_loadable",
-        )
-        return None
-
-    bsg_map = BSGMap.build(
-        graph,
-        root=str(root),
-        serialization_config=_get_serialization_config(),
-    )
-    stats = {
-        "incremental": True,
-        "reused_persisted_graph": True,
-        "base_index_id": current_index_id,
-        "changes_applied": 0,
-        "files_candidates": 0,
-        "files_parsed": 0,
-        "files_cached": 0,
-        "files_skipped": 0,
-        "errors": 0,
-        "workers_used": 0,
-        "entity_count": len(graph.entities),
-        "relationship_count": len(graph.relationships),
-    }
-    LOGGER.info(
-        "index_cache_reused",
-        base_index_id=current_index_id,
-        entity_count=len(graph.entities),
-        relationship_count=len(graph.relationships),
-    )
-    return graph, bsg_map, stats
 
 
 def _strip_files(
@@ -3795,8 +3762,36 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    # Load config and CLI flag overrides
-    cfg = get_config_cached()
+    # Determine target root directory for config resolution
+    # Most commands have a --root argument, default to current directory
+    target_root = getattr(args, "root", None)
+    if target_root:
+        target_root = Path(target_root).resolve()
+    else:
+        target_root = Path.cwd().resolve()
+
+    # Auto-create batho.yaml if missing when --root is explicitly provided
+    root_arg_provided = getattr(args, "root", None) is not None
+    config_path = target_root / "batho.yaml"
+    if root_arg_provided and not config_path.exists():
+        # Only prompt in interactive terminal (skip in tests/CI)
+        if sys.stdin.isatty():
+            print(f"No batho.yaml found in {target_root}")
+            response = input("Would you like to create a default batho.yaml? [Y/n]: ").strip().lower()
+            if response in ("", "y", "yes"):
+                try:
+                    config_path.write_text(get_default_batho_yaml_content())
+                    print(f"Created {config_path}")
+                except Exception as e:
+                    print(f"Warning: Could not create config file: {e}")
+            else:
+                print("Continuing without config file...")
+        else:
+            # Non-interactive mode: just continue with defaults
+            pass
+
+    # Load config with proper root resolution
+    cfg = get_config_cached_for_root(target_root)
 
     cli_level = getattr(args, "log_level", None)
     cli_quiet = bool(getattr(args, "quiet", False))

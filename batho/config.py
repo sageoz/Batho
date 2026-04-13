@@ -370,8 +370,40 @@ def get_build_info() -> dict[str, str]:
 
 
 def get_config() -> Dict[str, Any]:
-    """Return validated config as a plain dict sourced from ./batho.yaml."""
+    """Return validated config as a plain dict with batho.yaml resolved from cwd."""
+    return get_config_with_root(Path.cwd())
 
+
+def get_log_level() -> int:
+    return get_config_cached()["logging"]["level"]
+
+
+def get_build_info() -> dict[str, str]:
+    """Expose package version/build info for CLI and metadata."""
+
+    try:
+        version = importlib.metadata.version("batho")
+    except importlib.metadata.PackageNotFoundError:
+        version = _env("BATHO_VERSION", "0.1.0") or "0.1.0"
+    build = _env("BATHO_BUILD", "") or ""
+    return {"version": version, "build": build}
+
+
+@lru_cache(maxsize=None)
+def get_config_cached() -> Dict[str, Any]:
+    """Get config with batho.yaml resolved relative to current working directory."""
+    return get_config_with_root(Path.cwd())
+
+
+@lru_cache(maxsize=None)
+def get_config_cached_for_root(root_dir: Path) -> Dict[str, Any]:
+    """Get config with batho.yaml resolved relative to target root directory."""
+    return get_config_with_root(root_dir)
+
+
+def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
+    """Return validated config as a plain dict with batho.yaml resolved from root_dir."""
+    
     base_cfg: Dict[str, Any] = {
         "logging": {
             "level": DEFAULT_LOG_LEVEL,
@@ -386,7 +418,7 @@ def get_config() -> Dict[str, Any]:
             "max_indexed_files": DEFAULT_MAX_INDEXED_FILES,
             "max_workers": DEFAULT_INDEX_WORKERS,
             "max_files": None,
-            "ignore_patterns": [],  # Will be merged with actual patterns in ignore.py
+            "ignore_patterns": [],
             "ignore_files": DEFAULT_IGNORE_FILES,
             "metrics_output": DEFAULT_METRICS_OUTPUT,
             "fail_on_warning": False,
@@ -861,9 +893,182 @@ def get_config() -> Dict[str, Any]:
 
 @lru_cache(maxsize=None)
 def get_config_cached() -> Dict[str, Any]:
-    return get_config()
+    """Get config with batho.yaml resolved relative to current working directory."""
+    return get_config_with_root(Path.cwd())
+
+
+@lru_cache(maxsize=None)
+def get_config_cached_for_root(root_dir: Path) -> Dict[str, Any]:
+    """Get config with batho.yaml resolved relative to target root directory."""
+    return get_config_with_root(root_dir)
 
 
 def reload_config() -> Dict[str, Any]:
     get_config_cached.cache_clear()
+    get_config_cached_for_root.cache_clear()
     return get_config_cached()
+
+
+def get_default_batho_yaml_content() -> str:
+    """Return default batho.yaml content for auto-creation."""
+    return '''# Batho configuration
+# Auto-generated default config. Edit as needed for your project.
+
+logging:
+  level: INFO
+  json_format: null
+  quiet: false
+  file: null
+  format: "%(message)s"
+
+paths:
+  ctn_dir: .ctn
+
+indexer:
+  max_file_size_kb: 500
+  max_indexed_files: 200000
+  max_workers: 0
+  max_files: null
+  ignore_patterns: []
+  ignore_files: null
+  metrics_output: .ctn/metrics.json
+  fail_on_warning: false
+  strict: false
+
+patch:
+  timeout_seconds: 300
+  max_changes: 10000
+  audit_log_path: .ctn/patch_audit.log
+  history_days: 90
+  max_count: 1000
+  cleanup_on_startup: false
+
+flags:
+  fail_on_warning: false
+  strict: false
+  audit_log_enabled: true
+
+rules:
+  enabled: false
+  builtin_plugins:
+    - bsg_core
+    - bsg_silent_failure_catcher
+    - bsg_dependency_blast_radius
+    - bsg_resource_leak_preventer
+    - bsg_nplus1_query_catcher
+    - bsg_iac_drift_sentinel
+    - bsg_schema_migration_enforcer
+    - bsg_api_contract_guardian
+    - bsg_hardcoded_secret_catcher
+    - bsg_auth_boundary_shield
+  disabled_rules: []
+  custom_rules_path: null
+  custom_rules_inline: []
+  strict_validation: false
+  cache_ttl: 3600
+  fail_on_rule_error: false
+
+plugins:
+  overrides: {}
+
+schemas:
+  graph: graph.v1
+  bsg: bsg.v1
+  snapshot: snapshot.v1
+  index_metadata: index-metadata.v1
+  file_cache: file-cache.v1
+
+webhook:
+  enabled: false
+  server:
+    host: 0.0.0.0
+    port: 8080
+    workers: 4
+    endpoint: /webhook
+    health_endpoint: /health
+  repository: null
+  processing:
+    queue_backend: celery
+    celery_broker_url: memory://
+    celery_result_backend: cache+memory://
+    task_always_eager: true
+    task_store_eager_result: false
+    batch_size: 100
+    timeout_seconds: 300
+    retry_attempts: 3
+  rate_limit:
+    requests_per_hour: 100
+    burst_size: 10
+  logging:
+    level: INFO
+    file: null
+  github_secret: null
+  gitlab_token: null
+  allowed_ips: []
+
+cloud_sync:
+  enabled: false
+  endpoint: ""
+  api_key: ""
+  organization_id: ""
+  project_id: ""
+  timeout_seconds: 300
+  max_retries: 3
+  batch_size: 10
+
+bsg:
+  parallel:
+    enabled: true
+    max_workers: 16
+    chunk_size: 50
+  ignore:
+    enabled: true
+    file: .bathoignore
+  cache:
+    enabled: true
+    path: ~/.batho/ast_cache.db
+    max_size_mb: 1024
+    ttl_days: 30
+  incremental:
+    enabled: true
+    fallback_to_full: true
+    auto_detect_git: true
+  symbol_resolution:
+    enabled: true
+    fuzzy_matching: false
+    cache_symbols: true
+  serialization:
+    method: legacy
+    compression: false
+    batch_size: 1000
+  parsing:
+    error_recovery: true
+    partial_parsing: false
+    max_file_size_mb: 10
+    skip_comments: false
+  query:
+    enabled: true
+    index_on_write: true
+    cache_enabled: true
+    cache_size: 256
+    default_limit: 200
+    query_timeout_ms: 5000
+  storage:
+    enabled: true
+    backend: sqlite
+    registry_path: .ctn/artifact_registry.db
+    content_scope: durable
+    strict_compatibility: true
+    cloud_sync_ready: true
+    track_content_ids: true
+    mmap_enabled: false
+    mmap_min_size_mb: 8
+    retention:
+      enabled: true
+      snapshot_ttl_days: 90
+      patch_ttl_days: 90
+      metrics_ttl_days: 30
+      context_ttl_days: 90
+      max_snapshots: 500
+      max_patches: 5000
+'''
