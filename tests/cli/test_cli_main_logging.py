@@ -27,12 +27,14 @@ def _reset_cli_output_state():
 
 
 def test_main_uses_config_logging_defaults(monkeypatch):
+    import logging
+
     captured = {}
 
     monkeypatch.setattr(
         batho,
-        "get_config_cached",
-        lambda: {"logging": _base_logging_config(level="WARNING", json_format=False)},
+        "get_config_cached_for_root",
+        lambda root: {"logging": _base_logging_config(level=logging.WARNING, json_format=False)},
     )
     monkeypatch.setattr(batho, "configure_logging", lambda cfg: captured.setdefault("cfg", cfg))
     monkeypatch.setattr(batho, "cmd_stats", lambda _args: 0)
@@ -40,19 +42,21 @@ def test_main_uses_config_logging_defaults(monkeypatch):
     result = batho.main(["stats", "--root", "/tmp/repo"])
 
     assert result == 0
-    assert captured["cfg"]["level"] == "WARNING"
+    assert captured["cfg"]["level"] == logging.WARNING
     assert captured["cfg"]["json_format"] is False
     assert captured["cfg"]["quiet"] is False
     assert captured["cfg"]["file"] is None
 
 
 def test_main_cli_logging_flags_override_config(monkeypatch):
+    import logging
+
     captured = {}
 
     monkeypatch.setattr(
         batho,
-        "get_config_cached",
-        lambda: {"logging": _base_logging_config(level="INFO", json_format=False)},
+        "get_config_cached_for_root",
+        lambda root: {"logging": _base_logging_config(level=logging.INFO, json_format=False)},
     )
     monkeypatch.setattr(batho, "configure_logging", lambda cfg: captured.setdefault("cfg", cfg))
     monkeypatch.setattr(batho, "cmd_stats", lambda _args: 0)

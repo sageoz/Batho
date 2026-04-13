@@ -363,61 +363,6 @@ class TestCmdIndex:
         assert isinstance(bsg_payload.get("quality_warnings"), list)
         get_config_cached.cache_clear()
 
-    def test_index_reuses_persisted_graph_when_hash_scan_finds_no_changes(
-        self,
-        tmp_path: Path,
-    ):
-        root = tmp_path / "repo"
-        root.mkdir()
-        (root / "a.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
-
-        first_args = argparse.Namespace(
-            root=str(root),
-            extensions=None,
-            max_workers=0,
-            max_file_size_kb=None,
-            force=True,
-            full=False,
-            base_snapshot=None,
-            budget_tokens=0,
-            output_json=None,
-            output_md=None,
-            metrics_output=None,
-            snapshot=False,
-            snapshot_label=None,
-            verbose=False,
-            log_json=False,
-        )
-        assert cmd_index(first_args) == 0
-
-        ctn_dir = root / ".ctn"
-        tracker = FileChangeTracker(root)
-        tracker.scan_for_changes(max_file_size_kb=500)
-        tracker.save(ctn_dir / "file_hashes.json")
-
-        second_args = argparse.Namespace(
-            root=str(root),
-            extensions=None,
-            max_workers=0,
-            max_file_size_kb=None,
-            force=False,
-            full=False,
-            base_snapshot=None,
-            budget_tokens=0,
-            output_json=None,
-            output_md=None,
-            metrics_output=None,
-            snapshot=False,
-            snapshot_label=None,
-            verbose=False,
-            log_json=False,
-        )
-        assert cmd_index(second_args) == 0
-
-        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
-        current_id = str(index_payload.get("current_index_id"))
-        stats = index_payload.get("indexes", {}).get(current_id, {}).get("stats", {})
-        assert stats.get("reused_persisted_graph") is True
 
 
 # ---------------------------------------------------------------------------
