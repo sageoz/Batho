@@ -65,7 +65,7 @@ def timeout_context(timeout_seconds: float):
         )
 
     # Windows doesn't support SIGALRM, use threading.Timer as fallback
-    if sys.platform == "win32":
+    if sys.platform == "win32" or not hasattr(signal, "SIGALRM"):
         import threading
         timer = None
         try:
