@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from batho.context.codegraph import InMemoryGraph
-from batho.context.repomap import RepoMap
+from batho.context.bsg_map import BSGMap as RepoMap
 from batho.context.schema import Entity, EntityType
 from batho.time_machine import (
     compute_staleness,

@@ -27,7 +27,7 @@ from batho.time_machine import (
     PatchFileError,
 )
 from batho.context.codegraph import InMemoryGraph
-from batho.context.repomap import RepoMap
+from batho.context.bsg_map import BSGMap as RepoMap
 from batho.utils.hash import compute_bytes_hash
 
 

@@ -50,11 +50,6 @@ def _get_serialization_config() -> dict[str, Any]:
     return get_config_cached().get("bsg", {}).get("serialization", {})
 
 
-# Backward compatibility for legacy tests/mocks that patch
-# batho.time_machine.RepoMap.
-RepoMap = BSGMap
-
-
 @contextmanager
 def timeout_context(timeout_seconds: float):
     """Context manager to enforce operation timeouts."""
