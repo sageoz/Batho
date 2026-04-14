@@ -1,0 +1,119 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_swift
+name: Swift Language Detection
+version: 1.0.0
+enabled: true
+description: Detect Swift projects from Package.swift, Xcode projects, and source files.
+rules:
+  - rule_id: detect-swift
+    name: Swift Language Detection
+    description: Detect Swift projects from Package.swift and .swift files.
+    severity: info
+    priority: 55
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.swift'
+        - '**/Package.swift'
+        - '**/*.xcodeproj/**'
+        - '**/*.xcworkspace/**'
+      content_patterns:
+        - 'import '
+        - 'func '
+        - 'struct '
+        - 'class '
+    actions:
+      detect_language:
+        language: Swift
+
+  - rule_id: detect-swift-package-manager
+    name: Swift Package Manager Detection
+    description: Detect Swift Package Manager from Package.swift.
+    severity: info
+    priority: 54
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Package.swift'
+    actions:
+      detect_package_manager:
+        package_manager: swift-pm
+
+  - rule_id: detect-cocoapods
+    name: CocoaPods Package Manager Detection
+    description: Detect CocoaPods from Podfile.
+    severity: info
+    priority: 53
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Podfile'
+        - '**/Podfile.lock'
+    actions:
+      detect_package_manager:
+        package_manager: cocoapods
+
+  - rule_id: detect-carthage
+    name: Carthage Package Manager Detection
+    description: Detect Carthage from Cartfile.
+    severity: info
+    priority: 52
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Cartfile'
+        - '**/Cartfile.resolved'
+    actions:
+      detect_package_manager:
+        package_manager: carthage
+
+  - rule_id: detect-swiftui
+    name: SwiftUI Framework Detection
+    description: Detect SwiftUI framework from source files.
+    severity: info
+    priority: 51
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.swift'
+      content_patterns:
+        - 'import SwiftUI'
+        - 'SwiftUI.View'
+    actions:
+      detect_framework:
+        language: Swift
+        framework: SwiftUI
+
+  - rule_id: detect-uikit
+    name: UIKit Framework Detection
+    description: Detect UIKit framework from source files.
+    severity: info
+    priority: 50
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.swift'
+      content_patterns:
+        - 'import UIKit'
+        - 'UIViewController'
+    actions:
+      detect_framework:
+        language: Swift
+        framework: UIKit
+
+  - rule_id: detect-vapor
+    name: Vapor Framework Detection
+    description: Detect Vapor server-side Swift framework.
+    severity: info
+    priority: 49
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Package.swift'
+      content_patterns:
+        - 'vapor/vapor'
+        - 'import Vapor'
+    actions:
+      detect_framework:
+        language: Swift
+        framework: Vapor

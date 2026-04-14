@@ -1,0 +1,44 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_framework_django
+name: Django Framework Detection
+version: 1.0.0
+enabled: true
+description: Detect Django and Django REST Framework.
+rules:
+  - rule_id: detect-django
+    name: Django Framework Detection
+    description: Detect Django framework from requirements and settings.
+    severity: info
+    priority: 140
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/requirements.txt'
+        - '**/pyproject.toml'
+        - '**/manage.py'
+        - '**/settings.py'
+      content_patterns:
+        - 'Django'
+        - 'django'
+    actions:
+      detect_framework:
+        language: Python
+        framework: Django
+
+  - rule_id: detect-django-rest-framework
+    name: Django REST Framework Detection
+    description: Detect Django REST Framework from requirements.
+    severity: info
+    priority: 139
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/requirements.txt'
+        - '**/pyproject.toml'
+      content_patterns:
+        - 'djangorestframework'
+        - 'rest_framework'
+    actions:
+      detect_framework:
+        language: Python
+        framework: Django REST Framework

@@ -1,0 +1,79 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_kotlin
+name: Kotlin Language Detection
+version: 1.0.0
+enabled: true
+description: Detect Kotlin projects from build files and source files.
+rules:
+  - rule_id: detect-kotlin
+    name: Kotlin Language Detection
+    description: Detect Kotlin projects from .kt files and build.gradle.kts.
+    severity: info
+    priority: 58
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.kt'
+        - '**/*.kts'
+        - '**/build.gradle.kts'
+      content_patterns:
+        - 'fun '
+        - 'val '
+        - 'var '
+    actions:
+      detect_language:
+        language: Kotlin
+
+  - rule_id: detect-ktor
+    name: Ktor Framework Detection
+    description: Detect Ktor server framework from build files.
+    severity: info
+    priority: 57
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/build.gradle.kts'
+        - '**/build.gradle'
+      content_patterns:
+        - 'io.ktor'
+        - 'ktor-server'
+    actions:
+      detect_framework:
+        language: Kotlin
+        framework: Ktor
+
+  - rule_id: detect-spring-kotlin
+    name: Spring Boot Kotlin Detection
+    description: Detect Spring Boot with Kotlin from build files.
+    severity: info
+    priority: 56
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/build.gradle.kts'
+        - '**/pom.xml'
+      content_patterns:
+        - 'org.springframework.boot'
+        - 'kotlin'
+    actions:
+      detect_framework:
+        language: Kotlin
+        framework: Spring Boot
+
+  - rule_id: detect-android-kotlin
+    name: Android Kotlin Detection
+    description: Detect Android projects using Kotlin.
+    severity: info
+    priority: 55
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/build.gradle.kts'
+        - '**/AndroidManifest.xml'
+      content_patterns:
+        - 'com.android.application'
+        - 'kotlin-android'
+    actions:
+      detect_framework:
+        language: Kotlin
+        framework: Android

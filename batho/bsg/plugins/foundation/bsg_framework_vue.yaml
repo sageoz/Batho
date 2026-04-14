@@ -1,0 +1,58 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_framework_vue
+name: Vue.js Framework Detection
+version: 1.0.0
+enabled: true
+description: Detect Vue.js, Nuxt.js, and Quasar frameworks.
+rules:
+  - rule_id: detect-vue
+    name: Vue.js Framework Detection
+    description: Detect Vue.js framework from package.json.
+    severity: info
+    priority: 145
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/*.vue'
+      content_patterns:
+        - '"vue":'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Vue.js
+
+  - rule_id: detect-nuxtjs
+    name: Nuxt.js Framework Detection
+    description: Detect Nuxt.js framework from package.json and config.
+    severity: info
+    priority: 144
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/nuxt.config.js'
+        - '**/nuxt.config.ts'
+      content_patterns:
+        - '"nuxt":'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Nuxt.js
+
+  - rule_id: detect-quasar
+    name: Quasar Framework Detection
+    description: Detect Quasar framework from package.json.
+    severity: info
+    priority: 143
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/quasar.conf.js'
+      content_patterns:
+        - '"quasar":'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Quasar

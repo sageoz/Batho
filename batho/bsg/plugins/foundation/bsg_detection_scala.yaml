@@ -1,0 +1,93 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_scala
+name: Scala Language Detection
+version: 1.0.0
+enabled: true
+description: Detect Scala projects from sbt build files and source files.
+rules:
+  - rule_id: detect-scala
+    name: Scala Language Detection
+    description: Detect Scala projects from .scala files and build.sbt.
+    severity: info
+    priority: 48
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.scala'
+        - '**/build.sbt'
+        - '**/project/build.properties'
+      content_patterns:
+        - 'package '
+        - 'import '
+        - 'object '
+    actions:
+      detect_language:
+        language: Scala
+
+  - rule_id: detect-sbt
+    name: SBT Build Tool Detection
+    description: Detect SBT build tool from build.sbt.
+    severity: info
+    priority: 47
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/build.sbt'
+        - '**/project/build.properties'
+    actions:
+      detect_package_manager:
+        package_manager: sbt
+
+  - rule_id: detect-play-framework
+    name: Play Framework Detection
+    description: Detect Play Framework from build files.
+    severity: info
+    priority: 46
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/build.sbt'
+        - '**/conf/application.conf'
+        - '**/conf/routes'
+      content_patterns:
+        - 'play.sbt.PlayImport'
+        - 'play.api'
+    actions:
+      detect_framework:
+        language: Scala
+        framework: Play
+
+  - rule_id: detect-akka
+    name: Akka Framework Detection
+    description: Detect Akka framework from build files.
+    severity: info
+    priority: 45
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/build.sbt'
+      content_patterns:
+        - 'com.typesafe.akka'
+        - 'akka-actor'
+    actions:
+      detect_framework:
+        language: Scala
+        framework: Akka
+
+  - rule_id: detect-spark-scala
+    name: Apache Spark Scala Detection
+    description: Detect Apache Spark with Scala from build files.
+    severity: info
+    priority: 44
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/build.sbt'
+        - '**/pom.xml'
+      content_patterns:
+        - 'org.apache.spark'
+        - 'spark-core'
+    actions:
+      detect_framework:
+        language: Scala
+        framework: Spark

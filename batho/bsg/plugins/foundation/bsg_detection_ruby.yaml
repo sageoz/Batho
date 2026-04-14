@@ -1,0 +1,100 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_ruby
+name: Ruby Language Detection
+version: 1.0.0
+enabled: true
+description: Detect Ruby projects from Gemfile, gemspec files, and source files.
+rules:
+  - rule_id: detect-ruby
+    name: Ruby Language Detection
+    description: Detect Ruby projects from Gemfile and .rb files.
+    severity: info
+    priority: 65
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.rb'
+        - '**/Gemfile'
+        - '**/Gemfile.lock'
+        - '**/*.gemspec'
+        - '**/Rakefile'
+      content_patterns:
+        - 'def '
+        - 'class '
+        - 'module '
+        - 'require '
+    actions:
+      detect_language:
+        language: Ruby
+
+  - rule_id: detect-rails
+    name: Ruby on Rails Framework Detection
+    description: Detect Ruby on Rails framework from config and Gemfile.
+    severity: info
+    priority: 64
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/config/application.rb'
+        - '**/config/routes.rb'
+        - '**/Gemfile'
+      content_patterns:
+        - 'Rails.application'
+        - 'rails'
+    actions:
+      detect_framework:
+        language: Ruby
+        framework: Rails
+
+  - rule_id: detect-sinatra
+    name: Sinatra Framework Detection
+    description: Detect Sinatra framework from Gemfile.
+    severity: info
+    priority: 63
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Gemfile'
+        - '**/*.rb'
+      content_patterns:
+        - 'sinatra'
+        - 'Sinatra::Base'
+    actions:
+      detect_framework:
+        language: Ruby
+        framework: Sinatra
+
+  - rule_id: detect-hanami
+    name: Hanami Framework Detection
+    description: Detect Hanami framework from Gemfile and config.
+    severity: info
+    priority: 62
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Gemfile'
+        - '**/config/environment.rb'
+      content_patterns:
+        - 'hanami'
+        - 'Hanami'
+    actions:
+      detect_framework:
+        language: Ruby
+        framework: Hanami
+
+  - rule_id: detect-jekyll
+    name: Jekyll Static Site Generator Detection
+    description: Detect Jekyll static site generator.
+    severity: info
+    priority: 61
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/_config.yml'
+        - '**/Gemfile'
+      content_patterns:
+        - 'jekyll'
+    actions:
+      detect_framework:
+        language: Ruby
+        framework: Jekyll

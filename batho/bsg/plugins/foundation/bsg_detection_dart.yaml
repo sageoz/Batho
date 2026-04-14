@@ -1,0 +1,89 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_dart
+name: Dart Language Detection
+version: 1.0.0
+enabled: true
+description: Detect Dart projects from pubspec files and source files.
+rules:
+  - rule_id: detect-dart
+    name: Dart Language Detection
+    description: Detect Dart projects from .dart files and pubspec.yaml.
+    severity: info
+    priority: 28
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.dart'
+        - '**/pubspec.yaml'
+        - '**/pubspec.lock'
+      content_patterns:
+        - 'import '
+        - 'void main'
+        - 'class '
+    actions:
+      detect_language:
+        language: Dart
+
+  - rule_id: detect-pub
+    name: Pub Package Manager Detection
+    description: Detect Pub package manager from pubspec.yaml.
+    severity: info
+    priority: 27
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pubspec.yaml'
+        - '**/pubspec.lock'
+    actions:
+      detect_package_manager:
+        package_manager: pub
+
+  - rule_id: detect-flutter
+    name: Flutter Framework Detection
+    description: Detect Flutter framework from pubspec.yaml.
+    severity: info
+    priority: 26
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pubspec.yaml'
+      content_patterns:
+        - 'flutter:'
+        - 'sdk: flutter'
+    actions:
+      detect_framework:
+        language: Dart
+        framework: Flutter
+
+  - rule_id: detect-angular-dart
+    name: AngularDart Framework Detection
+    description: Detect AngularDart framework from pubspec.yaml.
+    severity: info
+    priority: 25
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pubspec.yaml'
+      content_patterns:
+        - 'angular:'
+        - 'angular_components'
+    actions:
+      detect_framework:
+        language: Dart
+        framework: AngularDart
+
+  - rule_id: detect-aqueduct
+    name: Aqueduct Framework Detection
+    description: Detect Aqueduct server framework from pubspec.yaml.
+    severity: info
+    priority: 24
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pubspec.yaml'
+      content_patterns:
+        - 'aqueduct:'
+    actions:
+      detect_framework:
+        language: Dart
+        framework: Aqueduct

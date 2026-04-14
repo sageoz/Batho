@@ -1,0 +1,130 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_test_frameworks
+name: Test Framework Detection
+version: 1.0.0
+enabled: true
+description: Detect test frameworks across multiple languages.
+rules:
+  - rule_id: detect-pytest
+    name: Pytest Framework Detection
+    description: Detect pytest testing framework for Python.
+    severity: info
+    priority: 99
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pytest.ini'
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/test_*.py'
+        - '**/*_test.py'
+      content_patterns:
+        - 'pytest'
+    actions:
+      detect_framework:
+        language: Python
+        framework: pytest
+
+  - rule_id: detect-jest
+    name: Jest Framework Detection
+    description: Detect Jest testing framework for JavaScript/TypeScript.
+    severity: info
+    priority: 98
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/jest.config.js'
+        - '**/jest.config.ts'
+      content_patterns:
+        - '"jest":'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Jest
+
+  - rule_id: detect-mocha
+    name: Mocha Framework Detection
+    description: Detect Mocha testing framework for JavaScript.
+    severity: info
+    priority: 97
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/.mocharc.json'
+      content_patterns:
+        - '"mocha":'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Mocha
+
+  - rule_id: detect-vitest
+    name: Vitest Framework Detection
+    description: Detect Vitest testing framework for Vite projects.
+    severity: info
+    priority: 96
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/vitest.config.ts'
+      content_patterns:
+        - '"vitest":'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Vitest
+
+  - rule_id: detect-junit
+    name: JUnit Framework Detection
+    description: Detect JUnit testing framework for Java.
+    severity: info
+    priority: 95
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pom.xml'
+        - '**/build.gradle'
+      content_patterns:
+        - 'junit'
+        - 'org.junit'
+    actions:
+      detect_framework:
+        language: Java
+        framework: JUnit
+
+  - rule_id: detect-rspec
+    name: RSpec Framework Detection
+    description: Detect RSpec testing framework for Ruby.
+    severity: info
+    priority: 94
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Gemfile'
+        - '**/.rspec'
+        - '**/spec/**/*_spec.rb'
+      content_patterns:
+        - 'rspec'
+    actions:
+      detect_framework:
+        language: Ruby
+        framework: RSpec
+
+  - rule_id: detect-go-testing
+    name: Go Testing Package Detection
+    description: Detect Go built-in testing package.
+    severity: info
+    priority: 93
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*_test.go'
+      content_patterns:
+        - 'import "testing"'
+    actions:
+      detect_framework:
+        language: Go
+        framework: Go Testing

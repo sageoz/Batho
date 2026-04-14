@@ -1,0 +1,87 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_cicd
+name: CI/CD Platform Detection
+version: 1.0.0
+enabled: true
+description: Detect CI/CD platforms and pipeline configurations.
+rules:
+  - rule_id: detect-github-actions
+    name: GitHub Actions Detection
+    description: Detect GitHub Actions workflows.
+    severity: info
+    priority: 105
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/.github/workflows/*.yml'
+        - '**/.github/workflows/*.yaml'
+    actions:
+      detect_infra:
+        infra_type: github-actions
+
+  - rule_id: detect-gitlab-ci
+    name: GitLab CI Detection
+    description: Detect GitLab CI/CD pipelines.
+    severity: info
+    priority: 104
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/.gitlab-ci.yml'
+    actions:
+      detect_infra:
+        infra_type: gitlab-ci
+
+  - rule_id: detect-jenkins
+    name: Jenkins Detection
+    description: Detect Jenkins pipeline configurations.
+    severity: info
+    priority: 103
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Jenkinsfile'
+        - '**/jenkins.yaml'
+    actions:
+      detect_infra:
+        infra_type: jenkins
+
+  - rule_id: detect-circleci
+    name: CircleCI Detection
+    description: Detect CircleCI pipeline configurations.
+    severity: info
+    priority: 102
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/.circleci/config.yml'
+    actions:
+      detect_infra:
+        infra_type: circleci
+
+  - rule_id: detect-travis-ci
+    name: Travis CI Detection
+    description: Detect Travis CI configurations.
+    severity: info
+    priority: 101
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/.travis.yml'
+    actions:
+      detect_infra:
+        infra_type: travis-ci
+
+  - rule_id: detect-azure-pipelines
+    name: Azure Pipelines Detection
+    description: Detect Azure Pipelines configurations.
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/azure-pipelines.yml'
+        - '**/azure-pipelines.yaml'
+    actions:
+      detect_infra:
+        infra_type: azure-pipelines

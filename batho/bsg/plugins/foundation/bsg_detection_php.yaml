@@ -1,0 +1,135 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_php
+name: PHP Language Detection
+version: 1.0.0
+enabled: true
+description: Detect PHP projects from configuration files, composer files, and source files.
+rules:
+  - rule_id: detect-php
+    name: PHP Language Detection
+    description: Detect PHP projects from composer.json and .php files.
+    severity: info
+    priority: 75
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.php'
+        - '**/composer.json'
+        - '**/composer.lock'
+      content_patterns:
+        - '<?php'
+        - 'namespace '
+        - 'use '
+    actions:
+      detect_language:
+        language: PHP
+
+  - rule_id: detect-laravel
+    name: Laravel Framework Detection
+    description: Detect Laravel framework from artisan and composer.json.
+    severity: info
+    priority: 74
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/artisan'
+        - '**/composer.json'
+      content_patterns:
+        - 'laravel/framework'
+        - 'illuminate/'
+    actions:
+      detect_framework:
+        language: PHP
+        framework: Laravel
+
+  - rule_id: detect-symfony
+    name: Symfony Framework Detection
+    description: Detect Symfony framework from composer.json and config files.
+    severity: info
+    priority: 73
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/composer.json'
+        - '**/symfony.lock'
+        - '**/config/bundles.php'
+      content_patterns:
+        - 'symfony/framework-bundle'
+        - 'symfony/symfony'
+    actions:
+      detect_framework:
+        language: PHP
+        framework: Symfony
+
+  - rule_id: detect-wordpress
+    name: WordPress Detection
+    description: Detect WordPress CMS from wp-config and core files.
+    severity: info
+    priority: 72
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/wp-config.php'
+        - '**/wp-content/**'
+        - '**/wp-includes/**'
+      content_patterns:
+        - 'ABSPATH'
+        - 'wp_'
+    actions:
+      detect_framework:
+        language: PHP
+        framework: WordPress
+
+  - rule_id: detect-drupal
+    name: Drupal Detection
+    description: Detect Drupal CMS from core files and composer.json.
+    severity: info
+    priority: 71
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/composer.json'
+        - '**/core/lib/Drupal.php'
+        - '**/sites/default/**'
+      content_patterns:
+        - 'drupal/core'
+        - 'drupal/drupal'
+    actions:
+      detect_framework:
+        language: PHP
+        framework: Drupal
+
+  - rule_id: detect-codeigniter
+    name: CodeIgniter Framework Detection
+    description: Detect CodeIgniter framework from system files.
+    severity: info
+    priority: 70
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/system/core/CodeIgniter.php'
+        - '**/application/config/**'
+      content_patterns:
+        - 'CI_Controller'
+        - 'CodeIgniter'
+    actions:
+      detect_framework:
+        language: PHP
+        framework: CodeIgniter
+
+  - rule_id: detect-yii
+    name: Yii Framework Detection
+    description: Detect Yii framework from composer.json.
+    severity: info
+    priority: 69
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/composer.json'
+      content_patterns:
+        - 'yiisoft/yii2'
+        - 'yiisoft/yii'
+    actions:
+      detect_framework:
+        language: PHP
+        framework: Yii

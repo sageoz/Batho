@@ -1,0 +1,100 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_cloud_providers
+name: Cloud Provider Detection
+version: 1.0.0
+enabled: true
+description: Detect AWS, GCP, Azure, and multi-cloud infrastructure patterns.
+rules:
+  - rule_id: detect-aws
+    name: AWS Cloud Detection
+    description: Detect AWS infrastructure from CloudFormation, CDK, and SAM templates.
+    severity: info
+    priority: 110
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/template.yaml'
+        - '**/template.yml'
+        - '**/*-template.yaml'
+        - '**/cdk.json'
+        - '**/samconfig.toml'
+      content_patterns:
+        - 'AWSTemplateFormatVersion'
+        - 'AWS::CloudFormation'
+        - 'AWS::Lambda'
+        - 'aws-cdk'
+    actions:
+      detect_infra:
+        infra_type: aws
+
+  - rule_id: detect-gcp
+    name: GCP Cloud Detection
+    description: Detect GCP infrastructure from Deployment Manager and gcloud configs.
+    severity: info
+    priority: 109
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.jinja'
+        - '**/*.py.schema'
+        - '**/deployment.yaml'
+      content_patterns:
+        - 'gcp-types'
+        - 'deployment-manager'
+        - 'google-cloud'
+    actions:
+      detect_infra:
+        infra_type: gcp
+
+  - rule_id: detect-azure
+    name: Azure Cloud Detection
+    description: Detect Azure infrastructure from ARM templates and Bicep files.
+    severity: info
+    priority: 108
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.bicep'
+        - '**/azuredeploy.json'
+        - '**/azuredeploy.parameters.json'
+      content_patterns:
+        - 'Microsoft.Resources'
+        - 'Microsoft.Compute'
+        - 'Microsoft.Storage'
+    actions:
+      detect_infra:
+        infra_type: azure
+
+  - rule_id: detect-terraform
+    name: Terraform Multi-Cloud Detection
+    description: Detect Terraform infrastructure as code.
+    severity: info
+    priority: 107
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.tf'
+        - '**/*.tfvars'
+        - '**/terraform.tfstate'
+      content_patterns:
+        - 'terraform'
+        - 'provider'
+    actions:
+      detect_infra:
+        infra_type: terraform
+
+  - rule_id: detect-pulumi
+    name: Pulumi Multi-Cloud Detection
+    description: Detect Pulumi infrastructure as code.
+    severity: info
+    priority: 106
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Pulumi.yaml'
+        - '**/Pulumi.*.yaml'
+      content_patterns:
+        - 'pulumi'
+    actions:
+      detect_infra:
+        infra_type: pulumi

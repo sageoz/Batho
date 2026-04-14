@@ -1,0 +1,40 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_framework_angular
+name: Angular Framework Detection
+version: 1.0.0
+enabled: true
+description: Detect Angular and AngularJS frameworks.
+rules:
+  - rule_id: detect-angular
+    name: Angular Framework Detection
+    description: Detect Angular framework from package.json and angular.json.
+    severity: info
+    priority: 142
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/angular.json'
+      content_patterns:
+        - '"@angular/core":'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Angular
+
+  - rule_id: detect-angularjs
+    name: AngularJS Framework Detection
+    description: Detect AngularJS (1.x) framework from package.json.
+    severity: info
+    priority: 141
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"angular":'
+        - 'angular.module'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: AngularJS

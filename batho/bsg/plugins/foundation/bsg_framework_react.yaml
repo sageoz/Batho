@@ -1,0 +1,92 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_framework_react
+name: React Framework Detection
+version: 1.0.0
+enabled: true
+description: Detect React, Next.js, Remix, and Gatsby frameworks.
+rules:
+  - rule_id: detect-react
+    name: React Framework Detection
+    description: Detect React library from package.json dependencies.
+    severity: info
+    priority: 150
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"react":'
+        - '"react-dom":'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: React
+
+  - rule_id: detect-nextjs
+    name: Next.js Framework Detection
+    description: Detect Next.js framework from package.json and config files.
+    severity: info
+    priority: 149
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/next.config.js'
+        - '**/next.config.mjs'
+      content_patterns:
+        - '"next":'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Next.js
+
+  - rule_id: detect-remix
+    name: Remix Framework Detection
+    description: Detect Remix framework from package.json.
+    severity: info
+    priority: 148
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/remix.config.js'
+      content_patterns:
+        - '"@remix-run/'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Remix
+
+  - rule_id: detect-gatsby
+    name: Gatsby Framework Detection
+    description: Detect Gatsby static site generator from package.json.
+    severity: info
+    priority: 147
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/gatsby-config.js'
+        - '**/gatsby-node.js'
+      content_patterns:
+        - '"gatsby":'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Gatsby
+
+  - rule_id: detect-create-react-app
+    name: Create React App Detection
+    description: Detect Create React App from package.json.
+    severity: info
+    priority: 146
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"react-scripts":'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Create React App

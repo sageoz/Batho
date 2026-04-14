@@ -1,0 +1,92 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_elixir
+name: Elixir Language Detection
+version: 1.0.0
+enabled: true
+description: Detect Elixir projects from mix files and source files.
+rules:
+  - rule_id: detect-elixir
+    name: Elixir Language Detection
+    description: Detect Elixir projects from .ex, .exs files and mix.exs.
+    severity: info
+    priority: 35
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.ex'
+        - '**/*.exs'
+        - '**/mix.exs'
+        - '**/mix.lock'
+      content_patterns:
+        - 'defmodule '
+        - 'def '
+        - 'end'
+    actions:
+      detect_language:
+        language: Elixir
+
+  - rule_id: detect-mix
+    name: Mix Build Tool Detection
+    description: Detect Mix build tool from mix.exs.
+    severity: info
+    priority: 34
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/mix.exs'
+        - '**/mix.lock'
+    actions:
+      detect_package_manager:
+        package_manager: mix
+
+  - rule_id: detect-phoenix
+    name: Phoenix Framework Detection
+    description: Detect Phoenix web framework from mix.exs.
+    severity: info
+    priority: 33
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/mix.exs'
+        - '**/config/config.exs'
+      content_patterns:
+        - 'phoenix'
+        - 'Phoenix.Endpoint'
+    actions:
+      detect_framework:
+        language: Elixir
+        framework: Phoenix
+
+  - rule_id: detect-ecto
+    name: Ecto Database Library Detection
+    description: Detect Ecto database library from mix.exs.
+    severity: info
+    priority: 32
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/mix.exs'
+      content_patterns:
+        - 'ecto'
+        - 'Ecto.Repo'
+    actions:
+      detect_framework:
+        language: Elixir
+        framework: Ecto
+
+  - rule_id: detect-nerves
+    name: Nerves IoT Framework Detection
+    description: Detect Nerves IoT framework from mix.exs.
+    severity: info
+    priority: 31
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/mix.exs'
+      content_patterns:
+        - 'nerves'
+        - 'Nerves'
+    actions:
+      detect_framework:
+        language: Elixir
+        framework: Nerves

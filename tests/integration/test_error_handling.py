@@ -186,8 +186,11 @@ def fetch_with_requests():
         results = []
         
         def index_repo():
-            rc = main(["index", "--root", str(tmp_path), "--force"])
-            results.append(rc)
+            try:
+                rc = main(["index", "--root", str(tmp_path), "--force"])
+                results.append(rc)
+            except Exception:
+                results.append(1)  # Mark as failed on exception
         
         # Start multiple indexing operations concurrently
         threads = []

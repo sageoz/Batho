@@ -1,0 +1,44 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_framework_flask
+name: Flask Framework Detection
+version: 1.0.0
+enabled: true
+description: Detect Flask and FastAPI frameworks.
+rules:
+  - rule_id: detect-flask
+    name: Flask Framework Detection
+    description: Detect Flask framework from requirements and imports.
+    severity: info
+    priority: 138
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/requirements.txt'
+        - '**/pyproject.toml'
+        - '**/*.py'
+      content_patterns:
+        - 'Flask'
+        - 'from flask import'
+    actions:
+      detect_framework:
+        language: Python
+        framework: Flask
+
+  - rule_id: detect-fastapi
+    name: FastAPI Framework Detection
+    description: Detect FastAPI framework from requirements and imports.
+    severity: info
+    priority: 137
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/requirements.txt'
+        - '**/pyproject.toml'
+        - '**/*.py'
+      content_patterns:
+        - 'fastapi'
+        - 'from fastapi import'
+    actions:
+      detect_framework:
+        language: Python
+        framework: FastAPI

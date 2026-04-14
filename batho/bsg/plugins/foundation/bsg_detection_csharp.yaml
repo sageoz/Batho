@@ -1,0 +1,130 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_csharp
+name: C# Language Detection
+version: 1.0.0
+enabled: true
+description: Detect C# projects from configuration files, solution files, and source files.
+rules:
+  - rule_id: detect-csharp
+    name: C# Language Detection
+    description: Detect C# projects from .csproj, .sln, and .cs files.
+    severity: info
+    priority: 85
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.cs'
+        - '**/*.csproj'
+        - '**/*.sln'
+        - '**/packages.config'
+        - '**/nuget.config'
+      content_patterns:
+        - 'namespace '
+        - 'using System'
+        - 'class '
+        - 'public class'
+    actions:
+      detect_language:
+        language: C#
+
+  - rule_id: detect-nuget
+    name: NuGet Package Manager Detection
+    description: Detect NuGet package manager from .csproj and packages.config.
+    severity: info
+    priority: 85
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.csproj'
+        - '**/packages.config'
+        - '**/nuget.config'
+    actions:
+      detect_package_manager:
+        package_manager: nuget
+
+  - rule_id: detect-dotnet-cli
+    name: .NET CLI Detection
+    description: Detect .NET CLI from global.json and project structure.
+    severity: info
+    priority: 84
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/global.json'
+        - '**/*.csproj'
+    actions:
+      detect_package_manager:
+        package_manager: dotnet
+
+  - rule_id: detect-aspnet
+    name: ASP.NET Framework Detection
+    description: Detect ASP.NET and ASP.NET Core frameworks.
+    severity: info
+    priority: 83
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.csproj'
+      content_patterns:
+        - 'Microsoft.AspNetCore'
+        - 'Microsoft.AspNet'
+        - 'System.Web.Mvc'
+    actions:
+      detect_framework:
+        language: C#
+        framework: ASP.NET
+
+  - rule_id: detect-blazor
+    name: Blazor Framework Detection
+    description: Detect Blazor framework from project files.
+    severity: info
+    priority: 82
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.razor'
+        - '**/*.csproj'
+      content_patterns:
+        - 'Microsoft.AspNetCore.Components'
+        - 'Blazor'
+    actions:
+      detect_framework:
+        language: C#
+        framework: Blazor
+
+  - rule_id: detect-unity
+    name: Unity Framework Detection
+    description: Detect Unity game engine projects.
+    severity: info
+    priority: 81
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Assets/**/*.cs'
+        - '**/ProjectSettings/**'
+        - '**/*.unity'
+      content_patterns:
+        - 'UnityEngine'
+        - 'UnityEditor'
+    actions:
+      detect_framework:
+        language: C#
+        framework: Unity
+
+  - rule_id: detect-xamarin
+    name: Xamarin Framework Detection
+    description: Detect Xamarin mobile development framework.
+    severity: info
+    priority: 80
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.csproj'
+      content_patterns:
+        - 'Xamarin.Forms'
+        - 'Xamarin.Android'
+        - 'Xamarin.iOS'
+    actions:
+      detect_framework:
+        language: C#
+        framework: Xamarin
