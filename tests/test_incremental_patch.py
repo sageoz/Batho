@@ -27,7 +27,7 @@ from batho.time_machine import (
     PatchFileError,
 )
 from batho.context.codegraph import InMemoryGraph
-from batho.context.bsg_map import BSGMap as RepoMap
+from batho.context.bsg_map import BSGMap
 from batho.utils.hash import compute_bytes_hash
 
 
@@ -575,7 +575,7 @@ class TestIncrementalPatchFunction:
                 return_value=MagicMock(),
             ),
             patch(
-                "batho.time_machine.RepoMap.from_dict", return_value=MagicMock()
+                "batho.time_machine.BSGMap.from_dict", return_value=MagicMock()
             ),
             patch(
                 "batho.time_machine.create_snapshot", return_value="new_snap_123"
@@ -658,7 +658,7 @@ class TestIncrementalPatchFunction:
                 return_value=MagicMock(),
             ),
             patch(
-                "batho.time_machine.RepoMap.from_dict", return_value=MagicMock()
+                "batho.time_machine.BSGMap.from_dict", return_value=MagicMock()
             ),
             patch("batho.time_machine.aggregate_changes", return_value=changes),
             patch(
