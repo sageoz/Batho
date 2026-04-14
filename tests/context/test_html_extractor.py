@@ -48,16 +48,19 @@ class TestHTMLExtractor:
         expected_elements = {"html", "head", "title", "link", "body", "h1", "div", "p", "a", "img"}
         assert expected_elements.issubset(element_names)
         
-        # Check attribute entities
-        attribute_entities = [e for e in entities if e.type == EntityType.ATTRIBUTE]
-        assert len(attribute_entities) > 0
+        # Check that attributes are stored in element metadata (not as separate entities)
+        # Find elements with attributes
+        elements_with_attrs = [e for e in element_entities if e.metadata.get("attributes")]
+        assert len(elements_with_attrs) > 0
         
         # Check relationships
         assert len(relationships) > 0
         
-        # Check HAS_ATTRIBUTE relationships
-        has_attr_rels = [r for r in relationships if r.type == RelationshipType.HAS_ATTRIBUTE]
-        assert len(has_attr_rels) > 0
+        # Attributes are now stored in metadata, no HAS_ATTRIBUTE relationships
+        # Verify attributes are in metadata instead
+        div_elements = [e for e in element_entities if e.name == "div"]
+        assert len(div_elements) > 0
+        assert "class" in div_elements[0].metadata.get("attributes", {})
         
         # Check CONTAINS relationships
         contains_rels = [r for r in relationships if r.type == RelationshipType.CONTAINS]
@@ -99,17 +102,19 @@ class TestHTMLExtractor:
         entities, relationships = self.extractor.parse_file("test.html", html_content)
         
         # Check attribute extraction with different quote styles
-        attribute_entities = [e for e in entities if e.type == EntityType.ATTRIBUTE]
-        attr_names = {e.metadata["attribute_name"] for e in attribute_entities}
+        # Attributes are now stored in element metadata
+        div_elements = [e for e in entities if e.type == EntityType.ELEMENT and e.name == "div"]
+        assert len(div_elements) > 0
+        
+        attributes = div_elements[0].metadata.get("attributes", {})
+        attr_names = set(attributes.keys())
         expected_attrs = {"class", "id", "data-value"}
         assert attr_names == expected_attrs
         
         # Check attribute values
-        attr_values = {e.metadata["attribute_name"]: e.metadata["attribute_value"] 
-                      for e in attribute_entities}
-        assert attr_values["class"] == "container"
-        assert attr_values["id"] == "main"
-        assert attr_values["data-value"] == "123"
+        assert attributes["class"] == "container"
+        assert attributes["id"] == "main"
+        assert attributes["data-value"] == "123"
 
     def test_extract_unicode_content(self):
         """Test extracting HTML with unicode content."""

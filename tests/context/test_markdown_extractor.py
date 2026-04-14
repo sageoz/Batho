@@ -116,7 +116,9 @@ Plain code block
 
     def test_extract_lists(self):
         """Test extracting unordered and ordered lists."""
-        md_content = b"""- Unordered item 1
+        md_content = b"""# Header
+
+- Unordered item 1
 - Unordered item 2
   - Nested item
 - Unordered item 3
@@ -129,9 +131,18 @@ Plain code block
         
         entities, relationships = self.extractor.parse_file("test.md", md_content)
         
-        # Should have list items
-        list_entities = [e for e in entities if e.type == EntityType.ELEMENT and e.name.startswith("list_item_")]
-        assert len(list_entities) >= 6  # At least 6 list items
+        # List items are now rolled up into parent header metadata
+        # Check that header has content_rollup with list items
+        header_entities = [e for e in entities if e.type == EntityType.ELEMENT and e.name.startswith("header_")]
+        assert len(header_entities) >= 1
+        
+        # Verify content rollup contains list items
+        header_with_content = [e for e in header_entities if e.metadata.get("content_rollup")]
+        assert len(header_with_content) >= 1
+        
+        # Check that rollup contains list markers
+        content_rollup = header_with_content[0].metadata.get("content_rollup", "")
+        assert "- " in content_rollup or len(content_rollup.split("\n")) >= 6
 
     def test_extract_links_and_images(self):
         """Test extracting links and images."""

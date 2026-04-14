@@ -1,0 +1,249 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_framework_python
+name: BSG Python Framework Detection
+version: 1.0.0
+enabled: true
+description: Detect Python frameworks from pyproject.toml, requirements.txt, and setup.py content patterns.
+
+rules:
+  # Web frameworks
+  - rule_id: detect-fastapi
+    name: FastAPI Framework
+    description: Detect FastAPI web framework
+    severity: info
+    priority: 500
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'fastapi'
+    actions:
+      detect_framework:
+        language: Python
+        framework: FastAPI
+
+  - rule_id: detect-flask
+    name: Flask Framework
+    description: Detect Flask web framework
+    severity: info
+    priority: 490
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'flask'
+    actions:
+      detect_framework:
+        language: Python
+        framework: Flask
+
+  - rule_id: detect-django
+    name: Django Framework
+    description: Detect Django web framework
+    severity: info
+    priority: 480
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'django'
+    actions:
+      detect_framework:
+        language: Python
+        framework: Django
+
+  # ORMs
+  - rule_id: detect-sqlalchemy
+    name: SQLAlchemy ORM
+    description: Detect SQLAlchemy ORM
+    severity: info
+    priority: 470
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'sqlalchemy'
+    actions:
+      detect_framework:
+        language: Python
+        framework: SQLAlchemy
+
+  # Testing
+  - rule_id: detect-pytest
+    name: Pytest Framework
+    description: Detect Pytest testing framework
+    severity: info
+    priority: 460
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+        - '**/pytest.ini'
+      content_patterns:
+        - 'pytest'
+    actions:
+      detect_framework:
+        language: Python
+        framework: Pytest
+
+  # HTTP clients
+  - rule_id: detect-requests
+    name: Requests Library
+    description: Detect Requests HTTP library
+    severity: info
+    priority: 450
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'requests'
+    actions:
+      detect_framework:
+        language: Python
+        framework: Requests
+
+  - rule_id: detect-httpx
+    name: HTTPX Library
+    description: Detect HTTPX HTTP library
+    severity: info
+    priority: 440
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'httpx'
+    actions:
+      detect_framework:
+        language: Python
+        framework: HTTPX
+
+  # Data/ML
+  - rule_id: detect-pandas
+    name: Pandas Library
+    description: Detect Pandas data analysis library
+    severity: info
+    priority: 430
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'pandas'
+    actions:
+      detect_framework:
+        language: Python
+        framework: Pandas
+
+  - rule_id: detect-numpy
+    name: NumPy Library
+    description: Detect NumPy numerical computing library
+    severity: info
+    priority: 420
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'numpy'
+    actions:
+      detect_framework:
+        language: Python
+        framework: NumPy
+
+  - rule_id: detect-pytorch
+    name: PyTorch Framework
+    description: Detect PyTorch deep learning framework
+    severity: info
+    priority: 410
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'torch'
+        - 'pytorch'
+    actions:
+      detect_framework:
+        language: Python
+        framework: PyTorch
+
+  - rule_id: detect-tensorflow
+    name: TensorFlow Framework
+    description: Detect TensorFlow deep learning framework
+    severity: info
+    priority: 400
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'tensorflow'
+    actions:
+      detect_framework:
+        language: Python
+        framework: TensorFlow
+
+  # LLM/AI
+  - rule_id: detect-openai
+    name: OpenAI SDK
+    description: Detect OpenAI Python SDK
+    severity: info
+    priority: 390
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'openai'
+    actions:
+      detect_framework:
+        language: Python
+        framework: OpenAI
+
+  - rule_id: detect-langchain
+    name: LangChain Framework
+    description: Detect LangChain LLM framework
+    severity: info
+    priority: 380
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/requirements.txt'
+        - '**/setup.py'
+      content_patterns:
+        - 'langchain'
+    actions:
+      detect_framework:
+        language: Python
+        framework: LangChain

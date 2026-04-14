@@ -1,0 +1,378 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_framework_nodejs
+name: BSG Node.js Framework Detection
+version: 1.0.0
+enabled: true
+description: Detect Node.js frameworks from package.json content patterns.
+
+rules:
+  # Frontend frameworks
+  - rule_id: detect-react
+    name: React Framework
+    description: Detect React frontend framework
+    severity: info
+    priority: 500
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"react"'
+        - '"react-dom"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: React
+
+  - rule_id: detect-vue
+    name: Vue.js Framework
+    description: Detect Vue.js frontend framework
+    severity: info
+    priority: 490
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"vue"'
+        - '"@vue/core"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Vue.js
+
+  - rule_id: detect-angular
+    name: Angular Framework
+    description: Detect Angular frontend framework
+    severity: info
+    priority: 480
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"angular"'
+        - '"@angular/core"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Angular
+
+  - rule_id: detect-svelte
+    name: Svelte Framework
+    description: Detect Svelte frontend framework
+    severity: info
+    priority: 470
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"svelte"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Svelte
+
+  # Backend frameworks
+  - rule_id: detect-express
+    name: Express Framework
+    description: Detect Express backend framework
+    severity: info
+    priority: 460
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"express"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Express
+
+  - rule_id: detect-fastify
+    name: Fastify Framework
+    description: Detect Fastify backend framework
+    severity: info
+    priority: 450
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"fastify"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Fastify
+
+  - rule_id: detect-nestjs
+    name: NestJS Framework
+    description: Detect NestJS backend framework
+    severity: info
+    priority: 440
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"nest"'
+        - '"@nestjs/core"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: NestJS
+
+  # Meta frameworks
+  - rule_id: detect-nextjs
+    name: Next.js Framework
+    description: Detect Next.js meta framework
+    severity: info
+    priority: 430
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"next"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Next.js
+
+  - rule_id: detect-nuxt
+    name: Nuxt.js Framework
+    description: Detect Nuxt.js meta framework
+    severity: info
+    priority: 420
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"nuxt"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Nuxt.js
+
+  - rule_id: detect-remix
+    name: Remix Framework
+    description: Detect Remix meta framework
+    severity: info
+    priority: 410
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"remix"'
+        - '"@remix-run/react"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Remix
+
+  # Testing
+  - rule_id: detect-jest
+    name: Jest Testing Framework
+    description: Detect Jest testing framework
+    severity: info
+    priority: 400
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"jest"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Jest
+
+  - rule_id: detect-vitest
+    name: Vitest Testing Framework
+    description: Detect Vitest testing framework
+    severity: info
+    priority: 390
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"vitest"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Vitest
+
+  - rule_id: detect-playwright
+    name: Playwright Testing Framework
+    description: Detect Playwright E2E testing framework
+    severity: info
+    priority: 380
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"playwright"'
+        - '"@playwright/test"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Playwright
+
+  # Build tools
+  - rule_id: detect-vite
+    name: Vite Build Tool
+    description: Detect Vite build tool
+    severity: info
+    priority: 370
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"vite"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Vite
+
+  - rule_id: detect-webpack
+    name: Webpack Build Tool
+    description: Detect Webpack build tool
+    severity: info
+    priority: 360
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"webpack"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Webpack
+
+  # TypeScript
+  - rule_id: detect-typescript
+    name: TypeScript
+    description: Detect TypeScript
+    severity: info
+    priority: 350
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/tsconfig.json'
+      content_patterns:
+        - '"typescript"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: TypeScript
+
+  # State management
+  - rule_id: detect-redux
+    name: Redux State Management
+    description: Detect Redux state management
+    severity: info
+    priority: 340
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"redux"'
+        - '"@reduxjs/toolkit"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Redux
+
+  - rule_id: detect-zustand
+    name: Zustand State Management
+    description: Detect Zustand state management
+    severity: info
+    priority: 330
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"zustand"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Zustand
+
+  # UI libraries
+  - rule_id: detect-tailwind
+    name: Tailwind CSS
+    description: Detect Tailwind CSS framework
+    severity: info
+    priority: 320
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"tailwindcss"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Tailwind CSS
+
+  - rule_id: detect-mui
+    name: Material UI
+    description: Detect Material UI component library
+    severity: info
+    priority: 310
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"@mui/material"'
+        - '"@material-ui/core"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Material UI
+
+  # Database/ORM
+  - rule_id: detect-prisma
+    name: Prisma ORM
+    description: Detect Prisma ORM
+    severity: info
+    priority: 300
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"prisma"'
+        - '"@prisma/client"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: Prisma
+
+  - rule_id: detect-typeorm
+    name: TypeORM
+    description: Detect TypeORM
+    severity: info
+    priority: 290
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+      content_patterns:
+        - '"typeorm"'
+    actions:
+      detect_framework:
+        language: Node.js
+        framework: TypeORM

@@ -5,6 +5,7 @@ from .rules import (
 	apply_semantic_overlay,
 	load_effective_rules,
 	list_builtin_plugins,
+	validate_plugin_file,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
 	"apply_semantic_overlay",
 	"load_effective_rules",
 	"list_builtin_plugins",
+	"validate_plugin_file",
 ]

@@ -111,6 +111,14 @@
             "minLength": 1
           }
         },
+        "content_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Patterns to match in file content (e.g., dependency names in package.json)"
+        },
         "usn_tags_any": {
           "type": "array",
           "items": {
@@ -254,6 +262,75 @@
         "normalize_entry_point": {
           "type": "boolean",
           "description": "Normalize entry point names to __main__"
+        },
+        "detect_language": {
+          "type": "object",
+          "description": "Detect programming language from file patterns and content",
+          "properties": {
+            "language": {
+              "type": "string",
+              "minLength": 1
+            },
+            "priority": {
+              "type": "integer"
+            }
+          }
+        },
+        "detect_framework": {
+          "type": "object",
+          "description": "Detect framework from content patterns",
+          "properties": {
+            "language": {
+              "type": "string",
+              "minLength": 1
+            },
+            "framework": {
+              "type": "string",
+              "minLength": 1
+            },
+            "priority": {
+              "type": "integer"
+            }
+          }
+        },
+        "detect_package_manager": {
+          "type": "object",
+          "description": "Detect package manager from file patterns",
+          "properties": {
+            "package_manager": {
+              "type": "string",
+              "minLength": 1
+            },
+            "priority": {
+              "type": "integer"
+            }
+          }
+        },
+        "detect_infra": {
+          "type": "object",
+          "description": "Detect infrastructure tools (Docker, K8s, etc.)",
+          "properties": {
+            "infra_type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "priority": {
+              "type": "integer"
+            }
+          }
+        },
+        "assign_category": {
+          "type": "object",
+          "description": "Assign file category (TEST, DOCS, CONFIG, SOURCE, UNCATEGORIZED)",
+          "properties": {
+            "category": {
+              "type": "string",
+              "enum": ["TEST", "DOCS", "CONFIG", "SOURCE", "UNCATEGORIZED"]
+            },
+            "priority": {
+              "type": "integer"
+            }
+          }
         }
       }
     }

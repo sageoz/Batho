@@ -1,0 +1,268 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_detection_foundation
+name: BSG Detection Foundation
+version: 1.0.0
+enabled: true
+description: Foundation plugin for language, framework, package manager, and infrastructure detection.
+rules:
+  - rule_id: detect-python
+    name: Python Language Detection
+    description: Detect Python projects from configuration files and source files.
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/setup.py'
+        - '**/requirements.txt'
+        - '**/Pipfile'
+        - '**/*.py'
+    actions:
+      detect_language:
+        language: Python
+
+  - rule_id: detect-node
+    name: Node.js Language Detection
+    description: Detect Node.js projects from package.json and source files.
+    severity: info
+    priority: 90
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/*.js'
+        - '**/*.ts'
+        - '**/*.jsx'
+        - '**/*.tsx'
+    actions:
+      detect_language:
+        language: Node.js
+
+  - rule_id: detect-rust
+    name: Rust Language Detection
+    description: Detect Rust projects from Cargo.toml and source files.
+    severity: info
+    priority: 80
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Cargo.toml'
+        - '**/*.rs'
+    actions:
+      detect_language:
+        language: Rust
+
+  - rule_id: detect-go
+    name: Go Language Detection
+    description: Detect Go projects from go.mod and source files.
+    severity: info
+    priority: 70
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/go.mod'
+        - '**/*.go'
+    actions:
+      detect_language:
+        language: Go
+
+  - rule_id: detect-java
+    name: Java Language Detection
+    description: Detect Java projects from Maven/Gradle files and source files.
+    severity: info
+    priority: 60
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pom.xml'
+        - '**/build.gradle'
+        - '**/build.gradle.kts'
+        - '**/*.java'
+        - '**/*.kt'
+        - '**/*.kts'
+    actions:
+      detect_language:
+        language: Java
+
+  - rule_id: detect-docker
+    name: Docker Infrastructure Detection
+    description: Detect Docker infrastructure from Dockerfile and docker-compose files.
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Dockerfile*'
+        - '**/docker-compose*.yml'
+        - '**/docker-compose*.yaml'
+        - '**/.dockerignore'
+    actions:
+      detect_infra:
+        infra_type: docker
+
+  - rule_id: detect-kubernetes
+    name: Kubernetes Infrastructure Detection
+    description: Detect Kubernetes infrastructure from manifest files.
+    severity: info
+    priority: 90
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.yaml'
+        - '**/*.yml'
+      content_patterns:
+        - 'apiVersion:'
+        - 'kind: Deployment'
+        - 'kind: Service'
+        - 'kind: ConfigMap'
+    actions:
+      detect_infra:
+        infra_type: kubernetes
+
+  - rule_id: detect-npm
+    name: NPM Package Manager Detection
+    description: Detect NPM package manager from package.json and lock files.
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/package.json'
+        - '**/package-lock.json'
+    actions:
+      detect_package_manager:
+        package_manager: npm
+
+  - rule_id: detect-poetry
+    name: Poetry Package Manager Detection
+    description: Detect Poetry package manager from pyproject.toml and poetry.lock.
+    severity: info
+    priority: 90
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pyproject.toml'
+        - '**/poetry.lock'
+    actions:
+      detect_package_manager:
+        package_manager: poetry
+
+  - rule_id: detect-cargo
+    name: Cargo Package Manager Detection
+    description: Detect Cargo package manager from Cargo.toml and Cargo.lock.
+    severity: info
+    priority: 80
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Cargo.toml'
+        - '**/Cargo.lock'
+    actions:
+      detect_package_manager:
+        package_manager: cargo
+
+  - rule_id: detect-pip
+    name: Pip Package Manager Detection
+    description: Detect pip package manager from requirements.txt.
+    severity: info
+    priority: 70
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/requirements.txt'
+    actions:
+      detect_package_manager:
+        package_manager: pip
+
+  - rule_id: detect-yarn
+    name: Yarn Package Manager Detection
+    description: Detect Yarn package manager from yarn.lock.
+    severity: info
+    priority: 60
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/yarn.lock'
+    actions:
+      detect_package_manager:
+        package_manager: yarn
+
+  - rule_id: detect-pnpm
+    name: pnpm Package Manager Detection
+    description: Detect pnpm package manager from pnpm-lock.yaml.
+    severity: info
+    priority: 50
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pnpm-lock.yaml'
+    actions:
+      detect_package_manager:
+        package_manager: pnpm
+
+  - rule_id: detect-go-modules
+    name: Go Modules Detection
+    description: Detect Go modules from go.mod.
+    severity: info
+    priority: 40
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/go.mod'
+    actions:
+      detect_package_manager:
+        package_manager: go modules
+
+  - rule_id: detect-composer
+    name: Composer Package Manager Detection
+    description: Detect Composer package manager from composer.json.
+    severity: info
+    priority: 30
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/composer.json'
+    actions:
+      detect_package_manager:
+        package_manager: composer
+
+  - rule_id: detect-bundler
+    name: Bundler Package Manager Detection
+    description: Detect Bundler package manager from Gemfile.
+    severity: info
+    priority: 20
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Gemfile'
+    actions:
+      detect_package_manager:
+        package_manager: bundler
+
+  - rule_id: detect-gradle
+    name: Gradle Build Tool Detection
+    description: Detect Gradle build tool from build.gradle files.
+    severity: info
+    priority: 10
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/build.gradle'
+        - '**/build.gradle.kts'
+    actions:
+      detect_package_manager:
+        package_manager: gradle
+
+  - rule_id: detect-maven
+    name: Maven Build Tool Detection
+    description: Detect Maven build tool from pom.xml.
+    severity: info
+    priority: 5
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pom.xml'
+    actions:
+      detect_package_manager:
+        package_manager: maven

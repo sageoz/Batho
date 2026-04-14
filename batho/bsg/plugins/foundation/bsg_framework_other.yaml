@@ -1,0 +1,278 @@
+schema_version: bsg-plugin.v1
+plugin_id: bsg_framework_other
+name: BSG Other Language Framework Detection
+version: 1.0.0
+enabled: true
+description: Detect frameworks for Java, Go, Rust, PHP, Ruby, and .NET.
+
+rules:
+  # Java frameworks
+  - rule_id: detect-spring-boot
+    name: Spring Boot Framework
+    description: Detect Spring Boot framework
+    severity: info
+    priority: 500
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pom.xml'
+        - '**/build.gradle'
+        - '**/build.gradle.kts'
+      content_patterns:
+        - 'spring-boot'
+        - 'spring-boot-starter'
+    actions:
+      detect_framework:
+        language: Java
+        framework: Spring Boot
+
+  - rule_id: detect-micronaut
+    name: Micronaut Framework
+    description: Detect Micronaut framework
+    severity: info
+    priority: 490
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pom.xml'
+        - '**/build.gradle'
+        - '**/build.gradle.kts'
+      content_patterns:
+        - 'micronaut'
+    actions:
+      detect_framework:
+        language: Java
+        framework: Micronaut
+
+  - rule_id: detect-quarkus
+    name: Quarkus Framework
+    description: Detect Quarkus framework
+    severity: info
+    priority: 480
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/pom.xml'
+        - '**/build.gradle'
+        - '**/build.gradle.kts'
+      content_patterns:
+        - 'quarkus'
+    actions:
+      detect_framework:
+        language: Java
+        framework: Quarkus
+
+  # Go frameworks
+  - rule_id: detect-gin
+    name: Gin Framework
+    description: Detect Gin web framework for Go
+    severity: info
+    priority: 470
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/go.mod'
+      content_patterns:
+        - 'github.com/gin-gonic/gin'
+    actions:
+      detect_framework:
+        language: Go
+        framework: Gin
+
+  - rule_id: detect-echo
+    name: Echo Framework
+    description: Detect Echo web framework for Go
+    severity: info
+    priority: 460
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/go.mod'
+      content_patterns:
+        - 'github.com/labstack/echo'
+    actions:
+      detect_framework:
+        language: Go
+        framework: Echo
+
+  - rule_id: detect-fiber
+    name: Fiber Framework
+    description: Detect Fiber web framework for Go
+    severity: info
+    priority: 450
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/go.mod'
+      content_patterns:
+        - 'github.com/gofiber/fiber'
+    actions:
+      detect_framework:
+        language: Go
+        framework: Fiber
+
+  # Rust frameworks
+  - rule_id: detect-actix-web
+    name: Actix Web Framework
+    description: Detect Actix Web framework for Rust
+    severity: info
+    priority: 440
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Cargo.toml'
+      content_patterns:
+        - 'actix-web'
+    actions:
+      detect_framework:
+        language: Rust
+        framework: Actix Web
+
+  - rule_id: detect-rocket
+    name: Rocket Framework
+    description: Detect Rocket web framework for Rust
+    severity: info
+    priority: 430
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Cargo.toml'
+      content_patterns:
+        - 'rocket'
+    actions:
+      detect_framework:
+        language: Rust
+        framework: Rocket
+
+  - rule_id: detect-axum
+    name: Axum Framework
+    description: Detect Axum web framework for Rust
+    severity: info
+    priority: 420
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Cargo.toml'
+      content_patterns:
+        - 'axum'
+    actions:
+      detect_framework:
+        language: Rust
+        framework: Axum
+
+  - rule_id: detect-tokio
+    name: Tokio Runtime
+    description: Detect Tokio async runtime for Rust
+    severity: info
+    priority: 410
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Cargo.toml'
+      content_patterns:
+        - 'tokio'
+    actions:
+      detect_framework:
+        language: Rust
+        framework: Tokio
+
+  # PHP frameworks
+  - rule_id: detect-laravel
+    name: Laravel Framework
+    description: Detect Laravel PHP framework
+    severity: info
+    priority: 400
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/composer.json'
+      content_patterns:
+        - 'laravel/framework'
+    actions:
+      detect_framework:
+        language: PHP
+        framework: Laravel
+
+  - rule_id: detect-symfony
+    name: Symfony Framework
+    description: Detect Symfony PHP framework
+    severity: info
+    priority: 390
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/composer.json'
+      content_patterns:
+        - 'symfony/symfony'
+    actions:
+      detect_framework:
+        language: PHP
+        framework: Symfony
+
+  # Ruby frameworks
+  - rule_id: detect-rails
+    name: Ruby on Rails Framework
+    description: Detect Ruby on Rails framework
+    severity: info
+    priority: 380
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Gemfile'
+      content_patterns:
+        - 'rails'
+    actions:
+      detect_framework:
+        language: Ruby
+        framework: Rails
+
+  - rule_id: detect-sinatra
+    name: Sinatra Framework
+    description: Detect Sinatra Ruby framework
+    severity: info
+    priority: 370
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/Gemfile'
+      content_patterns:
+        - 'sinatra'
+    actions:
+      detect_framework:
+        language: Ruby
+        framework: Sinatra
+
+  # .NET frameworks
+  - rule_id: detect-aspnetcore
+    name: ASP.NET Core Framework
+    description: Detect ASP.NET Core framework
+    severity: info
+    priority: 360
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.csproj'
+      content_patterns:
+        - 'Microsoft.AspNetCore'
+        - 'AspNetCore'
+    actions:
+      detect_framework:
+        language: .NET
+        framework: ASP.NET Core
+
+  - rule_id: detect-entityframework
+    name: Entity Framework
+    description: Detect Entity Framework ORM
+    severity: info
+    priority: 350
+    enabled: true
+    matchers:
+      file_patterns:
+        - '**/*.csproj'
+      content_patterns:
+        - 'EntityFramework'
+        - 'EFCore'
+    actions:
+      detect_framework:
+        language: .NET
+        framework: Entity Framework

@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
-import batho.context.categorizer as categorizer_module
 import batho.context.languages.css as css_module
 import batho.context.languages.detector as detector_module
 import batho.context.languages.hcl as hcl_module
@@ -11,7 +10,6 @@ import batho.context.languages.json as json_module
 import batho.context.languages.registry as registry_module
 import batho.context.languages.toml as toml_module
 import batho.context.languages.yaml as yaml_module
-from batho.context.categorizer import FileCategorizer
 from batho.context.codegraph import InMemoryGraph
 from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 from batho.context.symbol_index import SymbolIndex
@@ -261,21 +259,6 @@ def test_registry_branch_paths(monkeypatch) -> None:
 
     assert registry_module.get_language_for_extension(".PY") == "python"
     assert ".py" in registry_module.get_extensions_for_language("python")
-
-
-def test_categorizer_branch_paths() -> None:
-    categorizer = FileCategorizer()
-
-    assert categorizer.categorize("__pycache__/cache.bin") == "cache"
-    assert categorizer._is_doc_file([], "README.extra.md", "readme.extra", ".md") is True
-    assert categorizer._is_config_file(["config"], "x.txt", "x", ".txt") is True
-    assert categorizer._is_config_file([], "custom.config.cjs", "custom.config", ".cjs") is True
-    assert categorizer._is_source_file(["assets"], "logo.bin", ".bin") is False
-    assert categorizer._is_cache_file(["tmp", "cache", "file"]) is True
-    assert categorizer._get_folder_category(PurePosixPath("single"), ["single"]) == "root"
-
-    assert categorizer.categorize("assets/logo.bin") == "assets"
-    assert categorizer_module.categorize_file("src/main.py") == "source"
 
 
 def test_symbol_index_branch_paths() -> None:

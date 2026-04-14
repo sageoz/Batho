@@ -26,13 +26,12 @@ from batho.config import BSG_SCHEMA_VERSION
 from batho.utils.hash import generate_relationship_id
 from batho.utils.logging import get_logger
 
-from .categorizer import FileCategorizer
 from .schema import Entity, EntityType
-
-_FILE_CATEGORIZER = FileCategorizer()
 _CATEGORY_ALIASES: dict[str, str] = {
     "DOCS": "DOC",
     "DOCUMENTATION": "DOC",
+    "CONFIG": "CONFIGURATION",
+    "TESTS": "TEST",
 }
 
 if TYPE_CHECKING:
@@ -900,7 +899,11 @@ class BSGMap:
         return parts[0]
 
     def _derive_category(self, rel_file_path: str) -> str:
-        return _FILE_CATEGORIZER.categorize(rel_file_path).upper()
+        """
+        Derive category from file path.
+        Note: This is a fallback. BSG plugins should set bsg.category metadata.
+        """
+        return "SOURCE"
 
     def _normalize_category(self, raw_category: str) -> str:
         candidate = str(raw_category or "").strip().upper()
@@ -1046,15 +1049,45 @@ class BSGMap:
     def categorize_files(self) -> dict[str, dict[str, list[Entity]]]:
         """
         Categorize all files by type (tests, docs, config, source, and folder-based).
+        Uses bsg.category metadata set by BSG plugins.
+        
+        If multiple entities in a file have different categories, uses priority:
+        TEST > CONFIG > DOCS > SOURCE > UNCATEGORIZED
 
         Returns:
             Dict mapping category string to dict of file_path -> entities
         """
-        categorizer = FileCategorizer()
         categorized: dict[str, dict[str, list[Entity]]] = {}
+        
+        # Category priority (higher number = higher priority)
+        category_priority = {
+            "TEST": 4,
+            "CONFIG": 3,
+            "DOCS": 2,
+            "SOURCE": 1,
+            "UNCATEGORIZED": 0,
+        }
 
         for file_path, entities in self._by_file.items():
-            category = categorizer.categorize(file_path)
+            if not entities:
+                continue  # Skip files with no entities
+            
+            # Collect all categories from entities in this file
+            categories = set()
+            for entity in entities:
+                metadata = entity.metadata or {}
+                cat = str(metadata.get("bsg.category", "SOURCE")).upper()
+                categories.add(cat)
+            
+            # Use highest priority category
+            category = "SOURCE"
+            max_priority = -1
+            for cat in categories:
+                priority = category_priority.get(cat, 0)
+                if priority > max_priority:
+                    max_priority = priority
+                    category = cat
+            
             if category not in categorized:
                 categorized[category] = {}
             categorized[category][file_path] = entities

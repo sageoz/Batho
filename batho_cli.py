@@ -66,7 +66,6 @@ from batho.context.storage import (
     register_artifact,
     verify_registry,
 )
-from batho.context.stack_detector import detect_stack
 from batho.synthesizer import load_evolution_ledger, record_failure_rule
 from batho.time_machine import (
     create_snapshot,
@@ -130,6 +129,8 @@ __all__ = [
     "cmd_patch_chain",
     "cmd_patch_info",
     "cmd_patches",
+    "cmd_plugins_list",
+    "cmd_plugins_validate",
     "cmd_query",
     "cmd_sync",
     "cmd_webhook",
@@ -228,6 +229,74 @@ def _format_bytes(size_bytes: int) -> str:
             return f"{value:.1f} {unit}"
         value /= 1024.0
     return f"{int(size_bytes)} B"
+
+
+def _extract_stack_info_from_bsg(graph: Any) -> dict[str, Any]:
+    """
+    Extract stack information from BSG metadata set by detection plugins.
+    
+    Optimized to process only file-level entities (MODULE, DOCUMENT) to avoid
+    redundant extraction from multiple entities in the same file.
+    
+    Returns a dict with languages, frameworks, package_managers, and infra.
+    """
+    from batho.context.schema import EntityType
+    
+    languages: set[str] = set()
+    frameworks: set[str] = set()
+    package_managers: set[str] = set()
+    infra: set[str] = set()
+    
+    # Track processed files to avoid redundant extraction
+    processed_files: set[str] = set()
+    
+    # File-level entity types that typically hold stack detection metadata
+    file_level_types = {EntityType.MODULE, EntityType.DOCUMENT, EntityType.ENTRY_POINT}
+    
+    for entity in graph.entities.values():
+        # Skip if we've already processed this file
+        if entity.file in processed_files:
+            continue
+        
+        # Prefer file-level entities for stack metadata
+        if entity.type not in file_level_types:
+            continue
+        
+        metadata = entity.metadata or {}
+        
+        # Extract language
+        lang = metadata.get("bsg.language")
+        if lang:
+            languages.add(str(lang))
+        
+        # Extract frameworks (can be a list)
+        fw = metadata.get("bsg.frameworks")
+        if isinstance(fw, list):
+            frameworks.update(str(f) for f in fw)
+        elif fw:
+            frameworks.add(str(fw))
+        
+        # Extract package manager
+        pm = metadata.get("bsg.package_manager")
+        if pm:
+            package_managers.add(str(pm))
+        
+        # Extract infrastructure (can be a list)
+        inf = metadata.get("bsg.infra")
+        if isinstance(inf, list):
+            infra.update(str(i) for i in inf)
+        elif inf:
+            infra.add(str(inf))
+        
+        # Mark this file as processed
+        processed_files.add(entity.file)
+    
+    return {
+        "languages": sorted(languages),
+        "frameworks": sorted(frameworks),
+        "package_managers": sorted(package_managers),
+        "infra": sorted(infra),
+    }
 
 
 def _extract_change_paths(changes: Iterable[Any]) -> list[str]:
@@ -1453,7 +1522,8 @@ def cmd_index(args: argparse.Namespace) -> int:
         print("⚠️  No entities extracted. Check source files and ignore patterns.")
         return 1
 
-    stack_info = detect_stack(root)
+    # Extract stack info from BSG metadata
+    stack_info = _extract_stack_info_from_bsg(graph)
     token_input_estimate = bsg_map.estimate_tokens()
     versioned_dir = ctn_dir / index_id
     versioned_dir.mkdir(parents=True, exist_ok=True)
@@ -3064,6 +3134,92 @@ def cmd_bsg(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plugins_list(args: argparse.Namespace) -> int:
+    """List available BSG plugins and their status."""
+    from batho.bsg import list_builtin_plugins, load_effective_rules
+    
+    root = Path(args.root).resolve()
+    if not root.exists() or not root.is_dir():
+        print(f"❌ Root does not exist or is not a directory: {root}")
+        return 1
+    
+    _ensure_runtime_logging()
+    cfg = get_config_cached_for_root(root)
+    rules_cfg = cfg.get("bsg", {}).get("rules", {})
+    
+    # Get builtin plugins
+    builtin_available = list_builtin_plugins()
+    builtin_requested = rules_cfg.get("builtin_plugins", ["bsg_core"])
+    if not isinstance(builtin_requested, list):
+        builtin_requested = []
+    
+    # Load effective rules to get actual loaded state
+    try:
+        effective_rules, load_stats = load_effective_rules(
+            rules_config=rules_cfg,
+            root_path=root,
+        )
+    except Exception as exc:
+        print(f"❌ Failed to load rules: {exc}")
+        return 1
+    
+    # Build plugin info
+    loaded_plugins: dict[str, dict[str, Any]] = {}
+    for rule in effective_rules:
+        plugin_name = rule.plugin
+        if plugin_name not in loaded_plugins:
+            loaded_plugins[plugin_name] = {
+                "name": plugin_name,
+                "enabled": True,
+                "rule_count": 0,
+                "source": "custom_inline" if plugin_name == "custom_inline" else
+                         "custom_file" if plugin_name == "custom_file" else "builtin",
+            }
+        loaded_plugins[plugin_name]["rule_count"] += 1
+    
+    # Custom rules info
+    custom_inline_count = load_stats.get("custom_inline_count", 0)
+    custom_file_count = load_stats.get("custom_file_count", 0)
+    custom_file_path = rules_cfg.get("custom_rules_path")
+    
+    payload = {
+        "builtin_plugins_available": sorted(builtin_available),
+        "builtin_plugins_requested": sorted(builtin_requested),
+        "custom_inline_rules": custom_inline_count,
+        "custom_file": custom_file_path,
+        "custom_file_rules": custom_file_count,
+        "loaded_plugins": sorted(loaded_plugins.values(), key=lambda x: x["name"]),
+        "stats": {
+            "total_plugins": len(loaded_plugins),
+            "total_rules": load_stats.get("rules_loaded", 0),
+            "builtin_plugins_loaded": load_stats.get("builtin_plugins_loaded", 0),
+            "rules_disabled": load_stats.get("rules_disabled", 0),
+            "cache_hit": load_stats.get("cache_hit", False),
+        },
+        "load_stats": load_stats,
+    }
+    
+    if bool(args.verbose):
+        # Include full load stats in verbose mode
+        payload["verbose_stats"] = load_stats
+    
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_plugins_validate(args: argparse.Namespace) -> int:
+    """Validate a BSG plugin YAML file."""
+    from batho.bsg import validate_plugin_file
+    
+    plugin_path = Path(args.plugin_file).resolve()
+    
+    result = validate_plugin_file(plugin_path)
+    
+    print(json.dumps(result, indent=2))
+    
+    return 0 if result["valid"] else 1
+
+
 # ---------------------------------------------------------------------------
 # Entry
 # ---------------------------------------------------------------------------
@@ -3490,6 +3646,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Token budget for compressed mode (default: 12000)",
     )
     bsg.set_defaults(func=cmd_bsg)
+
+    # Plugins command
+    plugins = sub.add_parser("plugins", help="BSG plugin management")
+    plugins_sub = plugins.add_subparsers(dest="plugins_command", required=True)
+
+    plugins_list = plugins_sub.add_parser("list", help="List available BSG plugins")
+    plugins_list.add_argument("--root", required=True, help="Path to repo root")
+    plugins_list.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show detailed plugin information",
+    )
+    plugins_list.set_defaults(func=cmd_plugins_list)
+
+    plugins_validate = plugins_sub.add_parser(
+        "validate", help="Validate a BSG plugin YAML file"
+    )
+    plugins_validate.add_argument(
+        "plugin_file", help="Path to plugin YAML file to validate"
+    )
+    plugins_validate.set_defaults(func=cmd_plugins_validate)
 
     ws = sub.add_parser(
         "webhook-server", help="Start webhook server using ./batho.yaml"
