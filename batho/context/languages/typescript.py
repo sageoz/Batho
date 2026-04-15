@@ -27,7 +27,8 @@ class TypeScriptExtractor(ASTExtractor):
 
     def _query_source(self) -> str:
         # Use common entry point patterns (shared with JavaScript)
-        return r"""
+        return (
+            r"""
 ; ── Class declarations ────────────────────────────────────────────────────────
 (class_declaration
   name: (type_identifier) @def.class.name
@@ -81,4 +82,7 @@ class TypeScriptExtractor(ASTExtractor):
 (call_expression
   function: (member_expression
     property: (property_identifier) @ref.call))
-""" + CommonQueries.http_server_entry_points() + CommonQueries.react_render_entry_points()
+"""
+            + CommonQueries.http_server_entry_points()
+            + CommonQueries.react_render_entry_points()
+        )

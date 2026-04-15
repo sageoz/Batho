@@ -15,18 +15,19 @@ Provides three rendering modes:
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import json
 from pathlib import Path, PurePosixPath
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from batho.config import BSG_SCHEMA_VERSION
 from batho.utils.hash import generate_relationship_id
 from batho.utils.logging import get_logger
 
 from .schema import Entity, EntityType
+
 _CATEGORY_ALIASES: dict[str, str] = {
     "DOCS": "DOC",
     "DOCUMENTATION": "DOC",
@@ -36,6 +37,7 @@ _CATEGORY_ALIASES: dict[str, str] = {
 
 if TYPE_CHECKING:
     from batho.time_machine import FileChange
+
     from .codegraph import InMemoryGraph
 
 # ---------------------------------------------------------------------------
@@ -98,7 +100,11 @@ class BSGMap:
             changes: List of FileChange objects representing what changed
             graph: Updated InMemoryGraph with the changes applied
         """
-        rebuilt = BSGMap.build(graph=graph, root=self._root, serialization_config=self._serialization_config)
+        rebuilt = BSGMap.build(
+            graph=graph,
+            root=self._root,
+            serialization_config=self._serialization_config,
+        )
         self._by_file = rebuilt._by_file
         self._dependencies = rebuilt._dependencies
         self._relationships = rebuilt._relationships
@@ -116,7 +122,9 @@ class BSGMap:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any], serialization_config: dict[str, Any] | None = None) -> "BSGMap":
+    def from_dict(
+        cls, data: dict[str, Any], serialization_config: dict[str, Any] | None = None
+    ) -> "BSGMap":
         """
         Reconstruct a BSGMap from serialized data.
 
@@ -192,7 +200,12 @@ class BSGMap:
         )
 
     @classmethod
-    def build(cls, graph: "object", root: str, serialization_config: dict[str, Any] | None = None) -> "BSGMap":
+    def build(
+        cls,
+        graph: "object",
+        root: str,
+        serialization_config: dict[str, Any] | None = None,
+    ) -> "BSGMap":
         """
         Build a BSGMap from an InMemoryGraph.
 
@@ -370,7 +383,9 @@ class BSGMap:
         """Build reusable render components for JSON outputs."""
         resolved_default_snapshot = (default_snapshot_id or "").strip() or None
         resolved_default_service = (
-            (default_service_tag or "").strip() if default_service_tag is not None else ""
+            (default_service_tag or "").strip()
+            if default_service_tag is not None
+            else ""
         )
         if not resolved_default_service:
             resolved_default_service = Path(self._root).name or "root"
@@ -395,7 +410,9 @@ class BSGMap:
             entities = self._by_file[file_path]
             for entity in sorted(entities, key=lambda item: (item.start_line, item.id)):
                 metadata = dict(entity.metadata or {})
-                scope_tier = str(metadata.get("bsg.scope_tier") or self._derive_scope_tier(entity))
+                scope_tier = str(
+                    metadata.get("bsg.scope_tier") or self._derive_scope_tier(entity)
+                )
                 raw_category = str(
                     metadata.get("bsg.category") or self._derive_category(file_path)
                 )
@@ -415,14 +432,11 @@ class BSGMap:
                     missing_service_tags += 1
 
                 language = self._derive_language(entity, file_path)
-                raw_snapshot_id = (
-                    metadata.get("bsg.snapshot_id")
-                    or metadata.get("snapshot_id")
+                raw_snapshot_id = metadata.get("bsg.snapshot_id") or metadata.get(
+                    "snapshot_id"
                 )
                 snapshot_id_text = (
-                    str(raw_snapshot_id).strip()
-                    if raw_snapshot_id is not None
-                    else ""
+                    str(raw_snapshot_id).strip() if raw_snapshot_id is not None else ""
                 )
                 if not snapshot_id_text and resolved_default_snapshot:
                     snapshot_id_text = resolved_default_snapshot
@@ -499,7 +513,11 @@ class BSGMap:
             key=lambda rel: (
                 str(getattr(rel, "source_id", "")),
                 str(getattr(rel, "target_id", "")),
-                str(getattr(getattr(rel, "type", None), "name", getattr(rel, "type", ""))),
+                str(
+                    getattr(
+                        getattr(rel, "type", None), "name", getattr(rel, "type", "")
+                    )
+                ),
             ),
         )
 
@@ -601,12 +619,17 @@ class BSGMap:
             key: sorted(value) for key, value in sorted(inbound_edge_map.items())
         }
 
-        edges.sort(key=lambda edge: (edge["type"], edge["source_id"], edge["target_id"]))
+        edges.sort(
+            key=lambda edge: (edge["type"], edge["source_id"], edge["target_id"])
+        )
         nodes.sort(key=lambda node: node["id"])
         cross_boundaries.sort(key=lambda item: item["edge_id"])
 
         files_ranked = sorted(
-            ((file_path, len(node_ids)) for file_path, node_ids in nodes_by_file.items()),
+            (
+                (file_path, len(node_ids))
+                for file_path, node_ids in nodes_by_file.items()
+            ),
             key=lambda item: (-item[1], item[0]),
         )
         rules_applied = sum(
@@ -674,12 +697,10 @@ class BSGMap:
             },
             "human": {
                 "categories": {
-                    key: len(value)
-                    for key, value in sorted(nodes_by_category.items())
+                    key: len(value) for key, value in sorted(nodes_by_category.items())
                 },
                 "services": {
-                    key: len(value)
-                    for key, value in sorted(nodes_by_service.items())
+                    key: len(value) for key, value in sorted(nodes_by_service.items())
                 },
             },
         }
@@ -715,7 +736,7 @@ class BSGMap:
         """
         # Check serialization config to determine method
         method = self._serialization_config.get("method", "streaming")
-        
+
         if method == "streaming":
             # For streaming mode, we need to materialize the full dict from the streaming generator
             # This maintains the API contract while using streaming internally
@@ -727,7 +748,7 @@ class BSGMap:
             ):
                 chunks.append(chunk)
             return json.loads("".join(chunks))
-        
+
         # Legacy mode - use original implementation
         if (
             self._serialized_bsg is not None
@@ -977,8 +998,8 @@ class BSGMap:
         grouped: dict[str, list[tuple[str, list[Entity]]]] = defaultdict(list)
         for file_path, entities in self._by_file.items():
             # Use string operations for better performance
-            if '/' in file_path:
-                dir_path, file_name = file_path.rsplit('/', 1)
+            if "/" in file_path:
+                dir_path, file_name = file_path.rsplit("/", 1)
             else:
                 dir_path, file_name = "", file_path
             grouped[dir_path].append((file_name, entities))
@@ -1050,7 +1071,7 @@ class BSGMap:
         """
         Categorize all files by type (tests, docs, config, source, and folder-based).
         Uses bsg.category metadata set by BSG plugins.
-        
+
         If multiple entities in a file have different categories, uses priority:
         TEST > CONFIG > DOCS > SOURCE > UNCATEGORIZED
 
@@ -1058,7 +1079,7 @@ class BSGMap:
             Dict mapping category string to dict of file_path -> entities
         """
         categorized: dict[str, dict[str, list[Entity]]] = {}
-        
+
         # Category priority (higher number = higher priority)
         category_priority = {
             "TEST": 4,
@@ -1071,14 +1092,14 @@ class BSGMap:
         for file_path, entities in self._by_file.items():
             if not entities:
                 continue  # Skip files with no entities
-            
+
             # Collect all categories from entities in this file
             categories = set()
             for entity in entities:
                 metadata = entity.metadata or {}
                 cat = str(metadata.get("bsg.category", "SOURCE")).upper()
                 categories.add(cat)
-            
+
             # Use highest priority category
             category = "SOURCE"
             max_priority = -1
@@ -1087,7 +1108,7 @@ class BSGMap:
                 if priority > max_priority:
                     max_priority = priority
                     category = cat
-            
+
             if category not in categorized:
                 categorized[category] = {}
             categorized[category][file_path] = entities
@@ -1137,8 +1158,10 @@ class BSGMap:
                 if include_full_entities:
                     entity_count = len(entities)
                     entity_types = self._summarize_entity_types(entities)
-                    lines.append(f"  📄 {file_name} ({entity_count} entities: {entity_types})")
-                    
+                    lines.append(
+                        f"  📄 {file_name} ({entity_count} entities: {entity_types})"
+                    )
+
                     # Group entities by type for compact display
                     entities_by_type = {}
                     for entity in entities:
@@ -1146,18 +1169,20 @@ class BSGMap:
                         if entity_type not in entities_by_type:
                             entities_by_type[entity_type] = []
                         entities_by_type[entity_type].append(entity)
-                    
+
                     # Display entities compactly, grouped by type
                     for entity_type, type_entities in entities_by_type.items():
                         for entity in type_entities:
                             sig = entity.signature or entity.name
                             # Remove type label since we're grouping by type
-                            lines.append(f"    {sig} [L{entity.start_line}-{entity.end_line}]")
-                    
+                            lines.append(
+                                f"    {sig} [L{entity.start_line}-{entity.end_line}]"
+                            )
+
                     # Compact dependencies on single line
                     deps = self._dependencies.get(file_path, [])
                     if deps:
-                        deps_str = ', '.join(deps[:5])  # Show first 5 deps
+                        deps_str = ", ".join(deps[:5])  # Show first 5 deps
                         if len(deps) > 5:
                             deps_str += f" (+{len(deps)-5} more)"
                         lines.append(f"    deps: {deps_str}")
@@ -1170,7 +1195,9 @@ class BSGMap:
 
         return "\n".join(lines)
 
-    def render_uncategorized_categories(self, include_full_entities: bool = False) -> str:
+    def render_uncategorized_categories(
+        self, include_full_entities: bool = False
+    ) -> str:
         """
         Render all uncategorized/folder-based categories grouped by folder name.
 
@@ -1181,59 +1208,66 @@ class BSGMap:
             Formatted markdown string for uncategorized categories
         """
         categorized = self.categorize_files()
-        
+
         # Standard categories to exclude
         standard_categories = {"source", "tests", "docs", "config"}
-        
+
         # Get only non-standard categories
         uncategorized = {
-            cat: files for cat, files in categorized.items() 
+            cat: files
+            for cat, files in categorized.items()
             if cat not in standard_categories and files
         }
-        
+
         if not uncategorized:
             return ""
-        
+
         lines: list[str] = []
         total_files = sum(len(files) for files in uncategorized.values())
-        total_entities = sum(len(entities) for files in uncategorized.values() for entities in files.values())
-        
+        total_entities = sum(
+            len(entities)
+            for files in uncategorized.values()
+            for entities in files.values()
+        )
+
         lines.append("## Uncategorized Files by Category")
         lines.append("")
         lines.append(f"- Total uncategorized files: {total_files}")
         lines.append(f"- Total entities: {total_entities}")
         lines.append("")
-        
+
         # Sort categories by entity count (descending)
         sorted_categories = sorted(
-            uncategorized.items(), 
-            key=lambda x: sum(len(entities) for entities in x[1].values()), 
-            reverse=True
+            uncategorized.items(),
+            key=lambda x: sum(len(entities) for entities in x[1].values()),
+            reverse=True,
         )
-        
+
         for category_name, files_data in sorted_categories:
             cat_entity_count = sum(len(entities) for entities in files_data.values())
             cat_file_count = len(files_data)
-            
+
             lines.append(f"### {category_name.capitalize()}")
             lines.append(f"- Total files: {cat_file_count}")
             lines.append(f"- Total entities: {cat_entity_count}")
             lines.append("")
-            
+
             grouped = self._group_by_directory_for_files(files_data)
-            
+
             for dir_path, files in grouped.items():
                 display_path = dir_path if dir_path else "(root)"
                 dir_header = f"📁 {display_path}/"
                 lines.append(dir_header)
-                
+
                 for file_name, entities in files:
                     file_path = f"{dir_path}/{file_name}" if dir_path else file_name
                     if include_full_entities:
                         entity_count = len(entities)
                         entity_types = self._summarize_entity_types(entities)
-                        lines.append(f"  📄 {file_name} ({entity_count} entities: {entity_types})")
-                        
+                        lines.append(
+                            f"  📄 {file_name} ({entity_count} entities: {entity_types})"
+                        )
+
                         # Group entities by type for compact display
                         entities_by_type = {}
                         for entity in entities:
@@ -1241,21 +1275,23 @@ class BSGMap:
                             if entity_type not in entities_by_type:
                                 entities_by_type[entity_type] = []
                             entities_by_type[entity_type].append(entity)
-                        
+
                         # Display entities compactly, grouped by type
                         for entity_type, type_entities in entities_by_type.items():
                             for entity in type_entities:
                                 sig = entity.signature or entity.name
-                                lines.append(f"    {sig} [L{entity.start_line}-{entity.end_line}]")
+                                lines.append(
+                                    f"    {sig} [L{entity.start_line}-{entity.end_line}]"
+                                )
                     else:
                         entity_count = len(entities)
                         entity_types = self._summarize_entity_types(entities)
                         lines.append(
                             f"  📄 {file_name} ({entity_count} entities: {entity_types})"
                         )
-                
+
                 lines.append("")
-            
+
         return "\n".join(lines)
 
     def _group_by_directory_for_files(
@@ -1279,8 +1315,12 @@ class BSGMap:
             type_counts[str(ent.type)] += 1
         # Use abbreviations for common types to save space
         abbreviations = {
-            "function": "func", "method": "meth", "class": "cls", 
-            "document": "doc", "section": "sec", "setting": "set"
+            "function": "func",
+            "method": "meth",
+            "class": "cls",
+            "document": "doc",
+            "section": "sec",
+            "setting": "set",
         }
         result = []
         for name, count in sorted(type_counts.items()):
@@ -1348,7 +1388,9 @@ class BSGMap:
                 source = str(item.get("source") or "unknown")
                 timestamp_hint = str(item.get("timestamp") or "").strip()
                 if timestamp_hint:
-                    lines.append(f"- **{source}**: {dont_rule} *(recorded {timestamp_hint})*")
+                    lines.append(
+                        f"- **{source}**: {dont_rule} *(recorded {timestamp_hint})*"
+                    )
                 else:
                     lines.append(f"- **{source}**: {dont_rule}")
             lines.append("")
@@ -1363,9 +1405,13 @@ class BSGMap:
 
         # Sort categories by file count, but prioritize main categories first
         main_categories = ["source", "tests", "docs", "config"]
-        other_categories = sorted([cat for cat in categorized.keys() if cat not in main_categories])
-        ordered_categories = main_categories + [cat for cat in other_categories if cat in categorized]
-        
+        other_categories = sorted(
+            [cat for cat in categorized.keys() if cat not in main_categories]
+        )
+        ordered_categories = main_categories + [
+            cat for cat in other_categories if cat in categorized
+        ]
+
         for cat in ordered_categories:
             if cat in categorized:  # Only show categories that have files
                 count = cat_counts.get(cat, 0)

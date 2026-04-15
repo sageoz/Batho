@@ -72,8 +72,12 @@ class TOMLExtractor(MarkupConfigExtractor):
             )
 
             if entities:
-                section_count = len([e for e in entities if e.type == EntityType.SECTION])
-                setting_count = len([e for e in entities if e.type == EntityType.SETTING])
+                section_count = len(
+                    [e for e in entities if e.type == EntityType.SECTION]
+                )
+                setting_count = len(
+                    [e for e in entities if e.type == EntityType.SETTING]
+                )
                 doc_entity = self._create_entity(
                     entity_type=EntityType.DOCUMENT,
                     name="document",

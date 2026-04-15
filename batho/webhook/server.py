@@ -42,7 +42,9 @@ def create_webhook_app(handler: WebhookHandler, config: WebhookConfig):
         headers = dict(request.headers)
         source_ip = request.client.host if request.client else None
         result = handler.handle_webhook(payload_bytes, headers, source_ip=source_ip)
-        return JSONResponse(status_code=result.http_status, content=result.to_response())
+        return JSONResponse(
+            status_code=result.http_status, content=result.to_response()
+        )
 
     @app.get(config.server.health_endpoint)
     async def health_endpoint():
@@ -59,7 +61,9 @@ class _FallbackWebhookRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self.config or not self.handler:
-            self._send_json(500, {"status": "error", "message": "Server not initialized"})
+            self._send_json(
+                500, {"status": "error", "message": "Server not initialized"}
+            )
             return
 
         if self.path != self.config.server.endpoint:
@@ -74,12 +78,16 @@ class _FallbackWebhookRequestHandler(BaseHTTPRequestHandler):
         payload_bytes = self.rfile.read(content_length)
         headers = {k: v for k, v in self.headers.items()}
         source_ip = self.client_address[0] if self.client_address else None
-        result = self.handler.handle_webhook(payload_bytes, headers, source_ip=source_ip)
+        result = self.handler.handle_webhook(
+            payload_bytes, headers, source_ip=source_ip
+        )
         self._send_json(result.http_status, result.to_response())
 
     def do_GET(self):
         if not self.config or not self.handler:
-            self._send_json(500, {"status": "error", "message": "Server not initialized"})
+            self._send_json(
+                500, {"status": "error", "message": "Server not initialized"}
+            )
             return
 
         if self.path != self.config.server.health_endpoint:

@@ -98,7 +98,6 @@ DEFAULT_IGNORE_PATTERNS: list[str] = [
     "Documentation/**/*.rst",  # Optional: skip docs for code-only graph
     "tools/testing/**",  # Optional: skip kernel selftests
     "arch/*/boot/compressed/",  # Compressed boot stubs
-
 ]
 
 # Patterns that should always be ignored for file watching
@@ -337,14 +336,18 @@ def walk_ignored_filtered(
         dirnames[:] = [
             d
             for d in dirnames
-            if not should_ignore_path(current_path / d, root, spec, include_hidden=skip_hidden)
+            if not should_ignore_path(
+                current_path / d, root, spec, include_hidden=skip_hidden
+            )
         ]
 
         # Filter out ignored files
         filtered_files = [
             f
             for f in filenames
-            if not should_ignore_path(current_path / f, root, spec, include_hidden=skip_hidden)
+            if not should_ignore_path(
+                current_path / f, root, spec, include_hidden=skip_hidden
+            )
         ]
 
         yield current_path, dirnames, filtered_files

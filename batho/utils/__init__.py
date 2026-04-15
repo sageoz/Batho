@@ -2,8 +2,8 @@
 Utility helpers for Batho core (hashing, encoding, ignore rules, logging).
 """
 
-from .encoding import normalize_to_utf8
 from .cli_output import CLIOutput
+from .encoding import normalize_to_utf8
 from .hash import (
     compute_bytes_hash,
     compute_file_hash,
@@ -20,12 +20,12 @@ from .logging import (
     get_logger,
 )
 from .patch_errors import (
-    PatchValidationError,
-    PatchConsistencyError,
-    PatchSnapshotError,
-    PatchFileError,
-    PatchTimeoutError,
     PatchAuditLogger,
+    PatchConsistencyError,
+    PatchFileError,
+    PatchSnapshotError,
+    PatchTimeoutError,
+    PatchValidationError,
     audit_logger,
 )
 

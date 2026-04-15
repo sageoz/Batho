@@ -67,7 +67,9 @@ def load_cached_graph(ctn_dir: Path, index_id: str) -> InMemoryGraph | None:
         return None
 
 
-def get_cached_graph_stats(ctn_dir: Path, index_id: str | None = None) -> dict[str, Any]:
+def get_cached_graph_stats(
+    ctn_dir: Path, index_id: str | None = None
+) -> dict[str, Any]:
     """Return cache stats for persisted graph artifacts."""
     metadata_path = ctn_dir / "index.json"
     current_index_id = index_id

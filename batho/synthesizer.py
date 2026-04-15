@@ -119,7 +119,9 @@ def _looks_generated(path: str) -> bool:
     )
 
 
-def synthesize_failure_rule(error_message: str, changed_files: Iterable[str] | None = None) -> dict[str, str]:
+def synthesize_failure_rule(
+    error_message: str, changed_files: Iterable[str] | None = None
+) -> dict[str, str]:
     message = str(error_message or "").strip()
     lowered = message.lower()
     files = _normalize_changed_files(changed_files)
@@ -131,7 +133,9 @@ def synthesize_failure_rule(error_message: str, changed_files: Iterable[str] | N
             "rationale": "Generated files are overwritten by tooling and should not be hand-maintained.",
         }
 
-    if "snapshot" in lowered and any(token in lowered for token in ("not found", "missing", "invalid")):
+    if "snapshot" in lowered and any(
+        token in lowered for token in ("not found", "missing", "invalid")
+    ):
         return {
             "category": "snapshot",
             "dont_rule": "Don't patch without a valid base snapshot; refresh index/snapshot state first.",
@@ -173,7 +177,9 @@ def synthesize_failure_rule(error_message: str, changed_files: Iterable[str] | N
     }
 
 
-def _is_duplicate(existing_entries: list[dict[str, Any]], candidate: dict[str, Any]) -> bool:
+def _is_duplicate(
+    existing_entries: list[dict[str, Any]], candidate: dict[str, Any]
+) -> bool:
     if not existing_entries:
         return False
 
@@ -181,7 +187,8 @@ def _is_duplicate(existing_entries: list[dict[str, Any]], candidate: dict[str, A
     return (
         str(last.get("source")) == str(candidate.get("source"))
         and str(last.get("error_message")) == str(candidate.get("error_message"))
-        and list(last.get("changed_files") or []) == list(candidate.get("changed_files") or [])
+        and list(last.get("changed_files") or [])
+        == list(candidate.get("changed_files") or [])
         and str(last.get("dont_rule")) == str(candidate.get("dont_rule"))
     )
 
@@ -195,7 +202,9 @@ def record_failure_rule(
 ) -> dict[str, Any]:
     """Record a deterministic evolution-ledger entry for a failure path."""
     files = _normalize_changed_files(changed_files)
-    synthesis = synthesize_failure_rule(error_message=error_message, changed_files=files)
+    synthesis = synthesize_failure_rule(
+        error_message=error_message, changed_files=files
+    )
 
     entry = {
         "entry_id": uuid.uuid4().hex[:12],

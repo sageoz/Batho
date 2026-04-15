@@ -377,9 +377,9 @@ _auto_discovery_done: bool = False
 def set_parsing_config(config: dict[str, Any]) -> None:
     """
     Set the global parsing configuration for all extractors.
-    
+
     This should be called before any extractors are instantiated.
-    
+
     Args:
         config: Parsing configuration dict with keys:
             - error_recovery: bool (default True)

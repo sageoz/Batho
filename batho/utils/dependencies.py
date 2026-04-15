@@ -286,7 +286,9 @@ def parse_setup_py(content: str) -> dict[str, Any]:
     }
 
     # Look for install_requires
-    install_requires_match = re.search(r"install_requires\s*=\s*\[(.*?)\]", content, re.DOTALL)
+    install_requires_match = re.search(
+        r"install_requires\s*=\s*\[(.*?)\]", content, re.DOTALL
+    )
     if install_requires_match:
         deps_str = install_requires_match.group(1)
         for match in re.finditer(r'["\']([^"\']+)["\']', deps_str):
@@ -296,7 +298,9 @@ def parse_setup_py(content: str) -> dict[str, Any]:
                 result["dependencies"].append(dep_name)
 
     # Look for python_requires
-    python_requires_match = re.search(r"python_requires\s*=\s*['\"]([^'\"]+)['\"]", content)
+    python_requires_match = re.search(
+        r"python_requires\s*=\s*['\"]([^'\"]+)['\"]", content
+    )
     if python_requires_match:
         result["python_requires"] = python_requires_match.group(1)
 

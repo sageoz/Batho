@@ -36,7 +36,9 @@ def read_text_with_optional_mmap(
 
     try:
         with path.open("rb") as handle:
-            with mmap.mmap(handle.fileno(), length=0, access=mmap.ACCESS_READ) as mapped:
+            with mmap.mmap(
+                handle.fileno(), length=0, access=mmap.ACCESS_READ
+            ) as mapped:
                 return mapped.read().decode("utf-8")
     except (OSError, ValueError, UnicodeDecodeError) as exc:
         LOGGER.warning("mmap_read_fallback", path=str(path), error=str(exc))

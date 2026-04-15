@@ -171,7 +171,9 @@ class HCLExtractor(MarkupConfigExtractor):
 
         return entities
 
-    def _find_block_end(self, content: str, start_pos: int, brace_positions: list) -> int:
+    def _find_block_end(
+        self, content: str, start_pos: int, brace_positions: list
+    ) -> int:
         """Find the matching closing brace for a block."""
         depth = 1
         for pos_type, pos in brace_positions:
@@ -212,7 +214,9 @@ class HCLExtractor(MarkupConfigExtractor):
 
             start_byte = match.start()
             end_byte = match.end()
-            start_line = get_line_from_offset(line_offset + content[:start_byte].count("\n"))
+            start_line = get_line_from_offset(
+                line_offset + content[:start_byte].count("\n")
+            )
 
             attr_path = f"{parent_path}.{key}" if parent_path != "root" else key
 

@@ -34,7 +34,9 @@ class CloudSyncConfig(BaseModel):
     max_retries: int = Field(default=3, ge=0, le=10)
     batch_size: int = Field(default=10, ge=1)
 
-    @field_validator("endpoint", "api_key", "organization_id", "project_id", mode="before")
+    @field_validator(
+        "endpoint", "api_key", "organization_id", "project_id", mode="before"
+    )
     @classmethod
     def _resolve_env_placeholder(cls, value: Any) -> Any:  # noqa: B902
         if not isinstance(value, str):

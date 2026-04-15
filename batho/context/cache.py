@@ -18,7 +18,7 @@ import hashlib
 import json
 import sqlite3
 import threading
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -73,8 +73,7 @@ class ASTCache:
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS cache_entries (
                     file_hash TEXT PRIMARY KEY,
                     file_path TEXT NOT NULL,
@@ -84,18 +83,13 @@ class ASTCache:
                     cached_at TEXT NOT NULL,
                     ttl_days INTEGER DEFAULT 30
                 )
-                """
-            )
-            cursor.execute(
-                """
+                """)
+            cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_file_path ON cache_entries(file_path)
-                """
-            )
-            cursor.execute(
-                """
+                """)
+            cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_cached_at ON cache_entries(cached_at)
-                """
-            )
+                """)
             conn.commit()
             self.logger.debug(
                 "cache_initialized",
@@ -335,9 +329,13 @@ class ASTCache:
             entry_count = cursor.fetchone()["count"]
 
             # Get total size (entities JSON size)
-            cursor.execute("SELECT SUM(LENGTH(entities)) as total_size FROM cache_entries")
+            cursor.execute(
+                "SELECT SUM(LENGTH(entities)) as total_size FROM cache_entries"
+            )
             total_size_result = cursor.fetchone()["total_size"]
-            total_size_mb = (total_size_result / (1024 * 1024)) if total_size_result else 0
+            total_size_mb = (
+                (total_size_result / (1024 * 1024)) if total_size_result else 0
+            )
 
             # Get oldest and newest entries
             cursor.execute(
@@ -365,12 +363,10 @@ class ASTCache:
             cursor = conn.cursor()
 
             # Find expired entries
-            cursor.execute(
-                """
+            cursor.execute("""
                 DELETE FROM cache_entries
                 WHERE datetime(cached_at) < datetime('now', '-' || ttl_days || ' days')
-                """
-            )
+                """)
             deleted_count = cursor.rowcount
             conn.commit()
 
@@ -397,9 +393,13 @@ class ASTCache:
             cursor = conn.cursor()
 
             # Get current total size
-            cursor.execute("SELECT SUM(LENGTH(entities)) as total_size FROM cache_entries")
+            cursor.execute(
+                "SELECT SUM(LENGTH(entities)) as total_size FROM cache_entries"
+            )
             total_size_result = cursor.fetchone()["total_size"]
-            total_size_mb = (total_size_result / (1024 * 1024)) if total_size_result else 0
+            total_size_mb = (
+                (total_size_result / (1024 * 1024)) if total_size_result else 0
+            )
 
             if total_size_mb <= max_size_mb:
                 return 0
@@ -412,13 +412,11 @@ class ASTCache:
             deleted_count = 0
             bytes_removed = 0
 
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT file_hash, LENGTH(entities) as size
                 FROM cache_entries
                 ORDER BY cached_at ASC
-                """
-            )
+                """)
             rows = cursor.fetchall()
 
             for row in rows:

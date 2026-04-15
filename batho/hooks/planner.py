@@ -49,15 +49,21 @@ def enabled_hook_names(hooks_file: HooksFile) -> list[str]:
     return sorted(name for name, hook in hooks_file.hooks.items() if hook.enabled)
 
 
-def resolve_hook_plan(hooks_file: HooksFile, hook_name: str) -> tuple[HookPlan, list[ResolvedStage]]:
+def resolve_hook_plan(
+    hooks_file: HooksFile, hook_name: str
+) -> tuple[HookPlan, list[ResolvedStage]]:
     hook = hooks_file.hooks.get(hook_name)
     if hook is None:
-        raise HookPlanningError(f"Hook '{hook_name}' is not defined in .batho/hooks.yaml")
+        raise HookPlanningError(
+            f"Hook '{hook_name}' is not defined in .batho/hooks.yaml"
+        )
     if not hook.stages:
         raise HookPlanningError(f"Hook '{hook_name}' has no configured stages")
 
     templates = _merged_templates(hooks_file)
-    default_policy: OnFailurePolicy = "fail" if hooks_file.defaults.fail_fast else "warn"
+    default_policy: OnFailurePolicy = (
+        "fail" if hooks_file.defaults.fail_fast else "warn"
+    )
 
     resolved: list[ResolvedStage] = []
     for index, stage in enumerate(hook.stages, start=1):
@@ -71,7 +77,9 @@ def resolve_hook_plan(hooks_file: HooksFile, hook_name: str) -> tuple[HookPlan, 
                     f"Hook '{hook_name}' references unknown template '{stage.template}'"
                 )
 
-        command = stage.run or (str(stage_template.get("run")) if stage_template else None)
+        command = stage.run or (
+            str(stage_template.get("run")) if stage_template else None
+        )
         if not command:
             raise HookPlanningError(
                 f"Hook '{hook_name}' stage {index} has no runnable command"
@@ -94,7 +102,9 @@ def resolve_hook_plan(hooks_file: HooksFile, hook_name: str) -> tuple[HookPlan, 
         env: dict[str, str] = {}
         env.update({k: str(v) for k, v in hooks_file.defaults.env.items()})
         if stage_template:
-            env.update({k: str(v) for k, v in dict(stage_template.get("env") or {}).items()})
+            env.update(
+                {k: str(v) for k, v in dict(stage_template.get("env") or {}).items()}
+            )
         env.update({k: str(v) for k, v in stage.env.items()})
 
         resolved.append(

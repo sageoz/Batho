@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import os
-import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional
+
+import yaml
 
 
 @dataclass
 class ServerConfig:
     """Server configuration."""
+
     host: str = "0.0.0.0"
     port: int = 8080
     workers: int = 4
@@ -22,6 +24,7 @@ class ServerConfig:
 @dataclass
 class RepositoryConfig:
     """Repository configuration."""
+
     name: str
     platform: Literal["github", "gitlab"]
     secret: Optional[str] = None
@@ -36,6 +39,7 @@ class RepositoryConfig:
 @dataclass
 class ProcessingConfig:
     """Processing configuration."""
+
     queue_backend: Literal["celery", "sync"] = "celery"
     celery_broker_url: str = "memory://"
     celery_result_backend: str = "cache+memory://"
@@ -49,6 +53,7 @@ class ProcessingConfig:
 @dataclass
 class RateLimitConfig:
     """Rate limiting configuration."""
+
     requests_per_hour: int = 100
     burst_size: int = 10
 
@@ -56,6 +61,7 @@ class RateLimitConfig:
 @dataclass
 class LoggingConfig:
     """Logging configuration."""
+
     level: str = "INFO"
     file: Optional[str] = None
 
@@ -63,6 +69,7 @@ class LoggingConfig:
 @dataclass
 class WebhookConfig:
     """Complete webhook configuration."""
+
     enabled: bool = True
     server: ServerConfig = field(default_factory=ServerConfig)
     repository: Optional[RepositoryConfig] = None
@@ -127,7 +134,7 @@ class WebhookConfig:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return cls.from_dict(data or {})
-    
+
     @staticmethod
     def _expand_env_vars(data: dict) -> dict:
         """Recursively expand environment variables in config values."""

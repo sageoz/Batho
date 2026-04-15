@@ -27,11 +27,32 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import batho as batho_api
-from batho.config import get_build_info, get_config_cached, get_config_cached_for_root, get_default_batho_yaml_content, reload_config
+from batho.config import (
+    get_build_info,
+    get_config_cached,
+    get_config_cached_for_root,
+    get_default_batho_yaml_content,
+    reload_config,
+)
+from batho.context.bsg_map import BSGMap
+from batho.context.codegraph import CodeGraphIndexer, InMemoryGraph
+from batho.context.graph_cache import get_cached_graph_stats, load_cached_graph
+from batho.context.incremental import GitDiffEntry
+from batho.context.languages.detector import default_detector
+from batho.context.languages.registry import get_extractor as registry_get_extractor
+from batho.context.query import QueryService
+from batho.context.storage import (
+    backfill_registry,
+    cleanup_registry,
+    get_registry_stats,
+    rebuild_query_index,
+    register_artifact,
+    verify_registry,
+)
 from batho.hooks import (
-    HooksConfigError,
     HookInstallError,
     HookPlanningError,
+    HooksConfigError,
     configured_hook_names,
     enabled_hook_names,
     ensure_git_hooks_dir,
@@ -47,29 +68,8 @@ from batho.hooks import (
     supported_git_hooks,
 )
 from batho.hooks.constants import BUILTIN_TEMPLATE_CATALOG
-from batho.context.codegraph import CodeGraphIndexer, InMemoryGraph
-from batho.context.incremental import (
-    GitDiffEntry,
-)
-from batho.context.languages.detector import default_detector
-from batho.context.languages.registry import (
-    get_extractor as registry_get_extractor,
-)
-from batho.context.bsg_map import BSGMap
-from batho.context.graph_cache import get_cached_graph_stats, load_cached_graph
-from batho.context.query import QueryService
-from batho.context.storage import (
-    backfill_registry,
-    cleanup_registry,
-    get_registry_stats,
-    rebuild_query_index,
-    register_artifact,
-    verify_registry,
-)
 from batho.synthesizer import load_evolution_ledger, record_failure_rule
 from batho.time_machine import (
-    create_snapshot,
-    diff_snapshots,
     FileChange,
     FileChangeSummary,
     FileChangeTracker,
@@ -77,23 +77,22 @@ from batho.time_machine import (
     FileTrackingConfig,
     PatchOperation,
     compute_staleness,
+    create_snapshot,
+    diff_snapshots,
     generate_snapshot_id,
     list_snapshots,
     load_snapshot,
 )
+from batho.utils.cli_output import CLIOutput
+from batho.utils.file_io import _is_binary, read_file_bytes, write_atomically
+from batho.utils.hash import compute_bytes_hash, compute_file_hash
+from batho.utils.ignore import is_ignored, load_ignore_spec
+from batho.utils.logging import configure_logging, get_logger
 from batho.webhook import (
     WebhookConfig,
     WebhookProcessor,
     WebhookServer,
     parse_webhook_event,
-)
-from batho.utils.file_io import read_file_bytes, write_atomically, _is_binary
-from batho.utils.hash import compute_bytes_hash, compute_file_hash
-from batho.utils.ignore import is_ignored, load_ignore_spec
-from batho.utils.cli_output import CLIOutput
-from batho.utils.logging import (
-    configure_logging,
-    get_logger,
 )
 
 # Re-export for CLI tests that import from batho_cli
@@ -171,7 +170,9 @@ def _ensure_runtime_logging() -> None:
     _RUNTIME_LOGGING_INITIALIZED = True
 
 
-def print(*args: Any, sep: str = " ", end: str = "\n", file: Any = None, flush: bool = False) -> None:
+def print(
+    *args: Any, sep: str = " ", end: str = "\n", file: Any = None, flush: bool = False
+) -> None:
     """Route CLI user output through the CLIOutput abstraction."""
 
     message = sep.join(str(arg) for arg in args) if args else ""
@@ -234,63 +235,63 @@ def _format_bytes(size_bytes: int) -> str:
 def _extract_stack_info_from_bsg(graph: Any) -> dict[str, Any]:
     """
     Extract stack information from BSG metadata set by detection plugins.
-    
+
     Optimized to process only file-level entities (MODULE, DOCUMENT) to avoid
     redundant extraction from multiple entities in the same file.
-    
+
     Returns a dict with languages, frameworks, package_managers, and infra.
     """
     from batho.context.schema import EntityType
-    
+
     languages: set[str] = set()
     frameworks: set[str] = set()
     package_managers: set[str] = set()
     infra: set[str] = set()
-    
+
     # Track processed files to avoid redundant extraction
     processed_files: set[str] = set()
-    
+
     # File-level entity types that typically hold stack detection metadata
     file_level_types = {EntityType.MODULE, EntityType.DOCUMENT, EntityType.ENTRY_POINT}
-    
+
     for entity in graph.entities.values():
         # Skip if we've already processed this file
         if entity.file in processed_files:
             continue
-        
+
         # Prefer file-level entities for stack metadata
         if entity.type not in file_level_types:
             continue
-        
+
         metadata = entity.metadata or {}
-        
+
         # Extract language
         lang = metadata.get("bsg.language")
         if lang:
             languages.add(str(lang))
-        
+
         # Extract frameworks (can be a list)
         fw = metadata.get("bsg.frameworks")
         if isinstance(fw, list):
             frameworks.update(str(f) for f in fw)
         elif fw:
             frameworks.add(str(fw))
-        
+
         # Extract package manager
         pm = metadata.get("bsg.package_manager")
         if pm:
             package_managers.add(str(pm))
-        
+
         # Extract infrastructure (can be a list)
         inf = metadata.get("bsg.infra")
         if isinstance(inf, list):
             infra.update(str(i) for i in inf)
         elif inf:
             infra.add(str(inf))
-        
+
         # Mark this file as processed
         processed_files.add(entity.file)
-    
+
     return {
         "languages": sorted(languages),
         "frameworks": sorted(frameworks),
@@ -1025,7 +1026,7 @@ def _try_reuse_persisted_graph(
     force_full: bool,
 ) -> tuple[InMemoryGraph, BSGMap, dict[str, Any]] | None:
     """Deprecated: Legacy file-hash based graph reuse. Always returns None.
-    
+
     SQLite cache now handles incremental indexing through content hashing.
     """
     if force_full:
@@ -1136,7 +1137,7 @@ def _files_from_diff(diff_path: Path, root: Path) -> list[Path]:
     Raises:
         PathSecurityError: If any path in the diff is malicious
     """
-    from batho.utils.path_sanitizer import sanitize_diff_path, PathSecurityError
+    from batho.utils.path_sanitizer import PathSecurityError, sanitize_diff_path
 
     paths: set[Path] = set()
     try:
@@ -1346,7 +1347,9 @@ def cmd_index(args: argparse.Namespace) -> int:
         try:
             from batho.context.cache import ASTCache
 
-            bsg_cache_cfg = bsg_cfg.get("cache", {}) if isinstance(bsg_cfg, dict) else {}
+            bsg_cache_cfg = (
+                bsg_cfg.get("cache", {}) if isinstance(bsg_cfg, dict) else {}
+            )
             ast_cache_path = str(bsg_cache_cfg.get("path", "~/.batho/ast_cache.db"))
             ast_cache = ASTCache(cache_path=ast_cache_path)
             try:
@@ -2599,9 +2602,9 @@ def _cmd_patch_snapshot_based(
                 },
                 "bsg_quality_warning_count": len(quality_warnings),
                 "bsg_quality_warnings": quality_warnings[:5],
-                "final_snapshot_id": final_snapshot_id
-                if args.snapshot
-                else result["new_snapshot_id"],
+                "final_snapshot_id": (
+                    final_snapshot_id if args.snapshot else result["new_snapshot_id"]
+                ),
             },
             indent=2,
         )
@@ -3137,22 +3140,22 @@ def cmd_bsg(args: argparse.Namespace) -> int:
 def cmd_plugins_list(args: argparse.Namespace) -> int:
     """List available BSG plugins and their status."""
     from batho.bsg import list_builtin_plugins, load_effective_rules
-    
+
     root = Path(args.root).resolve()
     if not root.exists() or not root.is_dir():
         print(f"❌ Root does not exist or is not a directory: {root}")
         return 1
-    
+
     _ensure_runtime_logging()
     cfg = get_config_cached_for_root(root)
     rules_cfg = cfg.get("bsg", {}).get("rules", {})
-    
+
     # Get builtin plugins
     builtin_available = list_builtin_plugins()
     builtin_requested = rules_cfg.get("builtin_plugins", ["bsg_core"])
     if not isinstance(builtin_requested, list):
         builtin_requested = []
-    
+
     # Load effective rules to get actual loaded state
     try:
         effective_rules, load_stats = load_effective_rules(
@@ -3162,7 +3165,7 @@ def cmd_plugins_list(args: argparse.Namespace) -> int:
     except Exception as exc:
         print(f"❌ Failed to load rules: {exc}")
         return 1
-    
+
     # Build plugin info
     loaded_plugins: dict[str, dict[str, Any]] = {}
     for rule in effective_rules:
@@ -3172,16 +3175,19 @@ def cmd_plugins_list(args: argparse.Namespace) -> int:
                 "name": plugin_name,
                 "enabled": True,
                 "rule_count": 0,
-                "source": "custom_inline" if plugin_name == "custom_inline" else
-                         "custom_file" if plugin_name == "custom_file" else "builtin",
+                "source": (
+                    "custom_inline"
+                    if plugin_name == "custom_inline"
+                    else "custom_file" if plugin_name == "custom_file" else "builtin"
+                ),
             }
         loaded_plugins[plugin_name]["rule_count"] += 1
-    
+
     # Custom rules info
     custom_inline_count = load_stats.get("custom_inline_count", 0)
     custom_file_count = load_stats.get("custom_file_count", 0)
     custom_file_path = rules_cfg.get("custom_rules_path")
-    
+
     payload = {
         "builtin_plugins_available": sorted(builtin_available),
         "builtin_plugins_requested": sorted(builtin_requested),
@@ -3198,11 +3204,11 @@ def cmd_plugins_list(args: argparse.Namespace) -> int:
         },
         "load_stats": load_stats,
     }
-    
+
     if bool(args.verbose):
         # Include full load stats in verbose mode
         payload["verbose_stats"] = load_stats
-    
+
     print(json.dumps(payload, indent=2))
     return 0
 
@@ -3210,13 +3216,13 @@ def cmd_plugins_list(args: argparse.Namespace) -> int:
 def cmd_plugins_validate(args: argparse.Namespace) -> int:
     """Validate a BSG plugin YAML file."""
     from batho.bsg import validate_plugin_file
-    
+
     plugin_path = Path(args.plugin_file).resolve()
-    
+
     result = validate_plugin_file(plugin_path)
-    
+
     print(json.dumps(result, indent=2))
-    
+
     return 0 if result["valid"] else 1
 
 
@@ -3795,7 +3801,7 @@ def cmd_patch_chain(args: argparse.Namespace) -> int:
 
 def cmd_apply_patch(args: argparse.Namespace) -> int:
     """Apply patch from diff file or cherry-pick."""
-    from batho.time_machine import parse_unified_diff, load_patch_operation
+    from batho.time_machine import load_patch_operation, parse_unified_diff
 
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
@@ -3907,7 +3913,7 @@ def cmd_apply_patch(args: argparse.Namespace) -> int:
 
 def cmd_cherry_pick(args: argparse.Namespace) -> int:
     """Cherry-pick patch to different base snapshot."""
-    from batho.time_machine import load_patch_operation, apply_deltas_to_snapshot
+    from batho.time_machine import apply_deltas_to_snapshot, load_patch_operation
 
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
@@ -3981,7 +3987,11 @@ def main(argv: list[str] | None = None) -> int:
         # Only prompt in interactive terminal (skip in tests/CI)
         if sys.stdin.isatty():
             print(f"No batho.yaml found in {target_root}")
-            response = input("Would you like to create a default batho.yaml? [Y/n]: ").strip().lower()
+            response = (
+                input("Would you like to create a default batho.yaml? [Y/n]: ")
+                .strip()
+                .lower()
+            )
             if response in ("", "y", "yes"):
                 try:
                     config_path.write_text(get_default_batho_yaml_content())
@@ -4005,7 +4015,9 @@ def main(argv: list[str] | None = None) -> int:
     resolved_level = cli_level if cli_level is not None else cfg["logging"]["level"]
     resolved_json = True if cli_log_json else cfg["logging"].get("json_format")
     resolved_quiet = cli_quiet or bool(cfg["logging"].get("quiet", False))
-    resolved_file = cli_log_file if cli_log_file is not None else cfg["logging"].get("file")
+    resolved_file = (
+        cli_log_file if cli_log_file is not None else cfg["logging"].get("file")
+    )
 
     # CLI flags override config/env (quiet flag wins over log level threshold)
     log_config = {

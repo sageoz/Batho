@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import functools
 import hashlib
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Union
 
 # Binary detection functions copied from file_io to avoid circular import
 import math
 from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Union
 
 _BINARY_MAGIC_BYTES: tuple[bytes, ...] = (
     b"\x00\x00\x01\xba",  # MPEG-2

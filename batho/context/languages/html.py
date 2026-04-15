@@ -88,7 +88,10 @@ class HTMLExtractor(MarkupConfigExtractor):
                         attr_name = attr_match.group(1).lower()
                         # Get the value (can be in quotes or unquoted)
                         attr_value = (
-                            attr_match.group(2) or attr_match.group(3) or attr_match.group(4) or ""
+                            attr_match.group(2)
+                            or attr_match.group(3)
+                            or attr_match.group(4)
+                            or ""
                         )
                         element_attributes[attr_name] = attr_value
 
@@ -110,7 +113,7 @@ class HTMLExtractor(MarkupConfigExtractor):
                 )
                 entities.append(element)
                 self._entity_ids[f"{tag_name}:{start_byte}"] = element
-                
+
                 # DO NOT create separate ATTRIBUTE entities - stored in metadata
 
             # Also track the document itself

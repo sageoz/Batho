@@ -14,13 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from batho.config import get_config_cached
 from batho.context.storage import (
     infer_ctn_dir_for_path,
     persist_json,
     register_artifact_for_path,
 )
 from batho.utils.logging import get_logger
-from batho.config import get_config_cached
 
 AUDIT_LOG_ENABLED = get_config_cached().get("flags", {}).get("audit_log_enabled", True)
 

@@ -10,7 +10,6 @@ from pathlib import Path
 from batho.hooks.planner import ResolvedStage
 from batho.utils.logging import get_logger
 
-
 LOGGER = get_logger(__name__, component="hooks_runner")
 
 
@@ -139,6 +138,10 @@ def execute_hook(
             )
             continue
 
-        return HookExecutionResult(hook=hook_name, success=False, stage_results=stage_results)
+        return HookExecutionResult(
+            hook=hook_name, success=False, stage_results=stage_results
+        )
 
-    return HookExecutionResult(hook=hook_name, success=True, stage_results=stage_results)
+    return HookExecutionResult(
+        hook=hook_name, success=True, stage_results=stage_results
+    )

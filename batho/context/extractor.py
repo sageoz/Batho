@@ -27,13 +27,7 @@ from tree_sitter_language_pack import get_language, get_parser
 from batho.utils.encoding import normalize_to_utf8
 from batho.utils.logging import get_logger
 
-from .schema import (
-    Entity,
-    EntityMetadata,
-    EntityType,
-    Relationship,
-    RelationshipType,
-)
+from .schema import Entity, EntityMetadata, EntityType, Relationship, RelationshipType
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -91,7 +85,11 @@ _CAPTURE_REL_MAP: dict[str, RelationshipType] = {
 
 def _node_text(node: Node, source: bytes) -> str:
     """Slice raw bytes and decode to a clean UTF-8 string."""
-    return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace").strip()
+    return (
+        source[node.start_byte : node.end_byte]
+        .decode("utf-8", errors="replace")
+        .strip()
+    )
 
 
 def _clean_docstring(text: str) -> str:
@@ -109,7 +107,9 @@ def _clean_docstring(text: str) -> str:
     return t
 
 
-def _relationship_capture_info(cap_name: str) -> tuple[RelationshipType | None, str | None]:
+def _relationship_capture_info(
+    cap_name: str,
+) -> tuple[RelationshipType | None, str | None]:
     """Map a capture name to relationship type and optional capture variant."""
     parts = cap_name.split(".")
     if len(parts) < 2 or parts[0] != "ref":
@@ -237,7 +237,9 @@ class ASTExtractor(abc.ABC):
         @ref.import               — import reference
     """
 
-    def __init__(self, language: str, parsing_config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, language: str, parsing_config: dict[str, Any] | None = None
+    ) -> None:
         """
         Initialise the extractor for *language*.
 
@@ -255,7 +257,9 @@ class ASTExtractor(abc.ABC):
         self._compiled_query: Query | None = None
         self._query_lock = threading.Lock()
         self._parsing_config: dict[str, Any] = parsing_config or {}
-        self.logger = get_logger(__name__, operation="ast_extract").bind(language=language)
+        self.logger = get_logger(__name__, operation="ast_extract").bind(
+            language=language
+        )
 
     def _get_compiled_query(self) -> Query | None:
         """Compile and cache the tree-sitter query once per extractor instance."""
@@ -360,11 +364,13 @@ class ASTExtractor(abc.ABC):
             cursor = QueryCursor(query)
             # If skip_comments is enabled, we'll filter during capture processing
             raw_captures: dict[str, list[Node]] = cursor.captures(tree.root_node)
-            
+
             if skip_comments:
                 raw_captures = self._filter_comment_captures(raw_captures)
-            
-            entities, relationships = self._process_captures(raw_captures, content, filepath, snapshot_id=snapshot_id)
+
+            entities, relationships = self._process_captures(
+                raw_captures, content, filepath, snapshot_id=snapshot_id
+            )
         except Exception as exc:
             if error_recovery:
                 self.logger.warning(
@@ -394,10 +400,12 @@ class ASTExtractor(abc.ABC):
         )
         return entities, relationships
 
-    def _filter_comment_captures(self, captures: dict[str, list[Node]]) -> dict[str, list[Node]]:
+    def _filter_comment_captures(
+        self, captures: dict[str, list[Node]]
+    ) -> dict[str, list[Node]]:
         """
         Filter out comment-related captures when skip_comments is enabled.
-        
+
         This removes captures that are primarily comment nodes, reducing AST size
         and processing time for comment-heavy files.
         """
@@ -406,8 +414,10 @@ class ASTExtractor(abc.ABC):
             # Filter out nodes that are comment types
             # Common comment node types across languages
             filtered_nodes = [
-                node for node in nodes
-                if node.type not in {
+                node
+                for node in nodes
+                if node.type
+                not in {
                     "comment",
                     "line_comment",
                     "block_comment",
@@ -451,7 +461,9 @@ class ASTExtractor(abc.ABC):
             elif len(parts) == 2 and parts[0] in ("def", "ref"):
                 definition_nodes.setdefault(cap_name, []).extend(nodes)
 
-        entities = self._build_entities(definition_nodes, auxiliary_nodes, source, filepath, snapshot_id=snapshot_id)
+        entities = self._build_entities(
+            definition_nodes, auxiliary_nodes, source, filepath, snapshot_id=snapshot_id
+        )
         relationships = self._build_relationships(captures, entities, source, filepath)
         return entities, relationships
 
@@ -476,7 +488,9 @@ class ASTExtractor(abc.ABC):
                 if not name:
                     continue
 
-                decl_node: Node = name_node.parent if name_node.parent is not None else name_node
+                decl_node: Node = (
+                    name_node.parent if name_node.parent is not None else name_node
+                )
 
                 metadata = self._collect_metadata_with_source(
                     base_key, decl_node, auxiliary_nodes, source
@@ -493,12 +507,12 @@ class ASTExtractor(abc.ABC):
                     raw_snippet_value = metadata.get("invocation_snippet")
                     raw_snippet = (
                         str(raw_snippet_value)
-                        if isinstance(raw_snippet_value, str) and raw_snippet_value.strip()
+                        if isinstance(raw_snippet_value, str)
+                        and raw_snippet_value.strip()
                         else name
                     )
                     if (
-                        "__name__" in raw_snippet
-                        and "__main__" in raw_snippet
+                        "__name__" in raw_snippet and "__main__" in raw_snippet
                     ) or name == "__name__":
                         normalized_name = "__main__"
                         metadata["invocation_snippet"] = raw_snippet
@@ -561,7 +575,9 @@ class ASTExtractor(abc.ABC):
                     and parent.end_byte >= child.end_byte
                     and parent.id != child.id
                 ):
-                    _add(parent.id, child.id, RelationshipType.CONTAINS, child.start_line)
+                    _add(
+                        parent.id, child.id, RelationshipType.CONTAINS, child.start_line
+                    )
                     break
 
         by_name: dict[str, Entity] = {e.name: e for e in entities}
@@ -636,7 +652,10 @@ class ASTExtractor(abc.ABC):
                                 ref=target_ref,
                             )
 
-                elif rel_type in (RelationshipType.INHERITS, RelationshipType.IMPLEMENTS):
+                elif rel_type in (
+                    RelationshipType.INHERITS,
+                    RelationshipType.IMPLEMENTS,
+                ):
                     source_ent = _find_enclosing(node.start_byte)
                     if source_ent is None:
                         continue
@@ -692,7 +711,9 @@ class ASTExtractor(abc.ABC):
             metadata[meta_key] = text
 
         if not metadata.get("docstring"):
-            fallback_doc = self._extract_leading_doc_comment(decl_node=decl_node, source=source)
+            fallback_doc = self._extract_leading_doc_comment(
+                decl_node=decl_node, source=source
+            )
             if fallback_doc:
                 metadata["docstring"] = _clean_docstring(fallback_doc)
 
@@ -711,7 +732,9 @@ class ASTExtractor(abc.ABC):
 
         return metadata
 
-    def _extract_leading_doc_comment(self, decl_node: Node, source: bytes) -> str | None:
+    def _extract_leading_doc_comment(
+        self, decl_node: Node, source: bytes
+    ) -> str | None:
         """Extract contiguous comment lines immediately above a declaration."""
         try:
             text = source.decode("utf-8", errors="replace")
@@ -844,12 +867,16 @@ class MarkupConfigExtractor(ASTExtractor):
     - _extract_references(): Extract references/relationships between elements
     """
 
-    def __init__(self, language: str, parsing_config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, language: str, parsing_config: dict[str, Any] | None = None
+    ) -> None:
         self._language_name = language
         self._ts_parser = None
         self._ts_language = None
         self._parsing_config: dict[str, Any] = parsing_config or {}
-        self.logger = get_logger(__name__, operation="markup_extract").bind(language=language)
+        self.logger = get_logger(__name__, operation="markup_extract").bind(
+            language=language
+        )
 
     def _query_source(self) -> str:
         """Return empty query — subclasses override parse_file() directly."""

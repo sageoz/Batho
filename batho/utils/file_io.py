@@ -19,7 +19,7 @@ from typing import Any, Union
 
 from batho.config import get_config_cached
 from batho.utils.encoding import normalize_to_utf8
-from batho.utils.hash import compute_bytes_hash, _is_binary
+from batho.utils.hash import _is_binary, compute_bytes_hash
 from batho.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
@@ -182,9 +182,11 @@ def write_atomically(
                 tmp_path.unlink()
         except OSError as cleanup_exc:
             # Log cleanup failure at debug level - file write already failed
-            LOGGER.debug("temp_file_cleanup_failed", 
-                        temp_path=str(tmp_path), 
-                        error=str(cleanup_exc))
+            LOGGER.debug(
+                "temp_file_cleanup_failed",
+                temp_path=str(tmp_path),
+                error=str(cleanup_exc),
+            )
             pass  # Continue - original error is more important
         return False
 

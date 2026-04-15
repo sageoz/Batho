@@ -119,7 +119,9 @@ class CloudSyncUploader:
                     retry_count=retry_count + 1,
                 )
                 summary.failed += 1
-                summary.failures.append({"artifact_id": artifact_id, "error": error_msg})
+                summary.failures.append(
+                    {"artifact_id": artifact_id, "error": error_msg}
+                )
                 continue
 
             metadata = self._metadata_payload(row)
@@ -130,7 +132,9 @@ class CloudSyncUploader:
             )
 
             if result.success:
-                cloud_content_id = str(result.cloud_content_id or "").strip() or artifact_id
+                cloud_content_id = (
+                    str(result.cloud_content_id or "").strip() or artifact_id
+                )
                 registry.mark_synced(artifact_id, cloud_content_id=cloud_content_id)
                 summary.uploaded += 1
             else:

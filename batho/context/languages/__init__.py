@@ -46,16 +46,9 @@ from .detector import (
 from .erlang import ErlangExtractor
 
 # Factory module for creating extractors without subclassing
-from .factory import (
-    QUERY_REGISTRY,
-    ConfigurableExtractor,
-    create_extractor,
-)
+from .factory import QUERY_REGISTRY, ConfigurableExtractor, create_extractor
 from .factory import get_extractor as get_factory_extractor
-from .factory import (
-    list_supported_languages,
-    register_extractor,
-)
+from .factory import list_supported_languages, register_extractor
 from .go import GoExtractor
 from .hack import HackExtractor
 from .haskell import HaskellExtractor

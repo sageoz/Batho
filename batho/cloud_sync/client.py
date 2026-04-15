@@ -72,7 +72,9 @@ class SyncClient:
     ) -> tuple[bytes, str]:
         boundary = f"----batho-sync-{uuid.uuid4().hex}"
         newline = b"\r\n"
-        mime_type = mimetypes.guess_type(str(artifact_path))[0] or "application/octet-stream"
+        mime_type = (
+            mimetypes.guess_type(str(artifact_path))[0] or "application/octet-stream"
+        )
 
         metadata_payload = json.dumps(metadata, ensure_ascii=True).encode("utf-8")
         file_payload = artifact_path.read_bytes()
@@ -119,8 +121,14 @@ class SyncClient:
         payload: bytes | None = None,
         timeout_seconds: int | None = None,
     ) -> tuple[int, dict[str, Any]]:
-        request = urllib.request.Request(url=url, data=payload, headers=headers, method=method)
-        timeout = timeout_seconds if timeout_seconds is not None else self.config.timeout_seconds
+        request = urllib.request.Request(
+            url=url, data=payload, headers=headers, method=method
+        )
+        timeout = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else self.config.timeout_seconds
+        )
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 body = response.read()
@@ -128,7 +136,9 @@ class SyncClient:
         except urllib.error.HTTPError as exc:
             body = exc.read() if exc.fp is not None else b""
             payload_json = self._parse_json(body)
-            raise RuntimeError(json.dumps({"status": int(exc.code), "payload": payload_json})) from exc
+            raise RuntimeError(
+                json.dumps({"status": int(exc.code), "payload": payload_json})
+            ) from exc
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
             raise ConnectionError(str(exc)) from exc
 
@@ -183,7 +193,7 @@ class SyncClient:
                 )
             except ConnectionError as exc:
                 if attempt < retries:
-                    delay = min(30.0, float(2 ** attempt))
+                    delay = min(30.0, float(2**attempt))
                     if progress_callback:
                         progress_callback(
                             "retry",
@@ -211,10 +221,18 @@ class SyncClient:
                 except json.JSONDecodeError:
                     details = {"status": None, "payload": {}, "error": str(exc)}
                 status_code = details.get("status")
-                payload = details.get("payload") if isinstance(details.get("payload"), dict) else {}
-                retriable = self._should_retry_status(int(status_code)) if isinstance(status_code, int) else False
+                payload = (
+                    details.get("payload")
+                    if isinstance(details.get("payload"), dict)
+                    else {}
+                )
+                retriable = (
+                    self._should_retry_status(int(status_code))
+                    if isinstance(status_code, int)
+                    else False
+                )
                 if retriable and attempt < retries:
-                    delay = min(30.0, float(2 ** attempt))
+                    delay = min(30.0, float(2**attempt))
                     if progress_callback:
                         progress_callback(
                             "retry",
@@ -233,7 +251,9 @@ class SyncClient:
                 return SyncResult(
                     artifact_id=artifact_id,
                     success=False,
-                    status_code=int(status_code) if isinstance(status_code, int) else None,
+                    status_code=(
+                        int(status_code) if isinstance(status_code, int) else None
+                    ),
                     error=str(payload.get("error") or "upload_failed"),
                     retry_count=attempt,
                     duration_seconds=duration,

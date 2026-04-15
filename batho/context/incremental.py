@@ -7,12 +7,11 @@ status-aware diff records for incremental graph patching.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import re
 import subprocess
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
-
 
 _SNAPSHOT_ID_RE = re.compile(
     r"^batho_(?P<project>.+)_(?P<commit>[0-9a-f]{7,64}|nogit)_(?P<timestamp>\d{8}T\d{6}(?:\d{6})?Z)$"
@@ -25,7 +24,9 @@ class GitDiffEntry:
     path: str
 
 
-def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str] | None:
+def _run_git(
+    repo_root: Path, args: list[str]
+) -> subprocess.CompletedProcess[str] | None:
     try:
         return subprocess.run(
             ["git", *args],
@@ -150,7 +151,9 @@ def _parse_name_status_output(output: str) -> list[GitDiffEntry]:
         if not target_path:
             continue
 
-        entries.append(GitDiffEntry(status=("M" if status == "T" else status), path=target_path))
+        entries.append(
+            GitDiffEntry(status=("M" if status == "T" else status), path=target_path)
+        )
 
     deduped: dict[tuple[str, str], GitDiffEntry] = {}
     for entry in entries:

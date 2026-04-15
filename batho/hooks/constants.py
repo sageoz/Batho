@@ -60,8 +60,7 @@ BUILTIN_TEMPLATE_CATALOG: dict[str, dict[str, str]] = {
 
 
 def starter_hooks_yaml() -> str:
-    return dedent(
-        """\
+    return dedent("""\
         version: hooks.v1
         defaults:
           shell: sh
@@ -95,5 +94,4 @@ def starter_hooks_yaml() -> str:
             description: Custom non-git hook runnable via batho hooks run
             stages:
               - template: custom-team-check
-        """
-    )
+        """)

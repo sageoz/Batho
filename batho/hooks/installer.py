@@ -3,10 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from batho.hooks.constants import (
-    MANAGED_HOOK_MARKER,
-    SUPPORTED_GIT_CLIENT_HOOKS,
-)
+from batho.hooks.constants import MANAGED_HOOK_MARKER, SUPPORTED_GIT_CLIENT_HOOKS
 
 
 class HookInstallError(ValueError):
@@ -66,7 +63,9 @@ def install_hooks(
                 warnings.append(msg)
                 skipped.append({"hook": hook_name, "reason": "unsupported_for_install"})
                 continue
-            raise HookInstallError(f"Unsupported git hook name for install: {hook_name}")
+            raise HookInstallError(
+                f"Unsupported git hook name for install: {hook_name}"
+            )
 
         target = hooks_dir / hook_name
         content = render_hook_script(hook_name, root)
@@ -76,7 +75,11 @@ def install_hooks(
             continue
 
         try:
-            current = target.read_text(encoding="utf-8", errors="ignore") if target.exists() else None
+            current = (
+                target.read_text(encoding="utf-8", errors="ignore")
+                if target.exists()
+                else None
+            )
         except OSError:
             current = None
 
@@ -103,7 +106,9 @@ def install_hooks(
     }
 
 
-def remove_hooks(root: Path, hook_names: list[str], *, dry_run: bool = False) -> dict[str, object]:
+def remove_hooks(
+    root: Path, hook_names: list[str], *, dry_run: bool = False
+) -> dict[str, object]:
     hooks_dir = ensure_git_hooks_dir(root)
     removed: list[str] = []
     skipped: list[dict[str, str]] = []

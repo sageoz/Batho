@@ -13,9 +13,11 @@ from typing import Any
 
 from batho.config import get_config_cached
 from batho.context.mmap_storage import load_json_with_optional_mmap
+from batho.context.storage import query_entities as query_entities_from_registry
 from batho.context.storage import (
-    query_entities as query_entities_from_registry,
     query_relationships as query_relationships_from_registry,
+)
+from batho.context.storage import (
     rebuild_query_index,
 )
 from batho.utils.logging import get_logger
@@ -187,7 +189,9 @@ class QueryService:
             raw_type = str(raw.get("type") or "").strip().lower()
             if raw_type != normalized:
                 continue
-            metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+            metadata = (
+                raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+            )
             fallback.append(
                 {
                     "entity_id": entity_id,
@@ -238,7 +242,9 @@ class QueryService:
             if raw_file != normalized_path:
                 continue
             raw_type = str(raw.get("type") or "").strip().lower()
-            metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+            metadata = (
+                raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+            )
             fallback.append(
                 {
                     "entity_id": entity_id,
@@ -288,7 +294,9 @@ class QueryService:
             raw_type = str(raw.get("type") or "").strip().lower()
             if raw_type != normalized:
                 continue
-            metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+            metadata = (
+                raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+            )
             fallback.append(
                 {
                     "relationship_id": str(raw.get("id") or ""),

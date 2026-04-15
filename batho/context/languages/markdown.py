@@ -143,14 +143,14 @@ class MarkdownExtractor(MarkupConfigExtractor):
             for match in list_pattern.finditer(content):
                 text = match.group(2).strip()
                 start_line = get_line_from_offset(match.start())
-                
+
                 # Find nearest parent header
                 parent_header = None
                 for level, htext, hstart, hend, hentity in reversed(headers):
                     if hstart < start_line:
                         parent_header = hentity
                         break
-                
+
                 # Roll up content to parent header or document
                 if parent_header and parent_header.id in content_buffer:
                     content_buffer[parent_header.id].append(f"- {text}")
@@ -196,10 +196,14 @@ class MarkdownExtractor(MarkupConfigExtractor):
                 if entity.id in content_buffer and content_buffer[entity.id]:
                     # Update entity metadata with content_rollup
                     updated_metadata = dict(entity.metadata or {})
-                    updated_metadata["content_rollup"] = "\n".join(content_buffer[entity.id])
+                    updated_metadata["content_rollup"] = "\n".join(
+                        content_buffer[entity.id]
+                    )
                     # Replace entity in list with updated version
                     idx = entities.index(entity)
-                    entities[idx] = entity.model_copy(update={"metadata": updated_metadata})
+                    entities[idx] = entity.model_copy(
+                        update={"metadata": updated_metadata}
+                    )
 
             # Document entity
             doc_entity = self._create_entity(

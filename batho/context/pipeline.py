@@ -115,10 +115,9 @@ def process_file_worker(
         from .languages.registry import get_extractor as _registry_get_extractor
 
         suffix = file_path.suffix.lower()
-        file_extractor: ASTExtractor | object | None = (
-            default_detector.get_extractor(file_path, content)
-            or _registry_get_extractor(suffix)
-        )
+        file_extractor: ASTExtractor | object | None = default_detector.get_extractor(
+            file_path, content
+        ) or _registry_get_extractor(suffix)
         if file_extractor is None:
             return None
 
@@ -205,11 +204,11 @@ def build_graph_parallel(
     cpu_count = os.cpu_count() or 4
     actual_workers = min(cpu_count, max_workers)
     actual_workers = min(actual_workers, len(candidates))
-    
+
     # Ensure at least 1 worker if there are files to process
     if actual_workers == 0 and len(candidates) > 0:
         actual_workers = 1
-    
+
     # If no files to process, return early
     if len(candidates) == 0:
         return [], 0
@@ -231,9 +230,7 @@ def build_graph_parallel(
             continue
 
         if size > configured_max_file_size_kb * 1024:
-            logger.debug(
-                "skipping_large_file", filepath=filepath, size_kb=size // 1024
-            )
+            logger.debug("skipping_large_file", filepath=filepath, size_kb=size // 1024)
             continue
 
         content = _read_file_content(filepath, configured_max_file_size_kb)
@@ -263,8 +260,9 @@ def build_graph_parallel(
 
     # Use multiprocessing for parallel processing
     try:
-        from batho.config import get_config_cached
         from multiprocessing import Pool
+
+        from batho.config import get_config_cached
 
         worker_log_config = dict(get_config_cached().get("logging", {}))
         with Pool(
@@ -272,7 +270,9 @@ def build_graph_parallel(
             initializer=_initialize_worker_logging,
             initargs=(worker_log_config,),
         ) as pool:
-            results = pool.starmap(process_file_worker, work_items, chunksize=chunk_size)
+            results = pool.starmap(
+                process_file_worker, work_items, chunksize=chunk_size
+            )
     except ImportError:
         logger.warning("multiprocessing_unavailable", fallback="sequential")
         return build_graph_sequential(
@@ -335,9 +335,7 @@ def build_graph_sequential(
             continue
 
         if size > configured_max_file_size_kb * 1024:
-            logger.debug(
-                "skipping_large_file", filepath=filepath, size_kb=size // 1024
-            )
+            logger.debug("skipping_large_file", filepath=filepath, size_kb=size // 1024)
             continue
 
         content = _read_file_content(filepath, configured_max_file_size_kb)

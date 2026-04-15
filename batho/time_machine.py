@@ -18,27 +18,27 @@ import sys
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone, timedelta
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable
 
 from batho.config import SNAPSHOT_SCHEMA_VERSION, get_config_cached
-from batho.context.incremental import get_head_commit, is_git_repo
-from batho.context.codegraph import InMemoryGraph, IncrementalGraphUpdater
 from batho.context.bsg_map import BSGMap
+from batho.context.codegraph import IncrementalGraphUpdater, InMemoryGraph
+from batho.context.incremental import get_head_commit, is_git_repo
 from batho.context.storage import register_artifact
+from batho.utils.file_io import _is_binary
 from batho.utils.hash import compute_bytes_hash, compute_file_hash
 from batho.utils.ignore import is_ignored, load_ignore_spec
 from batho.utils.logging import get_logger
-from batho.utils.file_io import _is_binary
 from batho.utils.patch_errors import (
-    PatchValidationError,
     PatchConsistencyError,
-    PatchSnapshotError,
     PatchFileError,
+    PatchSnapshotError,
     PatchTimeoutError,
+    PatchValidationError,
     audit_logger,
 )
 
@@ -62,11 +62,18 @@ def timeout_context(timeout_seconds: float):
     # Windows doesn't support SIGALRM, use threading.Timer as fallback
     if sys.platform == "win32" or not hasattr(signal, "SIGALRM"):
         import threading
+
         timer = None
         try:
-            timer = threading.Timer(timeout_seconds, lambda: (_ for _ in ()).throw(PatchTimeoutError(
-                f"Operation timed out after {timeout_seconds} seconds", timeout_seconds
-            )))
+            timer = threading.Timer(
+                timeout_seconds,
+                lambda: (_ for _ in ()).throw(
+                    PatchTimeoutError(
+                        f"Operation timed out after {timeout_seconds} seconds",
+                        timeout_seconds,
+                    )
+                ),
+            )
             timer.start()
             yield
         finally:
@@ -155,9 +162,9 @@ class PatchOperation:
     timestamp: datetime
     checksum: str
     patch_chain: list[str]  # NEW: Chain of parent patches
-    operation_type: str     # NEW: "incremental_patch", "diff_patch", "cherry_pick"
+    operation_type: str  # NEW: "incremental_patch", "diff_patch", "cherry_pick"
     user_info: dict[str, Any]  # NEW: Source: CLI, webhook, AI agent
-    metrics: dict[str, Any]   # NEW: Token size, affected components, timing
+    metrics: dict[str, Any]  # NEW: Token size, affected components, timing
 
     def validate(self) -> bool:
         data = {k: v for k, v in self.serialize().items() if k != "checksum"}
@@ -193,6 +200,7 @@ class PatchOperation:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PatchOperation":
         """Deserialize PatchOperation from dictionary."""
+
         def dict_to_change(d: dict[str, Any]) -> FileChange:
             if d.get("change_type"):
                 d["change_type"] = FileChangeType(d["change_type"])
@@ -200,8 +208,10 @@ class PatchOperation:
                 d["mtime"] = datetime.fromisoformat(d["mtime"])
             return FileChange(**d)
 
-        changes_applied = [dict_to_change(change) for change in data.get("changes_applied", [])]
-        
+        changes_applied = [
+            dict_to_change(change) for change in data.get("changes_applied", [])
+        ]
+
         return cls(
             operation_id=data["operation_id"],
             base_snapshot_id=data["base_snapshot_id"],
@@ -501,7 +511,7 @@ def generate_snapshot_id(root: Path | None = None) -> str:
     repo_root = root.resolve()
     project = _sanitize_project_slug(repo_root.name)
     commit = get_head_commit(repo_root) if is_git_repo(repo_root) else None
-    commit_fragment = (commit[:32].lower() if commit else "nogit")
+    commit_fragment = commit[:32].lower() if commit else "nogit"
     return f"batho_{project}_{commit_fragment}_{ts}"
 
 
@@ -826,7 +836,9 @@ def incremental_patch(
 
             # Reconstruct base graph and bsg map
             base_graph = InMemoryGraph.from_dict(base_snapshot["graph"])
-            base_bsg = BSGMap.from_dict(base_snapshot["bsg"], serialization_config=_get_serialization_config())
+            base_bsg = BSGMap.from_dict(
+                base_snapshot["bsg"], serialization_config=_get_serialization_config()
+            )
             base_bsg._root = base_snapshot["root"]  # Set the root path
 
             # Initialize updater
@@ -858,9 +870,7 @@ def incremental_patch(
 
                     elif change.change_type == FileChangeType.MODIFIED:
                         # For modified files, we need an extractor
-                        from batho.context.languages.detector import (
-                            default_detector,
-                        )
+                        from batho.context.languages.detector import default_detector
                         from batho.context.languages.registry import get_extractor
 
                         extractor = default_detector.get_extractor(
@@ -880,9 +890,7 @@ def incremental_patch(
 
                     elif change.change_type == FileChangeType.ADDED:
                         # For new files, we need an extractor
-                        from batho.context.languages.detector import (
-                            default_detector,
-                        )
+                        from batho.context.languages.detector import default_detector
                         from batho.context.languages.registry import get_extractor
 
                         extractor = default_detector.get_extractor(
@@ -962,7 +970,7 @@ def incremental_patch(
             operation_id = generate_snapshot_id()
             patch_chain = build_patch_chain(ctn_dir, base_snapshot_id, operation_id)
             elapsed = time.perf_counter() - start_time
-            
+
             operation = PatchOperation(
                 operation_id=operation_id,
                 base_snapshot_id=base_snapshot_id,
@@ -977,9 +985,21 @@ def incremental_patch(
                     "token_size": estimate_token_changes(applied_changes),
                     "affected_files": len(applied_changes),
                     "elapsed_seconds": round(elapsed, 4),
-                    "added_files": sum(1 for c in applied_changes if c.change_type == FileChangeType.ADDED),
-                    "modified_files": sum(1 for c in applied_changes if c.change_type == FileChangeType.MODIFIED),
-                    "deleted_files": sum(1 for c in applied_changes if c.change_type == FileChangeType.DELETED),
+                    "added_files": sum(
+                        1
+                        for c in applied_changes
+                        if c.change_type == FileChangeType.ADDED
+                    ),
+                    "modified_files": sum(
+                        1
+                        for c in applied_changes
+                        if c.change_type == FileChangeType.MODIFIED
+                    ),
+                    "deleted_files": sum(
+                        1
+                        for c in applied_changes
+                        if c.change_type == FileChangeType.DELETED
+                    ),
                 },
             )
             # Compute checksum
@@ -987,7 +1007,7 @@ def incremental_patch(
             operation.checksum = compute_bytes_hash(
                 json.dumps(data, sort_keys=True).encode("utf-8")
             )
-            
+
             # Save patch operation
             save_patch_operation(ctn_dir, operation)
 
@@ -1144,6 +1164,7 @@ def _rollback_changes(
 # Patch Persistence Functions
 # ---------------------------------------------------------------------------
 
+
 def _patch_dir(ctn_dir: Path) -> Path:
     """Get the patches directory."""
     return ctn_dir / "patches"
@@ -1153,7 +1174,7 @@ def save_patch_operation(ctn_dir: Path, operation: PatchOperation) -> None:
     """Save a patch operation to disk and update the index."""
     patches_dir = _patch_dir(ctn_dir)
     patches_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Save individual patch file
     patch_file = patches_dir / f"patch_{operation.operation_id}.json"
     patch_data = operation.serialize()
@@ -1171,10 +1192,10 @@ def save_patch_operation(ctn_dir: Path, operation: PatchOperation) -> None:
         },
         retention_class="patch",
     )
-    
+
     # Update index
     update_patch_index(ctn_dir, operation)
-    
+
     logger.info("patch_operation_saved", operation_id=operation.operation_id)
 
 
@@ -1182,25 +1203,29 @@ def load_patch_operation(ctn_dir: Path, operation_id: str) -> PatchOperation | N
     """Load a patch operation by ID."""
     patches_dir = _patch_dir(ctn_dir)
     patch_file = patches_dir / f"patch_{operation_id}.json"
-    
+
     if not patch_file.exists():
         logger.warning("patch_operation_not_found", operation_id=operation_id)
         return None
-    
+
     try:
         data = json.loads(patch_file.read_text(encoding="utf-8"))
         operation = PatchOperation.from_dict(data)
-        
+
         # Validate checksum
         if not operation.validate():
-            logger.warning("patch_operation_checksum_invalid", operation_id=operation_id)
+            logger.warning(
+                "patch_operation_checksum_invalid", operation_id=operation_id
+            )
             return None
-            
+
         logger.debug("patch_operation_loaded", operation_id=operation_id)
         return operation
-        
+
     except Exception as exc:
-        logger.error("patch_operation_load_failed", operation_id=operation_id, error=str(exc))
+        logger.error(
+            "patch_operation_load_failed", operation_id=operation_id, error=str(exc)
+        )
         return None
 
 
@@ -1208,7 +1233,7 @@ def update_patch_index(ctn_dir: Path, operation: PatchOperation) -> None:
     """Update the patch index with a new operation."""
     patches_dir = _patch_dir(ctn_dir)
     index_file = patches_dir / "index.json"
-    
+
     # Load existing index or create new one
     if index_file.exists():
         try:
@@ -1218,7 +1243,7 @@ def update_patch_index(ctn_dir: Path, operation: PatchOperation) -> None:
             index_data = {"schema_version": "1.0", "patches": []}
     else:
         index_data = {"schema_version": "1.0", "patches": []}
-    
+
     # Add new operation to index
     index_entry = {
         "operation_id": operation.operation_id,
@@ -1228,14 +1253,14 @@ def update_patch_index(ctn_dir: Path, operation: PatchOperation) -> None:
         "operation_type": operation.operation_type,
         "metrics": operation.metrics,
     }
-    
+
     index_data["patches"].append(index_entry)
     index_data["total_patches"] = len(index_data["patches"])
     index_data["last_updated"] = datetime.now(timezone.utc).isoformat()
-    
+
     # Sort by timestamp
     index_data["patches"].sort(key=lambda x: x["timestamp"])
-    
+
     # Save index
     index_file.write_text(json.dumps(index_data, indent=2), encoding="utf-8")
     register_artifact(
@@ -1249,35 +1274,46 @@ def update_patch_index(ctn_dir: Path, operation: PatchOperation) -> None:
     logger.debug("patch_index_updated", operation_id=operation.operation_id)
 
 
-def list_patch_operations(ctn_dir: Path, filters: dict[str, Any] | None = None) -> list[PatchOperation]:
+def list_patch_operations(
+    ctn_dir: Path, filters: dict[str, Any] | None = None
+) -> list[PatchOperation]:
     """List patch operations with optional filtering."""
     patches_dir = _patch_dir(ctn_dir)
     index_file = patches_dir / "index.json"
-    
+
     if not index_file.exists():
         return []
-    
+
     try:
         index_data = json.loads(index_file.read_text(encoding="utf-8"))
         patches = []
-        
+
         for entry in index_data.get("patches", []):
             # Apply filters if provided
             if filters:
-                if "operation_type" in filters and entry["operation_type"] != filters["operation_type"]:
+                if (
+                    "operation_type" in filters
+                    and entry["operation_type"] != filters["operation_type"]
+                ):
                     continue
-                if "base_snapshot_id" in filters and entry["base_snapshot_id"] != filters["base_snapshot_id"]:
+                if (
+                    "base_snapshot_id" in filters
+                    and entry["base_snapshot_id"] != filters["base_snapshot_id"]
+                ):
                     continue
-                if "new_snapshot_id" in filters and entry["new_snapshot_id"] != filters["new_snapshot_id"]:
+                if (
+                    "new_snapshot_id" in filters
+                    and entry["new_snapshot_id"] != filters["new_snapshot_id"]
+                ):
                     continue
-            
+
             # Load full operation
             operation = load_patch_operation(ctn_dir, entry["operation_id"])
             if operation:
                 patches.append(operation)
-        
+
         return patches
-        
+
     except Exception as exc:
         logger.error("list_patch_operations_failed", error=str(exc))
         return []
@@ -1287,11 +1323,11 @@ def get_patches_for_snapshot(ctn_dir: Path, snapshot_id: str) -> list[PatchOpera
     """Get all patch operations that led to a snapshot."""
     patches = list_patch_operations(ctn_dir)
     result = []
-    
+
     for patch in patches:
         if patch.new_snapshot_id == snapshot_id:
             result.append(patch)
-    
+
     return result
 
 
@@ -1300,17 +1336,17 @@ def cleanup_old_patches(ctn_dir: Path, config: dict[str, Any]) -> int:
     patches_dir = _patch_dir(ctn_dir)
     max_days = config.get("max_patch_history_days", 90)
     max_count = config.get("max_patch_count", 1000)
-    
+
     if not patches_dir.exists():
         return 0
-    
+
     cutoff_time = datetime.now(timezone.utc) - timedelta(days=max_days)
     patches = list_patch_operations(ctn_dir)
     cleaned_count = 0
-    
+
     # Sort by timestamp (newest first)
     patches.sort(key=lambda x: x.timestamp, reverse=True)
-    
+
     # Keep patches within time limit or count limit
     patches_to_keep = []
     for i, patch in enumerate(patches):
@@ -1323,34 +1359,40 @@ def cleanup_old_patches(ctn_dir: Path, config: dict[str, Any]) -> int:
                 patch_file.unlink()
                 cleaned_count += 1
                 logger.debug("patch_deleted", operation_id=patch.operation_id)
-    
+
     # Rebuild index
     if cleaned_count > 0:
         index_file = patches_dir / "index.json"
         index_data = {"schema_version": "1.0", "patches": []}
-        
+
         for patch in patches_to_keep:
             update_patch_index(ctn_dir, patch)
-        
-        logger.info("patches_cleaned", cleaned_count=cleaned_count, remaining=len(patches_to_keep))
-    
+
+        logger.info(
+            "patches_cleaned",
+            cleaned_count=cleaned_count,
+            remaining=len(patches_to_keep),
+        )
+
     return cleaned_count
 
 
-def build_patch_chain(ctn_dir: Path, base_snapshot_id: str, current_operation_id: str) -> list[str]:
+def build_patch_chain(
+    ctn_dir: Path, base_snapshot_id: str, current_operation_id: str
+) -> list[str]:
     """Build the patch chain for a new patch operation."""
     # Get patches for the base snapshot
     base_patches = get_patches_for_snapshot(ctn_dir, base_snapshot_id)
-    
+
     if not base_patches:
         # Base snapshot has no patches (initial snapshot)
         return [current_operation_id]
-    
+
     # Get the patch chain from the most recent patch that created the base snapshot
     latest_base_patch = max(base_patches, key=lambda x: x.timestamp)
     chain = latest_base_patch.patch_chain.copy()
     chain.append(current_operation_id)
-    
+
     return chain
 
 
@@ -1373,220 +1415,241 @@ def estimate_token_changes(changes: list[FileChange]) -> int:
 # Patch Application Functions (Phase 5)
 # ---------------------------------------------------------------------------
 
+
 def parse_unified_diff(diff_content: str) -> list[FileChange]:
     """Parse a unified diff into FileChange objects."""
     changes = []
-    lines = diff_content.split('\n')
+    lines = diff_content.split("\n")
     current_file = None
     old_hash = None
     new_hash = None
-    
+
     for line in lines:
-        if line.startswith('diff --git'):
+        if line.startswith("diff --git"):
             # Parse file path from git diff header
             parts = line.split()
             if len(parts) >= 4:
                 current_file = parts[3][2:]  # Remove 'b/' prefix
-        elif line.startswith('index '):
+        elif line.startswith("index "):
             # Parse file hashes
-            hash_parts = line.split()[1].split('..')
+            hash_parts = line.split()[1].split("..")
             if len(hash_parts) == 2:
                 old_hash, new_hash = hash_parts
-        elif line.startswith('new file mode'):
+        elif line.startswith("new file mode"):
             # New file detected
             if current_file:
-                changes.append(FileChange(
-                    path=current_file,
-                    change_type=FileChangeType.ADDED,
-                    old_hash=None,
-                    new_hash=new_hash,
-                ))
-        elif line.startswith('deleted file mode'):
+                changes.append(
+                    FileChange(
+                        path=current_file,
+                        change_type=FileChangeType.ADDED,
+                        old_hash=None,
+                        new_hash=new_hash,
+                    )
+                )
+        elif line.startswith("deleted file mode"):
             # Deleted file detected
             if current_file:
-                changes.append(FileChange(
-                    path=current_file,
-                    change_type=FileChangeType.DELETED,
-                    old_hash=old_hash,
-                    new_hash=None,
-                ))
-        elif line.startswith('@@'):
+                changes.append(
+                    FileChange(
+                        path=current_file,
+                        change_type=FileChangeType.DELETED,
+                        old_hash=old_hash,
+                        new_hash=None,
+                    )
+                )
+        elif line.startswith("@@"):
             # Modified file (has hunks)
             if current_file and old_hash and new_hash:
                 # Check if this is actually a modification or just file metadata change
                 if not any(c.path == current_file for c in changes):
-                    changes.append(FileChange(
-                        path=current_file,
-                        change_type=FileChangeType.MODIFIED,
-                        old_hash=old_hash,
-                        new_hash=new_hash,
-                    ))
-    
+                    changes.append(
+                        FileChange(
+                            path=current_file,
+                            change_type=FileChangeType.MODIFIED,
+                            old_hash=old_hash,
+                            new_hash=new_hash,
+                        )
+                    )
+
     return changes
 
 
-def validate_patch_compatibility(patch_data: dict[str, Any], base_snapshot_id: str, ctn_dir: Path) -> bool:
+def validate_patch_compatibility(
+    patch_data: dict[str, Any], base_snapshot_id: str, ctn_dir: Path
+) -> bool:
     """Validate that a patch can be applied to a base snapshot.
-    
+
     Performs sophisticated validation including:
     - Required fields check
     - File existence in base snapshot
     - Patch consistency checks
     - Dependency validation
-    
+
     Args:
         patch_data: Patch operation data to validate
         base_snapshot_id: ID of the base snapshot
         ctn_dir: Path to .ctn directory containing snapshots
-        
+
     Returns:
         True if patch is compatible, False otherwise
     """
     logger = get_logger(__name__, component="patch_validation")
-    
+
     # Basic validation - check required fields
-    required_fields = ['changes_applied', 'operation_type']
+    required_fields = ["changes_applied", "operation_type"]
     for field in required_fields:
         if field not in patch_data:
             logger.error("patch_missing_required_field", field=field)
             return False
-    
+
     # Load base snapshot for validation
     base_snapshot = load_snapshot(ctn_dir, base_snapshot_id)
     if base_snapshot is None:
-        logger.error("patch_validation_base_snapshot_not_found", snapshot_id=base_snapshot_id)
+        logger.error(
+            "patch_validation_base_snapshot_not_found", snapshot_id=base_snapshot_id
+        )
         return False
-    
+
     # Extract file paths from base snapshot
     base_files = set()
-    if 'graph' in base_snapshot and 'entities' in base_snapshot['graph']:
-        for entity in base_snapshot['graph']['entities']:
-            if 'file_path' in entity:
-                base_files.add(entity['file_path'])
-    
+    if "graph" in base_snapshot and "entities" in base_snapshot["graph"]:
+        for entity in base_snapshot["graph"]["entities"]:
+            if "file_path" in entity:
+                base_files.add(entity["file_path"])
+
     # Validate each change in the patch
-    changes_applied = patch_data.get('changes_applied', [])
+    changes_applied = patch_data.get("changes_applied", [])
     for change in changes_applied:
         if isinstance(change, dict):
-            change_path = change.get('path')
-            change_type = change.get('change_type')
+            change_path = change.get("path")
+            change_type = change.get("change_type")
         else:
             # Handle FileChange objects
-            change_path = getattr(change, 'path', None)
-            change_type = getattr(change, 'change_type', None)
-        
+            change_path = getattr(change, "path", None)
+            change_type = getattr(change, "change_type", None)
+
         if not change_path or not change_type:
             logger.error("patch_invalid_change", change=change)
             return False
-        
+
         # Validate file operations based on change type
-        if change_type in ['MODIFIED', 'DELETED']:
+        if change_type in ["MODIFIED", "DELETED"]:
             # For modifications and deletions, file must exist in base snapshot
             if change_path not in base_files:
-                logger.error("patch_file_not_in_base", 
-                           path=change_path, 
-                           change_type=change_type,
-                           available_files=list(base_files)[:10])  # Log first 10 for debugging
+                logger.error(
+                    "patch_file_not_in_base",
+                    path=change_path,
+                    change_type=change_type,
+                    available_files=list(base_files)[:10],
+                )  # Log first 10 for debugging
                 return False
-        
-        elif change_type == 'ADDED':
+
+        elif change_type == "ADDED":
             # For additions, file should not exist in base snapshot (unless it's a re-add)
             if change_path in base_files:
                 logger.warning("patch_adding_existing_file", path=change_path)
                 # This is not necessarily an error - could be a re-add after deletion
-    
+
     # Check for patch dependencies if specified
-    if 'dependencies' in patch_data:
-        dependencies = patch_data['dependencies']
+    if "dependencies" in patch_data:
+        dependencies = patch_data["dependencies"]
         if not _validate_patch_dependencies(dependencies, base_snapshot_id, ctn_dir):
             logger.error("patch_dependencies_not_satisfied", dependencies=dependencies)
             return False
-    
-    logger.info("patch_validation_success", 
-               changes_count=len(changes_applied),
-               base_snapshot=base_snapshot_id)
+
+    logger.info(
+        "patch_validation_success",
+        changes_count=len(changes_applied),
+        base_snapshot=base_snapshot_id,
+    )
     return True
 
 
-def _validate_patch_dependencies(dependencies: list[str], base_snapshot_id: str, ctn_dir: Path) -> bool:
+def _validate_patch_dependencies(
+    dependencies: list[str], base_snapshot_id: str, ctn_dir: Path
+) -> bool:
     """Validate that all patch dependencies are satisfied.
-    
+
     Args:
         dependencies: List of patch IDs that this patch depends on
         base_snapshot_id: Base snapshot ID
         ctn_dir: .ctn directory path
-        
+
     Returns:
         True if all dependencies are satisfied, False otherwise
     """
     logger = get_logger(__name__, component="patch_validation")
-    
+
     for dep_patch_id in dependencies:
         # Check if dependency patch exists
         dep_patch_path = ctn_dir / "patches" / f"{dep_patch_id}.json"
         if not dep_patch_path.exists():
             logger.error("patch_dependency_not_found", dependency=dep_patch_id)
             return False
-        
+
         # Load and validate dependency patch
         try:
-            dep_data = json.loads(dep_patch_path.read_text(encoding='utf-8'))
-            if not dep_data.get('success', True):
+            dep_data = json.loads(dep_patch_path.read_text(encoding="utf-8"))
+            if not dep_data.get("success", True):
                 logger.error("patch_dependency_failed", dependency=dep_patch_id)
                 return False
         except (json.JSONDecodeError, OSError) as e:
-            logger.error("patch_dependency_invalid", 
-                        dependency=dep_patch_id, 
-                        error=str(e))
+            logger.error(
+                "patch_dependency_invalid", dependency=dep_patch_id, error=str(e)
+            )
             return False
-    
+
     return True
 
 
 def extract_patch_deltas(operation: PatchOperation) -> dict[str, Any]:
     """Extract reusable deltas from a patch operation."""
     return {
-        'operation_id': operation.operation_id,
-        'changes_applied': operation.changes_applied,
-        'operation_type': operation.operation_type,
-        'metrics': operation.metrics,
-        'timestamp': operation.timestamp.isoformat(),
+        "operation_id": operation.operation_id,
+        "changes_applied": operation.changes_applied,
+        "operation_type": operation.operation_type,
+        "metrics": operation.metrics,
+        "timestamp": operation.timestamp.isoformat(),
     }
 
 
-def apply_deltas_to_snapshot(ctn_dir: Path, base_snapshot_id: str, deltas: dict[str, Any]) -> str | None:
+def apply_deltas_to_snapshot(
+    ctn_dir: Path, base_snapshot_id: str, deltas: dict[str, Any]
+) -> str | None:
     """Apply patch deltas to a base snapshot and return new snapshot ID."""
     try:
         # Validate patch compatibility before applying
         if not validate_patch_compatibility(deltas, base_snapshot_id, ctn_dir):
-            logger.error("patch_delta_validation_failed", 
-                        base_snapshot=base_snapshot_id,
-                        operation_id=deltas.get('operation_id'))
+            logger.error(
+                "patch_delta_validation_failed",
+                base_snapshot=base_snapshot_id,
+                operation_id=deltas.get("operation_id"),
+            )
             return None
-        
+
         # Load base snapshot
         base_snapshot = load_snapshot(ctn_dir, base_snapshot_id)
         if not base_snapshot:
             logger.error("base_snapshot_not_found", snapshot_id=base_snapshot_id)
             return None
-        
+
         # Convert deltas back to FileChange objects
         changes = []
-        for change_data in deltas['changes_applied']:
+        for change_data in deltas["changes_applied"]:
             if isinstance(change_data, dict):
                 changes.append(FileChange.from_dict(change_data))
             else:
                 changes.append(change_data)
-        
+
         # Apply changes using incremental_patch
         result = incremental_patch(ctn_dir, base_snapshot_id, changes)
-        
-        if result.get('success'):
-            return result.get('new_snapshot_id')
+
+        if result.get("success"):
+            return result.get("new_snapshot_id")
         else:
-            logger.error("delta_application_failed", error=result.get('error'))
+            logger.error("delta_application_failed", error=result.get("error"))
             return None
-            
+
     except Exception as exc:
         logger.error("apply_deltas_error", error=str(exc))
         return None
@@ -1609,12 +1672,18 @@ def webhook_stub(
         if "repository" in event_payload:
             github_event = event_payload.get("event")
             if not github_event:
-                github_event = "pull_request" if "pull_request" in event_payload else "push"
+                github_event = (
+                    "pull_request" if "pull_request" in event_payload else "push"
+                )
             incoming_headers["X-GitHub-Event"] = github_event
         elif "project" in event_payload:
             gitlab_event = event_payload.get("event")
             if not gitlab_event:
-                gitlab_event = "Merge Request Hook" if "object_attributes" in event_payload else "Push Hook"
+                gitlab_event = (
+                    "Merge Request Hook"
+                    if "object_attributes" in event_payload
+                    else "Push Hook"
+                )
             incoming_headers["X-Gitlab-Event"] = gitlab_event
 
     repo = (

@@ -6,7 +6,10 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from batho.hooks.constants import DEFAULT_HOOKS_CONFIG_REL_PATH, DEFAULT_ROOT_CONFIG_REL_PATH
+from batho.hooks.constants import (
+    DEFAULT_HOOKS_CONFIG_REL_PATH,
+    DEFAULT_ROOT_CONFIG_REL_PATH,
+)
 from batho.hooks.models import HooksFile
 
 

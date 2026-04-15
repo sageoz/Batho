@@ -21,23 +21,21 @@ import json
 import math
 import os
 import re
+import threading
+from collections import Counter, defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Dict, Iterable, Optional
 
-import threading
-from collections import Counter, defaultdict
-from typing import Dict, Optional
-
+import batho.utils.memory_monitor
 from batho.config import get_config_cached
 from batho.utils.file_io import _read_file_content, read_file_bytes
 from batho.utils.hash import compute_bytes_hash
 from batho.utils.ignore import is_ignored, load_ignore_spec
 from batho.utils.logging import get_logger
-from batho.utils.memory_monitor import memory_monitor, force_garbage_collection
-import batho.utils.memory_monitor
+from batho.utils.memory_monitor import force_garbage_collection, memory_monitor
 
 from .cache import ASTCache
 from .extractor import ASTExtractor
@@ -522,6 +520,7 @@ class CodeGraphIndexer:
 
             # Set parsing config for all extractors
             from .languages.registry import set_parsing_config
+
             bsg_parsing_cfg = bsg_cfg.get("parsing", {})
             set_parsing_config(bsg_parsing_cfg)
 
@@ -999,7 +998,9 @@ class CodeGraphIndexer:
         if not graph.entities:
             return 0
 
-        class_methods: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+        class_methods: dict[str, dict[str, list[str]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
         parent_map: dict[str, set[str]] = defaultdict(set)
         existing = {
             (
@@ -1116,9 +1117,7 @@ class CodeGraphIndexer:
                 Relationship(
                     source_id=rel.source_id,
                     target_id=(
-                        target_id
-                        if target_id
-                        else self._normalize_ref_token(ref_text)
+                        target_id if target_id else self._normalize_ref_token(ref_text)
                     ),
                     type=rel.type,
                     metadata=rel.metadata,

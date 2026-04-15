@@ -16,7 +16,9 @@ class CLIOutput:
         self.quiet = quiet
         self.json_mode = json_mode
 
-    def configure(self, *, quiet: bool | None = None, json_mode: bool | None = None) -> None:
+    def configure(
+        self, *, quiet: bool | None = None, json_mode: bool | None = None
+    ) -> None:
         if quiet is not None:
             self.quiet = quiet
         if json_mode is not None:
@@ -26,7 +28,11 @@ class CLIOutput:
         text = message.strip().lower()
         if not text:
             return "info"
-        if text.startswith("❌") or text.startswith("error") or text.startswith("fatal"):
+        if (
+            text.startswith("❌")
+            or text.startswith("error")
+            or text.startswith("fatal")
+        ):
             return "error"
         if text.startswith("⚠") or text.startswith("warning"):
             return "warning"
@@ -61,19 +67,27 @@ class CLIOutput:
         print(rendered, file=stream, end=end, flush=flush)
 
     def success(self, message: str, **data: Any) -> None:
-        payload = message if not data else f"{message} {json.dumps(data, sort_keys=True)}"
+        payload = (
+            message if not data else f"{message} {json.dumps(data, sort_keys=True)}"
+        )
         self._emit(payload, stream=sys.stdout, respect_quiet=True, color="32")
 
     def error(self, message: str, **data: Any) -> None:
-        payload = message if not data else f"{message} {json.dumps(data, sort_keys=True)}"
+        payload = (
+            message if not data else f"{message} {json.dumps(data, sort_keys=True)}"
+        )
         self._emit(payload, stream=sys.stderr, respect_quiet=False, color="31")
 
     def warning(self, message: str, **data: Any) -> None:
-        payload = message if not data else f"{message} {json.dumps(data, sort_keys=True)}"
+        payload = (
+            message if not data else f"{message} {json.dumps(data, sort_keys=True)}"
+        )
         self._emit(payload, stream=sys.stderr, respect_quiet=True, color="33")
 
     def info(self, message: str, **data: Any) -> None:
-        payload = message if not data else f"{message} {json.dumps(data, sort_keys=True)}"
+        payload = (
+            message if not data else f"{message} {json.dumps(data, sort_keys=True)}"
+        )
         self._emit(payload, stream=sys.stdout, respect_quiet=True)
 
     def json_response(self, data: dict[str, Any]) -> None:
@@ -92,18 +106,43 @@ class CLIOutput:
         flush: bool = False,
     ) -> None:
         if stream is not None:
-            self._emit(message, stream=stream, respect_quiet=False, end=end, flush=flush)
+            self._emit(
+                message, stream=stream, respect_quiet=False, end=end, flush=flush
+            )
             return
 
         kind = self.classify(message)
         if kind == "error":
-            self._emit(message, stream=sys.stderr, respect_quiet=False, color="31", end=end, flush=flush)
+            self._emit(
+                message,
+                stream=sys.stderr,
+                respect_quiet=False,
+                color="31",
+                end=end,
+                flush=flush,
+            )
         elif kind == "warning":
-            self._emit(message, stream=sys.stderr, respect_quiet=True, color="33", end=end, flush=flush)
+            self._emit(
+                message,
+                stream=sys.stderr,
+                respect_quiet=True,
+                color="33",
+                end=end,
+                flush=flush,
+            )
         elif kind == "success":
-            self._emit(message, stream=sys.stdout, respect_quiet=True, color="32", end=end, flush=flush)
+            self._emit(
+                message,
+                stream=sys.stdout,
+                respect_quiet=True,
+                color="32",
+                end=end,
+                flush=flush,
+            )
         else:
-            self._emit(message, stream=sys.stdout, respect_quiet=True, end=end, flush=flush)
+            self._emit(
+                message, stream=sys.stdout, respect_quiet=True, end=end, flush=flush
+            )
 
     @contextmanager
     def progress(self, total: int, desc: str) -> Iterator[Callable[[int], None]]:

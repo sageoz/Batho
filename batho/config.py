@@ -403,7 +403,7 @@ def get_config_cached_for_root(root_dir: Path) -> Dict[str, Any]:
 
 def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
     """Return validated config as a plain dict with batho.yaml resolved from root_dir."""
-    
+
     base_cfg: Dict[str, Any] = {
         "logging": {
             "level": DEFAULT_LOG_LEVEL,
@@ -911,7 +911,7 @@ def reload_config() -> Dict[str, Any]:
 
 def get_default_batho_yaml_content() -> str:
     """Return default batho.yaml content for auto-creation."""
-    return '''# Batho configuration
+    return """# Batho configuration
 # Auto-generated default config. Edit as needed for your project.
 
 logging:
@@ -1071,4 +1071,4 @@ bsg:
       context_ttl_days: 90
       max_snapshots: 500
       max_patches: 5000
-'''
+"""

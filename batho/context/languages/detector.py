@@ -20,11 +20,7 @@ from typing import Any
 
 from batho.utils.logging import get_logger
 
-from .registry import (
-    _EXT_TO_LANG,
-    get_extractor_for_language,
-    is_language_available,
-)
+from .registry import _EXT_TO_LANG, get_extractor_for_language, is_language_available
 
 # ---------------------------------------------------------------------------
 # Module logger
@@ -138,7 +134,9 @@ _SPECIAL_FILENAME_MAP: dict[str, tuple[str, float]] = {
 }
 
 
-def detect_by_special_filename(filepath: Path, content: bytes) -> DetectionResult | None:
+def detect_by_special_filename(
+    filepath: Path, content: bytes
+) -> DetectionResult | None:
     """
     Detect language/format by special filename patterns.
 
@@ -306,7 +304,9 @@ _CONTENT_HEURISTICS: list[tuple[re.Pattern[str], str, float]] = [
     (re.compile(rb"<\?hh\b", re.IGNORECASE), "hack", 0.9),
     # HTML/XML
     (
-        re.compile(rb"^\s*<(!DOCTYPE|html|head|body|div|span|p|a|script|style)", re.IGNORECASE),
+        re.compile(
+            rb"^\s*<(!DOCTYPE|html|head|body|div|span|p|a|script|style)", re.IGNORECASE
+        ),
         "html",
         0.8,
     ),

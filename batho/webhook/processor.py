@@ -9,6 +9,7 @@ from typing import Any, Optional
 from batho.synthesizer import record_failure_rule
 from batho.time_machine import incremental_patch
 from batho.utils.logging import get_logger
+
 from .config import WebhookConfig
 from .parser import WebhookEvent, parse_webhook_event
 from .queue import QueueItem, WebhookQueue
@@ -18,32 +19,32 @@ logger = get_logger(__name__, component="webhook_processor")
 
 class WebhookProcessor:
     """Processes webhook events and updates Batho graph."""
-    
+
     def __init__(self, config: WebhookConfig, repo_path: Path):
         self.config = config
         self.repo_path = repo_path
         self.queue = WebhookQueue(config=self.config.processing)
         self._ctn_dir = repo_path / ".ctn"
         self._latest_snapshot_id: Optional[str] = None
-    
+
     def process_webhook(
         self,
         payload: dict[str, Any],
         headers: dict[str, str],
     ) -> dict[str, Any]:
         """Process incoming webhook.
-        
+
         Args:
             payload: Webhook payload
             headers: HTTP headers
-            
+
         Returns:
             Response dict with status
         """
         try:
             # Parse event
             event = parse_webhook_event(payload, headers)
-            
+
             validation = self._validate_event(event)
             if validation:
                 return {
@@ -146,20 +147,20 @@ class WebhookProcessor:
                 "status": "error",
                 "message": f"Processing error: {str(e)}",
             }
-    
+
     def start(self) -> None:
         """Start background processing."""
         self.queue.start_processing(self._handle_queue_item)
         logger.info("webhook_processor_started")
-    
+
     def stop(self) -> None:
         """Stop background processing."""
         self.queue.stop_processing()
         logger.info("webhook_processor_stopped")
-    
+
     def _handle_queue_item(self, item: QueueItem) -> bool:
         """Handle a queue item.
-        
+
         Returns:
             True if successful, False for retry
         """
@@ -167,7 +168,7 @@ class WebhookProcessor:
         try:
             event_data = item.event
             event = parse_webhook_event(event_data["payload"], event_data["headers"])
-            
+
             logger.info(
                 "processing_webhook",
                 event_id=item.event_id,
@@ -223,7 +224,9 @@ class WebhookProcessor:
                     )
                     self._record_failure_entry(
                         source="webhook.processor",
-                        error_message=str(result.get("error") or "incremental patch failed"),
+                        error_message=str(
+                            result.get("error") or "incremental patch failed"
+                        ),
                         changed_files=[change.path for change in event.changes],
                         context={
                             "event_id": item.event_id,
@@ -239,7 +242,7 @@ class WebhookProcessor:
                 # No changes to process
                 logger.info("webhook_no_changes", event_id=item.event_id)
                 return True
-                
+
         except Exception as e:
             logger.error(
                 "queue_item_processing_error",
@@ -249,7 +252,9 @@ class WebhookProcessor:
             self._record_failure_entry(
                 source="webhook.processor",
                 error_message=str(e),
-                changed_files=[change.path for change in event.changes] if event else [],
+                changed_files=(
+                    [change.path for change in event.changes] if event else []
+                ),
                 context={
                     "event_id": item.event_id,
                     "event_type": event.event_type.value if event else "unknown",
@@ -277,11 +282,11 @@ class WebhookProcessor:
             )
         except Exception as exc:
             logger.warning("webhook_evolution_ledger_record_failed", error=str(exc))
-    
+
     def _find_latest_snapshot(self) -> Optional[str]:
         """Find the latest snapshot ID."""
         from batho.time_machine import list_snapshots
-        
+
         snapshots = list_snapshots(self._ctn_dir)
         if snapshots:
             # Return the most recent snapshot

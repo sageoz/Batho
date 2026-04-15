@@ -57,7 +57,9 @@ class WebhookHandler:
         self.processor.stop()
 
     def verify_github_signature(self, payload: bytes, signature: str) -> bool:
-        return verify_github_signature(payload, signature, self.config.get_github_secret())
+        return verify_github_signature(
+            payload, signature, self.config.get_github_secret()
+        )
 
     def verify_gitlab_token(self, token: str) -> bool:
         return verify_gitlab_token(token, self.config.get_gitlab_token())
@@ -98,7 +100,9 @@ class WebhookHandler:
         event_id = result.get("event_id")
 
         if status == "queued":
-            return WebhookResult("accepted", "Webhook accepted for processing", 202, event_id)
+            return WebhookResult(
+                "accepted", "Webhook accepted for processing", 202, event_id
+            )
         if status == "processed":
             return WebhookResult("processed", message, 200, event_id)
         if status == "ignored":
@@ -138,7 +142,9 @@ class WebhookHandler:
             "enabled": self.config.enabled,
         }
 
-    def _authenticate(self, payload: bytes, headers: dict[str, str]) -> WebhookResult | None:
+    def _authenticate(
+        self, payload: bytes, headers: dict[str, str]
+    ) -> WebhookResult | None:
         signature = self._header(headers, "X-Hub-Signature-256")
         token = self._header(headers, "X-Gitlab-Token")
 
@@ -152,7 +158,9 @@ class WebhookHandler:
                 return WebhookResult("unauthorized", "Invalid GitLab token", 401)
             return None
 
-        return WebhookResult("unauthorized", "Missing webhook authentication header", 401)
+        return WebhookResult(
+            "unauthorized", "Missing webhook authentication header", 401
+        )
 
     def _is_allowed_ip(self, source_ip: str | None) -> bool:
         allowed = self.config.get_allowed_ips()
@@ -207,9 +215,15 @@ class WebhookHandler:
         bucket.append(now)
         return False
 
-    def _check_and_track_delivery(self, headers: dict[str, str]) -> WebhookResult | None:
+    def _check_and_track_delivery(
+        self, headers: dict[str, str]
+    ) -> WebhookResult | None:
         now = time.time()
-        expired = [k for k, ts in self._delivery_seen.items() if now - ts > self._delivery_ttl_seconds]
+        expired = [
+            k
+            for k, ts in self._delivery_seen.items()
+            if now - ts > self._delivery_ttl_seconds
+        ]
         for key in expired:
             self._delivery_seen.pop(key, None)
 

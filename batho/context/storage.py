@@ -135,10 +135,15 @@ def describe_artifact(artifact_path: Path, ctn_dir: Path) -> ArtifactDescriptor:
     logical = _safe_relative(artifact_path, ctn_dir).replace("\\", "/")
 
     if logical == "index.json":
-        return ArtifactDescriptor("index_metadata", schema_version=_schema_for_artifact_type("index_metadata"))
+        return ArtifactDescriptor(
+            "index_metadata", schema_version=_schema_for_artifact_type("index_metadata")
+        )
 
     if logical == "file_cache.json":
-        return ArtifactDescriptor("file_cache_sqlite", schema_version=_schema_for_artifact_type("file_cache_sqlite"))
+        return ArtifactDescriptor(
+            "file_cache_sqlite",
+            schema_version=_schema_for_artifact_type("file_cache_sqlite"),
+        )
 
     if logical == "file_hashes.json":
         return ArtifactDescriptor("file_hashes_json", schema_version="file-hashes.v1")
@@ -190,28 +195,46 @@ def describe_artifact(artifact_path: Path, ctn_dir: Path) -> ArtifactDescriptor:
         )
 
     if logical.endswith("/graph.json"):
-        return ArtifactDescriptor("graph_json", schema_version=_schema_for_artifact_type("graph_json"))
+        return ArtifactDescriptor(
+            "graph_json", schema_version=_schema_for_artifact_type("graph_json")
+        )
 
     if logical.endswith("/bsg.json"):
-        return ArtifactDescriptor("bsg_json", schema_version=_schema_for_artifact_type("bsg_json"))
+        return ArtifactDescriptor(
+            "bsg_json", schema_version=_schema_for_artifact_type("bsg_json")
+        )
 
     if logical.endswith("/context/overview.md"):
-        return ArtifactDescriptor("context_overview", retention_class="context", schema_version="context.v1")
+        return ArtifactDescriptor(
+            "context_overview", retention_class="context", schema_version="context.v1"
+        )
 
     if logical.endswith("/context/architecture.md"):
-        return ArtifactDescriptor("context_architecture", retention_class="context", schema_version="context.v1")
+        return ArtifactDescriptor(
+            "context_architecture",
+            retention_class="context",
+            schema_version="context.v1",
+        )
 
     if logical.endswith("/context/tests.md"):
-        return ArtifactDescriptor("context_tests", retention_class="context", schema_version="context.v1")
+        return ArtifactDescriptor(
+            "context_tests", retention_class="context", schema_version="context.v1"
+        )
 
     if logical.endswith("/context/docs.md"):
-        return ArtifactDescriptor("context_docs", retention_class="context", schema_version="context.v1")
+        return ArtifactDescriptor(
+            "context_docs", retention_class="context", schema_version="context.v1"
+        )
 
     if logical.endswith("/context/config.md"):
-        return ArtifactDescriptor("context_config", retention_class="context", schema_version="context.v1")
+        return ArtifactDescriptor(
+            "context_config", retention_class="context", schema_version="context.v1"
+        )
 
     if "/context/" in logical and logical.endswith(".md"):
-        return ArtifactDescriptor("context_markdown", retention_class="context", schema_version="context.v1")
+        return ArtifactDescriptor(
+            "context_markdown", retention_class="context", schema_version="context.v1"
+        )
 
     if logical.endswith("metrics.json"):
         return ArtifactDescriptor(
@@ -263,7 +286,9 @@ class ArtifactRegistry:
             return
 
         if self.backend != "sqlite":
-            LOGGER.warning("artifact_registry_backend_unsupported", backend=self.backend)
+            LOGGER.warning(
+                "artifact_registry_backend_unsupported", backend=self.backend
+            )
             self.enabled = False
             return
 
@@ -315,11 +340,12 @@ class ArtifactRegistry:
         if "sync_error" not in columns:
             conn.execute("ALTER TABLE artifacts ADD COLUMN sync_error TEXT")
         if "retry_count" not in columns:
-            conn.execute("ALTER TABLE artifacts ADD COLUMN retry_count INTEGER DEFAULT 0")
+            conn.execute(
+                "ALTER TABLE artifacts ADD COLUMN retry_count INTEGER DEFAULT 0"
+            )
 
     def _ensure_query_tables(self, conn: sqlite3.Connection) -> None:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS query_entities (
                 index_id TEXT NOT NULL,
                 entity_id TEXT NOT NULL,
@@ -330,16 +356,14 @@ class ArtifactRegistry:
                 metadata_json TEXT NOT NULL,
                 PRIMARY KEY (index_id, entity_id)
             )
-            """
-        )
+            """)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_query_entities_type ON query_entities(index_id, entity_type, name)"
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_query_entities_file ON query_entities(index_id, file_path, name)"
         )
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS query_relationships (
                 index_id TEXT NOT NULL,
                 relationship_id TEXT NOT NULL,
@@ -349,8 +373,7 @@ class ArtifactRegistry:
                 metadata_json TEXT NOT NULL,
                 PRIMARY KEY (index_id, relationship_id)
             )
-            """
-        )
+            """)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_query_relationships_type ON query_relationships(index_id, relationship_type)"
         )
@@ -365,8 +388,7 @@ class ArtifactRegistry:
         try:
             self.registry_path.parent.mkdir(parents=True, exist_ok=True)
             with self._connect() as conn:
-                conn.execute(
-                    """
+                conn.execute("""
                     CREATE TABLE IF NOT EXISTS artifacts (
                         artifact_id TEXT PRIMARY KEY,
                         content_id TEXT,
@@ -389,8 +411,7 @@ class ArtifactRegistry:
                         updated_at TEXT NOT NULL,
                         deleted INTEGER NOT NULL DEFAULT 0
                     )
-                    """
-                )
+                    """)
                 self._migrate_schema(conn)
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type, updated_at DESC)"
@@ -404,8 +425,7 @@ class ArtifactRegistry:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_artifacts_sync_status ON artifacts(sync_status, updated_at DESC)"
                 )
-                conn.execute(
-                    """
+                conn.execute("""
                     CREATE TABLE IF NOT EXISTS content_blobs (
                         content_id TEXT PRIMARY KEY,
                         checksum TEXT NOT NULL,
@@ -414,8 +434,7 @@ class ArtifactRegistry:
                         last_seen_at TEXT NOT NULL,
                         ref_count INTEGER NOT NULL DEFAULT 1
                     )
-                    """
-                )
+                    """)
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS registry_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
                 )
@@ -448,7 +467,10 @@ class ArtifactRegistry:
             return True
 
         suffix = path.name.lower()
-        if suffix in {f"{self.registry_path.name}-wal", f"{self.registry_path.name}-shm"}:
+        if suffix in {
+            f"{self.registry_path.name}-wal",
+            f"{self.registry_path.name}-shm",
+        }:
             return True
 
         return False
@@ -525,7 +547,9 @@ class ArtifactRegistry:
         except OSError:
             return False
 
-        resolved_schema_version = schema_version or _schema_for_artifact_type(artifact_type)
+        resolved_schema_version = schema_version or _schema_for_artifact_type(
+            artifact_type
+        )
         artifact_id = self._build_artifact_id(
             artifact_type=artifact_type,
             logical_path=logical_path,
@@ -733,36 +757,39 @@ class ArtifactRegistry:
                 "SELECT COUNT(*) AS count FROM query_relationships"
             ).fetchone()
 
-            summary["artifact_count"] = int(artifact_count["count"] if artifact_count else 0)
-            summary["deleted_artifact_count"] = int(deleted_count["count"] if deleted_count else 0)
-            summary["content_blob_count"] = int(blob_count["count"] if blob_count else 0)
-            summary["query_entities_count"] = int(entity_count["count"] if entity_count else 0)
+            summary["artifact_count"] = int(
+                artifact_count["count"] if artifact_count else 0
+            )
+            summary["deleted_artifact_count"] = int(
+                deleted_count["count"] if deleted_count else 0
+            )
+            summary["content_blob_count"] = int(
+                blob_count["count"] if blob_count else 0
+            )
+            summary["query_entities_count"] = int(
+                entity_count["count"] if entity_count else 0
+            )
             summary["query_relationships_count"] = int(
                 relationship_count["count"] if relationship_count else 0
             )
 
-            type_rows = conn.execute(
-                """
+            type_rows = conn.execute("""
                 SELECT artifact_type, COUNT(*) AS count
                 FROM artifacts
                 WHERE deleted = 0
                 GROUP BY artifact_type
                 ORDER BY count DESC, artifact_type ASC
-                """
-            ).fetchall()
+                """).fetchall()
             summary["artifact_types"] = {
-                str(row["artifact_type"]): int(row["count"])
-                for row in type_rows
+                str(row["artifact_type"]): int(row["count"]) for row in type_rows
             }
 
-            sync_rows = conn.execute(
-                """
+            sync_rows = conn.execute("""
                 SELECT COALESCE(sync_status, 'local_only') AS sync_status, COUNT(*) AS count
                 FROM artifacts
                 WHERE deleted = 0
                 GROUP BY COALESCE(sync_status, 'local_only')
-                """
-            ).fetchall()
+                """).fetchall()
             sync_status = dict(summary["sync_status"])
             for row in sync_rows:
                 key = str(row["sync_status"])
@@ -808,9 +835,7 @@ class ArtifactRegistry:
         params: list[Any] = []
 
         normalized_types = [
-            str(value).strip()
-            for value in (artifact_types or [])
-            if str(value).strip()
+            str(value).strip() for value in (artifact_types or []) if str(value).strip()
         ]
         if normalized_types:
             placeholders = ", ".join("?" for _ in normalized_types)
@@ -920,14 +945,12 @@ class ArtifactRegistry:
             ).fetchone()
             summary["total"] = int(total_row["count"] if total_row else 0)
 
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT COALESCE(sync_status, 'local_only') AS sync_status, COUNT(*) AS count
                 FROM artifacts
                 WHERE deleted = 0
                 GROUP BY COALESCE(sync_status, 'local_only')
-                """
-            ).fetchall()
+                """).fetchall()
 
         for row in rows:
             key = str(row["sync_status"])
@@ -940,8 +963,7 @@ class ArtifactRegistry:
             return []
 
         with self._connect(row_factory=True) as conn:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT
                     artifact_id,
                     artifact_type,
@@ -953,8 +975,7 @@ class ArtifactRegistry:
                     deleted
                 FROM artifacts
                 WHERE deleted = 0
-                """
-            ).fetchall()
+                """).fetchall()
 
         return [dict(row) for row in rows]
 
@@ -991,15 +1012,17 @@ class ArtifactRegistry:
             return report
 
         active_rows = self._active_artifacts()
-        registered_paths = {str(Path(str(row["physical_path"])).resolve()) for row in active_rows}
+        registered_paths = {
+            str(Path(str(row["physical_path"])).resolve()) for row in active_rows
+        }
         durable_paths = {str(path.resolve()) for path in self.scan_durable_files()}
 
         missing_rows = [
-            row
-            for row in active_rows
-            if not Path(str(row["physical_path"])).exists()
+            row for row in active_rows if not Path(str(row["physical_path"])).exists()
         ]
-        unregistered_paths = sorted(path for path in durable_paths if path not in registered_paths)
+        unregistered_paths = sorted(
+            path for path in durable_paths if path not in registered_paths
+        )
 
         report["scanned_durable"] = len(durable_paths)
         report["registered_active"] = len(active_rows)
@@ -1073,7 +1096,9 @@ class ArtifactRegistry:
         candidates: dict[str, dict[str, Any]] = {}
 
         for row in rows:
-            retention_class = str(row.get("retention_class") or _DEFAULT_RETENTION_CLASS)
+            retention_class = str(
+                row.get("retention_class") or _DEFAULT_RETENTION_CLASS
+            )
             ttl_days = ttl_by_class.get(retention_class)
             if not ttl_days:
                 continue
@@ -1092,7 +1117,9 @@ class ArtifactRegistry:
                 for row in rows
                 if str(row.get("retention_class") or "") == retention_class
             ]
-            class_rows.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+            class_rows.sort(
+                key=lambda item: str(item.get("updated_at") or ""), reverse=True
+            )
             for row in class_rows[max_count:]:
                 candidates[str(row["artifact_id"])] = row
 
@@ -1100,7 +1127,9 @@ class ArtifactRegistry:
         summary["candidates"] = len(candidate_rows)
 
         if dry_run:
-            summary["candidate_paths"] = [str(row.get("logical_path") or "") for row in candidate_rows]
+            summary["candidate_paths"] = [
+                str(row.get("logical_path") or "") for row in candidate_rows
+            ]
             return summary
 
         for row in candidate_rows:
@@ -1109,7 +1138,9 @@ class ArtifactRegistry:
 
             if physical_path.exists():
                 try:
-                    if _is_under(physical_path, self.ctn_dir) and self._is_durable_artifact(physical_path):
+                    if _is_under(
+                        physical_path, self.ctn_dir
+                    ) and self._is_durable_artifact(physical_path):
                         physical_path.unlink()
                         summary["deleted_files"] += 1
                 except (PermissionError, OSError) as exc:
@@ -1147,7 +1178,9 @@ class ArtifactRegistry:
                 file_path = str(raw.get("file") or "")
                 name = str(raw.get("name") or "")
                 signature_value = raw.get("signature")
-                signature = str(signature_value) if signature_value is not None else None
+                signature = (
+                    str(signature_value) if signature_value is not None else None
+                )
                 metadata_value = raw.get("metadata")
                 metadata = metadata_value if isinstance(metadata_value, dict) else {}
                 entity_rows.append(
@@ -1172,7 +1205,9 @@ class ArtifactRegistry:
                 file_path = str(raw.get("file") or "")
                 name = str(raw.get("name") or "")
                 signature_value = raw.get("signature")
-                signature = str(signature_value) if signature_value is not None else None
+                signature = (
+                    str(signature_value) if signature_value is not None else None
+                )
                 metadata_value = raw.get("metadata")
                 metadata = metadata_value if isinstance(metadata_value, dict) else {}
                 entity_rows.append(
@@ -1200,12 +1235,12 @@ class ArtifactRegistry:
                 relationship_id = hashlib.sha256(
                     f"{source_id}:{target_id}:{relationship_type}".encode("utf-8")
                 ).hexdigest()
-            
+
             key = (index_id, relationship_id)
             if key in relationship_keys_seen:
                 continue
             relationship_keys_seen.add(key)
-            
+
             metadata_value = raw.get("metadata")
             metadata = metadata_value if isinstance(metadata_value, dict) else {}
             relationship_rows.append(
@@ -1221,8 +1256,12 @@ class ArtifactRegistry:
 
         try:
             with self._connect() as conn:
-                conn.execute("DELETE FROM query_entities WHERE index_id = ?", (index_id,))
-                conn.execute("DELETE FROM query_relationships WHERE index_id = ?", (index_id,))
+                conn.execute(
+                    "DELETE FROM query_entities WHERE index_id = ?", (index_id,)
+                )
+                conn.execute(
+                    "DELETE FROM query_relationships WHERE index_id = ?", (index_id,)
+                )
                 if entity_rows:
                     conn.executemany(
                         """
@@ -1505,7 +1544,9 @@ def rebuild_query_index(
     graph_payload: dict[str, Any],
 ) -> dict[str, int]:
     registry = get_artifact_registry(ctn_dir)
-    return registry.rebuild_query_indexes(index_id=index_id, graph_payload=graph_payload)
+    return registry.rebuild_query_indexes(
+        index_id=index_id, graph_payload=graph_payload
+    )
 
 
 def query_entities(

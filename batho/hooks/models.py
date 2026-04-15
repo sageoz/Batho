@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_va
 
 from batho.hooks.constants import HOOKS_SCHEMA_VERSION
 
-
 OnFailurePolicy = Literal["fail", "warn", "continue"]
 
 

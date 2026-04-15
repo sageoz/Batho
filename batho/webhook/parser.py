@@ -11,12 +11,14 @@ from batho.time_machine import FileChange, FileChangeType
 
 class WebhookPlatform(Enum):
     """Webhook platform."""
+
     GITHUB = "github"
     GITLAB = "gitlab"
 
 
 class WebhookEventType(Enum):
     """Webhook event types."""
+
     # GitHub
     GITHUB_PUSH = "push"
     GITHUB_PR_OPENED = "pull_request_opened"
@@ -32,6 +34,7 @@ class WebhookEventType(Enum):
 @dataclass
 class WebhookEvent:
     """Parsed webhook event."""
+
     platform: WebhookPlatform
     event_type: WebhookEventType
     repository: str
@@ -41,13 +44,15 @@ class WebhookEvent:
     raw_payload: dict[str, Any]
 
 
-def parse_webhook_event(payload: dict[str, Any], headers: dict[str, str]) -> WebhookEvent:
+def parse_webhook_event(
+    payload: dict[str, Any], headers: dict[str, str]
+) -> WebhookEvent:
     """Parse webhook event from payload and headers.
-    
+
     Args:
         payload: Parsed JSON payload
         headers: HTTP headers
-        
+
     Returns:
         Parsed WebhookEvent
     """
@@ -82,45 +87,51 @@ def _parse_github_event(payload: dict[str, Any], event: str) -> WebhookEvent:
     repo_name = repo_info.get("full_name")
     if not repo_name:
         raise ValueError("Missing repository.full_name")
-    
+
     if event == "push":
         # Extract branch from ref
         ref = _require(payload, "ref")
         if not ref.startswith("refs/heads/"):
             raise ValueError(f"Unsupported ref type: {ref}")
         branch = ref[11:]  # Remove 'refs/heads/'
-        
+
         # Get commit hash
         commit_hash = _require(payload, "after")
-        
+
         # Extract file changes from commits
         changes = []
         for commit in payload.get("commits", []):
             # Added files
             for path in commit.get("added", []):
-                changes.append(FileChange(
-                    path=path,
-                    change_type=FileChangeType.ADDED,
-                    old_hash=None,
-                    new_hash=commit_hash
-                ))
+                changes.append(
+                    FileChange(
+                        path=path,
+                        change_type=FileChangeType.ADDED,
+                        old_hash=None,
+                        new_hash=commit_hash,
+                    )
+                )
             # Modified files
             for path in commit.get("modified", []):
-                changes.append(FileChange(
-                    path=path,
-                    change_type=FileChangeType.MODIFIED,
-                    old_hash=None,  # GitHub doesn't provide old hash in push event
-                    new_hash=commit_hash
-                ))
+                changes.append(
+                    FileChange(
+                        path=path,
+                        change_type=FileChangeType.MODIFIED,
+                        old_hash=None,  # GitHub doesn't provide old hash in push event
+                        new_hash=commit_hash,
+                    )
+                )
             # Removed files
             for path in commit.get("removed", []):
-                changes.append(FileChange(
-                    path=path,
-                    change_type=FileChangeType.DELETED,
-                    old_hash=None,
-                    new_hash=None
-                ))
-        
+                changes.append(
+                    FileChange(
+                        path=path,
+                        change_type=FileChangeType.DELETED,
+                        old_hash=None,
+                        new_hash=None,
+                    )
+                )
+
         return WebhookEvent(
             platform=WebhookPlatform.GITHUB,
             event_type=WebhookEventType.GITHUB_PUSH,
@@ -128,31 +139,31 @@ def _parse_github_event(payload: dict[str, Any], event: str) -> WebhookEvent:
             branch=branch,
             commit_hash=commit_hash,
             changes=changes,
-            raw_payload=payload
+            raw_payload=payload,
         )
-    
+
     elif event == "pull_request":
         pr = _require(payload, "pull_request")
         action = _require(payload, "action")
-        
+
         # Map action to event type
         event_map = {
             "opened": WebhookEventType.GITHUB_PR_OPENED,
             "synchronize": WebhookEventType.GITHUB_PR_SYNCED,
             "closed": WebhookEventType.GITHUB_PR_CLOSED,
         }
-        
+
         if action not in event_map:
             raise ValueError(f"Unsupported PR action: {action}")
-        
+
         # Get branch from PR head
         branch = pr["head"]["ref"]
         commit_hash = pr["head"]["sha"]
-        
+
         # For PRs, we'll need to fetch the diff separately
         # For now, create an empty changes list
         changes = []
-        
+
         return WebhookEvent(
             platform=WebhookPlatform.GITHUB,
             event_type=event_map[action],
@@ -160,9 +171,9 @@ def _parse_github_event(payload: dict[str, Any], event: str) -> WebhookEvent:
             branch=branch,
             commit_hash=commit_hash,
             changes=changes,
-            raw_payload=payload
+            raw_payload=payload,
         )
-    
+
     else:
         raise ValueError(f"Unsupported GitHub event: {event}")
 
@@ -173,45 +184,51 @@ def _parse_gitlab_event(payload: dict[str, Any], event: str) -> WebhookEvent:
     repo_name = project.get("path_with_namespace") or project.get("name")
     if not repo_name:
         raise ValueError("Missing project.path_with_namespace")
-    
+
     if event == "Push Hook":
         # Extract branch from ref
         ref = _require(payload, "ref")
         if not ref.startswith("refs/heads/"):
             raise ValueError(f"Unsupported ref type: {ref}")
         branch = ref[11:]  # Remove 'refs/heads/'
-        
+
         # Get commit hash
         commit_hash = _require(payload, "after")
-        
+
         # Extract file changes from commits
         changes = []
         for commit in payload.get("commits", []):
             # Added files
             for path in commit.get("added", []):
-                changes.append(FileChange(
-                    path=path,
-                    change_type=FileChangeType.ADDED,
-                    old_hash=None,
-                    new_hash=commit["id"]
-                ))
+                changes.append(
+                    FileChange(
+                        path=path,
+                        change_type=FileChangeType.ADDED,
+                        old_hash=None,
+                        new_hash=commit["id"],
+                    )
+                )
             # Modified files
             for path in commit.get("modified", []):
-                changes.append(FileChange(
-                    path=path,
-                    change_type=FileChangeType.MODIFIED,
-                    old_hash=None,
-                    new_hash=commit["id"]
-                ))
+                changes.append(
+                    FileChange(
+                        path=path,
+                        change_type=FileChangeType.MODIFIED,
+                        old_hash=None,
+                        new_hash=commit["id"],
+                    )
+                )
             # Removed files
             for path in commit.get("removed", []):
-                changes.append(FileChange(
-                    path=path,
-                    change_type=FileChangeType.DELETED,
-                    old_hash=None,
-                    new_hash=None
-                ))
-        
+                changes.append(
+                    FileChange(
+                        path=path,
+                        change_type=FileChangeType.DELETED,
+                        old_hash=None,
+                        new_hash=None,
+                    )
+                )
+
         return WebhookEvent(
             platform=WebhookPlatform.GITLAB,
             event_type=WebhookEventType.GITLAB_PUSH,
@@ -219,9 +236,9 @@ def _parse_gitlab_event(payload: dict[str, Any], event: str) -> WebhookEvent:
             branch=branch,
             commit_hash=commit_hash,
             changes=changes,
-            raw_payload=payload
+            raw_payload=payload,
         )
-    
+
     elif event == "Merge Request Hook":
         attrs = _require(payload, "object_attributes")
         action = attrs.get("action") or attrs.get("state")
@@ -253,6 +270,6 @@ def _parse_gitlab_event(payload: dict[str, Any], event: str) -> WebhookEvent:
             changes=[],
             raw_payload=payload,
         )
-    
+
     else:
         raise ValueError(f"Unsupported GitLab event: {event}")
