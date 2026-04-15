@@ -28,7 +28,7 @@ jobs:
         run: uv sync --group dev
 
       - name: Check black
-        run: uv run black --check batho/ batho_cli.py
+        run: uv run black --check --target-version py312 batho/ batho_cli.py
 
       - name: Check isort
         run: uv run isort --check-only batho/ batho_cli.py
