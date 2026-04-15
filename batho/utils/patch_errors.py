@@ -14,17 +14,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from batho.config import get_config_cached
-from batho.context.storage import (
-    infer_ctn_dir_for_path,
-    persist_json,
-    register_artifact_for_path,
-)
 from batho.utils.logging import get_logger
 
-AUDIT_LOG_ENABLED = get_config_cached().get("flags", {}).get("audit_log_enabled", True)
-
 logger = get_logger(__name__, component="patch_errors")
+
+
+def _is_audit_enabled() -> bool:
+    """Check if audit logging is enabled via config (lazy evaluation)."""
+    try:
+        from batho.config import get_config_cached
+
+        return get_config_cached().get("flags", {}).get("audit_log_enabled", True)
+    except Exception:
+        return True  # Default to enabled if config fails
 
 
 class PatchValidationError(ValueError):
@@ -138,7 +140,7 @@ class PatchAuditLogger:
         )
         self.entries.append(entry)
 
-        if AUDIT_LOG_ENABLED:
+        if _is_audit_enabled():
             logger.info(
                 "patch_audit_operation_start",
                 operation_id=operation_id,
@@ -164,7 +166,7 @@ class PatchAuditLogger:
                 entry.change_count = change_count
                 break
 
-        if AUDIT_LOG_ENABLED:
+        if _is_audit_enabled():
             logger.info(
                 "patch_audit_operation_complete",
                 operation_id=operation_id,
@@ -178,10 +180,17 @@ class PatchAuditLogger:
 
     def _write_audit_log(self) -> None:
         """Persist audit entries to log file."""
-        if not AUDIT_LOG_ENABLED or not self.log_file:
+        if not _is_audit_enabled() or not self.log_file:
             return
 
         try:
+            # Lazy import to avoid circular dependency
+            from batho.context.storage import (
+                infer_ctn_dir_for_path,
+                persist_json,
+                register_artifact_for_path,
+            )
+
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
             audit_data = {
                 "schema_version": "1.0",
@@ -240,13 +249,31 @@ class PatchAuditLogger:
         return filtered
 
 
-# Global audit logger instance - initialized at import time
-try:
-    audit_log_path = get_config_cached().get("patch", {}).get("audit_log_path")
-    if audit_log_path:
-        audit_logger = PatchAuditLogger(Path(audit_log_path))
-    else:
-        audit_logger = PatchAuditLogger()
-except Exception:
-    # Fallback if config fails
-    audit_logger = PatchAuditLogger()
+# Global audit logger instance - lazy initialization to avoid circular imports
+_audit_logger_instance: PatchAuditLogger | None = None
+
+
+def _get_audit_logger() -> PatchAuditLogger:
+    """Get or create the global audit logger instance (lazy initialization)."""
+    global _audit_logger_instance
+    if _audit_logger_instance is None:
+        try:
+            from batho.config import get_config_cached
+
+            audit_log_path = get_config_cached().get("patch", {}).get("audit_log_path")
+            if audit_log_path:
+                _audit_logger_instance = PatchAuditLogger(Path(audit_log_path))
+            else:
+                _audit_logger_instance = PatchAuditLogger()
+        except Exception:
+            # Fallback if config fails
+            _audit_logger_instance = PatchAuditLogger()
+    return _audit_logger_instance
+
+
+# Module-level __getattr__ for backward compatible lazy loading
+def __getattr__(name: str) -> Any:
+    """Lazy load audit_logger on first access."""
+    if name == "audit_logger":
+        return _get_audit_logger()
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
