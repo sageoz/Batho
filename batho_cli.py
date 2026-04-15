@@ -3236,6 +3236,13 @@ def build_parser() -> argparse.ArgumentParser:
         prog="batho", description="Batho core CLI (index, stats, invalidate)"
     )
 
+    # Version flag
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {batho_api.__version__}",
+    )
+
     # Global logging flags (apply before subcommands)
     parser.add_argument(
         "--log-level",

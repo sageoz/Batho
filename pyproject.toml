@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "batho"
-version = "0.1.1"
+version = "0.1.2"
 description = "Enterprise-ready, high-speed, multi-language code indexer with BSG compression and Time Machine snapshots/diffs — no LLM required."
 readme = "README.md"
 license = { file = "LICENSE" }
