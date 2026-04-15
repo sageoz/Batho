@@ -44,13 +44,13 @@ jobs:
       - name: Test installation from TestPyPI
         run: |
           sleep 10  # Wait for package to be available
-          uv pip install --index-url https://test.pypi.org/simple/ \
+          uv pip install --system --index-url https://test.pypi.org/simple/ \
             --extra-index-url https://pypi.org/simple \
             batho==$(cat pyproject.toml | grep '^version' | cut -d'"' -f2)
           
           # Verify installation
-          uv run python -c "import batho; print(f'Batho version: {batho.__version__}')"
-          uv run batho --version
+          python -c "import batho; print(f'Batho version: {batho.__version__}')"
+          batho --version
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
