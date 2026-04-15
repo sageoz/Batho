@@ -53,9 +53,11 @@ webhooks = [
 [project.scripts]
 batho = "batho_cli:main"
 
+[tool.hatch.build.targets.wheel]
+packages = ["batho"]
+
 [tool.hatch.build.targets.wheel.force-include]
 "batho_cli.py" = "batho_cli.py"
-"batho" = "batho"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/batho/"><img src="https://img.shields.io/pypi/v/batho?color=blue" alt="PyPI"></a>
-  <a href="https://github.com/batho-ai/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
+  <a href="https://testpypi.org/project/batho/"><img src="https://img.shields.io/pypi/v/batho?color=blue" alt="PyPI"></a>
+  <a href="https://github.com/sageoz/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
   <a href="#supported-languages"><img src="https://img.shields.io/badge/languages-40+-orange" alt="Languages"></a>
 </p>
 
@@ -197,7 +197,7 @@ Use this section when you want to contribute to Batho locally, run tests, and ve
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/batho-ai/batho.git
+git clone https://github.com/sageoz/batho.git
 cd batho
 ```
 
@@ -1112,26 +1112,6 @@ Batho is open source and welcomes contributions. Whether it's a bug report, a ne
 
 ---
 
-## Roadmap
-
-### v1.1 (In Development)
-- [ ] Advanced AI features and agentic architecture generation
-- [ ] Live state integration with Jira/GitHub Issues
-- [ ] Persistent graph storage for large repositories
-- [ ] Enterprise telemetry and health checks
-
-### v1.2 (Planned)
-- [ ] Advanced compression with adaptive token budgeting
-- [ ] Vulnerability scanning and license detection
-- [ ] Complete MR validation with policy engine
-- [ ] Full standards compliance (SRS/OWASP/ADR)
-
-### Past Releases
-- [x] **v1.0.0** - Production launch with webhooks, CI/CD, and automated docs
-- [x] **v0.1.0** - Beta release with core functionality
-
----
-
 ## License
 
 MIT — see [LICENSE](LICENSE)
@@ -1148,5 +1128,5 @@ Batho v1.0.0 is here thanks to our amazing community of contributors and users. 
 
 <p align="center">
   <strong>🚀 Batho v1.0.0 - Code Intelligence for the AI Era</strong><br>
-  <a href="https://pypi.org/project/batho/">PyPI</a> · <a href="https://github.com/batho-ai/batho/issues">Issues</a> · <a href="https://github.com/batho-ai/batho/discussions">Discussions</a> · <a href="https://github.com/batho-ai/batho/blob/main/docs/updated.md">Full Documentation</a>
+  <a href="https://pypi.org/project/batho/">PyPI</a> · <a href="https://github.com/sageoz/batho/issues">Issues</a> · <a href="https://github.com/sageoz/batho/discussions">Discussions</a> · <a href="https://github.com/sageoz/batho/blob/main/docs/updated.md">Full Documentation</a>
 </p># test
