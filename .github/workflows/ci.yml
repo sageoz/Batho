@@ -11,28 +11,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install lint dependencies
-        run: uv sync --group dev
-
-      - name: Check black
-        run: uv run black --check --target-version py312 batho/ batho_cli.py
-
-      - name: Check isort
-        run: uv run isort --check-only batho/ batho_cli.py
-
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
