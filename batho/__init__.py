@@ -5,7 +5,7 @@ This package provides the core functionality for analyzing code repositories,
 building dependency graphs, and generating contextual information for LLMs.
 """
 
-__version__ = "1.0.0"
+__version__ = "0.1.1"
 
 from batho.config import get_config_cached, reload_config
 from batho.context.bsg_map import BSGMap
