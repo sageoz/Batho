@@ -321,11 +321,11 @@
         },
         "assign_category": {
           "type": "object",
-          "description": "Assign file category (TEST, DOCS, CONFIG, SOURCE, UNCATEGORIZED)",
+          "description": "Assign file category (TEST, DOC, CONFIG, INFRA, SOURCE, UNCATEGORIZED)",
           "properties": {
             "category": {
               "type": "string",
-              "enum": ["TEST", "DOCS", "CONFIG", "SOURCE", "UNCATEGORIZED"]
+              "enum": ["TEST", "DOC", "CONFIG", "INFRA", "SOURCE", "UNCATEGORIZED"]
             },
             "priority": {
               "type": "integer"

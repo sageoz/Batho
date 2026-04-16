@@ -28,12 +28,6 @@ from batho.utils.logging import get_logger
 
 from .schema import Entity, EntityType
 
-_CATEGORY_ALIASES: dict[str, str] = {
-    "DOCS": "DOC",
-    "DOCUMENTATION": "DOC",
-    "CONFIG": "CONFIGURATION",
-    "TESTS": "TEST",
-}
 
 if TYPE_CHECKING:
     from batho.time_machine import FileChange
@@ -930,7 +924,7 @@ class BSGMap:
         candidate = str(raw_category or "").strip().upper()
         if not candidate:
             return "SOURCE"
-        return _CATEGORY_ALIASES.get(candidate, candidate)
+        return candidate
 
     def _derive_language(self, entity: Entity, rel_file_path: str) -> str:
         metadata = entity.metadata or {}
@@ -1084,7 +1078,8 @@ class BSGMap:
         category_priority = {
             "TEST": 4,
             "CONFIG": 3,
-            "DOCS": 2,
+            "DOC": 2,
+            "INFRA": 2,
             "SOURCE": 1,
             "UNCATEGORIZED": 0,
         }

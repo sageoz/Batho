@@ -96,7 +96,7 @@ rules:
         - '**/examples/**'
     actions:
       assign_category:
-        category: DOCS
+        category: DOC
 
   - rule_id: category-docs-extension
     name: Documentation Files by Extension
@@ -115,7 +115,7 @@ rules:
         - '**/*.asciidoc'
     actions:
       assign_category:
-        category: DOCS
+        category: DOC
 
   - rule_id: category-docs-special
     name: Special Documentation Files
@@ -142,7 +142,7 @@ rules:
         - '**/TODO*'
     actions:
       assign_category:
-        category: DOCS
+        category: DOC
 
   # Priority 200: CONFIG category
   - rule_id: category-config-path
