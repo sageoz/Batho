@@ -1,9 +1,12 @@
+# Batho configuration
+# Auto-generated default config. Edit as needed for your project.
+
 logging:
-  level: INFO             # DEBUG | INFO | WARNING | ERROR | CRITICAL
-  json_format: false        # true = JSON logs, false = console logs, null = auto
-  quiet: false              # Suppress all non-error output
-  file: null               # Optional log file path (e.g. .ctn/batho.log)
-  format: "%(message)s"    # Log format string
+  level: INFO
+  json_format: null
+  quiet: false
+  file: null
+  format: "%(message)s"
 
 paths:
   ctn_dir: .ctn
@@ -32,12 +35,49 @@ flags:
   strict: false
   audit_log_enabled: true
 
+rules:
+  enabled: false
+  builtin_plugins:
+    - bsg_core
+    - bsg_silent_failure_catcher
+    - bsg_dependency_blast_radius
+    - bsg_resource_leak_preventer
+    - bsg_nplus1_query_catcher
+    - bsg_iac_drift_sentinel
+    - bsg_schema_migration_enforcer
+    - bsg_api_contract_guardian
+    - bsg_hardcoded_secret_catcher
+    - bsg_auth_boundary_shield
+  disabled_rules: []
+  custom_rules_path: null
+  custom_rules_inline: []
+  strict_validation: false
+  cache_ttl: 3600
+  fail_on_rule_error: false
+
+plugins:
+  overrides: {}
+
+hooks:
+  enabled: true
+  include: true
+
 schemas:
   graph: graph.v1
   bsg: bsg.v1
   snapshot: snapshot.v1
   index_metadata: index-metadata.v1
   file_cache: file-cache.v1
+
+cloud_sync:
+  enabled: false
+  endpoint: ""
+  api_key: ""
+  organization_id: ""
+  project_id: ""
+  timeout_seconds: 300
+  max_retries: 3
+  batch_size: 10
 
 bsg:
   parallel:
@@ -52,8 +92,16 @@ bsg:
     path: ~/.batho/ast_cache.db
     max_size_mb: 1024
     ttl_days: 30
+  incremental:
+    enabled: true
+    fallback_to_full: true
+    auto_detect_git: true
+  symbol_resolution:
+    enabled: true
+    fuzzy_matching: false
+    cache_symbols: true
   serialization:
-    method: streaming
+    method: legacy
     compression: false
     batch_size: 1000
   parsing:

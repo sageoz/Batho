@@ -938,6 +938,10 @@ rules:
 plugins:
   overrides: {}
 
+hooks:
+  enabled: true
+  include: true
+
 schemas:
   graph: graph.v1
   bsg: bsg.v1

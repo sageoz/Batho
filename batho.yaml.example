@@ -78,6 +78,10 @@ plugins:
   #         metadata:
   #           bsg.category: TEST
 
+hooks:
+  enabled: true              # Enable/disable hooks system
+  include: true              # Include .batho/hooks.yaml as config source
+
 schemas:
   graph: graph.v1
   bsg: bsg.v1
