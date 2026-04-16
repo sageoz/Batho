@@ -25,7 +25,7 @@ production:
       - type: "email"
         recipients: ["admin@example.com"]
       - type: "slack"
-        webhook: "https://hooks.slack.com/webhook"
+        endpoint: "https://hooks.slack.com/hook"
 
 services:
   web:

@@ -1,6 +1,6 @@
 """Deterministic failure synthesizer and evolution ledger persistence.
 
-This module converts patch/webhook failures into concise "Don't" guidance and
+This module converts patch failures into concise "Don't" guidance and
 stores entries in `.ctn/evolution_ledger.json`.
 """
 

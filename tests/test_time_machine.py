@@ -7,22 +7,20 @@ from pathlib import Path
 
 import pytest
 
-from batho.context.codegraph import InMemoryGraph
 from batho.context.bsg_map import BSGMap as RepoMap
+from batho.context.codegraph import InMemoryGraph
 from batho.context.schema import Entity, EntityType
 from batho.time_machine import (
+    FileChangeTracker,
+    FileChangeType,
+    FileTrackingConfig,
     compute_staleness,
     create_snapshot,
     diff_snapshots,
     generate_snapshot_id,
     list_snapshots,
     load_snapshot,
-    webhook_stub,
-    FileChangeTracker,
-    FileChangeType,
-    FileTrackingConfig,
 )
-
 
 # ---------------------------------------------------------------------------
 # generate_snapshot_id
@@ -158,32 +156,6 @@ class TestComputeStaleness:
         }
         score = compute_staleness(prev, "abc", {"files_parsed": 5, "errors": 0})
         assert 0.0 <= score <= 1.0
-
-
-# ---------------------------------------------------------------------------
-# webhook_stub
-# ---------------------------------------------------------------------------
-
-
-class TestWebhookStub:
-    def test_returns_expected_keys(self):
-        result = webhook_stub(
-            {
-                "event": "push",
-                "ref": "refs/heads/main",
-                "after": "abc123",
-                "repository": {"full_name": "user/repo"},
-                "commits": [],
-            }
-        )
-        assert result["event"] == "push"
-        assert result["repo"] == "user/repo"
-        assert result["status"] == "parsed"
-
-    def test_missing_event(self):
-        result = webhook_stub({})
-        assert result["event"] == "unknown"
-        assert result["status"] == "error"
 
 
 # ---------------------------------------------------------------------------

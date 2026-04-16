@@ -56,7 +56,9 @@ def _mk_patch_operation(
         metrics={"token_size": 99},
     )
     payload = {k: v for k, v in op.serialize().items() if k != "checksum"}
-    op.checksum = tm.compute_bytes_hash(json.dumps(payload, sort_keys=True).encode("utf-8"))
+    op.checksum = tm.compute_bytes_hash(
+        json.dumps(payload, sort_keys=True).encode("utf-8")
+    )
     return op
 
 
@@ -169,15 +171,23 @@ def _configure_incremental_patch_success(
     import batho.context.languages.registry as registry_mod
 
     if extractor_available:
-        monkeypatch.setattr(detector_mod.default_detector, "get_extractor", lambda *_a, **_k: object())
+        monkeypatch.setattr(
+            detector_mod.default_detector, "get_extractor", lambda *_a, **_k: object()
+        )
         monkeypatch.setattr(registry_mod, "get_extractor", lambda *_a, **_k: object())
     else:
-        monkeypatch.setattr(detector_mod.default_detector, "get_extractor", lambda *_a, **_k: None)
+        monkeypatch.setattr(
+            detector_mod.default_detector, "get_extractor", lambda *_a, **_k: None
+        )
         monkeypatch.setattr(registry_mod, "get_extractor", lambda *_a, **_k: None)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="signal.alarm not available on Windows")
-def test_timeout_context_raises_and_restores_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="signal.alarm not available on Windows"
+)
+def test_timeout_context_raises_and_restores_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[tuple[str, int | object]] = []
     holder: dict[str, object] = {}
 
@@ -200,7 +210,9 @@ def test_timeout_context_raises_and_restores_signal(monkeypatch: pytest.MonkeyPa
     assert ("alarm", 0) in calls
 
 
-def test_patch_limits_and_change_summary_logging(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_patch_limits_and_change_summary_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     changes = [
         _mk_change("a.py", FileChangeType.ADDED, None, "x"),
         _mk_change("b.py", FileChangeType.MODIFIED, "o", "n"),
@@ -250,7 +262,9 @@ def test_file_tracker_invalid_cache_and_helper_accessors(tmp_path: Path) -> None
     assert deleted == ["z.py"]
 
 
-def test_git_branch_name_success_blank_and_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_git_branch_name_success_blank_and_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(
         tm.subprocess,
         "run",
@@ -278,7 +292,9 @@ def test_list_and_load_snapshot_parse_edge_cases(tmp_path: Path) -> None:
     snaps.mkdir(parents=True)
 
     good = snaps / "good.json"
-    good.write_text(json.dumps({"snapshot_id": "good", "created_at": "t"}), encoding="utf-8")
+    good.write_text(
+        json.dumps({"snapshot_id": "good", "created_at": "t"}), encoding="utf-8"
+    )
     bad = snaps / "bad.json"
     bad.write_text("{broken", encoding="utf-8")
 
@@ -292,7 +308,9 @@ def test_list_and_load_snapshot_parse_edge_cases(tmp_path: Path) -> None:
     assert loaded is not None
 
     bad_checksum = snaps / "badcheck.json"
-    bad_checksum.write_text(json.dumps({"snapshot_id": "badcheck", "_checksum": "x"}), encoding="utf-8")
+    bad_checksum.write_text(
+        json.dumps({"snapshot_id": "badcheck", "_checksum": "x"}), encoding="utf-8"
+    )
     assert tm.load_snapshot(ctn, "badcheck") is None
 
 
@@ -329,7 +347,9 @@ def test_compute_staleness_age_parse_error_branch() -> None:
     assert 0.0 <= score <= 1.0
 
 
-def test_incremental_patch_success_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_incremental_patch_success_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _configure_incremental_patch_success(monkeypatch, tmp_path)
 
     changes = [
@@ -343,7 +363,9 @@ def test_incremental_patch_success_path(tmp_path: Path, monkeypatch: pytest.Monk
     assert result["applied_changes"] == 3
 
 
-def test_incremental_patch_validation_limit_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_incremental_patch_validation_limit_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         tm,
         "get_config_cached",
@@ -428,8 +450,12 @@ def test_incremental_patch_file_error_validation_error_and_unexpected_error(
     assert "Unexpected error" in generic_result["error"]
 
 
-def test_incremental_patch_extractor_none_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _configure_incremental_patch_success(monkeypatch, tmp_path, extractor_available=False)
+def test_incremental_patch_extractor_none_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _configure_incremental_patch_success(
+        monkeypatch, tmp_path, extractor_available=False
+    )
     result = tm.incremental_patch(
         tmp_path / ".ctn",
         "base",
@@ -438,7 +464,9 @@ def test_incremental_patch_extractor_none_branch(tmp_path: Path, monkeypatch: py
     assert result["success"] is True
 
 
-def test_rollback_changes_action_paths_and_error_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rollback_changes_action_paths_and_error_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls: list[tuple[str, str]] = []
 
     class _Updater:
@@ -452,7 +480,11 @@ def test_rollback_changes_action_paths_and_error_branch(tmp_path: Path, monkeypa
     tm._rollback_changes(
         graph=SimpleNamespace(),
         applied_changes=[_mk_change("a.py", FileChangeType.DELETED, "old", None)],
-        rollback_actions=[("add_file", "a.py"), ("restore_file", "b.py", "h"), ("delete_file", "c.py")],
+        rollback_actions=[
+            ("add_file", "a.py"),
+            ("restore_file", "b.py", "h"),
+            ("delete_file", "c.py"),
+        ],
         updater=_Updater(),
         root_path=tmp_path,
     )
@@ -460,7 +492,9 @@ def test_rollback_changes_action_paths_and_error_branch(tmp_path: Path, monkeypa
     assert any(action == "remove" for action, _ in calls)
 
 
-def test_save_and_load_patch_operation_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_save_and_load_patch_operation_roundtrip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ctn = tmp_path / ".ctn"
     ctn.mkdir()
     op = _mk_patch_operation("roundtrip-op")
@@ -490,11 +524,15 @@ def test_load_patch_operation_missing_invalid_checksum_and_invalid_json(
     op = _mk_patch_operation("badchecksum-op")
     data = op.serialize()
     data["checksum"] = "bad"
-    (patches / "patch_badchecksum-op.json").write_text(json.dumps(data), encoding="utf-8")
+    (patches / "patch_badchecksum-op.json").write_text(
+        json.dumps(data), encoding="utf-8"
+    )
     assert tm.load_patch_operation(ctn, "badchecksum-op") is None
 
 
-def test_update_patch_index_with_corrupt_existing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_update_patch_index_with_corrupt_existing_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ctn = tmp_path / ".ctn"
     patches = ctn / "patches"
     patches.mkdir(parents=True)
@@ -507,7 +545,9 @@ def test_update_patch_index_with_corrupt_existing_file(tmp_path: Path, monkeypat
     assert index_data["total_patches"] == 1
 
 
-def test_list_patch_operations_filters_and_error_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_list_patch_operations_filters_and_error_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ctn = tmp_path / ".ctn"
     ctn.mkdir()
     monkeypatch.setattr(tm, "register_artifact", lambda *_a, **_k: True)
@@ -516,7 +556,9 @@ def test_list_patch_operations_filters_and_error_path(tmp_path: Path, monkeypatc
     op2 = _mk_patch_operation("op-b")
     op2.operation_type = "cherry_pick"
     payload = {k: v for k, v in op2.serialize().items() if k != "checksum"}
-    op2.checksum = tm.compute_bytes_hash(json.dumps(payload, sort_keys=True).encode("utf-8"))
+    op2.checksum = tm.compute_bytes_hash(
+        json.dumps(payload, sort_keys=True).encode("utf-8")
+    )
 
     tm.save_patch_operation(ctn, op1)
     tm.save_patch_operation(ctn, op2)
@@ -530,11 +572,15 @@ def test_list_patch_operations_filters_and_error_path(tmp_path: Path, monkeypatc
     assert tm.list_patch_operations(ctn) == []
 
 
-def test_get_patches_for_snapshot_and_build_patch_chain(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_get_patches_for_snapshot_and_build_patch_chain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     ctn = tmp_path / ".ctn"
     ctn.mkdir()
 
-    p1 = _mk_patch_operation("chain-a", timestamp=datetime.now(timezone.utc) - timedelta(seconds=10))
+    p1 = _mk_patch_operation(
+        "chain-a", timestamp=datetime.now(timezone.utc) - timedelta(seconds=10)
+    )
     p1.new_snapshot_id = "snap-target"
     p1.patch_chain = ["root", "chain-a"]
     p2 = _mk_patch_operation("chain-b", timestamp=datetime.now(timezone.utc))
@@ -555,9 +601,16 @@ def test_get_patches_for_snapshot_and_build_patch_chain(monkeypatch: pytest.Monk
     assert root_chain == ["chain-z"]
 
 
-def test_cleanup_old_patches_missing_dir_and_deletion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cleanup_old_patches_missing_dir_and_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ctn_missing = tmp_path / "missing-ctn"
-    assert tm.cleanup_old_patches(ctn_missing, {"max_patch_history_days": 1, "max_patch_count": 1}) == 0
+    assert (
+        tm.cleanup_old_patches(
+            ctn_missing, {"max_patch_history_days": 1, "max_patch_count": 1}
+        )
+        == 0
+    )
 
     ctn = tmp_path / ".ctn"
     patches = ctn / "patches"
@@ -572,8 +625,12 @@ def test_cleanup_old_patches_missing_dir_and_deletion(tmp_path: Path, monkeypatc
         timestamp=datetime.now(timezone.utc),
     )
 
-    (patches / "patch_old-op.json").write_text(json.dumps(old.serialize()), encoding="utf-8")
-    (patches / "patch_keep-op.json").write_text(json.dumps(keep.serialize()), encoding="utf-8")
+    (patches / "patch_old-op.json").write_text(
+        json.dumps(old.serialize()), encoding="utf-8"
+    )
+    (patches / "patch_keep-op.json").write_text(
+        json.dumps(keep.serialize()), encoding="utf-8"
+    )
 
     monkeypatch.setattr(tm, "list_patch_operations", lambda *_a, **_k: [keep, old])
     monkeypatch.setattr(tm, "update_patch_index", lambda *_a, **_k: None)
@@ -617,12 +674,16 @@ def test_estimate_tokens_and_parse_unified_diff() -> None:
     assert kinds["mod.py"] == FileChangeType.MODIFIED
 
 
-def test_validate_patch_compatibility_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_validate_patch_compatibility_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ctn = tmp_path / ".ctn"
     ctn.mkdir()
 
     # Missing required field.
-    assert tm.validate_patch_compatibility({"changes_applied": []}, "snap", ctn) is False
+    assert (
+        tm.validate_patch_compatibility({"changes_applied": []}, "snap", ctn) is False
+    )
 
     # Missing base snapshot.
     monkeypatch.setattr(tm, "load_snapshot", lambda *_a, **_k: None)
@@ -715,14 +776,18 @@ def test_validate_patch_dependencies_paths(tmp_path: Path) -> None:
     (patches / "bad.json").write_text("{", encoding="utf-8")
     assert tm._validate_patch_dependencies(["bad"], "snap", ctn) is False
 
-    (patches / "failed.json").write_text(json.dumps({"success": False}), encoding="utf-8")
+    (patches / "failed.json").write_text(
+        json.dumps({"success": False}), encoding="utf-8"
+    )
     assert tm._validate_patch_dependencies(["failed"], "snap", ctn) is False
 
     (patches / "ok.json").write_text(json.dumps({"success": True}), encoding="utf-8")
     assert tm._validate_patch_dependencies(["ok"], "snap", ctn) is True
 
 
-def test_extract_patch_deltas_and_apply_deltas_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extract_patch_deltas_and_apply_deltas_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ctn = tmp_path / ".ctn"
     ctn.mkdir()
     op = _mk_patch_operation("delta-op")
@@ -768,39 +833,3 @@ def test_extract_patch_deltas_and_apply_deltas_paths(tmp_path: Path, monkeypatch
         "changes_applied": [{"path": "a.py", "change_type": "ADDED"}],
     }
     assert tm.apply_deltas_to_snapshot(ctn, "base", dict_deltas) is None
-
-
-def test_webhook_stub_header_inference_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import batho.webhook.parser as parser_mod
-
-    captured: dict[str, dict[str, str]] = {}
-
-    def _fake_parse(payload, headers):
-        captured["headers"] = dict(headers)
-        return SimpleNamespace(
-            event_type=SimpleNamespace(value="push"),
-            repository="org/repo",
-            platform=SimpleNamespace(value="github"),
-            branch="main",
-            commit_hash="abc",
-            changes=[{"path": "a.py"}],
-        )
-
-    monkeypatch.setattr(parser_mod, "parse_webhook_event", _fake_parse)
-
-    # GitHub pull_request default event inference.
-    out_gh = tm.webhook_stub({"repository": {"full_name": "org/repo"}, "pull_request": {}})
-    assert out_gh["status"] == "parsed"
-    assert captured["headers"]["X-GitHub-Event"] == "pull_request"
-
-    # GitLab default event inference.
-    out_gl = tm.webhook_stub({"project": {"path_with_namespace": "g/p"}, "object_attributes": {}})
-    assert out_gl["status"] == "parsed"
-    assert captured["headers"]["X-Gitlab-Event"] == "Merge Request Hook"
-
-    # Non-empty headers skip inference.
-    out_hdr = tm.webhook_stub(
-        {"repository": {"full_name": "org/repo"}},
-        headers={"X-GitHub-Event": "push"},
-    )
-    assert out_hdr["status"] == "parsed"

@@ -67,7 +67,6 @@ Modern AI tools need **structured code understanding** — not just raw file con
 | **Time Machine snapshots** | Track how your codebase evolves between releases |
 | **Zero Code Execution** | Safe to run in CI, pre-commit, or on untrusted repos |
 | **Caching** | mtime+SHA skips unchanged files — re-indexes in seconds |
-| **Production Webhooks** | GitHub/GitLab integration with authentication and queueing |
 | **CI/CD Pipeline Hooks** | Turnkey GitHub Actions and GitLab CI templates |
 | **Automated Documentation** | Generate docs/context from your codebase |
 | **Incremental patching** | 10-100x faster updates with complete lineage tracking |
@@ -281,8 +280,6 @@ batho <command> --help
 | `patch-chain` | Show chain of patches for a snapshot |
 | `apply-patch` | Apply patch by diff file or patch id |
 | `cherry-pick` | Apply a patch to another snapshot |
-| `webhook` | Parse/process a webhook payload |
-| `webhook-server` | Start webhook server from `batho.yaml` |
 | `sync` | Sync pending artifacts to configured cloud endpoint |
 | `hooks` | Git client-side hook management (install/remove/run) |
 | `invalidate` | Clear index file cache |
@@ -387,19 +384,6 @@ batho sync --root /path/to/repo --retry-failed
 
 # Show local sync status summary
 batho sync --root /path/to/repo --status
-```
-
-### Webhook Operations
-
-```bash
-# Parse/process one webhook payload
-batho webhook --payload '{"event":"push"}' --headers '{"X-GitHub-Event":"push"}'
-
-# Process webhook with repository context
-batho webhook --root /path/to/repo --payload '{...}' --headers '{...}'
-
-# Start webhook server from config
-batho webhook-server --root /path/to/repo
 ```
 
 ### Git Hooks Management
@@ -610,7 +594,6 @@ Output behavior:
 | `bsg.parsing` | `error_recovery`, `partial_parsing`, `max_file_size_mb`, `skip_comments` | Parser behavior |
 | `bsg.query` | `enabled`, `index_on_write`, `cache_enabled`, `cache_size`, `default_limit`, `query_timeout_ms` | Persistent query indexes |
 | `bsg.storage` | `enabled`, `backend`, `registry_path`, `content_scope`, `cloud_sync_ready`, `mmap_enabled`, `retention.*` | Durable artifact registry and retention |
-| `webhook` | `enabled`, `server.*`, `repository.*`, `processing.*`, `rate_limit.*` | Webhook server + event processing |
 | `hooks` | `enabled`, `include` | Git client-side hook automation pointer |
 
 ### Environment Variables (Common)
@@ -659,9 +642,6 @@ indexer:
 flags:
   strict: true
   fail_on_warning: true
-
-webhook:
-  enabled: false
 
 rules:
   enabled: true
@@ -772,25 +752,7 @@ batho stats --root .
 batho storage verify --root .
 ```
 
-#### 4) Webhook Runtime
-
-```yaml
-webhook:
-  enabled: true
-  server:
-    host: 0.0.0.0
-    port: 8080
-  repository:
-    name: your-org/your-repo
-    platform: github
-    secret: ${WEBHOOK_SECRET}
-```
-
-```bash
-batho webhook-server --root .
-```
-
-#### 5) Persistent Storage Hygiene (cloud-sync-ready v1)
+#### 4) Persistent Storage Hygiene (cloud-sync-ready v1)
 
 ```bash
 # register existing artifacts
@@ -887,7 +849,6 @@ The `batho` package exports core APIs directly:
 - Incremental patching: `FileChange`, `FileChangeType`, `FileChangeTracker`, `incremental_patch`
 - Git-aware change discovery: `get_changed_file_status_since`
 - Query layer: `QueryService`
-- Webhook processing: `WebhookConfig`, `WebhookProcessor`, `WebhookServer`, `parse_webhook_event`
 
 ### Example: Index + Snapshot from a Script
 
@@ -1092,7 +1053,6 @@ batho/
     │   ├── bsg_map.py            # Multi-format BSG renderer
     │   ├── query.py              # Query service over persisted artifacts
     │   └── languages/            # Per-language tree-sitter extractors
-    ├── webhook/                  # Webhook parsing, processing, queue/server
     └── utils/
         ├── logging.py            # Structured logging
         ├── hash.py               # SHA-256 helpers

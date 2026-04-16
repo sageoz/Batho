@@ -1,9 +1,8 @@
-"""Batho Core CLI (indexing, stats, invalidate, webhook).
+"""Batho Core CLI (indexing, stats, invalidate).
 
 - Index: builds code graph and bsg, writes JSON/MD outputs without LLM or UniversalMemory.
 - Stats: show current index metadata.
 - Invalidate: clear file cache to force next full parse.
-- Webhook Server: receive and process GitHub/GitLab webhook events.
 
 Outputs (default):
 - .ctn/<index_id>/graph.json       — Entities + relationships
@@ -88,12 +87,6 @@ from batho.utils.file_io import _is_binary, read_file_bytes, write_atomically
 from batho.utils.hash import compute_bytes_hash, compute_file_hash
 from batho.utils.ignore import is_ignored, load_ignore_spec
 from batho.utils.logging import configure_logging, get_logger
-from batho.webhook import (
-    WebhookConfig,
-    WebhookProcessor,
-    WebhookServer,
-    parse_webhook_event,
-)
 
 # Re-export for CLI tests that import from batho_cli
 __all__ = [
@@ -132,8 +125,6 @@ __all__ = [
     "cmd_plugins_validate",
     "cmd_query",
     "cmd_sync",
-    "cmd_webhook",
-    "cmd_webhook_server",
     "extract_patch_deltas",
 ]
 
@@ -2612,151 +2603,6 @@ def _cmd_patch_snapshot_based(
     return 0
 
 
-def cmd_webhook(args: argparse.Namespace) -> int:
-    try:
-        payload = json.loads(args.payload)
-    except json.JSONDecodeError:
-        print("❌ Invalid JSON payload")
-        return 1
-
-    try:
-        headers = json.loads(getattr(args, "headers", "{}") or "{}")
-        if not isinstance(headers, dict):
-            raise ValueError("headers must be a JSON object")
-    except Exception:
-        print("❌ Invalid headers JSON")
-        return 1
-
-    incoming_headers = dict(headers)
-    if not incoming_headers:
-        if "repository" in payload:
-            github_event = payload.get("event")
-            if not github_event:
-                github_event = "pull_request" if "pull_request" in payload else "push"
-            incoming_headers["X-GitHub-Event"] = github_event
-        elif "project" in payload:
-            gitlab_event = payload.get("event")
-            if not gitlab_event:
-                gitlab_event = (
-                    "Merge Request Hook"
-                    if "object_attributes" in payload
-                    else "Push Hook"
-                )
-            incoming_headers["X-Gitlab-Event"] = gitlab_event
-
-    try:
-        parsed = parse_webhook_event(payload, incoming_headers)
-    except Exception as exc:
-        print(
-            json.dumps(
-                {
-                    "status": "error",
-                    "message": str(exc),
-                },
-                indent=2,
-            )
-        )
-        return 1
-
-    result: dict[str, Any] = {
-        "event": parsed.event_type.value,
-        "repo": parsed.repository,
-        "status": "parsed",
-        "platform": parsed.platform.value,
-        "branch": parsed.branch,
-        "commit": parsed.commit_hash,
-        "changes": len(parsed.changes),
-    }
-
-    root_value = getattr(args, "root", None)
-    if not root_value:
-        print(json.dumps(result, indent=2))
-        return 0
-
-    root = Path(root_value).resolve()
-    if not root.exists() or not root.is_dir():
-        print(f"❌ Root does not exist or is not a directory: {root}")
-        return 1
-
-    config_payload = reload_config().get("webhook")
-    webhook_cfg = dict(config_payload) if isinstance(config_payload, dict) else {}
-    if not webhook_cfg.get("repository"):
-        branches = [parsed.branch] if parsed.branch else ["main"]
-        webhook_cfg["repository"] = {
-            "name": parsed.repository,
-            "platform": parsed.platform.value,
-            "branches": branches,
-        }
-
-    try:
-        processor = WebhookProcessor(WebhookConfig.from_dict(webhook_cfg), root)
-        processing = processor.process_webhook_sync(payload, incoming_headers)
-    except Exception as exc:
-        result["status"] = "error"
-        result["processing"] = {"status": "error", "message": str(exc)}
-        print(json.dumps(result, indent=2))
-        return 1
-
-    result["processing"] = processing
-    processing_status = str(processing.get("status") or "").lower()
-    if processing_status in {"processed", "ignored"}:
-        result["status"] = processing_status
-    elif processing_status == "error":
-        result["status"] = "error"
-
-    print(json.dumps(result, indent=2))
-    return 0 if result.get("status") != "error" else 1
-
-
-def cmd_webhook_server(args: argparse.Namespace) -> int:
-    """Start webhook server for continuous processing."""
-    config_path = Path("batho.yaml")
-    if not config_path.exists():
-        print("❌ Root config file not found: ./batho.yaml")
-        return 1
-
-    try:
-        full_config = reload_config()
-        config = WebhookConfig.from_dict(full_config.get("webhook") or {})
-    except Exception as e:
-        print(f"❌ Failed to load webhook config from ./batho.yaml: {e}")
-        return 1
-
-    # Validate repository configuration
-    if not config.repository:
-        print("❌ Repository not configured")
-        return 1
-
-    # Get repository path
-    repo_path = Path(args.root or ".").resolve()
-    if not repo_path.exists():
-        print(f"❌ Repository path does not exist: {repo_path}")
-        return 1
-
-    print(f"🚀 Starting webhook server for {config.repository.name}")
-    print(f"   Platform: {config.repository.platform}")
-    print(
-        f"   Endpoint: http://{config.server.host}:{config.server.port}{config.server.endpoint}"
-    )
-    print(
-        f"   Health: http://{config.server.host}:{config.server.port}{config.server.health_endpoint}"
-    )
-    print(f"   Repository: {repo_path}")
-    print()
-
-    # Start server
-    server = WebhookServer(config, repo_path)
-
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n🛑 Shutting down webhook server...")
-        server.stop()
-        print("✅ Server stopped")
-
-    return 0
-
-
 def cmd_invalidate(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
@@ -3496,19 +3342,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     hooks_run.set_defaults(func=cmd_hooks_run)
 
-    wh = sub.add_parser("webhook", help="Parse/process a webhook payload")
-    wh.add_argument(
-        "--root",
-        help="Optional repository root for synchronous processing (parse-only when omitted)",
-    )
-    wh.add_argument("--payload", required=True, help="JSON payload string")
-    wh.add_argument(
-        "--headers",
-        default="{}",
-        help="Optional JSON headers (e.g. {'X-GitHub-Event':'push'})",
-    )
-    wh.set_defaults(func=cmd_webhook)
-
     sync = sub.add_parser("sync", help="Sync artifacts to cloud endpoint")
     sync.add_argument(
         "--root",
@@ -3681,14 +3514,6 @@ def build_parser() -> argparse.ArgumentParser:
         "plugin_file", help="Path to plugin YAML file to validate"
     )
     plugins_validate.set_defaults(func=cmd_plugins_validate)
-
-    ws = sub.add_parser(
-        "webhook-server", help="Start webhook server using ./batho.yaml"
-    )
-    ws.add_argument(
-        "--root", help="Path to repository root (default: current directory)"
-    )
-    ws.set_defaults(func=cmd_webhook_server)
 
     return parser
 

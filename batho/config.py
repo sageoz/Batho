@@ -289,7 +289,6 @@ class Config(BaseModel):
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     schemas: dict = Field(default_factory=dict)
-    webhook: dict = Field(default_factory=dict)
     cloud_sync: CloudSyncConfig = Field(default_factory=CloudSyncConfig)
     bsg: BsgConfig = Field(default_factory=BsgConfig)
 
@@ -456,38 +455,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             "snapshot": SNAPSHOT_SCHEMA_VERSION,
             "index_metadata": INDEX_METADATA_SCHEMA_VERSION,
             "file_cache": FILE_CACHE_SCHEMA_VERSION,
-        },
-        "webhook": {
-            "enabled": False,
-            "server": {
-                "host": "0.0.0.0",
-                "port": 8080,
-                "workers": 4,
-                "endpoint": "/webhook",
-                "health_endpoint": "/health",
-            },
-            "repository": None,
-            "processing": {
-                "queue_backend": "celery",
-                "celery_broker_url": "memory://",
-                "celery_result_backend": "cache+memory://",
-                "task_always_eager": True,
-                "task_store_eager_result": False,
-                "batch_size": 100,
-                "timeout_seconds": 300,
-                "retry_attempts": 3,
-            },
-            "rate_limit": {
-                "requests_per_hour": 100,
-                "burst_size": 10,
-            },
-            "logging": {
-                "level": "INFO",
-                "file": None,
-            },
-            "github_secret": None,
-            "gitlab_token": None,
-            "allowed_ips": [],
         },
         "cloud_sync": {
             "enabled": False,
@@ -977,34 +944,6 @@ schemas:
   snapshot: snapshot.v1
   index_metadata: index-metadata.v1
   file_cache: file-cache.v1
-
-webhook:
-  enabled: false
-  server:
-    host: 0.0.0.0
-    port: 8080
-    workers: 4
-    endpoint: /webhook
-    health_endpoint: /health
-  repository: null
-  processing:
-    queue_backend: celery
-    celery_broker_url: memory://
-    celery_result_backend: cache+memory://
-    task_always_eager: true
-    task_store_eager_result: false
-    batch_size: 100
-    timeout_seconds: 300
-    retry_attempts: 3
-  rate_limit:
-    requests_per_hour: 100
-    burst_size: 10
-  logging:
-    level: INFO
-    file: null
-  github_secret: null
-  gitlab_token: null
-  allowed_ips: []
 
 cloud_sync:
   enabled: false

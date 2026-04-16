@@ -1,14 +1,15 @@
 """Tests for CLI argument parsing (batho_cli.build_parser)."""
+
 from __future__ import annotations
 
 import pytest
 
 from batho_cli import build_parser
 
-
 # ---------------------------------------------------------------------------
 # Parser construction
 # ---------------------------------------------------------------------------
+
 
 class TestBuildParser:
 
@@ -41,7 +42,9 @@ class TestBuildParser:
         assert args.log_file == "logs/batho.log"
 
     def test_index_with_extensions(self, parser):
-        args = parser.parse_args(["index", "--root", "/tmp", "--extensions", ".py", ".ts"])
+        args = parser.parse_args(
+            ["index", "--root", "/tmp", "--extensions", ".py", ".ts"]
+        )
         assert args.extensions == [".py", ".ts"]
 
     def test_index_with_force(self, parser):
@@ -71,7 +74,9 @@ class TestBuildParser:
         assert args.base_snapshot == "snap-123"
 
     def test_index_snapshot(self, parser):
-        args = parser.parse_args(["index", "--root", "/tmp", "--snapshot", "--snapshot-label", "v1"])
+        args = parser.parse_args(
+            ["index", "--root", "/tmp", "--snapshot", "--snapshot-label", "v1"]
+        )
         assert args.snapshot is True
         assert args.snapshot_label == "v1"
 
@@ -143,23 +148,20 @@ class TestBuildParser:
         assert args.verbose is True
 
     def test_query_command(self, parser):
-        args = parser.parse_args([
-            "query",
-            "--root",
-            "/tmp",
-            "--entity-type",
-            "function",
-            "--limit",
-            "10",
-        ])
+        args = parser.parse_args(
+            [
+                "query",
+                "--root",
+                "/tmp",
+                "--entity-type",
+                "function",
+                "--limit",
+                "10",
+            ]
+        )
         assert args.command == "query"
         assert args.entity_type == "function"
         assert args.limit == 10
-
-    def test_webhook_command(self, parser):
-        args = parser.parse_args(["webhook", "--payload", '{"event":"push"}'])
-        assert args.command == "webhook"
-        assert args.payload == '{"event":"push"}'
 
     def test_hooks_list_command(self, parser):
         args = parser.parse_args(["hooks", "list", "--root", "/tmp/repo"])
@@ -189,14 +191,16 @@ class TestBuildParser:
         assert args.dry_run is True
 
     def test_hooks_run_command(self, parser):
-        args = parser.parse_args([
-            "hooks",
-            "run",
-            "--hook",
-            "enterprise-nightly",
-            "--verbose",
-            "--dry-run",
-        ])
+        args = parser.parse_args(
+            [
+                "hooks",
+                "run",
+                "--hook",
+                "enterprise-nightly",
+                "--verbose",
+                "--dry-run",
+            ]
+        )
         assert args.command == "hooks"
         assert args.hooks_command == "run"
         assert args.hook == "enterprise-nightly"

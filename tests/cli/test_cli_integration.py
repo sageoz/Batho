@@ -1,4 +1,5 @@
 """End-to-end CLI integration tests."""
+
 from __future__ import annotations
 
 import json
@@ -8,10 +9,10 @@ import pytest
 
 from batho_cli import main
 
-
 # ---------------------------------------------------------------------------
 # Full workflows via main()
 # ---------------------------------------------------------------------------
+
 
 class TestCLIIntegration:
 
@@ -50,7 +51,9 @@ class TestCLIIntegration:
         assert (versioned_dir / "graph.json").exists()
         assert (versioned_dir / "bsg.json").exists()
 
-        bsg_payload = json.loads((versioned_dir / "bsg.json").read_text(encoding="utf-8"))
+        bsg_payload = json.loads(
+            (versioned_dir / "bsg.json").read_text(encoding="utf-8")
+        )
         assert isinstance(bsg_payload.get("quality_warnings"), list)
         assert bsg_payload.get("stats", {}).get("quality_warnings") == len(
             bsg_payload.get("quality_warnings", [])
@@ -69,15 +72,4 @@ class TestCLIIntegration:
         root = tmp_path / "repo"
         root.mkdir()
         rc = main(["snapshots", "--root", str(root)])
-        assert rc == 0
-
-    def test_webhook_via_main(self):
-        rc = main([
-            "webhook",
-            "--payload",
-            (
-                '{"event":"push","ref":"refs/heads/main","after":"abc123",'
-                '"repository":{"full_name":"u/r"},"commits":[]}'
-            ),
-        ])
         assert rc == 0

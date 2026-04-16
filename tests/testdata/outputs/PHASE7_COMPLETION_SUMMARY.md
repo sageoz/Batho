@@ -34,16 +34,6 @@ For each repository (simple_python, multi_language, flask_sample):
 - **invalid_configs/missing_fields.json** - Missing required fields
 - **invalid_configs/type_errors.json** - Type mismatch errors
 
-### Webhook Mock Data (`tests/testdata/outputs/webhooks/`)
-#### GitHub Webhooks
-- **github_push_main.json** - Push event to main branch
-- **github_pr_opened.json** - Pull request opened
-- **github_pr_merged.json** - Pull request merged
-
-#### Invalid Webhooks (for error testing)
-- **invalid_missing_fields.json** - Missing required fields
-- **invalid_wrong_format.json** - Type and format errors
-
 ### API Response Mock Data (`tests/testdata/outputs/api_responses/`)
 - **index_success.json** - Successful repository indexing response
 - **stats_response.json** - Repository statistics response
@@ -68,12 +58,6 @@ For each repository (simple_python, multi_language, flask_sample):
 ✅ Custom configurations cover different use cases
 ✅ Environment override documentation complete
 ✅ Invalid configurations generate expected errors
-
-### Webhook Validation
-✅ Realistic GitHub webhook payloads
-✅ Complete event coverage (push, PR open/close)
-✅ Invalid payloads for error testing
-✅ Schema compliance verified
 
 ### API Response Validation
 ✅ Success responses include all required fields
@@ -126,7 +110,6 @@ tests/testdata/outputs/
 │   ├── custom_configs/        # Valid custom configurations
 │   ├── env_override_configs/  # Environment override examples
 │   └── invalid_configs/       # Invalid configurations for testing
-├── webhooks/                  # GitHub webhook mock data
 └── api_responses/             # API response mock data
 ```
 
@@ -136,7 +119,6 @@ tests/testdata/outputs/
 1. Run `uv run batho.py index --root tests/testdata/repositories/{repo_name}` for each repository
 2. Run `uv run python generate_repomap_outputs.py` to regenerate RepoMap outputs
 3. Update configuration samples if Batho's defaults change
-4. Regenerate webhook mock data if GitHub API changes
 
 ### Version Control
 - All output files are version controlled

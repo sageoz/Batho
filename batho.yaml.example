@@ -85,62 +85,6 @@ schemas:
   index_metadata: index-metadata.v1
   file_cache: file-cache.v1
 
-webhook:
-  enabled: false            # Safer default; set true to activate webhook processing
-
-  server:
-    host: 0.0.0.0
-    port: 8080
-    workers: 4
-    endpoint: /webhook
-    health_endpoint: /health
-
-  # REQUIRED when webhook.enabled=true
-  # Example GitHub:
-  # repository:
-  #   name: your-org/your-repo
-  #   platform: github
-  #   secret: ${WEBHOOK_SECRET}
-  #   branches: [main, develop]
-  # Example GitLab:
-  # repository:
-  #   name: your-group/your-repo
-  #   platform: gitlab
-  #   secret: ${WEBHOOK_SECRET}
-  #   branches: [main]
-  repository:
-    name: your-org/your-repo
-    platform: github        # github | gitlab
-    secret: ${WEBHOOK_SECRET}
-    github_secret: null     # Optional provider-specific override
-    gitlab_token: null      # Optional provider-specific override
-    branches: [main, develop]
-    path: null              # Optional repo path override
-    allowed_ips: []         # Optional repository-level allowlist (IPs/CIDRs)
-    rate_limit_per_hour: 100
-
-  processing:
-    queue_backend: celery   # celery | sync
-    celery_broker_url: memory://
-    celery_result_backend: cache+memory://
-    task_always_eager: true
-    task_store_eager_result: false
-    batch_size: 100
-    timeout_seconds: 300
-    retry_attempts: 3
-
-  rate_limit:
-    requests_per_hour: 100  # Global fallback limit
-    burst_size: 10
-
-  logging:
-    level: INFO
-    file: null              # e.g. .ctn/webhook.log
-
-  github_secret: null       # Optional top-level secret override
-  gitlab_token: null        # Optional top-level token override
-  allowed_ips: []           # Optional global allowlist (IPs/CIDRs)
-
 cloud_sync:
   enabled: false
   endpoint: https://sync.batho.dev/v1

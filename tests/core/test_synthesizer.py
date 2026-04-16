@@ -35,13 +35,13 @@ class TestSynthesizer:
 
         first = record_failure_rule(
             ctn_dir=ctn_dir,
-            source="webhook.processor",
+            source="cli.patch.processor",
             error_message="Base snapshot not found",
             changed_files=["src/main.py"],
         )
         second = record_failure_rule(
             ctn_dir=ctn_dir,
-            source="webhook.processor",
+            source="cli.patch.processor",
             error_message="Base snapshot not found",
             changed_files=["src/main.py"],
         )

@@ -5,7 +5,7 @@ This package provides the core functionality for analyzing code repositories,
 building dependency graphs, and generating contextual information for LLMs.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 from batho.config import get_config_cached, reload_config
 from batho.context.bsg_map import BSGMap
@@ -26,12 +26,6 @@ from batho.time_machine import (
     load_snapshot,
 )
 from batho.utils.logging import get_logger
-from batho.webhook import (
-    WebhookConfig,
-    WebhookProcessor,
-    WebhookServer,
-    parse_webhook_event,
-)
 
 __all__ = [
     # Core indexing
@@ -53,11 +47,6 @@ __all__ = [
     "incremental_patch",
     "list_snapshots",
     "load_snapshot",
-    # Webhooks
-    "WebhookConfig",
-    "WebhookProcessor",
-    "WebhookServer",
-    "parse_webhook_event",
     # Config
     "get_config_cached",
     "reload_config",

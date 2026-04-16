@@ -1,13 +1,20 @@
 """Tests for CLI command functions."""
+
 from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sqlite3
+from pathlib import Path
 
 import pytest
 
+from batho.config import get_config_cached
+from batho.context.bsg_map import BSGMap
+from batho.context.codegraph import InMemoryGraph
+from batho.context.incremental import GitDiffEntry
+from batho.context.schema import Entity, EntityType
+from batho.time_machine import FileChangeTracker, create_snapshot
 from batho_cli import (
     cmd_hooks_install,
     cmd_hooks_list,
@@ -24,19 +31,12 @@ from batho_cli import (
     cmd_storage_rebuild_indexes,
     cmd_storage_stats,
     cmd_storage_verify,
-    cmd_webhook,
 )
-from batho.config import get_config_cached
-from batho.context.bsg_map import BSGMap
-from batho.context.codegraph import InMemoryGraph
-from batho.context.incremental import GitDiffEntry
-from batho.context.schema import Entity, EntityType
-from batho.time_machine import FileChangeTracker, create_snapshot
-
 
 # ---------------------------------------------------------------------------
 # cmd_index
 # ---------------------------------------------------------------------------
+
 
 class TestCmdIndex:
 
@@ -151,10 +151,14 @@ class TestCmdIndex:
         current_id = str(index_payload.get("current_index_id"))
         entry = index_payload.get("indexes", {}).get(current_id, {})
         stats = entry.get("stats", {})
-        bsg_payload = json.loads((ctn_dir / current_id / "bsg.json").read_text(encoding="utf-8"))
+        bsg_payload = json.loads(
+            (ctn_dir / current_id / "bsg.json").read_text(encoding="utf-8")
+        )
 
         assert "bsg_quality_warnings" in stats
-        assert stats["bsg_quality_warnings"] == len(bsg_payload.get("quality_warnings", []))
+        assert stats["bsg_quality_warnings"] == len(
+            bsg_payload.get("quality_warnings", [])
+        )
         assert "bsg_quality_warning_samples" in stats
 
     def test_index_overview_includes_evolution_ledger_insights(
@@ -330,7 +334,9 @@ class TestCmdIndex:
         assert entry.get("stats", {}).get("incremental") is True
         assert entry.get("stats", {}).get("changes_applied") == 1
 
-    def test_index_streaming_serialization_mode(self, simple_python_repo: Path, monkeypatch):
+    def test_index_streaming_serialization_mode(
+        self, simple_python_repo: Path, monkeypatch
+    ):
         monkeypatch.setenv("BATHO_BSG_SERIALIZATION_METHOD", "streaming")
         get_config_cached.cache_clear()
 
@@ -357,17 +363,19 @@ class TestCmdIndex:
         ctn_dir = simple_python_repo / ".ctn"
         index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
         current_id = str(index_payload.get("current_index_id"))
-        bsg_payload = json.loads((ctn_dir / current_id / "bsg.json").read_text(encoding="utf-8"))
+        bsg_payload = json.loads(
+            (ctn_dir / current_id / "bsg.json").read_text(encoding="utf-8")
+        )
         assert "nodes" in bsg_payload
         assert "edges" in bsg_payload
         assert isinstance(bsg_payload.get("quality_warnings"), list)
         get_config_cached.cache_clear()
 
 
-
 # ---------------------------------------------------------------------------
 # cmd_stats
 # ---------------------------------------------------------------------------
+
 
 class TestCmdStats:
 
@@ -459,6 +467,7 @@ class TestCmdStats:
 # cmd_invalidate
 # ---------------------------------------------------------------------------
 
+
 class TestCmdInvalidate:
 
     def test_invalidate_clears_cache(self, simple_python_repo: Path, capsys):
@@ -479,108 +488,6 @@ class TestCmdInvalidate:
         args = argparse.Namespace(root=str(root))
         result = cmd_invalidate(args)
         assert result == 0
-
-
-# ---------------------------------------------------------------------------
-# cmd_webhook
-# ---------------------------------------------------------------------------
-
-class TestCmdWebhook:
-
-    def test_valid_payload(self, capsys):
-        args = argparse.Namespace(
-            payload=(
-                '{"event":"push","ref":"refs/heads/main","after":"abc123",'
-                '"repository":{"full_name":"u/r"},"commits":[]}'
-            )
-        )
-        result = cmd_webhook(args)
-        assert result == 0
-
-        captured = capsys.readouterr()
-        # cmd_webhook prints JSON via json.dumps with indent=2; extract the JSON block
-        lines = captured.out.strip().split('\n')
-        # Find start of JSON object
-        json_start = None
-        for i, line in enumerate(lines):
-            if line.strip() == '{':
-                json_start = i
-                break
-        if json_start is not None:
-            json_text = '\n'.join(lines[json_start:])
-            data = json.loads(json_text)
-            assert data["event"] == "push"
-            assert data["status"] == "parsed"
-
-    def test_invalid_payload(self):
-        args = argparse.Namespace(payload="not json{{{")
-        result = cmd_webhook(args)
-        assert result == 1
-
-    def test_valid_payload_with_root_processes_synchronously(
-        self,
-        tmp_path: Path,
-        monkeypatch,
-        capsys,
-    ):
-        root = tmp_path / "repo"
-        root.mkdir()
-
-        source_file = root / "a.py"
-        source_file.write_text("print('hello')\n", encoding="utf-8")
-
-        ctn_dir = root / ".ctn"
-        ctn_dir.mkdir()
-
-        graph = InMemoryGraph()
-        graph.add_entity(
-            Entity(
-                type=EntityType.FUNCTION,
-                name="hello",
-                file=str(source_file),
-                start_line=1,
-                end_line=1,
-                metadata={"language": "python"},
-            )
-        )
-        bsg_map = BSGMap.build(graph, root=str(root))
-        snapshot_id = create_snapshot(ctn_dir, root, graph, bsg_map, label="base")
-
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(
-            "batho.webhook.processor.incremental_patch",
-            lambda _ctn, _snapshot, _changes: {
-                "success": True,
-                "new_snapshot_id": f"{snapshot_id}-next",
-            },
-        )
-
-        payload = {
-            "event": "push",
-            "ref": "refs/heads/main",
-            "after": "abc123",
-            "repository": {"full_name": "u/r"},
-            "commits": [{"modified": ["a.py"]}],
-        }
-        args = argparse.Namespace(
-            root=str(root),
-            payload=json.dumps(payload),
-            headers=json.dumps({"X-GitHub-Event": "push"}),
-        )
-
-        result = cmd_webhook(args)
-        assert result == 0
-
-        lines = capsys.readouterr().out.strip().split("\n")
-        json_start = None
-        for i, line in enumerate(lines):
-            if line.strip() == "{":
-                json_start = i
-                break
-        assert json_start is not None
-        data = json.loads("\n".join(lines[json_start:]))
-        assert data["status"] == "processed"
-        assert data.get("processing", {}).get("status") == "processed"
 
 
 class TestCmdPatch:
@@ -774,7 +681,9 @@ class TestCmdStorageAndQuery:
         ctn_dir = simple_python_repo / ".ctn"
         registry_db = ctn_dir / "artifact_registry.db"
         with sqlite3.connect(str(registry_db)) as conn:
-            conn.execute("UPDATE artifacts SET updated_at = '2000-01-01T00:00:00+00:00'")
+            conn.execute(
+                "UPDATE artifacts SET updated_at = '2000-01-01T00:00:00+00:00'"
+            )
             conn.commit()
 
         capsys.readouterr()
@@ -935,8 +844,7 @@ class TestCmdHooks:
         assert (root / ".batho" / "hooks.yaml").exists()
         assert "pre-commit" in payload.get("installed", [])
         assert any(
-            "enterprise-nightly" in warning
-            for warning in payload.get("warnings", [])
+            "enterprise-nightly" in warning for warning in payload.get("warnings", [])
         )
 
         run_args = argparse.Namespace(

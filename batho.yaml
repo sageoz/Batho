@@ -86,31 +86,3 @@ bsg:
       context_ttl_days: 90
       max_snapshots: 500
       max_patches: 5000
-
-webhook:
-  enabled: false
-  server:
-    host: 0.0.0.0
-    port: 8080
-    workers: 4
-    endpoint: /webhook
-    health_endpoint: /health
-  repository: null
-  processing:
-    queue_backend: celery
-    celery_broker_url: memory://
-    celery_result_backend: cache+memory://
-    task_always_eager: true
-    task_store_eager_result: false
-    batch_size: 100
-    timeout_seconds: 300
-    retry_attempts: 3
-  rate_limit:
-    requests_per_hour: 100
-    burst_size: 10
-  logging:
-    level: INFO
-    file: null
-  github_secret: null
-  gitlab_token: null
-  allowed_ips: []
