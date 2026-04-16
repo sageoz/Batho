@@ -23,6 +23,7 @@ class TestBSGRules:
     def test_apply_inline_custom_rule_updates_metadata(self, mock_graph):
         rules_cfg = {
             "enabled": True,
+            "auto_load_all_plugins": False,
             "builtin_plugins": [],
             "custom_rules_inline": [
                 {
@@ -63,6 +64,7 @@ rules:
 
         rules_cfg = {
             "enabled": True,
+            "auto_load_all_plugins": False,
             "builtin_plugins": [],
             "custom_rules_path": str(custom_rules),
         }
@@ -81,6 +83,7 @@ rules:
     def test_disabled_rule_is_not_applied(self, mock_graph):
         rules_cfg = {
             "enabled": True,
+            "auto_load_all_plugins": False,
             "builtin_plugins": [],
             "disabled_rules": ["do-not-apply"],
             "custom_rules_inline": [
@@ -140,6 +143,7 @@ rules:
 
         rules_cfg = {
             "enabled": True,
+            "auto_load_all_plugins": False,
             "builtin_plugins": [],
             "custom_rules_path": str(bad_rules),
         }
@@ -153,6 +157,7 @@ rules:
     def test_rule_shadowing_override_updates_custom_rule(self, mock_graph):
         rules_cfg = {
             "enabled": True,
+            "auto_load_all_plugins": False,
             "builtin_plugins": [],
             "custom_rules_inline": [
                 {
@@ -250,6 +255,7 @@ rules:
     ):
         rules_cfg = {
             "enabled": True,
+            "auto_load_all_plugins": False,
             "builtin_plugins": [],
             "custom_rules_inline": [
                 {
@@ -325,6 +331,7 @@ rules:
 
         rules_cfg = {
             "enabled": True,
+            "auto_load_all_plugins": False,
             "builtin_plugins": [],
             "custom_rules_inline": [
                 {
@@ -386,6 +393,7 @@ rules:
 
         rules_cfg = {
             "enabled": True,
+            "auto_load_all_plugins": False,
             "builtin_plugins": [],
             "custom_rules_inline": [
                 {
@@ -455,6 +463,7 @@ rules:
             root_path=tmp_path,
             rules_config={
                 "enabled": True,
+                "auto_load_all_plugins": False,
                 "builtin_plugins": [],
                 "custom_rules_inline": [],
             },

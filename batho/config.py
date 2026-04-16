@@ -32,6 +32,7 @@ DEFAULT_IGNORE_FILES: list[str] | None = None
 DEFAULT_METRICS_OUTPUT: str | None = ".ctn/metrics.json"
 DEFAULT_ROOT_CONFIG_FILE = "batho.yaml"
 DEFAULT_RULES_ENABLED = True
+DEFAULT_RULES_AUTO_LOAD_ALL_PLUGINS = True
 DEFAULT_RULES_INTERCEPTOR_PLUGINS = (
     "bsg_silent_failure_catcher",
     "bsg_dependency_blast_radius",
@@ -140,6 +141,7 @@ class FlagsConfig(BaseModel):
 
 class RulesConfig(BaseModel):
     enabled: bool = Field(default=DEFAULT_RULES_ENABLED)
+    auto_load_all_plugins: bool = Field(default=DEFAULT_RULES_AUTO_LOAD_ALL_PLUGINS)
     builtin_plugins: list[str] = Field(
         default_factory=lambda: list(DEFAULT_RULES_BUILTIN_PLUGINS)
     )
@@ -434,6 +436,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
         "flags": {"fail_on_warning": False, "strict": False, "audit_log_enabled": True},
         "rules": {
             "enabled": DEFAULT_RULES_ENABLED,
+            "auto_load_all_plugins": DEFAULT_RULES_AUTO_LOAD_ALL_PLUGINS,
             "builtin_plugins": list(DEFAULT_RULES_BUILTIN_PLUGINS),
             "disabled_rules": [],
             "custom_rules_path": None,
@@ -916,7 +919,8 @@ flags:
   audit_log_enabled: true
 
 rules:
-  enabled: false
+  enabled: true
+  auto_load_all_plugins: true
   builtin_plugins:
     - bsg_core
     - bsg_silent_failure_catcher

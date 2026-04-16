@@ -1198,8 +1198,18 @@ def load_effective_rules(
         if str(name).strip()
     }
 
+    auto_load_all = bool(cfg.get("auto_load_all_plugins", True))
     builtin_plugins = cfg.get("builtin_plugins")
-    if builtin_plugins is None:
+
+    if auto_load_all:
+        plugin_catalog = _discover_packaged_plugins()
+        builtin_plugins = list(plugin_catalog.keys())
+        log.info(
+            "bsg_auto_loading_all_plugins",
+            plugin_count=len(builtin_plugins),
+            plugins=builtin_plugins,
+        )
+    elif builtin_plugins is None:
         builtin_plugins = ["bsg_core"]
 
     def _handle_error(message: str) -> None:
@@ -1406,8 +1416,23 @@ def _to_relative_posix(file_path: str, root_path: Path) -> str:
 def _pattern_matches(text: str, patterns: tuple[str, ...]) -> bool:
     if not patterns:
         return True
+    text_lower = text.lower()
     for pattern in patterns:
-        if fnmatch.fnmatch(text.lower(), pattern.lower()):
+        pattern_lower = pattern.lower()
+        # Handle ** glob pattern (matches zero or more directory levels)
+        if "**" in pattern_lower:
+            # Convert **/*.py to */*.py and *.py and check both
+            # This handles cases like **/pyproject.toml matching both
+            # pyproject.toml and src/pyproject.toml
+            pattern_variants = [
+                pattern_lower,
+                pattern_lower.replace("**/", ""),  # */pyproject.toml -> pyproject.toml
+                pattern_lower.replace("**/", "*/"),  # keep the * prefix
+            ]
+            for variant in pattern_variants:
+                if fnmatch.fnmatch(text_lower, variant):
+                    return True
+        elif fnmatch.fnmatch(text_lower, pattern_lower):
             return True
     return False
 

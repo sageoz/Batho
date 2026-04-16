@@ -36,7 +36,8 @@ flags:
   audit_log_enabled: true
 
 rules:
-  enabled: false
+  enabled: true
+  auto_load_all_plugins: true
   builtin_plugins:
     - bsg_core
     - bsg_silent_failure_catcher
