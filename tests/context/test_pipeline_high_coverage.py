@@ -237,7 +237,7 @@ def test_build_graph_parallel_collects_valid_results(tmp_path: Path, monkeypatch
             assert chunksize == 3
             return [("src/a.py", [], [], False), None]
 
-    monkeypatch.setattr("multiprocessing.Pool", _Pool)
+    monkeypatch.setattr("multiprocessing.context.SpawnContext.Pool", _Pool)
 
     results, errors = pipeline.build_graph_parallel(
         candidates=[(src, "src/a.py")],
@@ -270,7 +270,7 @@ def test_build_graph_parallel_falls_back_when_pool_is_unavailable(
             _ = exc_type, exc, tb
             return False
 
-    monkeypatch.setattr("multiprocessing.Pool", _ImportErrorPool)
+    monkeypatch.setattr("multiprocessing.context.SpawnContext.Pool", _ImportErrorPool)
     sentinel = ([("fallback.py", [], [], False)], 9)
     monkeypatch.setattr(pipeline, "build_graph_sequential", lambda *_args, **_kwargs: sentinel)
 

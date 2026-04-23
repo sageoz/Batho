@@ -258,14 +258,23 @@ def build_graph_parallel(
             )
         )
 
-    # Use multiprocessing for parallel processing
+    # Use multiprocessing for parallel processing.
+    #
+    # We explicitly use the "spawn" start method instead of the platform
+    # default (fork on Linux). Forking from a multi-threaded Python process
+    # (e.g. when the indexer is invoked concurrently from multiple threads,
+    # as in the parallel-processing performance test) can deadlock the
+    # worker children because they inherit locked mutexes from threads that
+    # no longer exist in the child. "spawn" starts a fresh interpreter and
+    # is immune to this hazard at the cost of slightly slower pool startup.
     try:
-        from multiprocessing import Pool
+        import multiprocessing as _mp
 
         from batho.config import get_config_cached
 
         worker_log_config = dict(get_config_cached().get("logging", {}))
-        with Pool(
+        ctx = _mp.get_context("spawn")
+        with ctx.Pool(
             processes=actual_workers,
             initializer=_initialize_worker_logging,
             initargs=(worker_log_config,),
