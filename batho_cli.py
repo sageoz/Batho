@@ -3515,6 +3515,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plugins_validate.set_defaults(func=cmd_plugins_validate)
 
+    # v2 engine: fixture runner, strict validation, trace/profile
+    from batho.bsg.plugins_cli import register_cli_subcommands as _register_bsg_plugin_subcommands
+
+    _register_bsg_plugin_subcommands(plugins_sub)
+
     return parser
 
 

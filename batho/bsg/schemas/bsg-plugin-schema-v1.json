@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://batho.dev/schemas/bsg-plugin-schema-v1.json",
+  "$id": "https://sageoz.org/batho/schemas/bsg-plugin-schema-v1.json",
   "title": "Batho BSG Plugin Schema v1",
+  "description": "Unified BSG plugin schema. Includes plugin dependencies, numeric severity scoring, conditional actions (when), regex matchers, cross-entity metadata joins, and extended control/data-flow edges.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -34,6 +35,14 @@
     },
     "description": {
       "type": "string"
+    },
+    "depends_on": {
+      "type": "array",
+      "description": "Plugin IDs this plugin depends on. Loader enforces topological order and warns if any dependency is missing.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "rules": {
       "type": "array",
@@ -72,11 +81,22 @@
           "type": "string",
           "enum": ["info", "warning", "block"]
         },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Fine-grained numeric severity score (0–1000) independent of the severity bucket."
+        },
         "priority": {
           "type": "integer"
         },
         "enabled": {
           "type": "boolean"
+        },
+        "tags": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "Free-form classification tags used by the catalog generator and CLI filters."
         },
         "matchers": {
           "$ref": "#/$defs/matchers"
@@ -119,6 +139,11 @@
           },
           "description": "Patterns to match in file content (e.g., dependency names in package.json)"
         },
+        "regex_patterns": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/regexMatcher"},
+          "description": "Compiled regex patterns applied to entity name, file path, signature, or metadata fields."
+        },
         "usn_tags_any": {
           "type": "array",
           "items": {
@@ -137,6 +162,33 @@
         }
       }
     },
+    "regexMatcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern"],
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Python regex pattern; compiled once at plugin load time."
+        },
+        "target": {
+          "type": "string",
+          "enum": ["name", "file_path", "signature", "metadata"],
+          "default": "name",
+          "description": "Field the regex is evaluated against."
+        },
+        "metadata_key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "When target=metadata, the metadata key to stringify and match."
+        },
+        "case_insensitive": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
     "metadataCondition": {
       "type": "object",
       "additionalProperties": false,
@@ -149,7 +201,18 @@
         },
         "operator": {
           "type": "string",
-          "enum": ["exists", "length_gt", "contains_any", "in", "eq"],
+          "enum": [
+            "exists",
+            "length_gt",
+            "length_lt",
+            "contains_any",
+            "contains_all",
+            "in",
+            "not_in",
+            "eq",
+            "neq",
+            "regex_match"
+          ],
           "description": "Comparison operator"
         },
         "value": {
@@ -193,7 +256,14 @@
             "DEPENDS_ON_API",
             "REFERENCED_IN",
             "CLEANED_BY",
-            "CONTAINED_WITHIN"
+            "CONTAINED_WITHIN",
+            "CONTROLS",
+            "CALLS_ASYNC",
+            "RAISES",
+            "CATCHES",
+            "READS",
+            "WRITES",
+            "MUTATES"
           ]
         },
         "direction": {
@@ -222,6 +292,11 @@
             "minLength": 1
           }
         },
+        "target_metadata_equals": {
+          "type": "object",
+          "description": "Cross-entity metadata join: target entity must have these metadata key/value pairs.",
+          "additionalProperties": true
+        },
         "min_count": {
           "type": "integer",
           "minimum": 1,
@@ -229,10 +304,26 @@
         }
       }
     },
+    "when": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional condition gate applied to actions. If provided, actions only fire when the condition holds.",
+      "properties": {
+        "all": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/metadataCondition"}
+        },
+        "any": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/metadataCondition"}
+        }
+      }
+    },
     "actions": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "when": {"$ref": "#/$defs/when"},
         "metadata": {
           "type": "object"
         },

@@ -2,11 +2,11 @@
   <img src="assets/batho.svg" alt="Batho" width="160" height="160" />
 </p>
 
-<h1 align="center">Batho</h1>
+<h1 align="center">B.A.T.H.O</h1>
 
 <p align="center">
-  <strong>Codebase Intelligence for AI-Powered Development</strong><br>
-  Turn any codebase into structured knowledge your LLMs, agents, and tools can actually use.
+  <strong>Bidirectional AST Traversal & Hypergraph Orchestrator</strong><br>
+  <b>BATHO</b> indexes your codebase, compresses the result for LLM context windows, and tracks changes over time.
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 <br>
 
-> **Batho** indexes your codebase, compresses the result for LLM context windows, and tracks changes over time.
+> A code intelligence engine that transforms raw, massive codebases into queryable, Time-Aware Structured Graph. By safely parsing source code into an AST and extracting a highly structured relational Hypergraph, Batho acts as the ultimate memory layer for your repositories and codebase. Whether you are generating token-budgeted context to prevent AI agent amnesia, enforcing governance via webhook orchestration, or tracking code changes over time using time-based structured graph snapshots.
 
 
 ---
@@ -63,12 +63,11 @@ Modern AI tools need **structured code understanding** — not just raw file con
 | What you get | Why it matters |
 |---|---|
 | **40+ language AST parsing** | One tool for polyglot repos — Python, TypeScript, Rust, Go, Java, and more |
-| **10:1 context compression** | Fit entire codebases into LLM context windows |
+| **10x context compression** | Fit entire codebases into LLM context windows |
 | **Time Machine snapshots** | Track how your codebase evolves between releases |
 | **Zero Code Execution** | Safe to run in CI, pre-commit, or on untrusted repos |
 | **Caching** | mtime+SHA skips unchanged files — re-indexes in seconds |
 | **CI/CD Pipeline Hooks** | Turnkey GitHub Actions and GitLab CI templates |
-| **Automated Documentation** | Generate docs/context from your codebase |
 | **Incremental patching** | 10-100x faster updates with complete lineage tracking |
 
 ## How It Works
