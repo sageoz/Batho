@@ -56,6 +56,31 @@ That's it. Batho scans your codebase, extracts every function, class, import, an
 
 ---
 
+## Use in GitHub Actions (coming soon)
+
+A first-party composite GitHub Action and reusable workflow are staged
+under [`cicd/`](cicd/) and documented in
+[`docs/github-actions.md`](docs/github-actions.md). They are not yet
+activated at the repo root — once published, consumers will be able to run:
+
+```yaml
+jobs:
+  batho-index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: sageoz/batho@v1
+        with:
+          root: "."
+```
+
+to index their repo, write a Step Summary, and upload the `.ctn/` artifacts.
+See [`cicd/README.md`](cicd/README.md) for the activation checklist.
+
+---
+
 ## Why Batho?
 
 Modern AI tools need **structured code understanding** — not just raw file contents. Batho bridges that gap.

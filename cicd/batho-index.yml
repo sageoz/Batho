@@ -1,0 +1,106 @@
+name: Batho Index (reusable)
+
+# Reusable workflow that wraps the Batho composite action.
+# Call from a consumer repo with:
+#
+#   jobs:
+#     batho:
+#       uses: sageoz/batho/.github/workflows/batho-index.yml@v1
+#       with:
+#         root: "."
+#
+# See docs/github-actions.md for the full inputs reference.
+
+on:
+  workflow_call:
+    inputs:
+      root:
+        description: "Path to the repo root to index."
+        required: false
+        type: string
+        default: "."
+      python-version:
+        description: "Python version to install."
+        required: false
+        type: string
+        default: "3.12"
+      batho-ref:
+        description: "Git ref of Batho to install, or empty to use the action's checkout."
+        required: false
+        type: string
+        default: ""
+      extensions:
+        description: "Space-separated file extensions to include."
+        required: false
+        type: string
+        default: ""
+      output-dir:
+        description: "Batho output directory (relative to root)."
+        required: false
+        type: string
+        default: ".ctn"
+      artifact-name:
+        description: "Name of the uploaded workflow artifact."
+        required: false
+        type: string
+        default: "batho-index"
+      artifact-retention-days:
+        description: "How long to retain the uploaded artifact (days)."
+        required: false
+        type: string
+        default: "7"
+      upload-artifact:
+        description: "Upload the output directory as a workflow artifact."
+        required: false
+        type: string
+        default: "true"
+      summary:
+        description: "Write a GitHub Step Summary."
+        required: false
+        type: string
+        default: "true"
+      extra-args:
+        description: "Extra arguments appended to `batho index`."
+        required: false
+        type: string
+        default: ""
+      runs-on:
+        description: "Runner label for the job."
+        required: false
+        type: string
+        default: "ubuntu-latest"
+
+    outputs:
+      index-id:
+        description: "Batho index id produced by this run."
+        value: ${{ jobs.batho-index.outputs.index-id }}
+
+permissions:
+  contents: read
+
+jobs:
+  batho-index:
+    name: Batho Index
+    runs-on: ${{ inputs.runs-on }}
+    outputs:
+      index-id: ${{ steps.batho.outputs.index-id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Batho
+        id: batho
+        uses: sageoz/batho@v1
+        with:
+          root: ${{ inputs.root }}
+          python-version: ${{ inputs.python-version }}
+          batho-ref: ${{ inputs.batho-ref }}
+          extensions: ${{ inputs.extensions }}
+          output-dir: ${{ inputs.output-dir }}
+          artifact-name: ${{ inputs.artifact-name }}
+          artifact-retention-days: ${{ inputs.artifact-retention-days }}
+          upload-artifact: ${{ inputs.upload-artifact }}
+          summary: ${{ inputs.summary }}
+          extra-args: ${{ inputs.extra-args }}
