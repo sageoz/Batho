@@ -1104,7 +1104,6 @@ MIT — see [LICENSE](LICENSE)
 
 ## 🎉 Thank You!
 
-Batho v1.0.0 is here thanks to our amazing community of contributors and users. We're excited to see what you'll build with it!
 
 **Ready to get started?** [Install Batho](#installation) and index your first project in 30 seconds.
 
