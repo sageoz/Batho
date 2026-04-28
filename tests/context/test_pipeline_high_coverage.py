@@ -213,7 +213,7 @@ def test_build_graph_parallel_collects_valid_results(tmp_path: Path, monkeypatch
     src = tmp_path / "a.py"
     src.write_text("print('a')\n", encoding="utf-8")
 
-    monkeypatch.setattr(pipeline, "_read_file_content", lambda *_args, **_kwargs: b"print('a')\n")
+    monkeypatch.setattr(pipeline, "read_file_bytes", lambda *_args, **_kwargs: b"print('a')\n")
     monkeypatch.setattr(pipeline.os, "cpu_count", lambda: 0)
 
     class _Pool:
@@ -255,7 +255,7 @@ def test_build_graph_parallel_falls_back_when_pool_is_unavailable(
     src = tmp_path / "fallback.py"
     src.write_text("print('fallback')\n", encoding="utf-8")
 
-    monkeypatch.setattr(pipeline, "_read_file_content", lambda *_args, **_kwargs: b"x")
+    monkeypatch.setattr(pipeline, "read_file_bytes", lambda *_args, **_kwargs: b"x")
 
     class _ImportErrorPool:
         def __init__(self, processes: int, initializer=None, initargs=()):
@@ -316,7 +316,7 @@ def test_build_graph_sequential_counts_errors_and_success(tmp_path: Path, monkey
         def stat():
             raise OSError("stat failed")
 
-    def _read_content(filepath: str, _max_size_kb: int):
+    def _read_content(filepath: str, max_size_kb: int | None = None, **kwargs):
         if filepath == "none.py":
             return None
         return b"print('data')"
@@ -327,7 +327,7 @@ def test_build_graph_sequential_counts_errors_and_success(tmp_path: Path, monkey
             return None
         return (filepath, [], [], False)
 
-    monkeypatch.setattr(pipeline, "_read_file_content", _read_content)
+    monkeypatch.setattr(pipeline, "read_file_bytes", _read_content)
     monkeypatch.setattr(pipeline, "process_file_worker", _worker)
 
     results, errors = pipeline.build_graph_sequential(

@@ -10,37 +10,37 @@ from batho.context.extractor import (
     MarkupConfigExtractor,
     _clean_docstring,
 )
-from batho.utils.file_io import _read_file_bytes
+from batho.utils.file_io import read_file_bytes
 from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 
 
 # ---------------------------------------------------------------------------
-# _read_file_bytes
+# read_file_bytes (with normalize_encoding=True)
 # ---------------------------------------------------------------------------
 
 class TestReadFileBytes:
-
+    """Test read_file_bytes utility."""
     def test_read_normal_file(self, tmp_path: Path):
         f = tmp_path / "test.py"
         f.write_text("x = 1\n")
-        result = _read_file_bytes(str(f))
+        result = read_file_bytes(str(f), normalize_encoding=True)
         assert result is not None
         assert b"x = 1" in result
 
     def test_oversized_file_returns_none(self, tmp_path: Path):
         f = tmp_path / "big.py"
         f.write_bytes(b"x" * 600_000)  # > 500KB
-        result = _read_file_bytes(str(f), max_size_kb=500)
+        result = read_file_bytes(str(f), max_size_kb=500, normalize_encoding=True)
         assert result is None
 
     def test_nonexistent_file_returns_none(self):
-        result = _read_file_bytes("/no/such/file.py")
+        result = read_file_bytes("/no/such/file.py", normalize_encoding=True)
         assert result is None
 
     def test_normalizes_to_utf8(self, tmp_path: Path):
         f = tmp_path / "latin.py"
         f.write_bytes("café".encode("latin-1"))
-        result = _read_file_bytes(str(f))
+        result = read_file_bytes(str(f), normalize_encoding=True)
         assert result is not None
         # Should be valid UTF-8
         result.decode("utf-8")

@@ -31,7 +31,7 @@ from typing import Any, Callable, Dict, Iterable, Optional
 
 import batho.utils.memory_monitor
 from batho.config import get_config_cached
-from batho.utils.file_io import _read_file_content, read_file_bytes
+from batho.utils.file_io import read_file_bytes
 from batho.utils.hash import compute_bytes_hash
 from batho.utils.ignore import is_ignored, load_ignore_spec
 from batho.utils.logging import get_logger
@@ -287,8 +287,8 @@ class IncrementalGraphUpdater:
                 self.logger.warning("file_not_found", file_path=file_path)
                 return
 
-            content = _read_file_content(
-                file_path, get_config_cached()["indexer"]["max_file_size_kb"]
+            content = read_file_bytes(
+                file_path, max_size_kb=get_config_cached()["indexer"]["max_file_size_kb"], detect_binary=True
             )
             if content is None:
                 self.logger.warning("file_read_failed", file_path=file_path)
@@ -795,7 +795,7 @@ class CodeGraphIndexer:
             else get_config_cached()["indexer"]["max_file_size_kb"]
         )
 
-        content = _read_file_content(filepath, configured_max_file_size_kb)
+        content = read_file_bytes(filepath, max_size_kb=configured_max_file_size_kb, detect_binary=True)
         if content is None:
             return [], []
 

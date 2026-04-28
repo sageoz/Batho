@@ -20,7 +20,7 @@ from typing import Any
 from batho.context.cache import ASTCache
 from batho.context.extractor import ASTExtractor
 from batho.context.schema import Entity, Relationship
-from batho.utils.file_io import _read_file_content
+from batho.utils.file_io import read_file_bytes
 from batho.utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__, component="pipeline")
@@ -233,7 +233,7 @@ def build_graph_parallel(
             logger.debug("skipping_large_file", filepath=filepath, size_kb=size // 1024)
             continue
 
-        content = _read_file_content(filepath, configured_max_file_size_kb)
+        content = read_file_bytes(filepath, max_size_kb=configured_max_file_size_kb, detect_binary=True)
         if content is None:
             continue
 
@@ -347,7 +347,7 @@ def build_graph_sequential(
             logger.debug("skipping_large_file", filepath=filepath, size_kb=size // 1024)
             continue
 
-        content = _read_file_content(filepath, configured_max_file_size_kb)
+        content = read_file_bytes(filepath, max_size_kb=configured_max_file_size_kb, detect_binary=True)
         if content is None:
             errors += 1
             continue

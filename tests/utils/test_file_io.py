@@ -91,23 +91,4 @@ def test_write_atomically_ignores_temp_cleanup_failure(tmp_path: Path, monkeypat
     assert file_io.write_atomically(target, "content") is False
 
 
-def test_legacy_read_wrappers_delegate_to_read_file_bytes(monkeypatch) -> None:
-    calls: list[tuple[str, int | None, bool, bool]] = []
-
-    def _fake_read(
-        filepath: str,
-        max_size_kb: int | None = None,
-        normalize_encoding: bool = True,
-        detect_binary: bool = False,
-    ) -> bytes:
-        calls.append((filepath, max_size_kb, normalize_encoding, detect_binary))
-        return b"ok"
-
-    monkeypatch.setattr(file_io, "read_file_bytes", _fake_read)
-
-    assert file_io._read_file_bytes("a.py", max_size_kb=10) == b"ok"
-    assert file_io._read_file_content("b.py", max_size_kb=20) == b"ok"
-    assert calls == [
-        ("a.py", 10, True, False),
-        ("b.py", 20, True, True),
-    ]
+# Legacy wrapper tests removed in v2.0 - wrappers were removed

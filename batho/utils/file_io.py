@@ -191,12 +191,4 @@ def write_atomically(
         return False
 
 
-# Legacy compatibility functions
-def _read_file_bytes(filepath: str, max_size_kb: int = 500) -> bytes | None:
-    """Legacy wrapper for extractor.py compatibility."""
-    return read_file_bytes(filepath, max_size_kb=max_size_kb, normalize_encoding=True)
-
-
-def _read_file_content(filepath: str, max_size_kb: int | None = None) -> bytes | None:
-    """Legacy wrapper for codegraph.py compatibility."""
-    return read_file_bytes(filepath, max_size_kb=max_size_kb, detect_binary=True)
+# Legacy wrappers removed in v2.0 - use read_file_bytes directly

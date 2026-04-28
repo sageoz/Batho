@@ -14,7 +14,7 @@ from batho.context.codegraph import (
 )
 from batho.context.cache import ASTCache
 from batho.context.symbol_index import SymbolIndex
-from batho.utils.file_io import _read_file_content
+from batho.utils.file_io import read_file_bytes
 from batho.utils.hash import _calculate_shannon_entropy, _is_binary
 from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 
@@ -75,7 +75,7 @@ class TestIsBinary:
 
 
 # ---------------------------------------------------------------------------
-# _read_file_content
+# read_file_bytes (with detect_binary=True)
 # ---------------------------------------------------------------------------
 
 
@@ -83,21 +83,21 @@ class TestReadFileContent:
     def test_reads_text_file(self, tmp_path: Path):
         f = tmp_path / "code.py"
         f.write_text("print('hello')\n")
-        result = _read_file_content(str(f))
+        result = read_file_bytes(str(f), detect_binary=True)
         assert result is not None
 
     def test_returns_none_for_binary(self, tmp_path: Path):
         f = tmp_path / "image.png"
         f.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 200)
-        assert _read_file_content(str(f)) is None
+        assert read_file_bytes(str(f), detect_binary=True) is None
 
     def test_returns_none_for_oversized(self, tmp_path: Path):
         f = tmp_path / "huge.py"
         f.write_bytes(b"x" * 600_000)
-        assert _read_file_content(str(f), max_size_kb=500) is None
+        assert read_file_bytes(str(f), max_size_kb=500, detect_binary=True) is None
 
     def test_returns_none_for_missing(self):
-        assert _read_file_content("/no/file.py") is None
+        assert read_file_bytes("/no/file.py", detect_binary=True) is None
 
 
 # ---------------------------------------------------------------------------

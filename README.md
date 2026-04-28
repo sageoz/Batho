@@ -534,7 +534,7 @@ hooks:
         └── files.md
 ```
 
-Default AST cache database location: `~/.batho/ast_cache.db` (configured by `bsg.cache.path`).
+Default AST cache database location: `.ctn/local/cache/ast_cache.db` (configured by `bsg.cache.path`).
 
 <details>
 <summary><strong>graph.json example</strong></summary>
@@ -687,7 +687,7 @@ bsg:
     chunk_size: 50
   cache:
     enabled: true
-    path: ~/.batho/ast_cache.db
+    path: .ctn/local/cache/ast_cache.db
     max_size_mb: 1024
     ttl_days: 30
   query:

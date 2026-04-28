@@ -415,7 +415,7 @@ class TestIncrementalGraphUpdater:
         with (
             patch("pathlib.Path.exists", return_value=True),
             patch(
-                "batho.context.codegraph._read_file_content",
+                "batho.context.codegraph.read_file_bytes",
                 return_value=b"def test():\n    pass",
             ),
         ):

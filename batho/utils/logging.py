@@ -36,10 +36,7 @@ def get_logger(name: str | None = None, **context: Any) -> BindableLogger:
     return structlog.get_logger(name, **context)
 
 
-def get_context_logger(**context: Any) -> BindableLogger:
-    """Backward-compatible alias for get_logger."""
-
-    return get_logger(**context)
+# get_context_logger removed in v2.0 - use get_logger directly
 
 
 def get_log_level(level_name: str = "INFO") -> int:

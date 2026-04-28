@@ -9,7 +9,6 @@ import structlog
 
 from batho.utils.logging import (
     configure_logging,
-    get_context_logger,
     get_logger,
 )
 
@@ -31,9 +30,10 @@ class TestGetLogger:
 
 
 class TestGetContextLogger:
+    """Test get_logger with context (formerly get_context_logger)."""
 
-    def test_alias_works(self):
-        logger = get_context_logger(operation="test")
+    def test_logger_with_context(self):
+        logger = get_logger(operation="test")
         assert logger is not None
 
 
