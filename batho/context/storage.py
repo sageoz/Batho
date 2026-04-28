@@ -31,7 +31,7 @@ LOGGER = get_logger(__name__, component="ctn_storage")
 
 _REGISTRY_SCHEMA_VERSION = "ctn-artifact-registry.v1"
 _QUERY_INDEX_SCHEMA_VERSION = "ctn-query-index.v1"
-_DEFAULT_REGISTRY_PATH = ".ctn/artifact_registry.db"
+_DEFAULT_REGISTRY_PATH = ".ctn/local/sync/artifact_registry.db"
 _DEFAULT_RETENTION_CLASS = "default"
 _REGISTRY_CACHE: dict[str, "ArtifactRegistry"] = {}
 _REGISTRY_CACHE_LOCK = Lock()
@@ -139,13 +139,13 @@ def describe_artifact(artifact_path: Path, ctn_dir: Path) -> ArtifactDescriptor:
             "index_metadata", schema_version=_schema_for_artifact_type("index_metadata")
         )
 
-    if logical == "file_cache.json":
+    if logical == "file_cache.json" or logical == "local/cache/ast_cache.db":
         return ArtifactDescriptor(
             "file_cache_sqlite",
             schema_version=_schema_for_artifact_type("file_cache_sqlite"),
         )
 
-    if logical == "file_hashes.json":
+    if logical == "file_hashes.json" or logical == "local/state/file_hashes.json":
         return ArtifactDescriptor("file_hashes_json", schema_version="file-hashes.v1")
 
     if logical == "evolution_ledger.json":
@@ -161,13 +161,13 @@ def describe_artifact(artifact_path: Path, ctn_dir: Path) -> ArtifactDescriptor:
             schema_version=_schema_for_artifact_type("patch_audit_log_json"),
         )
 
-    if logical in {"rules_cache.pkl", "rules.cache.pkl"}:
+    if logical in {"rules_cache.pkl", "rules.cache.pkl", "local/cache/rules_cache.bin"}:
         return ArtifactDescriptor(
             "rules_cache_binary",
             schema_version=_schema_for_artifact_type("rules_cache_binary"),
         )
 
-    if logical == "interception_stats.json":
+    if logical == "interception_stats.json" or logical == "local/metrics/interception_stats.json":
         return ArtifactDescriptor(
             "interception_stats_json",
             schema_version=_schema_for_artifact_type("interception_stats_json"),

@@ -499,19 +499,22 @@ def test_cmd_cache_commands(
         invalidate_cache=lambda pattern=None: None,
     )
 
+    root = tmp_path / "repo"
+    root.mkdir()
+    
     monkeypatch.setattr("batho.context.cache.ASTCache", lambda cache_path: cache_obj)
     monkeypatch.setattr(
         batho,
         "get_config_cached",
-        lambda: {"bsg": {"cache": {"path": str(tmp_path / "c.db")}}},
+        lambda: {"bsg": {"cache": {"path": str(tmp_path / "c.db")}}, "paths": {"ctn_dir": ".ctn"}},
     )
 
-    assert cmd_cache_stats(argparse.Namespace()) == 0
+    assert cmd_cache_stats(argparse.Namespace(root=str(root))) == 0
     assert "AST Cache Statistics" in capsys.readouterr().out
 
-    assert cmd_cache_invalidate(argparse.Namespace(pattern="src/*")) == 0
-    assert cmd_cache_invalidate(argparse.Namespace(pattern=None)) == 0
-    assert cmd_cache_clear(argparse.Namespace()) == 0
+    assert cmd_cache_invalidate(argparse.Namespace(root=str(root), pattern="src/*")) == 0
+    assert cmd_cache_invalidate(argparse.Namespace(root=str(root), pattern=None)) == 0
+    assert cmd_cache_clear(argparse.Namespace(root=str(root))) == 0
 
 
 def test_cmd_query_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -872,7 +875,9 @@ def test_cmd_index_early_failure_paths(
     assert cmd_index(args) == 1
 
     # Invalid sqlite cache should be recreated and retried.
-    bad_cache = ctn / "file_cache.json"
+    cache_dir = ctn / "local" / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    bad_cache = cache_dir / "ast_cache.db"
     bad_cache.write_text("not sqlite", encoding="utf-8")
     init_calls = {"count": 0}
 

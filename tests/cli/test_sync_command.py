@@ -29,7 +29,9 @@ def test_cmd_sync_status_mode_outputs_counts(tmp_path: Path, capsys) -> None:
     ctn_dir = root / ".ctn"
     ctn_dir.mkdir(parents=True)
 
-    artifact = ctn_dir / "metrics.json"
+    metrics_dir = ctn_dir / "local" / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    artifact = metrics_dir / "metrics.json"
     artifact.write_text('{"ok": true}', encoding="utf-8")
     assert register_artifact(ctn_dir, artifact, "metrics_json", schema_version="metrics.v1")
 

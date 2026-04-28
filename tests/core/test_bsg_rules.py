@@ -216,7 +216,7 @@ rules:
         cfg_one = get_config_cached()
         rules_one, _ = load_effective_rules(cfg_one["rules"], root_path=tmp_path)
 
-        cache_path = tmp_path / ".ctn" / "rules_cache.bin"
+        cache_path = tmp_path / ".ctn" / "local" / "cache" / "rules_cache.bin"
         assert cache_path.exists()
         payload_one = pickle.loads(cache_path.read_bytes())
         assert any(
@@ -273,7 +273,7 @@ rules:
             rules_config=rules_cfg,
         )
 
-        interception_file = tmp_path / ".ctn" / "interception_stats.json"
+        interception_file = tmp_path / ".ctn" / "local" / "metrics" / "interception_stats.json"
         assert interception_file.exists()
 
         payload = json.loads(interception_file.read_text(encoding="utf-8"))

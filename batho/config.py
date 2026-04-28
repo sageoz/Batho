@@ -29,7 +29,7 @@ DEFAULT_MAX_FILE_SIZE_KB = 500
 DEFAULT_MAX_INDEXED_FILES = 200000  # allow large repos
 DEFAULT_INDEX_WORKERS = 0  # auto
 DEFAULT_IGNORE_FILES: list[str] | None = None
-DEFAULT_METRICS_OUTPUT: str | None = ".ctn/metrics.json"
+DEFAULT_METRICS_OUTPUT: str | None = ".ctn/local/metrics/metrics.json"
 DEFAULT_ROOT_CONFIG_FILE = "batho.yaml"
 DEFAULT_RULES_ENABLED = True
 DEFAULT_RULES_AUTO_LOAD_ALL_PLUGINS = True
@@ -50,7 +50,7 @@ DEFAULT_PATCH_TIMEOUT_SECONDS = 300  # 5 minutes
 DEFAULT_MAX_PATCH_CHANGES = 10000  # Max changes in a single patch
 DEFAULT_PATCH_HISTORY_DAYS = 90  # Retention policy for patches
 DEFAULT_PATCH_COUNT = 1000  # Alternative retention limit
-DEFAULT_STORAGE_REGISTRY_PATH = ".ctn/artifact_registry.db"
+DEFAULT_STORAGE_REGISTRY_PATH = ".ctn/local/sync/artifact_registry.db"
 DEFAULT_STORAGE_RETENTION_SNAPSHOT_DAYS = 90
 DEFAULT_STORAGE_RETENTION_PATCH_DAYS = 90
 DEFAULT_STORAGE_RETENTION_METRICS_DAYS = 30
@@ -175,7 +175,7 @@ class BsgIgnoreConfig(BaseModel):
 
 class BsgCacheConfig(BaseModel):
     enabled: bool = Field(default=True)
-    path: str = Field(default="~/.batho/ast_cache.db")
+    path: str = Field(default=".ctn/local/cache/ast_cache.db")
     max_size_mb: int = Field(default=1024, ge=1)
     ttl_days: int = Field(default=30, ge=1)
 
@@ -481,7 +481,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             },
             "cache": {
                 "enabled": True,
-                "path": "~/.batho/ast_cache.db",
+                "path": ".ctn/local/cache/ast_cache.db",
                 "max_size_mb": 1024,
                 "ttl_days": 30,
             },
@@ -901,7 +901,7 @@ indexer:
   max_files: null
   ignore_patterns: []
   ignore_files: null
-  metrics_output: .ctn/metrics.json
+  metrics_output: .ctn/local/metrics/metrics.json
   fail_on_warning: false
   strict: false
 
@@ -973,7 +973,7 @@ bsg:
     file: .bathoignore
   cache:
     enabled: true
-    path: ~/.batho/ast_cache.db
+    path: .ctn/local/cache/ast_cache.db
     max_size_mb: 1024
     ttl_days: 30
   incremental:
@@ -1003,7 +1003,7 @@ bsg:
   storage:
     enabled: true
     backend: sqlite
-    registry_path: .ctn/artifact_registry.db
+    registry_path: .ctn/local/sync/artifact_registry.db
     content_scope: durable
     strict_compatibility: true
     cloud_sync_ready: true

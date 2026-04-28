@@ -36,7 +36,9 @@ class _FakeClient:
 
 def _register_sample_artifacts(ctn_dir: Path) -> None:
     graph_path = ctn_dir / "graph.json"
-    metrics_path = ctn_dir / "metrics.json"
+    metrics_dir = ctn_dir / "local" / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = metrics_dir / "metrics.json"
     graph_path.write_text('{"nodes": []}', encoding="utf-8")
     metrics_path.write_text('{"ok": true}', encoding="utf-8")
 

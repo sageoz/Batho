@@ -206,6 +206,20 @@ def _ensure_ctn_dir(root: Path) -> Path:
     return ctn_dir
 
 
+def _ensure_local_dirs(ctn_dir: Path) -> dict[str, Path]:
+    """Create .ctn/local/ subdirectories and return paths."""
+    local = ctn_dir / "local"
+    paths = {
+        "cache": local / "cache",
+        "sync": local / "sync",
+        "metrics": local / "metrics",
+        "state": local / "state",
+    }
+    for p in paths.values():
+        p.mkdir(parents=True, exist_ok=True)
+    return paths
+
+
 def _get_serialization_config() -> dict[str, Any]:
     """Get BSG serialization config from cached config."""
     return get_config_cached().get("bsg", {}).get("serialization", {})
@@ -473,7 +487,7 @@ def _save_index_metadata(ctn_dir: Path, metadata: dict[str, Any]) -> None:
 
 
 def _load_interception_stats(ctn_dir: Path) -> dict[str, Any]:
-    path = ctn_dir / "interception_stats.json"
+    path = ctn_dir / "local" / "metrics" / "interception_stats.json"
     if not path.exists():
         return {"plugins": {}}
 
@@ -1302,8 +1316,9 @@ def cmd_index(args: argparse.Namespace) -> int:
 
     cfg = get_config_cached()
     ctn_dir = _ensure_ctn_dir(root)
+    local_dirs = _ensure_local_dirs(ctn_dir)
 
-    cache_path = ctn_dir / "file_cache.json"
+    cache_path = local_dirs["cache"] / "ast_cache.db"
     build_start = time.perf_counter()
     no_ast_cache = bool(getattr(args, "no_ast_cache", False))
 
@@ -1334,26 +1349,7 @@ def cmd_index(args: argparse.Namespace) -> int:
             )
             print(f"⚠️  Could not clear file cache (may be in use): {exc}")
 
-    if args.force:
-        try:
-            from batho.context.cache import ASTCache
-
-            bsg_cache_cfg = (
-                bsg_cfg.get("cache", {}) if isinstance(bsg_cfg, dict) else {}
-            )
-            ast_cache_path = str(bsg_cache_cfg.get("path", "~/.batho/ast_cache.db"))
-            ast_cache = ASTCache(cache_path=ast_cache_path)
-            try:
-                ast_cache.invalidate_cache(pattern=None)
-            finally:
-                ast_cache.close()
-            print("⚡ --force: cleared AST cache")
-        except Exception as exc:
-            LOGGER.warning(
-                "force_ast_cache_clear_failed",
-                error=str(exc),
-            )
-            print(f"⚠️  Could not clear AST cache: {exc}")
+    # Note: --force already cleared the per-project cache above
 
     if incremental_enabled:
         base_snapshot_id = requested_base_snapshot or _get_latest_snapshot(ctn_dir)
@@ -2040,7 +2036,8 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         print("❌ current graph.json missing or invalid")
         return 1
 
-    cache_path = ctn_dir / "file_cache.json"
+    local_dirs = _ensure_local_dirs(ctn_dir)
+    cache_path = local_dirs["cache"] / "ast_cache.db"
     indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
 
     files: list[Path] = []
@@ -2051,7 +2048,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
     existing_files = {Path(entity.file).resolve() for entity in graph.entities.values()}
 
     if args.scan:
-        hash_cache_path = ctn_dir / "file_hashes.json"
+        hash_cache_path = local_dirs["state"] / "file_hashes.json"
         tracker = FileChangeTracker(root)
         tracker.load(hash_cache_path)
         changes = tracker.scan_for_changes(max_file_size_kb=args.max_file_size_kb)
@@ -2356,10 +2353,11 @@ def _cmd_patch_snapshot_based(
     """Snapshot-based incremental patching using base snapshot."""
     # Collect changes from various sources
     changes: list[FileChange] = []
+    local_dirs = _ensure_local_dirs(ctn_dir)
 
     if args.scan:
         tracker = FileChangeTracker(root)
-        hash_cache_path = ctn_dir / "file_hashes.json"
+        hash_cache_path = local_dirs["state"] / "file_hashes.json"
         tracker.load(hash_cache_path)
         changes = tracker.scan_for_changes(max_file_size_kb=args.max_file_size_kb)
         tracker.save(hash_cache_path)
@@ -2514,11 +2512,12 @@ def _cmd_patch_snapshot_based(
 def cmd_invalidate(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
-    cache_path = ctn_dir / "file_cache.json"
+    local_dirs = _ensure_local_dirs(ctn_dir)
+    cache_path = local_dirs["cache"] / "ast_cache.db"
     if cache_path.exists():
         try:
             cache_path.unlink()
-            print("✅ Cleared file cache")
+            print("✅ Cleared AST cache")
         except (PermissionError, OSError) as exc:
             LOGGER.warning(
                 "invalidate_cache_failed",
@@ -2536,9 +2535,10 @@ def cmd_cache_stats(args: argparse.Namespace) -> int:
     """Show AST cache statistics."""
     from batho.context.cache import ASTCache
 
-    cfg = get_config_cached()
-    bsg_cache_cfg = cfg.get("bsg", {}).get("cache", {})
-    cache_path = bsg_cache_cfg.get("path", "~/.batho/ast_cache.db")
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    local_dirs = _ensure_local_dirs(ctn_dir)
+    cache_path = local_dirs["cache"] / "ast_cache.db"
 
     cache = ASTCache(cache_path=cache_path)
     stats = cache.get_cache_stats()
@@ -2556,11 +2556,12 @@ def cmd_cache_invalidate(args: argparse.Namespace) -> int:
     """Invalidate cache entries by pattern."""
     from batho.context.cache import ASTCache
 
-    cfg = get_config_cached()
-    bsg_cache_cfg = cfg.get("bsg", {}).get("cache", {})
-    cache_path = bsg_cache_cfg.get("path", "~/.batho/ast_cache.db")
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    local_dirs = _ensure_local_dirs(ctn_dir)
+    cache_path = local_dirs["cache"] / "ast_cache.db"
 
-    cache = ASTCache(cache_path=cache_path)
+    cache = ASTCache(cache_path=str(cache_path))
     pattern = args.pattern
 
     if pattern:
@@ -2576,11 +2577,12 @@ def cmd_cache_clear(args: argparse.Namespace) -> int:
     """Clear entire AST cache."""
     from batho.context.cache import ASTCache
 
-    cfg = get_config_cached()
-    bsg_cache_cfg = cfg.get("bsg", {}).get("cache", {})
-    cache_path = bsg_cache_cfg.get("path", "~/.batho/ast_cache.db")
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    local_dirs = _ensure_local_dirs(ctn_dir)
+    cache_path = local_dirs["cache"] / "ast_cache.db"
 
-    cache = ASTCache(cache_path=cache_path)
+    cache = ASTCache(cache_path=str(cache_path))
     cache.invalidate_cache(pattern=None)
     print("✅ Cleared entire AST cache")
     return 0

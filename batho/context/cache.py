@@ -5,7 +5,7 @@ Replaces the old file state cache with a more powerful cache that stores
 actual extracted entities keyed by file content hash.
 
 Features:
-- SQLite-based storage in ~/.batho/ast_cache.db
+- SQLite-based storage in .ctn/local/cache/ast_cache.db (per-project)
 - Thread-safe operations with connection pooling
 - TTL-based expiration
 - Size-based LRU eviction
@@ -41,14 +41,14 @@ class ASTCache:
     Includes mtime and size validation to ensure cache hits are valid.
     """
 
-    def __init__(self, cache_path: str = "~/.batho/ast_cache.db") -> None:
+    def __init__(self, cache_path: str = ".ctn/local/cache/ast_cache.db") -> None:
         """
         Initialize the AST cache.
 
         Args:
-            cache_path: Path to the SQLite cache database (can include ~ for home dir).
+            cache_path: Path to the SQLite cache database (per-project).
         """
-        self._path = Path(cache_path).expanduser().resolve()
+        self._path = Path(cache_path).resolve()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._local = threading.local()

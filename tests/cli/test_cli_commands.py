@@ -436,7 +436,9 @@ class TestCmdStats:
         cmd_index(idx_args)
 
         ctn_dir = simple_python_repo / ".ctn"
-        interception_file = ctn_dir / "interception_stats.json"
+        metrics_dir = ctn_dir / "local" / "metrics"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        interception_file = metrics_dir / "interception_stats.json"
         interception_file.write_text(
             json.dumps(
                 {
@@ -472,10 +474,10 @@ class TestCmdInvalidate:
 
     def test_invalidate_clears_cache(self, simple_python_repo: Path, capsys):
         # Create a cache file
-        ctn_dir = simple_python_repo / ".ctn"
-        ctn_dir.mkdir(exist_ok=True)
-        cache_file = ctn_dir / "file_cache.json"
-        cache_file.write_text("{}")
+        cache_dir = simple_python_repo / ".ctn" / "local" / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / "ast_cache.db"
+        cache_file.write_text("fake cache")
 
         args = argparse.Namespace(root=str(simple_python_repo))
         result = cmd_invalidate(args)
@@ -582,7 +584,9 @@ class TestCmdPatch:
 
         tracker = FileChangeTracker(root)
         tracker.scan_for_changes(max_file_size_kb=500)
-        tracker.save(root / ".ctn" / "file_hashes.json")
+        state_dir = root / ".ctn" / "local" / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        tracker.save(state_dir / "file_hashes.json")
 
         original.unlink()
         added = root / "b.py"
@@ -679,7 +683,7 @@ class TestCmdStorageAndQuery:
         assert cmd_index(idx_args) == 0
 
         ctn_dir = simple_python_repo / ".ctn"
-        registry_db = ctn_dir / "artifact_registry.db"
+        registry_db = ctn_dir / "local" / "sync" / "artifact_registry.db"
         with sqlite3.connect(str(registry_db)) as conn:
             conn.execute(
                 "UPDATE artifacts SET updated_at = '2000-01-01T00:00:00+00:00'"

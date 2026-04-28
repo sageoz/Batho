@@ -18,7 +18,7 @@ indexer:
   max_files: null
   ignore_patterns: []
   ignore_files: null
-  metrics_output: .ctn/metrics.json
+  metrics_output: .ctn/local/metrics/metrics.json
   fail_on_warning: false
   strict: false
 
@@ -90,7 +90,7 @@ bsg:
     file: .bathoignore
   cache:
     enabled: true
-    path: ~/.batho/ast_cache.db
+    path: .ctn/local/cache/ast_cache.db
     max_size_mb: 1024
     ttl_days: 30
   incremental:
@@ -120,7 +120,7 @@ bsg:
   storage:
     enabled: true
     backend: sqlite
-    registry_path: .ctn/artifact_registry.db
+    registry_path: .ctn/local/sync/artifact_registry.db
     content_scope: durable
     strict_compatibility: true
     cloud_sync_ready: true

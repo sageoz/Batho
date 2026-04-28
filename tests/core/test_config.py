@@ -220,7 +220,7 @@ class TestGetConfig:
         storage = cfg.get("bsg", {}).get("storage", {})
         assert storage.get("enabled") is True
         assert storage.get("backend") == "sqlite"
-        assert storage.get("registry_path") == ".ctn/artifact_registry.db"
+        assert storage.get("registry_path") == ".ctn/local/sync/artifact_registry.db"
         assert storage.get("content_scope") == "durable"
         assert storage.get("strict_compatibility") is True
         assert storage.get("cloud_sync_ready") is True

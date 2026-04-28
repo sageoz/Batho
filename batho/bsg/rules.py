@@ -451,22 +451,25 @@ def _hash_file(path: Path) -> str:
 def _rules_cache_path(root_path: Path) -> Path:
     ctn_dir_name = str(get_config_cached().get("paths", {}).get("ctn_dir", ".ctn"))
     ctn_dir = root_path / ctn_dir_name
-    ctn_dir.mkdir(parents=True, exist_ok=True)
-    return ctn_dir / _CACHE_FILENAME
+    cache_dir = ctn_dir / "local" / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / _CACHE_FILENAME
 
 
 def _interception_stats_path(root_path: Path) -> Path:
     ctn_dir_name = str(get_config_cached().get("paths", {}).get("ctn_dir", ".ctn"))
     ctn_dir = root_path / ctn_dir_name
-    ctn_dir.mkdir(parents=True, exist_ok=True)
-    return ctn_dir / _INTERCEPTION_FILENAME
+    metrics_dir = ctn_dir / "local" / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    return metrics_dir / _INTERCEPTION_FILENAME
 
 
 def _perf_stats_path(root_path: Path) -> Path:
     ctn_dir_name = str(get_config_cached().get("paths", {}).get("ctn_dir", ".ctn"))
     ctn_dir = root_path / ctn_dir_name
-    ctn_dir.mkdir(parents=True, exist_ok=True)
-    return ctn_dir / _PERF_FILENAME
+    metrics_dir = ctn_dir / "local" / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    return metrics_dir / _PERF_FILENAME
 
 
 def _write_perf_stats(path: Path, payload: dict[str, Any]) -> None:

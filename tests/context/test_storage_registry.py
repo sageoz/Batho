@@ -55,7 +55,7 @@ def test_register_artifact_creates_registry_and_entry(tmp_path: Path) -> None:
 
     assert ok is True
 
-    registry_db = ctn_dir / "artifact_registry.db"
+    registry_db = ctn_dir / "local" / "sync" / "artifact_registry.db"
     assert registry_db.exists()
 
     assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts") == 1
@@ -78,7 +78,7 @@ def test_register_artifact_ignores_lock_and_tmp_files(tmp_path: Path) -> None:
     assert lock_ok is False
     assert tmp_ok is False
 
-    registry_db = ctn_dir / "artifact_registry.db"
+    registry_db = ctn_dir / "local" / "sync" / "artifact_registry.db"
     if registry_db.exists():
         assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts") == 0
 
@@ -100,7 +100,7 @@ def test_register_artifact_for_path_infers_ctn_dir(tmp_path: Path) -> None:
 
     assert ok is True
 
-    registry_db = ctn_dir / "artifact_registry.db"
+    registry_db = ctn_dir / "local" / "sync" / "artifact_registry.db"
     assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts") == 1
 
 
@@ -147,7 +147,7 @@ def test_register_same_artifact_is_idempotent(tmp_path: Path) -> None:
     assert first is True
     assert second is True
 
-    registry_db = ctn_dir / "artifact_registry.db"
+    registry_db = ctn_dir / "local" / "sync" / "artifact_registry.db"
     assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts") == 1
     assert _rows(registry_db, "SELECT COUNT(*) FROM content_blobs") == 1
 
@@ -168,7 +168,7 @@ def test_backfill_registry_registers_existing_durable_files(tmp_path: Path) -> N
     assert result["scanned"] >= 3
     assert result["registered"] >= 3
 
-    registry_db = ctn_dir / "artifact_registry.db"
+    registry_db = ctn_dir / "local" / "sync" / "artifact_registry.db"
     logical_paths = {
         row[0]
         for row in _values(registry_db, "SELECT logical_path FROM artifacts WHERE deleted = 0")
@@ -223,7 +223,7 @@ def test_cleanup_registry_dry_run_then_apply(tmp_path: Path) -> None:
         is True
     )
 
-    registry_db = ctn_dir / "artifact_registry.db"
+    registry_db = ctn_dir / "local" / "sync" / "artifact_registry.db"
     old_time = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
     with sqlite3.connect(str(registry_db)) as conn:
         conn.execute("UPDATE artifacts SET updated_at = ?", (old_time,))
@@ -304,14 +304,22 @@ def test_describe_artifact_and_infer_helpers(tmp_path: Path) -> None:
     for path in [idx_dir, ctx_dir, patches_dir, snaps_dir]:
         path.mkdir(parents=True, exist_ok=True)
 
+    # Create local subdirectories
+    local_dir = ctn_dir / "local"
+    cache_dir = local_dir / "cache"
+    state_dir = local_dir / "state"
+    metrics_dir = local_dir / "metrics"
+    for d in [cache_dir, state_dir, metrics_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+    
     paths = [
         ctn_dir / "index.json",
-        ctn_dir / "file_cache.json",
-        ctn_dir / "file_hashes.json",
+        cache_dir / "ast_cache.db",
+        state_dir / "file_hashes.json",
         ctn_dir / "evolution_ledger.json",
         ctn_dir / "patch_audit.log",
-        ctn_dir / "rules_cache.pkl",
-        ctn_dir / "interception_stats.json",
+        cache_dir / "rules_cache.bin",
+        metrics_dir / "interception_stats.json",
         snaps_dir / "snap.json",
         patches_dir / "index.json",
         patches_dir / "patch_001.json",
@@ -320,7 +328,7 @@ def test_describe_artifact_and_infer_helpers(tmp_path: Path) -> None:
         ctx_dir / "overview.md",
         ctx_dir / "files.md",
         ctx_dir / "extra.md",
-        idx_dir / "metrics.json",
+        metrics_dir / "metrics.json",
         idx_dir / "other.bin",
     ]
     for p in paths:
@@ -473,7 +481,7 @@ def test_persist_wrappers_write_and_register(tmp_path: Path) -> None:
     assert persist_text(ctn_dir, t_path, "hello", artifact_type="context_markdown", producer="test")
     assert persist_bytes(ctn_dir, b_path, b"abc", artifact_type="artifact_file", producer="test")
 
-    registry_db = ctn_dir / "artifact_registry.db"
+    registry_db = ctn_dir / "local" / "sync" / "artifact_registry.db"
     assert registry_db.exists()
     assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts WHERE deleted = 0") >= 3
 
