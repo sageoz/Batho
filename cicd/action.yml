@@ -1,5 +1,5 @@
 name: "Batho Index"
-description: "Run Batho to index a repository and upload the .ctn artifacts (graph.json, bsg.json, architecture.md) as a workflow artifact."
+description: "Run Batho to index a repository and upload the .ctn artifacts (graph.json, bsg.json, overview.md, files.md) as a workflow artifact."
 author: "Batho"
 branding:
   icon: "layers"

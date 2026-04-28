@@ -63,10 +63,7 @@ class TestCLIIntegration:
         context_dir = versioned_dir / "context"
         assert context_dir.exists()
         assert (context_dir / "overview.md").exists()
-        assert (context_dir / "architecture.md").exists()
-        assert (context_dir / "tests.md").exists()
-        assert (context_dir / "docs.md").exists()
-        assert (context_dir / "config.md").exists()
+        assert (context_dir / "files.md").exists()
 
     def test_snapshots_empty(self, tmp_path: Path):
         root = tmp_path / "repo"

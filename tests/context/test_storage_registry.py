@@ -318,10 +318,7 @@ def test_describe_artifact_and_infer_helpers(tmp_path: Path) -> None:
         idx_dir / "graph.json",
         idx_dir / "bsg.json",
         ctx_dir / "overview.md",
-        ctx_dir / "architecture.md",
-        ctx_dir / "tests.md",
-        ctx_dir / "docs.md",
-        ctx_dir / "config.md",
+        ctx_dir / "files.md",
         ctx_dir / "extra.md",
         idx_dir / "metrics.json",
         idx_dir / "other.bin",
@@ -343,10 +340,7 @@ def test_describe_artifact_and_infer_helpers(tmp_path: Path) -> None:
     assert "graph_json" in types
     assert "bsg_json" in types
     assert "context_overview" in types
-    assert "context_architecture" in types
-    assert "context_tests" in types
-    assert "context_docs" in types
-    assert "context_config" in types
+    assert "context_files" in types
     assert "context_markdown" in types
     assert "metrics_json" in types
     assert "artifact_file" in types

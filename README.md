@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://test.pypi.org/project/batho/"><img src="https://img.shields.io/pypi/v/batho?color=blue" alt="PyPI"></a>
-  <a href="https://github.com/sageoz/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
+  <a href="https://github.com/sageoz/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   <a href="#supported-languages"><img src="https://img.shields.io/badge/languages-40+-orange" alt="Languages"></a>
 </p>
 
@@ -531,10 +531,7 @@ hooks:
     ├── bsg_hierarchical.json    # Hierarchical textual BSG output
     └── context/
         ├── overview.md
-        ├── architecture.md
-        ├── tests.md
-        ├── docs.md
-        └── config.md
+        └── files.md
 ```
 
 Default AST cache database location: `~/.batho/ast_cache.db` (configured by `bsg.cache.path`).
@@ -1034,7 +1031,7 @@ For regulated environments, add SBOM and license checks in CI:
 
 ```bash
 pip install cyclonedx-bom && cyclonedx-py -o sbom.xml
-pip install pip-licenses && pip-licenses --allow-only MIT
+pip install pip-licenses && pip-licenses --allow-only "Apache Software License"
 ```
 
 ---
@@ -1098,7 +1095,7 @@ Batho is open source and welcomes contributions. Whether it's a bug report, a ne
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+Apache 2.0 — see [LICENSE](LICENSE)
 
 ---
 

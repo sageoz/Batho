@@ -55,7 +55,7 @@ def _artifact_rows(index_dir: Path) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     if not index_dir.is_dir():
         return rows
-    for name in ("graph.json", "bsg.json", "architecture.md"):
+    for name in ("graph.json", "bsg.json", "overview.md", "files.md"):
         p = index_dir / name
         if p.exists():
             rows.append((name, _human_bytes(p.stat().st_size)))

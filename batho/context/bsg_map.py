@@ -1096,13 +1096,13 @@ class BSGMap:
                 categories.add(cat)
 
             # Use highest priority category
-            category = "SOURCE"
+            category = "source"
             max_priority = -1
             for cat in categories:
                 priority = category_priority.get(cat, 0)
                 if priority > max_priority:
                     max_priority = priority
-                    category = cat
+                    category = cat.lower()
 
             if category not in categorized:
                 categorized[category] = {}
@@ -1110,180 +1110,115 @@ class BSGMap:
 
         return categorized
 
-    def render_category(
+    def render_files_md(
         self,
-        category: str,
-        include_full_entities: bool = False,
+        repo_name: str | None = None,
+        timestamp: str | None = None,
     ) -> str:
         """
-        Render a specific category of files.
+        Render a single consolidated markdown document with all files by category.
+
+        This replaces the separate architecture.md, tests.md, docs.md, config.md
+        files with one ``files.md`` that serves as the single source of truth
+        for every file in the repository.
 
         Args:
-            category: The category string to render
-            include_full_entities: If True, include full entity details with signatures
+            repo_name: Repository name (defaults to root directory name).
+            timestamp: ISO timestamp for the index.
 
         Returns:
-            Formatted markdown string for the category
+            Formatted markdown string containing all files grouped by category.
         """
-        categorized = self.categorize_files()
-        files_data = categorized.get(category, {})
+        from datetime import datetime, timezone
 
-        if not files_data:
-            return f"No {category} files found."
+        if repo_name is None:
+            repo_name = Path(self._root).name if self._root else "repository"
+        if timestamp is None:
+            timestamp = datetime.now(timezone.utc).isoformat()
+
+        categorized = self.categorize_files()
+        total_files = len(self._by_file)
+        total_entities = self.entity_count
 
         lines: list[str] = []
-        total_entities = sum(len(ents) for ents in files_data.values())
+        lines.append("# Files")
+        lines.append("")
+        lines.append(f"*Generated: {timestamp}*")
+        lines.append(f"*Repo: {repo_name}*")
+        lines.append("")
+        lines.append(f"Total files: {total_files} | Total entities: {total_entities}")
+        lines.append("")
 
-        if not include_full_entities:
-            lines.append(f"## Summary")
-            lines.append(f"- Total {category} files: {len(files_data)}")
-            lines.append(f"- Total entities: {total_entities}")
-            lines.append("")
+        # Render categories in priority order
+        category_order = ["source", "test", "doc", "config", "infra"]
+        # Add any remaining categories not in the ordered list
+        remaining = [cat for cat in categorized if cat not in category_order]
+        category_order.extend(sorted(remaining))
 
-        grouped = self._group_by_directory_for_files(files_data)
-
-        for dir_path, files in grouped.items():
-            display_path = dir_path if dir_path else "(root)"
-            label = self._get_directory_label(dir_path)
-            dir_header = f"📁 {display_path}/" + (f" ({label})" if label else "")
-            lines.append(dir_header)
-
-            for file_name, entities in files:
-                file_path = f"{dir_path}/{file_name}" if dir_path else file_name
-                if include_full_entities:
-                    entity_count = len(entities)
-                    entity_types = self._summarize_entity_types(entities)
-                    lines.append(
-                        f"  📄 {file_name} ({entity_count} entities: {entity_types})"
-                    )
-
-                    # Group entities by type for compact display
-                    entities_by_type = {}
-                    for entity in entities:
-                        entity_type = str(entity.type)
-                        if entity_type not in entities_by_type:
-                            entities_by_type[entity_type] = []
-                        entities_by_type[entity_type].append(entity)
-
-                    # Display entities compactly, grouped by type
-                    for entity_type, type_entities in entities_by_type.items():
-                        for entity in type_entities:
-                            sig = entity.signature or entity.name
-                            # Remove type label since we're grouping by type
-                            lines.append(
-                                f"    {sig} [L{entity.start_line}-{entity.end_line}]"
-                            )
-
-                    # Compact dependencies on single line
-                    deps = self._dependencies.get(file_path, [])
-                    if deps:
-                        deps_str = ", ".join(deps[:5])  # Show first 5 deps
-                        if len(deps) > 5:
-                            deps_str += f" (+{len(deps)-5} more)"
-                        lines.append(f"    deps: {deps_str}")
-                else:
-                    entity_count = len(entities)
-                    entity_types = self._summarize_entity_types(entities)
-                    lines.append(
-                        f"  📄 {file_name} ({entity_count} entities: {entity_types})"
-                    )
-
-        return "\n".join(lines)
-
-    def render_uncategorized_categories(
-        self, include_full_entities: bool = False
-    ) -> str:
-        """
-        Render all uncategorized/folder-based categories grouped by folder name.
-
-        Args:
-            include_full_entities: If True, include full entity details
-
-        Returns:
-            Formatted markdown string for uncategorized categories
-        """
-        categorized = self.categorize_files()
-
-        # Standard categories to exclude
-        standard_categories = {"source", "tests", "docs", "config"}
-
-        # Get only non-standard categories
-        uncategorized = {
-            cat: files
-            for cat, files in categorized.items()
-            if cat not in standard_categories and files
+        # Display name mapping
+        display_names = {
+            "source": "Source",
+            "test": "Tests",
+            "doc": "Docs",
+            "config": "Config",
+            "infra": "Infra",
         }
 
-        if not uncategorized:
-            return ""
+        for cat in category_order:
+            files_data = categorized.get(cat)
+            if not files_data:
+                continue
 
-        lines: list[str] = []
-        total_files = sum(len(files) for files in uncategorized.values())
-        total_entities = sum(
-            len(entities)
-            for files in uncategorized.values()
-            for entities in files.values()
-        )
-
-        lines.append("## Uncategorized Files by Category")
-        lines.append("")
-        lines.append(f"- Total uncategorized files: {total_files}")
-        lines.append(f"- Total entities: {total_entities}")
-        lines.append("")
-
-        # Sort categories by entity count (descending)
-        sorted_categories = sorted(
-            uncategorized.items(),
-            key=lambda x: sum(len(entities) for entities in x[1].values()),
-            reverse=True,
-        )
-
-        for category_name, files_data in sorted_categories:
-            cat_entity_count = sum(len(entities) for entities in files_data.values())
             cat_file_count = len(files_data)
+            cat_entity_count = sum(len(ents) for ents in files_data.values())
+            display = display_names.get(cat, cat.capitalize())
 
-            lines.append(f"### {category_name.capitalize()}")
-            lines.append(f"- Total files: {cat_file_count}")
-            lines.append(f"- Total entities: {cat_entity_count}")
+            lines.append(f"## {display} ({cat_file_count} files, {cat_entity_count} entities)")
             lines.append("")
 
+            # Source gets full entity details; others get summary
+            include_full = cat == "source"
             grouped = self._group_by_directory_for_files(files_data)
 
             for dir_path, files in grouped.items():
                 display_path = dir_path if dir_path else "(root)"
-                dir_header = f"📁 {display_path}/"
+                label = self._get_directory_label(dir_path)
+                dir_header = f"📁 {display_path}/" + (f" ({label})" if label else "")
                 lines.append(dir_header)
 
                 for file_name, entities in files:
-                    file_path = f"{dir_path}/{file_name}" if dir_path else file_name
-                    if include_full_entities:
-                        entity_count = len(entities)
-                        entity_types = self._summarize_entity_types(entities)
-                        lines.append(
-                            f"  📄 {file_name} ({entity_count} entities: {entity_types})"
-                        )
+                    entity_count = len(entities)
+                    entity_types = self._summarize_entity_types(entities)
+                    lines.append(
+                        f"  📄 {file_name} ({entity_count} entities: {entity_types})"
+                    )
 
+                    if include_full:
                         # Group entities by type for compact display
-                        entities_by_type = {}
+                        entities_by_type: dict[str, list[Entity]] = {}
                         for entity in entities:
                             entity_type = str(entity.type)
                             if entity_type not in entities_by_type:
                                 entities_by_type[entity_type] = []
                             entities_by_type[entity_type].append(entity)
 
-                        # Display entities compactly, grouped by type
                         for entity_type, type_entities in entities_by_type.items():
                             for entity in type_entities:
                                 sig = entity.signature or entity.name
                                 lines.append(
                                     f"    {sig} [L{entity.start_line}-{entity.end_line}]"
                                 )
-                    else:
-                        entity_count = len(entities)
-                        entity_types = self._summarize_entity_types(entities)
-                        lines.append(
-                            f"  📄 {file_name} ({entity_count} entities: {entity_types})"
+
+                        # Compact dependencies on single line
+                        file_path = (
+                            f"{dir_path}/{file_name}" if dir_path else file_name
                         )
+                        deps = self._dependencies.get(file_path, [])
+                        if deps:
+                            deps_str = ", ".join(deps[:5])
+                            if len(deps) > 5:
+                                deps_str += f" (+{len(deps) - 5} more)"
+                            lines.append(f"    deps: {deps_str}")
 
                 lines.append("")
 
@@ -1399,7 +1334,7 @@ class BSGMap:
         }
 
         # Sort categories by file count, but prioritize main categories first
-        main_categories = ["source", "tests", "docs", "config"]
+        main_categories = ["source", "test", "doc", "config"]
         other_categories = sorted(
             [cat for cat in categorized.keys() if cat not in main_categories]
         )
@@ -1413,8 +1348,15 @@ class BSGMap:
                 entities = cat_entities.get(cat, 0)
                 pct = (count / total_files * 100) if total_files > 0 else 0
                 bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
-                # Capitalize first letter for display
-                display_name = cat.capitalize() if cat != "docs" else "Docs"
+                # Display name mapping for categories
+                display_map = {
+                    "source": "Source",
+                    "test": "Tests",
+                    "doc": "Docs",
+                    "config": "Config",
+                    "infra": "Infra",
+                }
+                display_name = display_map.get(cat, cat.capitalize())
                 lines.append(
                     f"- **{display_name}**: {count} files ({pct:.1f}%) | {entities} entities"
                 )

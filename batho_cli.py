@@ -7,7 +7,7 @@
 Outputs (default):
 - .ctn/<index_id>/graph.json       — Entities + relationships
 - .ctn/<index_id>/bsg.json         — BSG structured data
-- .ctn/<index_id>/architecture.md  — Hierarchical summary (optionally compressed)
+- .ctn/<index_id>/files.md         — All files by category (single source of truth)
 - .ctn/index.json                  — Index metadata (current and history)
 """
 
@@ -1617,57 +1617,16 @@ def cmd_index(args: argparse.Namespace) -> int:
             metadata={"index_id": index_id},
         )
 
-        # architecture.md - Main codebase only (full entities)
-        arch_content = bsg_map.render_category("source", include_full_entities=True)
-        _write_text(
-            context_dir / "architecture.md",
-            arch_content,
-            ctn_dir=ctn_dir,
-            artifact_type="context_architecture",
-            producer="cli.index",
-            metadata={"index_id": index_id},
+        # files.md - All files by category (single source of truth)
+        files_content = bsg_map.render_files_md(
+            repo_name=repo_name,
+            timestamp=timestamp,
         )
-
-        # tests.md - Test files (summary format)
-        tests_content = bsg_map.render_category("tests", include_full_entities=False)
         _write_text(
-            context_dir / "tests.md",
-            tests_content,
+            context_dir / "files.md",
+            files_content,
             ctn_dir=ctn_dir,
-            artifact_type="context_tests",
-            producer="cli.index",
-            metadata={"index_id": index_id},
-        )
-
-        # docs.md - Uncategorized categories + Documentation files (summary format)
-        uncategorized_content = bsg_map.render_uncategorized_categories(
-            include_full_entities=False
-        )
-        docs_content = bsg_map.render_category("docs", include_full_entities=False)
-
-        # Combine uncategorized categories with docs
-        combined_docs = uncategorized_content
-        if combined_docs and docs_content.strip():
-            combined_docs += "\n" + docs_content
-        elif docs_content.strip():
-            combined_docs = docs_content
-
-        _write_text(
-            context_dir / "docs.md",
-            combined_docs,
-            ctn_dir=ctn_dir,
-            artifact_type="context_docs",
-            producer="cli.index",
-            metadata={"index_id": index_id},
-        )
-
-        # config.md - Configuration files (summary format)
-        config_content = bsg_map.render_category("config", include_full_entities=False)
-        _write_text(
-            context_dir / "config.md",
-            config_content,
-            ctn_dir=ctn_dir,
-            artifact_type="context_config",
+            artifact_type="context_files",
             producer="cli.index",
             metadata={"index_id": index_id},
         )
@@ -1723,12 +1682,7 @@ def cmd_index(args: argparse.Namespace) -> int:
                 "graph_json": str(graph_path.relative_to(root)),
                 "bsg_json": str(bsg_path.relative_to(root)),
                 "overview_md": str((context_dir / "overview.md").relative_to(root)),
-                "architecture_md": str(
-                    (context_dir / "architecture.md").relative_to(root)
-                ),
-                "tests_md": str((context_dir / "tests.md").relative_to(root)),
-                "docs_md": str((context_dir / "docs.md").relative_to(root)),
-                "config_md": str((context_dir / "config.md").relative_to(root)),
+                "files_md": str((context_dir / "files.md").relative_to(root)),
             },
             "stats": stats,
             "metrics": metrics,
@@ -2261,57 +2215,16 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
             metadata={"index_id": current_id},
         )
 
-        # architecture.md - Main codebase only
-        arch_content = bsg_map.render_category("source", include_full_entities=True)
-        _write_text(
-            context_dir / "architecture.md",
-            arch_content,
-            ctn_dir=ctn_dir,
-            artifact_type="context_architecture",
-            producer="cli.patch.index",
-            metadata={"index_id": current_id},
+        # files.md - All files by category (single source of truth)
+        files_content = bsg_map.render_files_md(
+            repo_name=root.name,
+            timestamp=datetime.now(timezone.utc).isoformat(),
         )
-
-        # tests.md
-        tests_content = bsg_map.render_category("tests", include_full_entities=False)
         _write_text(
-            context_dir / "tests.md",
-            tests_content,
+            context_dir / "files.md",
+            files_content,
             ctn_dir=ctn_dir,
-            artifact_type="context_tests",
-            producer="cli.patch.index",
-            metadata={"index_id": current_id},
-        )
-
-        # docs.md - Uncategorized categories + Documentation files
-        uncategorized_content = bsg_map.render_uncategorized_categories(
-            include_full_entities=False
-        )
-        docs_content = bsg_map.render_category("docs", include_full_entities=False)
-
-        # Combine uncategorized categories with docs
-        combined_docs = uncategorized_content
-        if combined_docs and docs_content.strip():
-            combined_docs += "\n" + docs_content
-        elif docs_content.strip():
-            combined_docs = docs_content
-
-        _write_text(
-            context_dir / "docs.md",
-            combined_docs,
-            ctn_dir=ctn_dir,
-            artifact_type="context_docs",
-            producer="cli.patch.index",
-            metadata={"index_id": current_id},
-        )
-
-        # config.md
-        config_content = bsg_map.render_category("config", include_full_entities=False)
-        _write_text(
-            context_dir / "config.md",
-            config_content,
-            ctn_dir=ctn_dir,
-            artifact_type="context_config",
+            artifact_type="context_files",
             producer="cli.patch.index",
             metadata={"index_id": current_id},
         )
@@ -2367,12 +2280,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
             }:
                 outputs.pop(stale_key, None)
         outputs["overview_md"] = str((context_dir / "overview.md").relative_to(root))
-        outputs["architecture_md"] = str(
-            (context_dir / "architecture.md").relative_to(root)
-        )
-        outputs["tests_md"] = str((context_dir / "tests.md").relative_to(root))
-        outputs["docs_md"] = str((context_dir / "docs.md").relative_to(root))
-        outputs["config_md"] = str((context_dir / "config.md").relative_to(root))
+        outputs["files_md"] = str((context_dir / "files.md").relative_to(root))
         entry["schemas"] = dict(get_config_cached().get("schemas", {}))
         entry["persistence"] = {
             "model": _PERSISTENCE_MODEL_VERSION,

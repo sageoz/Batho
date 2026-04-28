@@ -209,26 +209,9 @@ def describe_artifact(artifact_path: Path, ctn_dir: Path) -> ArtifactDescriptor:
             "context_overview", retention_class="context", schema_version="context.v1"
         )
 
-    if logical.endswith("/context/architecture.md"):
+    if logical.endswith("/context/files.md"):
         return ArtifactDescriptor(
-            "context_architecture",
-            retention_class="context",
-            schema_version="context.v1",
-        )
-
-    if logical.endswith("/context/tests.md"):
-        return ArtifactDescriptor(
-            "context_tests", retention_class="context", schema_version="context.v1"
-        )
-
-    if logical.endswith("/context/docs.md"):
-        return ArtifactDescriptor(
-            "context_docs", retention_class="context", schema_version="context.v1"
-        )
-
-    if logical.endswith("/context/config.md"):
-        return ArtifactDescriptor(
-            "context_config", retention_class="context", schema_version="context.v1"
+            "context_files", retention_class="context", schema_version="context.v1"
         )
 
     if "/context/" in logical and logical.endswith(".md"):
