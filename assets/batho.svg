@@ -29,10 +29,6 @@
       <stop offset="50%" stop-color="#ffffff"/>
       <stop offset="100%" stop-color="#ffffff"/>
     </radialGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="6" result="blur"/>
-      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
-    </filter>
     <filter id="shadow">
       <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000" flood-opacity="0.25"/>
     </filter>
@@ -40,7 +36,7 @@
   </defs>
 
   <!-- Rotating blades -->
-  <g transform="translate(168,168)" filter="url(#glow)">
+  <g transform="translate(168,168)">
     <g>
       <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="10s" repeatCount="indefinite"/>
       <path d="M 0,0 C -15,-50 -60,-120 -10,-155 C 15,-140 50,-120 60,-60 C 50,-30 20,-8 0,0 Z"
