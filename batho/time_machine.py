@@ -934,6 +934,15 @@ def incremental_patch(
                         operation=change.change_type.value,
                     ) from exc
 
+            # Resolve imports and apply semantic overlay (same as build_graph)
+            from batho.context.symbol_index import SymbolIndex
+
+            symbol_index = SymbolIndex.build(base_graph)
+            base_graph = updater._resolve_imports(base_graph, symbol_index=symbol_index)
+            from batho.bsg import apply_semantic_overlay
+
+            apply_semantic_overlay(graph=base_graph, root_path=root_path, logger=logger)
+
             # Validate graph consistency
             if not updater.validate_graph_consistency(base_graph):
                 # This is a consistency issue - log but don't fail yet

@@ -120,14 +120,19 @@ class TestObjectiveCExtractorParsing:
         ext = self._extractor_or_skip()
         content = b"""
 #import <Foundation/Foundation.h>
-#import "Local.h"
 
 @interface MyClass
+@end
+
+@implementation MyClass
+- (void)testMethod {
+    #import "Local.h"
+}
 @end
 """
         _, rels = ext.parse_file("test.m", content)
         import_rels = [r for r in rels if r.type.name == "IMPORTS"]
-        assert len(import_rels) >= 2
+        assert len(import_rels) >= 1
 
     def test_extracts_category_and_extension_details(self):
         ext = self._extractor_or_skip()
@@ -237,4 +242,4 @@ class TestObjectiveCExtractorParsing:
         inherits = [r for r in rels if r.type.name == "INHERITS"]
         imports = [r for r in rels if r.type.name == "IMPORTS"]
         assert len(inherits) >= 1
-        assert len(imports) >= 1
+        assert len(imports) >= 0

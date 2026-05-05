@@ -109,7 +109,7 @@ def _configure_incremental_patch_success(
     class _FakeInMemoryGraph:
         @staticmethod
         def from_dict(_payload):
-            return SimpleNamespace()
+            return SimpleNamespace(entities={}, relationships=[])
 
     class _FakeBSG:
         def __init__(self):
@@ -137,6 +137,9 @@ def _configure_incremental_patch_success(
             if updater_raise == "add":
                 raise RuntimeError("add failed")
 
+        def _resolve_imports(self, _graph, symbol_index=None, fuzzy_matching=False):
+            return _graph
+
         def validate_graph_consistency(self, _graph):
             return consistency_ok
 
@@ -157,6 +160,12 @@ def _configure_incremental_patch_success(
     monkeypatch.setattr(tm, "create_snapshot", lambda *_a, **_k: "snap-new")
     monkeypatch.setattr(tm, "build_patch_chain", lambda *_a, **_k: ["op-0", "op-1"])
     monkeypatch.setattr(tm, "estimate_token_changes", lambda _changes: 123)
+
+    import batho.bsg as bsg_mod
+
+    monkeypatch.setattr(
+        bsg_mod, "apply_semantic_overlay", lambda graph, root_path, logger=None: None
+    )
 
     if save_raises:
         monkeypatch.setattr(

@@ -627,7 +627,9 @@ class ASTExtractor(abc.ABC):
 
                 elif rel_type == RelationshipType.IMPORTS:
                     source_ent = _find_enclosing(node.start_byte)
-                    source_id = source_ent.id if source_ent else filepath
+                    if source_ent is None:
+                        continue
+                    source_id = source_ent.id
                     targets = _expand_import_targets(ref_text)
                     if not targets:
                         continue
