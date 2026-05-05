@@ -47,3 +47,5 @@ BSGautoresearch/state/
 BSGautoresearch/.env
 bsg_analysis.ipynb
 .DS_Store
+issue.md
+/Dashboard/*

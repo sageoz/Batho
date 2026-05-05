@@ -26,7 +26,12 @@ class TestImportNormalization:
 class TestRExtractorImports:
     def test_r_import_calls_are_captured(self):
         extractor = RExtractor()
-        source = b"foo <- function(x) x\nlibrary(dplyr)\nrequire('ggplot2')\n"
+        source = b"""foo <- function(x) x
+run_analysis <- function() {
+    library(dplyr)
+    require('ggplot2')
+}
+"""
         _, relationships = extractor.parse_file("sample.R", source)
 
         targets = sorted(
