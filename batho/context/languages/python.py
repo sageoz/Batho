@@ -49,7 +49,6 @@ class PythonExtractor(ASTExtractor):
           (string) @def.method.docstring)?))))
 
 ; ── Module-level / nested function definitions ───────────────────────────────
-; NOTE: this also matches decorated functions; the decorator does not interfere.
 (module
   (function_definition
     name: (identifier) @def.function.name
@@ -58,6 +57,17 @@ class PythonExtractor(ASTExtractor):
     body: (block
       (expression_statement
         (string) @def.function.docstring)?)))
+
+; Decorated module-level functions
+(module
+  (decorated_definition
+    definition: (function_definition
+      name: (identifier) @def.function.name
+      parameters: (parameters) @def.function.params
+      return_type: (type)? @def.function.return_type
+      body: (block
+        (expression_statement
+          (string) @def.function.docstring)?))))
 
 ; Nested functions inside other functions
 (function_definition

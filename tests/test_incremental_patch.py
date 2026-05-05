@@ -643,7 +643,7 @@ class TestIncrementalPatchFunction:
     def test_incremental_patch_consistency_failure(
         self, temp_ctn_dir, mock_base_snapshot
     ):
-        """Test patch with graph consistency failure."""
+        """Test patch with graph consistency warnings (non-fatal)."""
         base_snap, _ = mock_base_snapshot
         changes = [FileChange("file.py", FileChangeType.ADDED, None, "hash")]
 
@@ -664,6 +664,7 @@ class TestIncrementalPatchFunction:
             patch(
                 "batho.time_machine.IncrementalGraphUpdater"
             ) as mock_updater_cls,
+            patch("batho.time_machine.create_snapshot", return_value="new_snap_id"),
         ):
             mock_updater = MagicMock()
             mock_updater_cls.return_value = mock_updater
@@ -671,8 +672,9 @@ class TestIncrementalPatchFunction:
 
             result = incremental_patch(temp_ctn_dir, base_snap["snapshot_id"], changes)
 
-            assert result["success"] is False
-            assert "consistency check" in result["error"].lower()
+            # Graph consistency warnings are now non-fatal; patch succeeds with warning logged
+            assert result["success"] is True
+            assert result["new_snapshot_id"] == "new_snap_id"
 
 
 class TestIncrementalPatchExceptionHandling:
