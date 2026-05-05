@@ -137,7 +137,8 @@ def process_file_worker(
                 entities, relationships = file_extractor.parse_file(filepath, content)
 
         # Cache the extracted entities if cache is enabled
-        if cache_enabled:
+        # Skip caching empty results to avoid re-parsing files that legitimately have no entities
+        if cache_enabled and entities:
             cache = ASTCache(cache_path=cache_path)
             cache.cache_entities(
                 filepath, content_hash, entities, current_mtime, size, ttl_days

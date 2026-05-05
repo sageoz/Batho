@@ -2359,7 +2359,30 @@ def _cmd_patch_snapshot_based(
         tracker = FileChangeTracker(root)
         hash_cache_path = local_dirs["state"] / "file_hashes.json"
         tracker.load(hash_cache_path)
-        changes = tracker.scan_for_changes(max_file_size_kb=args.max_file_size_kb)
+
+        base_snapshot = None
+        if args.base_snapshot:
+            base_snapshot = load_snapshot(ctn_dir, args.base_snapshot)
+            if base_snapshot:
+                base_file_hashes: dict[str, str] = {}
+                for entity in base_snapshot.get("graph", {}).get("entities", []):
+                    file_path = entity.get("file", "")
+                    file_hash = entity.get("hash", "")
+                    if file_path and file_hash:
+                        base_file_hashes[file_path] = file_hash
+                if not base_file_hashes:
+                    LOGGER.warning(
+                        "base_snapshot_missing_hashes",
+                        base_snapshot_id=args.base_snapshot,
+                        note="snapshot entities lack hash field; falling back to full scan",
+                    )
+                    base_snapshot = None
+                else:
+                    base_snapshot = {"file_hashes": base_file_hashes}
+
+        changes = tracker.scan_for_changes(
+            max_file_size_kb=args.max_file_size_kb, base_snapshot=base_snapshot
+        )
         tracker.save(hash_cache_path)
         if hash_cache_path.exists():
             register_artifact(

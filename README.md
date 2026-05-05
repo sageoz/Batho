@@ -1093,4 +1093,4 @@ Apache 2.0 — see [LICENSE](LICENSE)
 <p align="center">
   <strong>🚀 Batho v1.0.0 - Code Intelligence for the AI Era</strong><br>
   <a href="https://pypi.org/project/batho/">PyPI</a> · <a href="https://github.com/sageoz/batho/issues">Issues</a> · <a href="https://github.com/sageoz/batho/discussions">Discussions</a> · <a href="https://github.com/sageoz/batho/blob/main/docs/updated.md">Full Documentation</a>
-</p># test
+</p>

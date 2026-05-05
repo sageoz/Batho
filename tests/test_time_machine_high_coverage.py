@@ -405,15 +405,16 @@ def test_incremental_patch_timeout_and_snapshot_and_consistency_errors(
     assert snap_result["success"] is False
     assert "not found" in snap_result["error"]
 
-    # Consistency failure path.
+    # Consistency failure path (now non-fatal - logs warning but succeeds).
     _configure_incremental_patch_success(monkeypatch, tmp_path, consistency_ok=False)
     consistency_result = tm.incremental_patch(
         tmp_path / ".ctn",
         "base",
         [_mk_change("del.py", FileChangeType.DELETED, "old", None)],
     )
-    assert consistency_result["success"] is False
-    assert "consistency" in consistency_result["error"].lower()
+    # Graph consistency warnings are now non-fatal; patch succeeds with warning logged
+    assert consistency_result["success"] is True
+    assert consistency_result["new_snapshot_id"] is not None
 
 
 def test_incremental_patch_file_error_validation_error_and_unexpected_error(

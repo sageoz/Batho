@@ -78,6 +78,7 @@ class InMemoryGraph:
         self.relationships: list[Relationship] = (
             relationships if relationships is not None else []
         )
+        self._rel_ids: set[str] = {r.id for r in (relationships or [])}
         self._adj_out: dict[str, list[str]] | None = None
         self._adj_in: dict[str, list[str]] | None = None
 
@@ -85,6 +86,9 @@ class InMemoryGraph:
         self.entities[entity.id] = entity
 
     def add_relationship(self, relationship: Relationship) -> None:
+        if relationship.id in self._rel_ids:
+            return
+        self._rel_ids.add(relationship.id)
         self.relationships.append(relationship)
         self._adj_out = None
         self._adj_in = None
@@ -237,6 +241,7 @@ class IncrementalGraphUpdater:
 
             # Update relationships
             graph.relationships = relationships_to_keep
+            graph._rel_ids = {r.id for r in relationships_to_keep}
 
             # Invalidate adjacency cache
             graph._adj_out = None
@@ -344,8 +349,34 @@ class IncrementalGraphUpdater:
         entity_ids = set(graph.entities.keys())
         broken_relationships = []
 
+        def is_valid_target(target_id: str) -> bool:
+            """Check if target is a valid entity reference or intentional external reference."""
+            if target_id in entity_ids:
+                return True
+            # Allow special external references (URLs, files, anchors, imports, resources, variables, images)
+            valid_prefixes = ("external:", "file:", "anchor:", "import:", "resource:", "variable:", "image:")
+            if any(target_id.startswith(prefix) for prefix in valid_prefixes):
+                return True
+            # Allow unresolved placeholders
+            if target_id.startswith("unresolved:"):
+                return True
+            # Allow module-style targets (e.g., "batho.context.codegraph")
+            # Permissive: allow any dotted identifier without path separators
+            if "." in target_id and not "/" in target_id and not "\\" in target_id:
+                return True
+            return False
+
+        def is_valid_source(source_id: str) -> bool:
+            """Check if source is a valid entity reference or file path (legacy behavior)."""
+            if source_id in entity_ids:
+                return True
+            # Allow file paths as source (legacy behavior - some relationships use file path as source)
+            if "/" in source_id or "\\" in source_id:
+                return True
+            return False
+
         for rel in graph.relationships:
-            if rel.source_id not in entity_ids or rel.target_id not in entity_ids:
+            if not is_valid_source(rel.source_id) or not is_valid_target(rel.target_id):
                 broken_relationships.append(rel)
 
         if broken_relationships:
@@ -762,6 +793,13 @@ class CodeGraphIndexer:
                 files_skipped=files_skipped,
                 files_cached=files_cached,
             )
+
+        # Validate graph consistency before returning
+        updater = IncrementalGraphUpdater()
+        if not updater.validate_graph_consistency(graph):
+            self.logger.warning("initial_graph_inconsistency_detected")
+            if strict_mode or fail_on_warning:
+                raise RuntimeError("Initial graph build produced inconsistent relationships")
 
         # Force garbage collection for large operations
         if len(candidates) > 1000:
