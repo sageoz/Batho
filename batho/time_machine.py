@@ -849,7 +849,7 @@ def incremental_patch(
 
             # Create file change tracker for validation
             tracker = FileChangeTracker(root_path)
-            tracker.load(ctn_dir / ".ctn" / "file_tracker.json")
+            tracker.load(ctn_dir / "file_tracker.json")
 
             # Apply changes in order: deletions first, then modifications, then additions
             ordered_changes = aggregate_changes(changes)
@@ -976,7 +976,7 @@ def incremental_patch(
                 else:
                     tracker.file_hashes[change.path] = change.new_hash or ""
 
-            tracker.save(ctn_dir / ".ctn" / "file_tracker.json")
+            tracker.save(ctn_dir / "file_tracker.json")
 
             # Create patch operation record
             operation_id = generate_snapshot_id()
