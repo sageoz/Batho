@@ -3453,6 +3453,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     _register_bsg_plugin_subcommands(plugins_sub)
 
+    # Dashboard: local static server with dual-root serving
+    from batho.cli.dashboard import register_cli_subcommands as _register_dashboard_subcommands
+
+    _register_dashboard_subcommands(sub)
+
     return parser
 
 
