@@ -1613,6 +1613,23 @@ def cmd_index(args: argparse.Namespace) -> int:
             metadata={"index_id": index_id},
         )
 
+        # overview.json
+        overview_json = bsg_map.render_overview_json(
+            stack_info=stack_info,
+            repo_name=repo_name,
+            timestamp=timestamp,
+            evolution_rules=evolution_rules,
+        )
+        _write_json(
+            context_dir / "json" / "overview.json",
+            overview_json,
+            ctn_dir=ctn_dir,
+            artifact_type="context_overview_json",
+            producer="cli.index",
+            metadata={"index_id": index_id},
+            schema_version="context-overview.v1",
+        )
+
         # files.md - All files by category (single source of truth)
         files_content = bsg_map.render_files_md(
             repo_name=repo_name,
@@ -1625,6 +1642,21 @@ def cmd_index(args: argparse.Namespace) -> int:
             artifact_type="context_files",
             producer="cli.index",
             metadata={"index_id": index_id},
+        )
+
+        # files.json
+        files_json = bsg_map.render_files_json(
+            repo_name=repo_name,
+            timestamp=timestamp,
+        )
+        _write_json(
+            context_dir / "json" / "files.json",
+            files_json,
+            ctn_dir=ctn_dir,
+            artifact_type="context_files_json",
+            producer="cli.index",
+            metadata={"index_id": index_id},
+            schema_version="context-files.v1",
         )
 
         # Metadata
@@ -1679,6 +1711,8 @@ def cmd_index(args: argparse.Namespace) -> int:
                 "bsg_json": str(bsg_path.relative_to(root)),
                 "overview_md": str((context_dir / "overview.md").relative_to(root)),
                 "files_md": str((context_dir / "files.md").relative_to(root)),
+                "overview_json": str((context_dir / "json" / "overview.json").relative_to(root)),
+                "files_json": str((context_dir / "json" / "files.json").relative_to(root)),
             },
             "stats": stats,
             "metrics": metrics,
@@ -2212,6 +2246,23 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
             metadata={"index_id": current_id},
         )
 
+        # overview.json
+        overview_json = bsg_map.render_overview_json(
+            stack_info=entry.get("stack"),
+            repo_name=repo_name,
+            timestamp=timestamp,
+            evolution_rules=evolution_rules,
+        )
+        _write_json(
+            context_dir / "json" / "overview.json",
+            overview_json,
+            ctn_dir=ctn_dir,
+            artifact_type="context_overview_json",
+            producer="cli.patch.index",
+            metadata={"index_id": current_id},
+            schema_version="context-overview.v1",
+        )
+
         # files.md - All files by category (single source of truth)
         files_content = bsg_map.render_files_md(
             repo_name=root.name,
@@ -2224,6 +2275,21 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
             artifact_type="context_files",
             producer="cli.patch.index",
             metadata={"index_id": current_id},
+        )
+
+        # files.json
+        files_json = bsg_map.render_files_json(
+            repo_name=root.name,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+        _write_json(
+            context_dir / "json" / "files.json",
+            files_json,
+            ctn_dir=ctn_dir,
+            artifact_type="context_files_json",
+            producer="cli.patch.index",
+            metadata={"index_id": current_id},
+            schema_version="context-files.v1",
         )
 
         # Update metadata entry
@@ -2278,6 +2344,8 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
                 outputs.pop(stale_key, None)
         outputs["overview_md"] = str((context_dir / "overview.md").relative_to(root))
         outputs["files_md"] = str((context_dir / "files.md").relative_to(root))
+        outputs["overview_json"] = str((context_dir / "json" / "overview.json").relative_to(root))
+        outputs["files_json"] = str((context_dir / "json" / "files.json").relative_to(root))
         entry["schemas"] = dict(get_config_cached().get("schemas", {}))
         entry["persistence"] = {
             "model": _PERSISTENCE_MODEL_VERSION,
