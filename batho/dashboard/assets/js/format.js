@@ -47,3 +47,14 @@ export function formatInt(value) {
   if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
   return value.toLocaleString();
 }
+
+export function formatDeltaSigned(value) {
+  if (value === null || value === undefined) return '—';
+  return value >= 0 ? `+${value}` : `${value}`;
+}
+
+export function formatStaleness(score) {
+  const pct = Math.round(score * 100);
+  if (pct >= 50) return `${pct}% (stale)`;
+  return `${pct}%`;
+}

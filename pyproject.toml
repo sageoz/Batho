@@ -53,7 +53,7 @@ packages = ["batho"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "batho_cli.py" = "batho_cli.py"
-"dashboard" = "dashboard"
+"batho/dashboard" = "batho/dashboard"
 
 [tool.hatch.build.targets.wheel.package-data]
 "batho" = ["dashboard/**/*"]

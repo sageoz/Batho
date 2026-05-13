@@ -46,11 +46,34 @@ def _find_workspace_root(ctn_path: Path) -> Path:
 
 
 def _find_dashboard_assets() -> Path | None:
-    """Find the packaged dashboard/ assets in the installed package."""
+    """Find the dashboard/ assets directory.
+
+    Resolution order:
+    1. ``BATHO_DASHBOARD_DIR`` environment variable (explicit override).
+    2. The dev checkout living next to this file (``<repo>/batho/dashboard``).
+       This lets contributors iterate without reinstalling the package.
+    3. The packaged copy inside the installed ``batho`` distribution.
+    """
+    override = os.environ.get("BATHO_DASHBOARD_DIR")
+    if override:
+        candidate = Path(override).expanduser()
+        if candidate.is_dir():
+            return candidate
+
+    # __file__ -> .../batho/cli/dashboard.py; dev dashboard sits at
+    # .../batho/dashboard relative to the package root.
+    here = Path(__file__).resolve()
+    dev_candidate = here.parent.parent / "dashboard"
+    if dev_candidate.is_dir() and (dev_candidate / "index.html").is_file():
+        return dev_candidate
+
     try:
-        return Path(str(_pkg_files("batho").joinpath("dashboard")))
+        packaged = Path(str(_pkg_files("batho").joinpath("dashboard")))
+        if packaged.is_dir():
+            return packaged
     except Exception:
-        return None
+        pass
+    return None
 
 
 def _is_port_available(host: str, port: int) -> bool:
@@ -119,7 +142,8 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, format, *args):
         """Log requests via structlog."""
-        LOGGER.info("dashboard_server", method=self.command, path=self.path, status=self.send_response_called and self.reply_code or "-")
+        status = args[1] if len(args) > 1 else "-"
+        LOGGER.info("dashboard_server", method=self.command, path=self.path, status=status)
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
