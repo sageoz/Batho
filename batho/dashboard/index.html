@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="description" content="Batho — brutalist code intelligence cockpit" />
+  <title>Batho Dashboard</title>
+  <link
+    rel="icon"
+    type="image/svg+xml"
+    href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='2' y='2' width='12' height='12' fill='%2300d9ff'/></svg>"
+  />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="/dashboard/assets/css/tokens.css" />
+  <link rel="stylesheet" href="/dashboard/assets/css/base.css" />
+  <link rel="stylesheet" href="/dashboard/assets/css/components.css" />
+  <link rel="stylesheet" href="/dashboard/assets/css/animations.css" />
+  <style>
+    .notice-slot {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      z-index: 1000;
+      max-width: 400px;
+      pointer-events: none;
+    }
+    .notice {
+      padding: var(--space-pad);
+      margin-top: var(--space-gutter);
+      border: var(--hairline);
+      background: var(--surface-container);
+      font-size: var(--type-terminal-size);
+      pointer-events: auto;
+    }
+    .notice--warn {
+      border-color: var(--tertiary);
+      color: var(--tertiary);
+    }
+
+    /* Pre-mount skeleton so the page never flashes white. */
+    .app-bootstrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      width: 100vw;
+      color: var(--on-surface-variant, #aaa);
+      background: var(--surface, #0a0a0a);
+      font-family: var(--font-mono, monospace);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+    }
+    .app-bootstrap__cursor {
+      display: inline-block;
+      width: 8px;
+      height: 12px;
+      background: var(--accent-cyan, #00d9ff);
+      margin-right: 8px;
+      animation: app-bootstrap-blink 1s steps(2) infinite;
+    }
+    @keyframes app-bootstrap-blink {
+      0%, 50% { opacity: 1; }
+      50.01%, 100% { opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="app-bootstrap" role="status" aria-live="polite">
+      <span class="app-bootstrap__cursor" aria-hidden="true"></span>
+      <span>booting cockpit&hellip;</span>
+    </div>
+  </div>
+  <noscript>
+    <div style="padding:16px;font-family:monospace;background:#0a0a0a;color:#fff;">
+      Batho Dashboard requires JavaScript to render the cockpit.
+    </div>
+  </noscript>
+  <script type="module" src="/dashboard/assets/js/main.js"></script>
+</body>
+</html>

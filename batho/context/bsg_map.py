@@ -1224,6 +1224,121 @@ class BSGMap:
 
         return "\n".join(lines)
 
+    def render_files_json(
+        self,
+        repo_name: str | None = None,
+        timestamp: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Render a structured JSON representation of all files by category.
+
+        Matches the ``context-files.v1`` schema for machine-parseable output.
+
+        Args:
+            repo_name: Repository name (defaults to root directory name).
+            timestamp: ISO timestamp for the index.
+
+        Returns:
+            Dict matching the context-files.v1 schema.
+        """
+        if repo_name is None:
+            repo_name = Path(self._root).name if self._root else "repository"
+        if timestamp is None:
+            timestamp = datetime.now(timezone.utc).isoformat()
+
+        categorized = self.categorize_files()
+        total_files = len(self._by_file)
+        total_entities = self.entity_count
+
+        display_names = {
+            "source": "Source",
+            "test": "Tests",
+            "doc": "Docs",
+            "config": "Config",
+            "infra": "Infra",
+        }
+
+        category_order = ["source", "test", "doc", "config", "infra"]
+        remaining = [cat for cat in categorized if cat not in category_order]
+        category_order.extend(sorted(remaining))
+
+        categories: list[dict[str, Any]] = []
+        for cat in category_order:
+            files_data = categorized.get(cat)
+            if not files_data:
+                continue
+
+            cat_file_count = len(files_data)
+            cat_entity_count = sum(len(ents) for ents in files_data.values())
+            display = display_names.get(cat, cat.capitalize())
+
+            directories: list[dict[str, Any]] = []
+            grouped = self._group_by_directory_for_files(files_data)
+            for dir_path, files in grouped.items():
+                dir_entry: dict[str, Any] = {
+                    "path": f"{dir_path}/" if dir_path else "(root)/",
+                }
+                label = self._get_directory_label(dir_path)
+                if label:
+                    dir_entry["label"] = label
+
+                file_entries: list[dict[str, Any]] = []
+                for file_name, entities in files:
+                    relative_path = f"{dir_path}/{file_name}" if dir_path else file_name
+                    type_counts: dict[str, int] = {}
+                    for ent in entities:
+                        type_name = str(ent.type)
+                        type_counts[type_name] = type_counts.get(type_name, 0) + 1
+
+                    entity_summary = {
+                        "total": len(entities),
+                        "breakdown": dict(sorted(type_counts.items())),
+                    }
+
+                    entity_entries: list[dict[str, Any]] = []
+                    for ent in entities:
+                        entity_entries.append({
+                            "name": ent.name,
+                            "type": str(ent.type),
+                            "start_line": ent.start_line,
+                            "end_line": ent.end_line,
+                        })
+
+                    file_entry: dict[str, Any] = {
+                        "name": file_name,
+                        "relative_path": relative_path,
+                        "entity_summary": entity_summary,
+                        "entities": entity_entries,
+                    }
+
+                    if cat == "source":
+                        deps = self._dependencies.get(relative_path, [])
+                        if deps:
+                            file_entry["dependencies"] = deps
+
+                    file_entries.append(file_entry)
+
+                dir_entry["files"] = file_entries
+                directories.append(dir_entry)
+
+            categories.append({
+                "name": display,
+                "file_count": cat_file_count,
+                "entity_count": cat_entity_count,
+                "directories": directories,
+            })
+
+        return {
+            "schema_version": "context-files.v1",
+            "generated_at": timestamp,
+            "repo": repo_name,
+            "summary": {
+                "total_files": total_files,
+                "total_entities": total_entities,
+            },
+            "categories": categories,
+        }
+
     def _group_by_directory_for_files(
         self,
         files_data: dict[str, list[Entity]],
@@ -1437,6 +1552,160 @@ class BSGMap:
 
         return "\n".join(lines)
 
+    def render_overview_json(
+        self,
+        stack_info: dict[str, Any] | None = None,
+        repo_name: str | None = None,
+        timestamp: str | None = None,
+        evolution_rules: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Render a structured JSON repository overview.
+
+        Matches the ``context-overview.v1`` schema for machine-parseable output.
+
+        Args:
+            stack_info: Stack detection results.
+            repo_name: Repository name (defaults to root directory name).
+            timestamp: ISO timestamp for the index.
+            evolution_rules: Optional recent entries from evolution ledger.
+
+        Returns:
+            Dict matching the context-overview.v1 schema.
+        """
+        if repo_name is None:
+            repo_name = Path(self._root).name if self._root else "repository"
+        if timestamp is None:
+            timestamp = datetime.now(timezone.utc).isoformat()
+
+        categorized = self.categorize_files()
+        total_files = len(self._by_file)
+        total_entities = self.entity_count
+        total_relationships = sum(len(deps) for deps in self._dependencies.values())
+
+        # File distribution
+        file_distribution: list[dict[str, Any]] = []
+        main_categories = ["source", "test", "doc", "config"]
+        other_categories = sorted(
+            [cat for cat in categorized.keys() if cat not in main_categories]
+        )
+        ordered_categories = main_categories + [
+            cat for cat in other_categories if cat in categorized
+        ]
+        display_map = {
+            "source": "Source",
+            "test": "Tests",
+            "doc": "Docs",
+            "config": "Config",
+            "infra": "Infra",
+        }
+        for cat in ordered_categories:
+            if cat not in categorized:
+                continue
+            count = len(categorized[cat])
+            entities = sum(len(ents) for ents in categorized[cat].values())
+            pct = round(count / total_files * 100, 1) if total_files > 0 else 0.0
+            display_name = display_map.get(cat, cat.capitalize())
+            file_distribution.append({
+                "category": display_name,
+                "files": count,
+                "percentage": pct,
+                "entities": entities,
+            })
+
+        # Language breakdown
+        lang_counts = self._count_by_language()
+        language_breakdown: list[dict[str, Any]] = []
+        for lang, count in sorted(lang_counts.items(), key=lambda x: -x[1]):
+            pct = round(count / total_files * 100, 1) if total_files > 0 else 0.0
+            language_breakdown.append({
+                "language": lang,
+                "files": count,
+                "percentage": pct,
+            })
+        primary_language = (
+            max(lang_counts.items(), key=lambda x: x[1])[0]
+            if lang_counts
+            else "N/A"
+        )
+
+        # Technology stack
+        technology_stack: dict[str, list[str]] = {
+            "languages": [],
+            "frameworks": [],
+            "package_managers": [],
+            "build_tools": [],
+            "infra": [],
+            "other": [],
+        }
+        if stack_info:
+            for key in technology_stack:
+                value = stack_info.get(key)
+                if isinstance(value, list):
+                    technology_stack[key] = [str(v) for v in value if v]
+                elif isinstance(value, str) and value:
+                    technology_stack[key] = [value]
+
+        # Directory structure
+        directory_structure = self._build_directory_tree_json()
+
+        # Entity statistics
+        type_counts: dict[str, int] = {}
+        for entities in self._by_file.values():
+            for ent in entities:
+                type_name = str(ent.type)
+                type_counts[type_name] = type_counts.get(type_name, 0) + 1
+        entity_statistics = [
+            {"type": ent_type, "count": count}
+            for ent_type, count in sorted(type_counts.items(), key=lambda x: -x[1])
+        ]
+
+        # Top dependencies
+        all_deps: dict[str, int] = {}
+        for deps in self._dependencies.values():
+            for dep in deps:
+                all_deps[dep] = all_deps.get(dep, 0) + 1
+        top_deps = sorted(all_deps.items(), key=lambda x: -x[1])[:10]
+        top_dependencies = [
+            {"dependency": dep, "references": count}
+            for dep, count in top_deps
+        ]
+
+        # Evolution rules
+        evolution_out: list[dict[str, Any]] = []
+        if evolution_rules:
+            for item in evolution_rules:
+                dont_rule = str(item.get("dont_rule") or "").strip()
+                if not dont_rule:
+                    continue
+                evolution_out.append({
+                    "source": str(item.get("source") or "unknown"),
+                    "rule": dont_rule,
+                    "timestamp": str(item.get("timestamp") or ""),
+                })
+
+        result: dict[str, Any] = {
+            "schema_version": "context-overview.v1",
+            "generated_at": timestamp,
+            "repo": repo_name,
+            "summary": {
+                "total_files": total_files,
+                "total_entities": total_entities,
+                "total_relationships": total_relationships,
+            },
+            "file_distribution": file_distribution,
+            "language_breakdown": language_breakdown,
+            "primary_language": primary_language,
+            "technology_stack": technology_stack,
+            "directory_structure": directory_structure,
+            "entity_statistics": entity_statistics,
+            "top_dependencies": top_dependencies,
+        }
+        if evolution_out:
+            result["evolution_rules"] = evolution_out
+
+        return result
+
     def _count_by_language(self) -> dict[str, int]:
         """Count files by detected language."""
         lang_counts: dict[str, int] = {}
@@ -1507,6 +1776,43 @@ class BSGMap:
                     lines.append(f"{file_indent}... and {len(files) - 5} more")
 
         return lines
+
+    def _build_directory_tree_json(self) -> dict[str, Any]:
+        """Build a recursive JSON directory tree from file paths."""
+        root: dict[str, Any] = {"name": "root", "type": "directory", "children": []}
+        for file_path in sorted(self._by_file.keys()):
+            parts = file_path.split("/")
+            current = root
+            for i, part in enumerate(parts[:-1]):
+                found = None
+                for child in current.get("children", []):
+                    if child["type"] == "directory" and child["name"] == part:
+                        found = child
+                        break
+                if found is None:
+                    dir_path = "/".join(parts[: i + 1])
+                    label = self._get_directory_label(dir_path)
+                    new_dir: dict[str, Any] = {
+                        "name": part,
+                        "type": "directory",
+                        "children": [],
+                    }
+                    if label:
+                        new_dir["label"] = label
+                    current["children"].append(new_dir)
+                    found = new_dir
+                current = found
+            current["children"].append({"name": parts[-1], "type": "file"})
+        self._sort_tree_children(root)
+        return root
+
+    def _sort_tree_children(self, node: dict[str, Any]) -> None:
+        """Sort tree children deterministically (directories first, then files)."""
+        children = node.get("children", [])
+        children.sort(key=lambda c: (0 if c["type"] == "directory" else 1, c["name"]))
+        for child in children:
+            if child["type"] == "directory":
+                self._sort_tree_children(child)
 
     # ------------------------------------------------------------------
     # Diagnostics

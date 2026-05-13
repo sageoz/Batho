@@ -371,6 +371,144 @@ class TestCmdIndex:
         assert isinstance(bsg_payload.get("quality_warnings"), list)
         get_config_cached.cache_clear()
 
+    def test_index_creates_context_json_files(self, simple_python_repo: Path):
+        args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            full=False,
+            base_snapshot=None,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        result = cmd_index(args)
+        assert result == 0
+
+        ctn_dir = simple_python_repo / ".ctn"
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+
+        overview_json_path = ctn_dir / current_id / "context" / "json" / "overview.json"
+        files_json_path = ctn_dir / current_id / "context" / "json" / "files.json"
+
+        assert overview_json_path.exists()
+        assert files_json_path.exists()
+
+        overview = json.loads(overview_json_path.read_text(encoding="utf-8"))
+        assert overview["schema_version"] == "context-overview.v1"
+        assert "summary" in overview
+        assert "file_distribution" in overview
+
+        files = json.loads(files_json_path.read_text(encoding="utf-8"))
+        assert files["schema_version"] == "context-files.v1"
+        assert "categories" in files
+        assert "summary" in files
+
+    def test_index_json_outputs_in_index_metadata(self, simple_python_repo: Path):
+        args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            full=False,
+            base_snapshot=None,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        result = cmd_index(args)
+        assert result == 0
+
+        ctn_dir = simple_python_repo / ".ctn"
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        entry = index_payload.get("indexes", {}).get(current_id, {})
+        outputs = entry.get("outputs", {})
+
+        assert "overview_json" in outputs
+        assert "files_json" in outputs
+        assert outputs["overview_json"].endswith("context/json/overview.json")
+        assert outputs["files_json"].endswith("context/json/files.json")
+
+    def test_patch_regenerates_context_json_files(self, tmp_path: Path):
+        root = tmp_path / "repo"
+        root.mkdir()
+        original = root / "a.py"
+        original.write_text("def alpha():\n    return 1\n", encoding="utf-8")
+
+        idx_args = argparse.Namespace(
+            root=str(root),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=False,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+        )
+        assert cmd_index(idx_args) == 0
+
+        # Manually save file hashes so patch scan detects changes
+        from batho.time_machine import FileChangeTracker
+        tracker = FileChangeTracker(root)
+        tracker.scan_for_changes(max_file_size_kb=500)
+        state_dir = root / ".ctn" / "local" / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        tracker.save(state_dir / "file_hashes.json")
+
+        # Modify the file
+        original.write_text("def alpha():\n    return 2\n", encoding="utf-8")
+
+        ctn_dir = root / ".ctn"
+        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = str(index_payload.get("current_index_id"))
+        overview_json_path = ctn_dir / current_id / "context" / "json" / "overview.json"
+        files_json_path = ctn_dir / current_id / "context" / "json" / "files.json"
+
+        pre_mtime_overview = overview_json_path.stat().st_mtime if overview_json_path.exists() else 0
+        pre_mtime_files = files_json_path.stat().st_mtime if files_json_path.exists() else 0
+
+        patch_args = argparse.Namespace(
+            root=str(root),
+            base_snapshot=None,
+            force_index_patch=True,
+            diff=None,
+            scan=True,
+            files=[],
+            snapshot=False,
+            dry_run=False,
+            max_file_size_kb=500,
+        )
+        assert cmd_patch(patch_args) == 0
+
+        assert overview_json_path.exists()
+        assert files_json_path.exists()
+        assert overview_json_path.stat().st_mtime > pre_mtime_overview
+        assert files_json_path.stat().st_mtime > pre_mtime_files
+
+        # Verify JSON content reflects the modified file
+        files_json = json.loads(files_json_path.read_text(encoding="utf-8"))
+        assert files_json["schema_version"] == "context-files.v1"
+
 
 # ---------------------------------------------------------------------------
 # cmd_stats
