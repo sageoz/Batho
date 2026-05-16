@@ -9,6 +9,7 @@ from batho.context.storage import (
     _safe_parse_iso,
     backfill_registry,
     cleanup_registry,
+    compact_registry,
     describe_artifact,
     get_artifact_registry,
     get_registry_stats,
@@ -561,3 +562,116 @@ def test_get_failed_artifacts_respects_max_retries(tmp_path: Path) -> None:
 
     failed = registry.get_failed_artifacts(max_retries=3)
     assert failed == []
+
+
+def test_register_changed_content_deduplicates_old_row(tmp_path: Path) -> None:
+    """When a file changes content, the old active row should be marked deleted."""
+    ctn_dir = tmp_path / ".ctn"
+    ctn_dir.mkdir()
+
+    artifact = ctn_dir / "bsg.json"
+    artifact.write_text('{"nodes": [1]}', encoding="utf-8")
+
+    ok1 = register_artifact(
+        ctn_dir,
+        artifact,
+        "bsg_json",
+        producer="test",
+        schema_version="bsg.v1",
+    )
+    assert ok1 is True
+
+    registry_db = ctn_dir / "local" / "sync" / "artifact_registry.db"
+    assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts WHERE deleted = 0") == 1
+
+    # Change content => new checksum => new artifact_id
+    artifact.write_text('{"nodes": [1, 2]}', encoding="utf-8")
+    ok2 = register_artifact(
+        ctn_dir,
+        artifact,
+        "bsg_json",
+        producer="test",
+        schema_version="bsg.v1",
+    )
+    assert ok2 is True
+
+    # Only 1 active row; old one marked deleted
+    assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts WHERE deleted = 0") == 1
+    assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts WHERE deleted = 1") == 1
+
+
+def test_compact_registry_dry_run_then_apply(tmp_path: Path) -> None:
+    """Compact should report duplicates in dry-run and remove them on apply."""
+    ctn_dir = tmp_path / ".ctn"
+    ctn_dir.mkdir()
+
+    artifact = ctn_dir / "metrics.json"
+    artifact.write_text('{"ok": true}', encoding="utf-8")
+
+    # Register twice with different content to create two active rows
+    assert register_artifact(
+        ctn_dir,
+        artifact,
+        "metrics_json",
+        producer="test",
+        schema_version="metrics.v1",
+    ) is True
+
+    artifact.write_text('{"ok": false}', encoding="utf-8")
+    assert register_artifact(
+        ctn_dir,
+        artifact,
+        "metrics_json",
+        producer="test",
+        schema_version="metrics.v1",
+    ) is True
+
+    registry_db = ctn_dir / "local" / "sync" / "artifact_registry.db"
+    assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts WHERE deleted = 0") == 1
+    # Wait, the new register_file dedup should already mark the old as deleted.
+    # So to test compact, we need to simulate pre-existing duplicates by
+    # manually inserting a second active row.
+    with sqlite3.connect(str(registry_db)) as conn:
+        conn.execute(
+            "INSERT INTO artifacts(artifact_id, content_id, artifact_type, logical_path, physical_path, checksum, size_bytes, schema_version, producer, run_id, sync_status, cloud_content_id, last_sync_at, sync_error, retry_count, retention_class, metadata_json, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            (
+                "fake-id-123",
+                "fake-content",
+                "metrics_json",
+                "metrics.json",
+                str(artifact),
+                "old-checksum",
+                99,
+                "metrics.v1",
+                "test",
+                None,
+                "local_only",
+                None,
+                None,
+                None,
+                0,
+                "default",
+                "{}",
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    # Now there are 2 active rows
+    assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts WHERE deleted = 0") == 2
+
+    dry_run = compact_registry(ctn_dir, dry_run=True)
+    assert dry_run["dry_run"] is True
+    assert dry_run["groups_found"] == 1
+    assert dry_run["artifacts_marked_deleted"] == 1
+    # Rows still active after dry-run
+    assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts WHERE deleted = 0") == 2
+
+    applied = compact_registry(ctn_dir, dry_run=False)
+    assert applied["dry_run"] is False
+    assert applied["groups_found"] == 1
+    assert applied["artifacts_marked_deleted"] == 1
+    # Only 1 active row now, and the stale row is physically removed
+    assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts WHERE deleted = 0") == 1
+    assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts") == 1

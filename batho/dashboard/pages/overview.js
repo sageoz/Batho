@@ -49,7 +49,7 @@ export async function renderOverview(params) {
     const stackHtml = renderStackChips(entry.stack || {});
     const overviewMissingNote = overviewDoc
       ? ''
-      : '<div class="overview-note">overview.md not generated for this index — re-run <code>batho scan</code> for richer detail.</div>';
+      : '<div class="overview-note">overview.json not found for this index — re-run <code>batho index</code> to generate context artifacts.</div>';
 
     container.innerHTML = `
       <div class="overview">
@@ -110,21 +110,22 @@ export async function renderOverview(params) {
 }
 
 function renderErrorPanel(err) {
-  const isCtnIndexMissing =
-    err && err.name === 'MissingArtifactError' && typeof err.path === 'string' && err.path.endsWith('/.ctn/index.json');
+  const isIndexMissing =
+    err && err.name === 'MissingArtifactError' && typeof err.path === 'string' &&
+    (err.path.endsWith('/.ctn/index.json') || err.path.includes('/indexes'));
   const isEntryMissing = err && err.name === 'IndexEntryMissingError';
-  const isArtifactMissing = err && err.name === 'MissingArtifactError' && !isCtnIndexMissing;
+  const isArtifactMissing = err && err.name === 'MissingArtifactError' && !isIndexMissing;
 
   let title = 'Error';
   let message = err?.message || 'An unknown error occurred';
   let hint = '';
 
-  if (isCtnIndexMissing) {
+  if (isIndexMissing) {
     title = 'Structural Fault';
-    message = 'No `.ctn/` folder found. Run `batho scan` first to populate `.ctn/`.';
+    message = 'No index data found. Run <code>batho index</code> first to populate `.ctn/`.';
   } else if (isEntryMissing) {
     title = 'Index Not Found';
-    message = `Active index \`${err.id}\` is not present in .ctn/index.json.`;
+    message = `Active index \`${err.id}\` is not present in the registry.`;
     hint = 'Open Snapshots and select another index, or run <code>batho scan</code> to create a new one.';
   } else if (isArtifactMissing) {
     title = 'Missing Artifact';

@@ -26,8 +26,8 @@ async function init() {
   app.innerHTML = '';
   app.className = 'app';
 
-  // Try to load the index. If `.ctn/` isn't reachable we still mount the
-  // shell so navigation works and pages can render their own error states.
+  // Try to load the index via the bridge API. If the server is unreachable
+  // we still mount the shell so navigation works and pages can render their own error states.
   let indexData = { currentIndexId: '—', indexes: {} };
   let indexLoadError = null;
   try {

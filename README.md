@@ -46,6 +46,10 @@ batho patch --root . --scan
 # Install Git hooks for automated checks
 batho hooks install --all
 
+# Start the artifact bridge (REST API + MCP server)
+batho bridge serve --root .
+batho bridge mcp --transport stdio
+
 # Show all commands
 batho --help
 
@@ -292,7 +296,7 @@ batho <command> --help
 | `hooks` | Git client-side hook management (install/remove/run) |
 | `invalidate` | Clear index file cache |
 | `cache` | AST cache management (`stats`, `invalidate`, `clear`) |
-| `storage` | Persistent artifact registry tools (`backfill`, `verify`, `cleanup`, `stats`, `rebuild-indexes`) |
+| `storage` | Persistent artifact registry tools (`backfill`, `verify`, `cleanup`, `stats`, `rebuild-indexes`, `compact`) |
 | `query` | Query persisted entity/relationship indexes |
 | `bsg` | Render BSG outputs (`compressed`, `full`, `hierarchical`) |
 
@@ -373,6 +377,8 @@ batho storage cleanup --root /path/to/repo          # dry-run
 batho storage cleanup --root /path/to/repo --apply  # execute cleanup
 batho storage stats --root /path/to/repo
 batho storage rebuild-indexes --root /path/to/repo
+batho storage compact --root /path/to/repo            # dry-run
+batho storage compact --root /path/to/repo --apply    # execute compaction
 ```
 
 ### Cloud Sync Operations
@@ -393,6 +399,40 @@ batho sync --root /path/to/repo --retry-failed
 # Show local sync status summary
 batho sync --root /path/to/repo --status
 ```
+
+### Bridge (Artifact Registry REST + MCP)
+
+Expose `.ctn/` artifacts via HTTP and MCP for dashboard/IDE integrations.
+
+```bash
+# Start REST API server (default http://127.0.0.1:8766)
+batho bridge serve --root /path/to/repo
+batho bridge serve --root /path/to/repo --host 0.0.0.0 --port 8766
+
+# Start MCP server (stdio for IDE integration)
+batho bridge mcp --root /path/to/repo --transport stdio
+
+# Start MCP server (SSE for remote clients)
+batho bridge mcp --root /path/to/repo --transport sse --port 8767
+
+# Check registry status
+batho bridge status --root /path/to/repo
+
+# Verify all artifacts are loadable
+batho bridge verify --root /path/to/repo
+```
+
+**REST endpoints** (mounted under `/api/v1/bridge/`):
+- `GET /indexes` — List all indexes
+- `GET /indexes/{index_id}` — Get specific index metadata
+- `GET /artifacts?type={artifact_type}&limit={n}` — List artifact records
+- `GET /artifacts/{artifact_type}?index_id={id}` — Load artifact JSON content
+- `GET /artifacts/{artifact_type}/content?path={logical_path}` — Load by logical path
+- `GET /stats` — Registry statistics
+
+**MCP tools**: `bridge_list_indexes`, `bridge_get_index`, `bridge_list_artifacts`,
+`bridge_get_artifact`, `bridge_get_artifact_by_path`, `bridge_search_artifacts`,
+`bridge_get_stats`.
 
 ### Git Hooks Management
 
@@ -775,6 +815,10 @@ batho storage rebuild-indexes --root .
 # retention dry-run / apply
 batho storage cleanup --root .
 batho storage cleanup --root . --apply
+
+# deduplicate registry (dry-run first)
+batho storage compact --root .
+batho storage compact --root . --apply
 ```
 
 ### BSG Rule Plugins

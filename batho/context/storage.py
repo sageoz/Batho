@@ -556,6 +556,19 @@ class ArtifactRegistry:
 
         try:
             with self._connect() as conn:
+                # Mark any existing active rows with the same logical_path as deleted.
+                # This ensures only the most recent version is active per (type, path).
+                conn.execute(
+                    """
+                    UPDATE artifacts
+                    SET deleted = 1, updated_at = ?
+                    WHERE deleted = 0
+                      AND artifact_type = ?
+                      AND logical_path = ?
+                      AND artifact_id != ?
+                    """,
+                    (now, artifact_type, logical_path, artifact_id),
+                )
                 conn.execute(
                     """
                     INSERT INTO artifacts(
@@ -1140,6 +1153,63 @@ class ArtifactRegistry:
 
         return summary
 
+    def compact(self, *, dry_run: bool = True) -> dict[str, Any]:
+        """Deduplicate active registry entries for the same logical path.
+
+        Keeps the most recently updated active row per (artifact_type,
+        logical_path) and marks older duplicates as deleted.  On *apply*,
+        physically deletes the stale rows.
+        """
+        summary = {
+            "enabled": bool(self.enabled and self._ready),
+            "dry_run": dry_run,
+            "groups_found": 0,
+            "artifacts_marked_deleted": 0,
+        }
+        if not self.enabled or not self._ready:
+            return summary
+
+        with self._connect(row_factory=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT artifact_id, artifact_type, logical_path, updated_at
+                FROM artifacts
+                WHERE deleted = 0
+                ORDER BY artifact_type ASC, logical_path ASC, updated_at DESC
+                """
+            ).fetchall()
+
+        groups: dict[tuple[str, str], list[str]] = {}
+        for row in rows:
+            key = (str(row["artifact_type"]), str(row["logical_path"]))
+            groups.setdefault(key, []).append(str(row["artifact_id"]))
+
+        duplicates: list[str] = []
+        for _key, artifact_ids in groups.items():
+            if len(artifact_ids) > 1:
+                duplicates.extend(artifact_ids[1:])
+                summary["groups_found"] += 1
+
+        summary["artifacts_marked_deleted"] = len(duplicates)
+
+        if dry_run:
+            return summary
+
+        removed = 0
+        with self._connect() as conn:
+            for artifact_id in duplicates:
+                cur = conn.execute(
+                    "DELETE FROM artifacts WHERE artifact_id = ? AND deleted = 0",
+                    (artifact_id,),
+                )
+                removed += cur.rowcount
+            # Also physically remove rows already marked deleted to reclaim space.
+            conn.execute("DELETE FROM artifacts WHERE deleted = 1")
+            conn.commit()
+
+        summary["artifacts_marked_deleted"] = removed
+        return summary
+
     def rebuild_query_indexes(
         self,
         index_id: str,
@@ -1645,3 +1715,13 @@ def persist_bytes(
         retention_class=retention_class,
         run_id=run_id,
     )
+
+
+def compact_registry(
+    ctn_dir: Path,
+    *,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Deduplicate registry entries for the same logical path."""
+    registry = get_artifact_registry(ctn_dir)
+    return registry.compact(dry_run=dry_run)

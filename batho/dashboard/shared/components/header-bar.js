@@ -22,9 +22,10 @@ export function createHeaderBar(props = {}) {
   const showStalenessBadge = staleness >= 0.5;
 
   const optionsHtml = sortedIndexes.map(idx => {
-    const isActive = idx.id === indexId;
-    const shortId = idx.id.replace(/^batho_/, '').slice(0, 12);
-    return `<button class="header-bar__dropdown-item ${isActive ? 'header-bar__dropdown-item--active' : ''}" data-index-id="${escapeHtml(idx.id)}">
+    const id = idx.indexId || idx.index_id || idx.id;
+    const isActive = id === indexId;
+    const shortId = (id || '').replace(/^batho_/, '').slice(0, 12);
+    return `<button class="header-bar__dropdown-item ${isActive ? 'header-bar__dropdown-item--active' : ''}" data-index-id="${escapeHtml(id)}">
       <span class="header-bar__dropdown-item-id">${shortId}</span>
       <span class="header-bar__dropdown-item-time">${formatRelativeTime(idx.timestamp)}</span>
     </button>`;
@@ -132,9 +133,10 @@ function updateIndexList(container, indexes, activeId) {
 
   const sortedIndexes = Object.values(indexes).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   menu.innerHTML = sortedIndexes.map(idx => {
-    const isActive = idx.id === activeId;
-    const shortId = idx.id.replace(/^batho_/, '').slice(0, 12);
-    return `<button class="header-bar__dropdown-item ${isActive ? 'header-bar__dropdown-item--active' : ''}" data-index-id="${escapeHtml(idx.id)}">
+    const id = idx.indexId || idx.index_id || idx.id;
+    const isActive = id === activeId;
+    const shortId = (id || '').replace(/^batho_/, '').slice(0, 12);
+    return `<button class="header-bar__dropdown-item ${isActive ? 'header-bar__dropdown-item--active' : ''}" data-index-id="${escapeHtml(id)}">
       <span class="header-bar__dropdown-item-id">${shortId}</span>
       <span class="header-bar__dropdown-item-time">${formatRelativeTime(idx.timestamp)}</span>
     </button>`;

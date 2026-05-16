@@ -1,13 +1,13 @@
 /**
- * CTN loader - loads artifacts from .ctn/ directory.
+ * CTN loader - loads artifacts via the Batho bridge REST API.
  *
  * Behavior notes:
  * - JSON keys are normalized from snake_case to camelCase, EXCEPT when a key
  *   looks like an opaque identifier (contains digits, dashes, dots, slashes,
  *   colons or whitespace). This prevents corruption of index_ids, plugin
  *   names, rule names, etc. that happen to contain `_x` substrings.
- * - `MissingArtifactError.path` is the URL that 404'd, allowing callers to
- *   distinguish "no .ctn/index.json" from "no overview.md for this index".
+ * - `MissingArtifactError.path` is the bridge URL that 404'd, allowing callers
+ *   to distinguish "no index" from "no overview for this index".
  */
 
 class MissingArtifactError extends Error {
@@ -77,6 +77,26 @@ function normalize(value) {
   return value;
 }
 
+const BRIDGE_BASE = '/api/v1/bridge';
+
+async function bridgeGet(path) {
+  const url = `${BRIDGE_BASE}/${path}`;
+  let response;
+  try {
+    response = await fetch(url);
+  } catch (e) {
+    throw new MissingArtifactError(url);
+  }
+  if (!response.ok) throw new MissingArtifactError(url);
+  const envelope = await response.json();
+  if (!envelope.ok) {
+    const err = new MissingArtifactError(url);
+    err.message = envelope.error?.message || err.message;
+    throw err;
+  }
+  return envelope.data;
+}
+
 async function fetchWithProgress(url, onProgress) {
   let response;
   try {
@@ -127,28 +147,38 @@ async function parseJsonWithProgress(url, onProgress) {
 }
 
 export async function loadIndex(onProgress) {
-  const url = '/.ctn/index.json';
-  const data = await parseJsonWithProgress(url, onProgress);
+  const entries = await bridgeGet('indexes');
 
-  if (typeof data.current_index_id !== 'string') {
-    throw new SchemaMismatchError('current_index_id must be a string');
-  }
-  if (typeof data.indexes !== 'object' || data.indexes === null) {
-    throw new SchemaMismatchError('indexes must be an object');
+  if (!Array.isArray(entries)) {
+    throw new SchemaMismatchError('indexes must be an array');
   }
 
   // Preserve original index_id keys; camelize entry contents so callers can
   // use idiomatic JS field names like `entry.fileCount` / `entry.repoHash`.
   const indexes = {};
-  for (const [id, entry] of Object.entries(data.indexes)) {
+  let currentIndexId = '';
+  let latestTimestamp = '';
+
+  for (const entry of entries) {
+    const id = entry.index_id;
+    if (!id) continue;
     indexes[id] = normalize(entry);
+    // Use the most recent timestamp as the current index.
+    if (entry.timestamp && entry.timestamp > latestTimestamp) {
+      latestTimestamp = entry.timestamp;
+      currentIndexId = id;
+    }
+  }
+
+  if (!currentIndexId && entries.length > 0) {
+    currentIndexId = entries[0].index_id;
   }
 
   return {
-    currentIndexId: data.current_index_id,
+    currentIndexId,
     indexes,
-    persistenceModel: data.persistence_model,
-    schemaVersion: data.schema_version,
+    persistenceModel: null,
+    schemaVersion: null,
   };
 }
 
@@ -220,16 +250,32 @@ export async function loadBsg(_indexId) {
 
 export async function loadOverview(indexId) {
   if (!indexId) throw new SchemaMismatchError('loadOverview requires an indexId');
-  const url = `/.ctn/${encodeURIComponent(indexId)}/context/overview.md`;
-  let response;
-  try {
-    response = await fetch(url);
-  } catch (e) {
-    throw new MissingArtifactError(url);
-  }
-  if (!response.ok) throw new MissingArtifactError(url);
-  const raw = await response.text();
-  return parseOverviewMd(raw);
+  const data = await bridgeGet(`artifacts/context_overview_json?index_id=${encodeURIComponent(indexId)}`);
+
+  // Map snake_case JSON from the bridge to the shape the dashboard expects.
+  const fileDistribution = (data.file_distribution || []).map((d) => ({
+    category: d.category,
+    files: d.files,
+    percent: d.percentage,
+  }));
+
+  const languageBreakdown = (data.language_breakdown || []).map((d) => ({
+    language: d.language,
+    files: d.files,
+    percent: d.percentage,
+  }));
+
+  return {
+    raw: null,
+    generatedAt: data.generated_at,
+    summary: {
+      totalFiles: data.summary?.total_files ?? 0,
+      totalEntities: data.summary?.total_entities ?? 0,
+      totalRelationships: data.summary?.total_relationships ?? 0,
+    },
+    fileDistribution,
+    languageBreakdown,
+  };
 }
 
 export async function loadFilesMd(_indexId) {
@@ -237,9 +283,8 @@ export async function loadFilesMd(_indexId) {
 }
 
 export async function loadMetrics() {
-  const url = '/.ctn/local/metrics/metrics.json';
   try {
-    const data = await parseJsonWithProgress(url);
+    const data = await bridgeGet('artifacts/metrics_json');
     return normalize(data);
   } catch (e) {
     if (e.name === 'MissingArtifactError') return null;
