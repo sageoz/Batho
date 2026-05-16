@@ -26,13 +26,14 @@ def _relationship(entity_id: str) -> Relationship:
 
 def test_process_file_worker_returns_cached_entities(monkeypatch, tmp_path: Path) -> None:
     cached = [_entity("src/cached.py")]
+    cached_rels = [_relationship(cached[0].id)]
 
     class _Cache:
         def __init__(self, cache_path: str):
             self.cache_path = cache_path
 
         def get_cached_entities(self, *_args):
-            return cached
+            return cached, cached_rels
 
     monkeypatch.setattr(pipeline, "ASTCache", _Cache)
 
@@ -50,7 +51,7 @@ def test_process_file_worker_returns_cached_entities(monkeypatch, tmp_path: Path
         {},
     )
 
-    assert result == ("src/cached.py", cached, [], True)
+    assert result == ("src/cached.py", cached, cached_rels, True)
 
 
 def test_process_file_worker_returns_none_for_invalid_extractor(monkeypatch, tmp_path: Path) -> None:
@@ -121,6 +122,7 @@ def test_process_file_worker_parses_and_caches(monkeypatch, tmp_path: Path) -> N
             current_mtime: float,
             size: int,
             ttl_days: int,
+            relationships: list[Relationship] | None = None,
         ) -> None:
             _ = current_mtime, size
             cache_calls.append((filepath, content_hash, len(entities), ttl_days))

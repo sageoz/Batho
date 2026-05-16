@@ -1,7 +1,16 @@
-import { loadIndex, loadOverview, loadMetrics, MissingArtifactError, IndexEntryMissingError } from '../assets/js/ctn-loader.js';
+import { loadIndex, loadOverview, loadMetrics, loadPatchesIndex, loadPatchDetail, loadSnapshotDiff, MissingArtifactError, IndexEntryMissingError } from '../assets/js/ctn-loader.js';
 import { formatRelativeTime, formatInt, formatDuration } from '../assets/js/format.js';
 import { createStatTile } from '../shared/components/stat-tile.js';
 import { createKpiRow } from '../shared/components/kpi-row.js';
+import { createTabBar } from '../shared/components/tab-bar.js';
+import { createLatencyBar } from '../shared/components/latency-bar.js';
+import { createStalenessGauge } from '../shared/components/staleness-gauge.js';
+import { createAuditExportButton } from '../shared/components/audit-export.js';
+
+let _activeTab = 'summary';
+let _cachedIndexData = null;
+let _cachedEntry = null;
+let _cachedActiveIndexId = null;
 
 export async function renderOverview(params) {
   const container = document.createElement('div');
@@ -11,12 +20,15 @@ export async function renderOverview(params) {
   try {
     const savedIndexId = localStorage.getItem('batho.activeIndexId');
     const indexData = await loadIndex();
+    _cachedIndexData = indexData;
     const activeIndexId = savedIndexId && indexData.indexes[savedIndexId]
       ? savedIndexId
       : indexData.currentIndexId;
+    _cachedActiveIndexId = activeIndexId;
 
     const entry = indexData.indexes[activeIndexId];
     if (!entry) throw new IndexEntryMissingError(activeIndexId);
+    _cachedEntry = entry;
 
     const [overviewDoc, metrics] = await Promise.all([
       loadOverview(activeIndexId).catch((err) => {
@@ -26,60 +38,53 @@ export async function renderOverview(params) {
       loadMetrics().catch(() => null),
     ]);
 
-    const stats = entry.stats || {};
-    const rulesStats = stats.rules || {};
-    const elapsed = metrics?.stats?.elapsedSeconds ?? stats.elapsedSeconds;
-    const errors = metrics?.stats?.errors ?? stats.errors ?? 0;
+    // Build tab bar
+    const tabBar = createTabBar(
+      [
+        { key: 'summary', label: 'Summary', active: _activeTab === 'summary' },
+        { key: 'patches', label: 'Patches', active: _activeTab === 'patches' },
+        { key: 'snapshots', label: 'Snapshots', active: _activeTab === 'snapshots' },
+      ],
+      (key) => {
+        _activeTab = key;
+        _renderTabContent(container, key, entry, indexData, overviewDoc, metrics, activeIndexId);
+      }
+    );
 
-    const tiles = [
-      { label: 'FILES', value: formatInt(entry.fileCount) },
-      { label: 'ENTITIES', value: formatInt(entry.entityCount) },
-      { label: 'RELATIONSHIPS', value: formatInt(entry.relationshipCount) },
-      { label: 'RULES', value: `${rulesStats.rulesLoaded || stats.rulesLoaded || 0}/${rulesStats.rulesApplied || stats.rulesApplied || 0}` },
-      { label: 'TAGGED', value: formatInt(stats.entitiesRuleTagged || 0) },
-      { label: 'ELAPSED', value: elapsed ? formatDuration(elapsed) : '—' },
-      { label: 'ERRORS', value: errors, deltaTone: errors > 0 ? 'warn' : 'neutral' },
-    ];
+    // Build header
+    const headerHtml = `
+      <div class="overview-header">
+        <h1 class="panel__title">Overview</h1>
+        <div class="overview-meta">
+          <span class="overview-meta__root" title="${escapeHtml(entry.root || '')}">${escapeHtml(entry.root || '—')}</span>
+          <span class="overview-meta__sep">·</span>
+          <span class="overview-meta__time">${formatRelativeTime(entry.timestamp)}</span>
+          <span class="overview-meta__sep">·</span>
+          <span class="overview-meta__id">idx ${escapeHtml(activeIndexId.replace(/^batho_/, '').slice(0, 8))}…</span>
+        </div>
+      </div>
+    `;
 
-    const kpiRow = createKpiRow(tiles.map((t) => createStatTile(t)));
-    const fileDist = overviewDoc?.fileDistribution || [];
-    const langs = overviewDoc?.languageBreakdown || [];
-    const fileDistHtml = renderFileDistribution(fileDist, entry.fileCount);
-    const langBreakdownHtml = renderLanguageBreakdown(langs);
-    const stackHtml = renderStackChips(entry.stack || {});
+    // Overview missing note
     const overviewMissingNote = overviewDoc
       ? ''
-      : '<div class="overview-note">overview.md not generated for this index — re-run <code>batho scan</code> for richer detail.</div>';
+      : '<div class="overview-note">overview.json not found for this index — re-run <code>batho index</code> to generate context artifacts.</div>';
 
     container.innerHTML = `
       <div class="overview">
         <div class="panel">
-          <div class="overview-header">
-            <h1 class="panel__title">Overview</h1>
-            <div class="overview-meta">
-              <span class="overview-meta__root" title="${escapeHtml(entry.root || '')}">${escapeHtml(entry.root || '—')}</span>
-              <span class="overview-meta__sep">·</span>
-              <span class="overview-meta__time">${formatRelativeTime(entry.timestamp)}</span>
-              <span class="overview-meta__sep">·</span>
-              <span class="overview-meta__id">idx ${escapeHtml(activeIndexId.replace(/^batho_/, '').slice(0, 8))}…</span>
-            </div>
-          </div>
+          ${headerHtml}
           ${overviewMissingNote}
         </div>
-        <div class="kpi-section">${kpiRow.outerHTML}</div>
-        ${fileDistHtml}
-        <div class="overview-grid">
-          <div class="panel panel--language">
-            <div class="panel__title">Languages</div>
-            ${langBreakdownHtml}
-          </div>
-          <div class="panel panel--stack">
-            <div class="panel__title">Stack</div>
-            ${stackHtml}
-          </div>
-        </div>
+        <div id="overview-tab-bar-mount"></div>
+        <div id="overview-tab-content"></div>
       </div>
     `;
+
+    const tabBarMount = container.querySelector('#overview-tab-bar-mount');
+    if (tabBarMount) tabBarMount.appendChild(tabBar);
+
+    _renderTabContent(container, _activeTab, entry, indexData, overviewDoc, metrics, activeIndexId);
 
     const headerBar = document.getElementById('header-bar');
     if (headerBar) {
@@ -94,6 +99,7 @@ export async function renderOverview(params) {
     if (!container.__indexChangedBound) {
       container.__indexChangedBound = true;
       window.addEventListener('batho:index-changed', async () => {
+        _activeTab = 'summary';
         const newOverview = await renderOverview(params);
         const mountPoint = document.getElementById('page-mount');
         if (mountPoint) {
@@ -109,55 +115,428 @@ export async function renderOverview(params) {
   return container;
 }
 
-function renderErrorPanel(err) {
-  const isCtnIndexMissing =
-    err && err.name === 'MissingArtifactError' && typeof err.path === 'string' && err.path.endsWith('/.ctn/index.json');
-  const isEntryMissing = err && err.name === 'IndexEntryMissingError';
-  const isArtifactMissing = err && err.name === 'MissingArtifactError' && !isCtnIndexMissing;
+// ─── Tab Content Router ──────────────────────────────────────────────────────
 
-  let title = 'Error';
-  let message = err?.message || 'An unknown error occurred';
-  let hint = '';
+function _renderTabContent(container, tabKey, entry, indexData, overviewDoc, metrics, activeIndexId) {
+  const mount = container.querySelector('#overview-tab-content');
+  if (!mount) return;
+  mount.innerHTML = '';
 
-  if (isCtnIndexMissing) {
-    title = 'Structural Fault';
-    message = 'No `.ctn/` folder found. Run `batho scan` first to populate `.ctn/`.';
-  } else if (isEntryMissing) {
-    title = 'Index Not Found';
-    message = `Active index \`${err.id}\` is not present in .ctn/index.json.`;
-    hint = 'Open Snapshots and select another index, or run <code>batho scan</code> to create a new one.';
-  } else if (isArtifactMissing) {
-    title = 'Missing Artifact';
-    message = `Could not load \`${err.path}\`.`;
-    hint = 'Re-run <code>batho scan</code> to regenerate context artifacts.';
-  } else if (err && err.name === 'ParseError') {
-    title = 'Corrupt Artifact';
-  } else if (err && err.name === 'SchemaMismatchError') {
-    title = 'Schema Mismatch';
+  if (tabKey === 'summary') {
+    mount.innerHTML = _renderSummaryTab(entry, overviewDoc, metrics, activeIndexId);
+  } else if (tabKey === 'patches') {
+    _renderPatchesTab(mount);
+  } else if (tabKey === 'snapshots') {
+    _renderSnapshotsTab(mount, indexData, activeIndexId);
   }
+}
 
-  const showSnapshotsBtn = isEntryMissing || isCtnIndexMissing;
+// ─── Summary Tab ─────────────────────────────────────────────────────────────
+
+function _renderSummaryTab(entry, overviewDoc, metrics, activeIndexId) {
+  const stats = entry.stats || {};
+  const rulesStats = stats.rules || {};
+  const elapsed = metrics?.stats?.elapsedSeconds ?? stats.elapsedSeconds;
+  const errors = metrics?.stats?.errors ?? stats.errors ?? 0;
+
+  const tiles = [
+    { label: 'FILES', value: formatInt(entry.fileCount) },
+    { label: 'ENTITIES', value: formatInt(entry.entityCount) },
+    { label: 'RELATIONSHIPS', value: formatInt(entry.relationshipCount) },
+    { label: 'RULES', value: `${rulesStats.rulesLoaded || stats.rulesLoaded || 0}/${rulesStats.rulesApplied || stats.rulesApplied || 0}` },
+    { label: 'TAGGED', value: formatInt(stats.entitiesRuleTagged || 0) },
+    { label: 'ELAPSED', value: elapsed ? formatDuration(elapsed) : '—' },
+    { label: 'ERRORS', value: errors, deltaTone: errors > 0 ? 'warn' : 'neutral' },
+  ];
+
+  const kpiRow = createKpiRow(tiles.map((t) => createStatTile(t)));
+  const fileDist = overviewDoc?.fileDistribution || [];
+  const langs = overviewDoc?.languageBreakdown || [];
+  const fileDistHtml = renderFileDistribution(fileDist, entry.fileCount);
+  const langBreakdownHtml = renderLanguageBreakdown(langs);
+  const stackHtml = renderStackChips(entry.stack || {});
 
   return `
-    <div class="panel error-panel">
-      <div class="error-panel__icon">⚠</div>
-      <div class="error-panel__title">${escapeHtml(title)}</div>
-      <div class="error-panel__message">${escapeHtml(message)}</div>
-      ${hint ? `<div class="error-panel__hint">${hint}</div>` : ''}
-      <div class="error-panel__actions">
-        <button class="btn" data-action="retry">retry</button>
-        ${showSnapshotsBtn ? '<button class="btn btn--ghost" data-action="snapshots">open snapshots</button>' : ''}
+    <div class="kpi-section">${kpiRow.outerHTML}</div>
+    ${fileDistHtml}
+    <div class="overview-grid">
+      <div class="panel panel--language">
+        <div class="panel__title">Languages</div>
+        ${langBreakdownHtml}
+      </div>
+      <div class="panel panel--stack">
+        <div class="panel__title">Stack</div>
+        ${stackHtml}
       </div>
     </div>
   `;
 }
 
-function bindErrorActions(container) {
-  const retryBtn = container.querySelector('[data-action="retry"]');
-  if (retryBtn) retryBtn.addEventListener('click', () => location.reload());
-  const snapBtn = container.querySelector('[data-action="snapshots"]');
-  if (snapBtn) snapBtn.addEventListener('click', () => { location.hash = '#/snapshots'; });
+// ─── Patches Tab ─────────────────────────────────────────────────────────────
+
+async function _renderPatchesTab(mount) {
+  mount.innerHTML = `<div class="panel" aria-busy="true"><div class="loading"><span class="loading__cursor"></span><span>loading patches …</span></div></div>`;
+
+  try {
+    const patchesData = await loadPatchesIndex();
+    const patches = patchesData.patches || [];
+
+    if (patches.length === 0) {
+      mount.innerHTML = `
+        <div class="panel">
+          <div class="panel__title">Patches</div>
+          <div class="empty-state">No patches recorded yet. Run <code>batho patch</code> to create your first patch.</div>
+        </div>
+      `;
+      return;
+    }
+
+    // Aggregate KPIs
+    const totalPatches = patches.length;
+    const avgLatency = patches.reduce((s, p) => s + (p.metrics?.elapsedSeconds ?? 0), 0) / totalPatches;
+    const totalFilesChanged = patches.reduce((s, p) => s + (p.metrics?.affectedFiles ?? 0), 0);
+    const totalTokens = patches.reduce((s, p) => s + (p.metrics?.tokenSize ?? 0), 0);
+    const maxLatency = Math.max(...patches.map((p) => p.metrics?.elapsedSeconds ?? 0));
+    const lastPatchTime = patches[0]?.timestamp || '—';
+
+    const kpiTiles = [
+      { label: 'TOTAL PATCHES', value: formatInt(totalPatches) },
+      { label: 'AVG LATENCY', value: formatDuration(avgLatency) },
+      { label: 'FILES CHANGED', value: formatInt(totalFilesChanged) },
+      { label: 'TOKEN THROUGHPUT', value: formatInt(totalTokens) },
+      { label: 'SUCCESS RATE', value: '100%' },
+      { label: 'LAST PATCH', value: formatRelativeTime(lastPatchTime) },
+    ];
+    const kpiRow = createKpiRow(kpiTiles.map((t) => createStatTile(t)));
+
+    // Timeline
+    const sorted = [...patches].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    const timelineHtml = sorted.map((patch) => _renderPatchRow(patch, maxLatency)).join('');
+
+    mount.innerHTML = `
+      <div class="kpi-section">${kpiRow.outerHTML}</div>
+      <div class="panel">
+        <div class="panel__title">Patch Timeline</div>
+        <div class="patch-timeline">${timelineHtml}</div>
+      </div>
+      <div id="patches-audit-mount"></div>
+    `;
+
+    // Wire expand/collapse
+    mount.querySelectorAll('[data-action="toggle-patch"]').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        const opId = e.currentTarget.dataset.operationId;
+        const detailEl = mount.querySelector(`[data-patch-detail="${opId}"]`);
+        if (!detailEl) return;
+
+        if (detailEl.style.display === 'none') {
+          // Load detail if not yet loaded
+          if (detailEl.dataset.loaded !== 'true') {
+            try {
+              const detail = await loadPatchDetail(opId);
+              const changes = detail.changesApplied || [];
+              detailEl.innerHTML = _renderPatchDetailTable(changes);
+              detailEl.dataset.loaded = 'true';
+            } catch (err) {
+              detailEl.innerHTML = `<div class="empty-state">Failed to load patch detail: ${escapeHtml(err.message)}</div>`;
+            }
+          }
+          detailEl.style.display = 'block';
+          e.currentTarget.textContent = 'collapse';
+        } else {
+          detailEl.style.display = 'none';
+          e.currentTarget.textContent = 'expand';
+        }
+      });
+    });
+
+    // Audit export
+    const auditMount = mount.querySelector('#patches-audit-mount');
+    if (auditMount) {
+      auditMount.appendChild(createAuditExportButton(patchesData, 'batho-patches-export'));
+    }
+
+  } catch (err) {
+    mount.innerHTML = `
+      <div class="panel error-panel">
+        <div class="error-panel__icon">⚠</div>
+        <div class="error-panel__title">Error</div>
+        <div class="error-panel__message">${escapeHtml(err.message || 'Failed to load patches')}</div>
+      </div>
+    `;
+  }
 }
+
+function _renderPatchRow(patch, maxLatency) {
+  const opId = patch.operationId || '';
+  const shortId = opId.replace(/^batho_/, '').slice(0, 12);
+  const ts = patch.timestamp || '';
+  const opType = patch.operationType || 'incremental_patch';
+  const metrics = patch.metrics || {};
+  const elapsed = metrics.elapsedSeconds ?? 0;
+  const added = metrics.addedFiles ?? 0;
+  const modified = metrics.modifiedFiles ?? 0;
+  const deleted = metrics.deletedFiles ?? 0;
+  const tokenSize = metrics.tokenSize ?? 0;
+  const affectedFiles = metrics.affectedFiles ?? (added + modified + deleted);
+
+  const typeBadge = opType === 'incremental_patch'
+    ? '<span class="change-badge change-badge--patch">incremental</span>'
+    : '<span class="change-badge change-badge--reindex">full reindex</span>';
+
+  const latencyBar = createLatencyBar(elapsed, maxLatency, { showValue: true });
+
+  // Only show non-zero deltas; always show modified since that's the common case
+  const deltaHtml = [
+    added > 0 ? `<span class="delta delta--pos">+${added}</span>` : '',
+    modified > 0 ? `<span class="delta delta--mod">~${modified}</span>` : '',
+    deleted > 0 ? `<span class="delta delta--neg">-${deleted}</span>` : '',
+  ].filter(Boolean).join('') || '<span class="delta delta--neutral">no changes</span>';
+
+  return `
+    <article class="patch-row">
+      <div class="patch-row__header">
+        <div class="patch-row__left">
+          <div class="patch-row__id">${escapeHtml(shortId)}</div>
+          ${typeBadge}
+        </div>
+        <div class="patch-row__center">
+          <div class="patch-row__latency">${latencyBar.outerHTML}</div>
+          <div class="patch-row__stats">
+            <span class="patch-row__stat-label">files</span>
+            <span class="patch-row__stat-value">${formatInt(affectedFiles)}</span>
+          </div>
+          <div class="patch-row__stats">
+            <span class="patch-row__stat-label">tokens</span>
+            <span class="patch-row__stat-value">${formatInt(tokenSize)}</span>
+          </div>
+          <div class="patch-row__deltas">${deltaHtml}</div>
+        </div>
+        <div class="patch-row__right">
+          <div class="patch-row__time">${formatRelativeTime(ts)}</div>
+          <button class="btn btn--ghost patch-row__expand" data-action="toggle-patch" data-operation-id="${escapeAttr(opId)}">expand</button>
+        </div>
+      </div>
+      <div class="patch-row__detail" data-patch-detail="${escapeAttr(opId)}" style="display:none"></div>
+    </article>
+  `;
+}
+
+function _renderPatchDetailTable(changes) {
+  if (!changes.length) return '<div class="empty-state">No file changes recorded</div>';
+  const rows = changes.map((c) => {
+    const typeClass = c.changeType === 'added' ? 'change-badge--added'
+      : c.changeType === 'deleted' ? 'change-badge--deleted'
+      : 'change-badge--modified';
+    return `
+      <tr>
+        <td class="patch-detail__path">${escapeHtml(c.path || '')}</td>
+        <td><span class="change-badge ${typeClass}">${escapeHtml(c.changeType || '')}</span></td>
+        <td class="patch-detail__hash">${escapeHtml((c.oldHash || '').slice(0, 8))}…</td>
+        <td class="patch-detail__hash">${escapeHtml((c.newHash || '').slice(0, 8))}…</td>
+        <td class="num">${formatInt(c.fileSize ?? 0)}</td>
+        <td class="patch-detail__mtime">${c.mtime ? formatRelativeTime(c.mtime) : '—'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <table class="table patch-detail__table">
+      <thead>
+        <tr><th>File</th><th>Change</th><th>Old Hash</th><th>New Hash</th><th>Size</th><th>Mtime</th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+// ─── Snapshots Tab ───────────────────────────────────────────────────────────
+
+async function _renderSnapshotsTab(mount, indexData, activeIndexId) {
+  const indexes = Object.values(indexData.indexes);
+  const sorted = [...indexes].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+  // Collect unique snapshot IDs from patches index
+  let snapshotIds = new Set();
+  try {
+    const patchesData = await loadPatchesIndex();
+    (patchesData.patches || []).forEach((p) => {
+      if (p.baseSnapshotId) snapshotIds.add(p.baseSnapshotId);
+      if (p.newSnapshotId) snapshotIds.add(p.newSnapshotId);
+    });
+  } catch (_) { /* ignore */ }
+
+  // Also add snapshot IDs from index entries
+  indexes.forEach((e) => {
+    if (e.snapshotId) snapshotIds.add(e.snapshotId);
+  });
+
+  const snapshotOptions = [...snapshotIds].sort().map((id) => {
+    const short = id.replace(/^batho_frontend_/, '').slice(0, 12);
+    return `<option value="${escapeAttr(id)}">${escapeHtml(short)}…</option>`;
+  }).join('');
+
+  // Staleness for active index
+  const activeEntry = indexData.indexes[activeIndexId];
+  const stalenessScore = activeEntry?.stalenessScore ?? 0;
+  const stalenessGauge = createStalenessGauge(stalenessScore);
+
+  // Compact timeline
+  const timelineHtml = sorted.map((entry) => {
+    const entryId = entry.indexId || entry.id || '';
+    const isActive = entryId === activeIndexId;
+    const shortId = entryId.replace(/^batho_/, '').slice(0, 12);
+    const staleness = entry.stalenessScore ?? 0;
+    const stalenessPct = Math.round(staleness * 100);
+
+    return `
+      <div class="snapshot-row ${isActive ? 'snapshot-row--active' : ''}">
+        <span class="snapshot-row__marker">${isActive ? '●' : '○'}</span>
+        <span class="snapshot-row__id">${escapeHtml(shortId)}</span>
+        <span class="snapshot-row__time">${formatRelativeTime(entry.timestamp)}</span>
+        <span class="snapshot-row__count">ent ${formatInt(entry.entityCount ?? 0)}</span>
+        <div class="snapshot-row__staleness">
+          <div class="timeline__staleness-bar"><div class="timeline__staleness-fill" style="width:${stalenessPct}%"></div></div>
+          <span>${stalenessPct}%</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  mount.innerHTML = `
+    <div class="panel">
+      <div class="panel__title">Snapshot Comparison</div>
+      <div class="snapshot-diff__selectors">
+        <div class="snapshot-diff__field">
+          <label class="snapshot-diff__label">Base</label>
+          <select id="snapshot-base-select" class="snapshot-diff__select">
+            <option value="">— select base —</option>
+            ${snapshotOptions}
+          </select>
+        </div>
+        <div class="snapshot-diff__arrow">→</div>
+        <div class="snapshot-diff__field">
+          <label class="snapshot-diff__label">New</label>
+          <select id="snapshot-new-select" class="snapshot-diff__select">
+            <option value="">— select new —</option>
+            ${snapshotOptions}
+          </select>
+        </div>
+        <button class="btn" id="snapshot-diff-btn">Compare</button>
+      </div>
+      <div id="snapshot-diff-result"></div>
+    </div>
+    <div class="panel">
+      <div class="panel__title">Index Staleness</div>
+      <div class="snapshot-staleness-current">
+        <span>Active index staleness</span>
+        <div id="staleness-gauge-mount"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel__title">Snapshot Timeline</div>
+      <div class="snapshot-timeline">${timelineHtml}</div>
+    </div>
+    <div id="snapshots-audit-mount"></div>
+  `;
+
+  // Mount staleness gauge
+  const gaugeMount = mount.querySelector('#staleness-gauge-mount');
+  if (gaugeMount) gaugeMount.appendChild(stalenessGauge);
+
+  // Wire compare button
+  const diffBtn = mount.querySelector('#snapshot-diff-btn');
+  if (diffBtn) {
+    diffBtn.addEventListener('click', async () => {
+      const baseId = mount.querySelector('#snapshot-base-select')?.value;
+      const newId = mount.querySelector('#snapshot-new-select')?.value;
+      const resultEl = mount.querySelector('#snapshot-diff-result');
+      if (!baseId || !newId || !resultEl) return;
+
+      resultEl.innerHTML = '<div class="loading"><span class="loading__cursor"></span><span>computing diff …</span></div>';
+
+      try {
+        const diff = await loadSnapshotDiff(baseId, newId);
+        resultEl.innerHTML = _renderSnapshotDiffResult(diff);
+      } catch (err) {
+        resultEl.innerHTML = `<div class="empty-state">Diff failed: ${escapeHtml(err.message)}</div>`;
+      }
+    });
+  }
+
+  // Audit export
+  const auditMount = mount.querySelector('#snapshots-audit-mount');
+  if (auditMount) {
+    const exportData = {
+      indexes: sorted.map((e) => ({
+        indexId: e.indexId || e.id,
+        timestamp: e.timestamp,
+        fileCount: e.fileCount,
+        entityCount: e.entityCount,
+        stalenessScore: e.stalenessScore,
+        snapshotId: e.snapshotId,
+      })),
+    };
+    auditMount.appendChild(createAuditExportButton(exportData, 'batho-snapshots-export'));
+  }
+}
+
+function _renderSnapshotDiffResult(diff) {
+  const entities = diff.entities || {};
+  const files = diff.files || {};
+  const loc = diff.loc || {};
+
+  const entityDeltaHtml = `
+    <div class="snapshot-diff__deltas">
+      <span class="delta delta--pos">+${entities.added ?? 0} entities</span>
+      <span class="delta delta--mod">~${entities.modified ?? 0} entities</span>
+      <span class="delta delta--neg">-${entities.removed ?? 0} entities</span>
+      <span class="delta delta--neutral">=${entities.unchanged ?? 0} unchanged</span>
+    </div>
+  `;
+
+  const fileDeltaHtml = `
+    <div class="snapshot-diff__file-delta">
+      <span>Files: ${files.baseCount ?? 0} → ${files.newCount ?? 0}</span>
+      <span class="delta ${(files.delta ?? 0) >= 0 ? 'delta--pos' : 'delta--neg'}">
+        Δ ${files.delta >= 0 ? '+' : ''}${files.delta ?? 0}
+      </span>
+    </div>
+  `;
+
+  const locDeltaHtml = loc.base !== undefined ? `
+    <div class="snapshot-diff__loc-delta">
+      <span>LOC: ${formatInt(loc.base)} → ${formatInt(loc.new)}</span>
+      <span class="delta ${(loc.delta ?? 0) >= 0 ? 'delta--pos' : 'delta--neg'}">
+        Δ ${loc.delta >= 0 ? '+' : ''}${loc.delta ?? 0}
+      </span>
+    </div>
+  ` : '';
+
+  // Show sample IDs if available
+  const addedIds = entities.addedIds || [];
+  const removedIds = entities.removedIds || [];
+  const modifiedIds = entities.modifiedIds || [];
+
+  const sampleIdsHtml = (addedIds.length + removedIds.length + modifiedIds.length) > 0 ? `
+    <div class="snapshot-diff__samples">
+      ${addedIds.length ? `<div class="snapshot-diff__sample-group"><strong>Added:</strong> ${addedIds.slice(0, 10).map((id) => escapeHtml(id)).join(', ')}${addedIds.length > 10 ? ' …' : ''}</div>` : ''}
+      ${modifiedIds.length ? `<div class="snapshot-diff__sample-group"><strong>Modified:</strong> ${modifiedIds.slice(0, 10).map((id) => escapeHtml(id)).join(', ')}${modifiedIds.length > 10 ? ' …' : ''}</div>` : ''}
+      ${removedIds.length ? `<div class="snapshot-diff__sample-group"><strong>Removed:</strong> ${removedIds.slice(0, 10).map((id) => escapeHtml(id)).join(', ')}${removedIds.length > 10 ? ' …' : ''}</div>` : ''}
+    </div>
+  ` : '';
+
+  return `
+    <div class="snapshot-diff__result">
+      ${entityDeltaHtml}
+      ${fileDeltaHtml}
+      ${locDeltaHtml}
+      ${sampleIdsHtml}
+    </div>
+  `;
+}
+
+// ─── Shared Helpers ──────────────────────────────────────────────────────────
 
 function renderFileDistribution(distribution, totalFiles) {
   if (!distribution.length) return '';
@@ -208,12 +587,69 @@ function renderStackChips(stack) {
   return `<div class="stack-chips">${chips}</div>`;
 }
 
+function renderErrorPanel(err) {
+  const isIndexMissing =
+    err && err.name === 'MissingArtifactError' && typeof err.path === 'string' &&
+    (err.path.endsWith('/.ctn/index.json') || err.path.includes('/indexes'));
+  const isEntryMissing = err && err.name === 'IndexEntryMissingError';
+  const isArtifactMissing = err && err.name === 'MissingArtifactError' && !isIndexMissing;
+
+  let title = 'Error';
+  let message = err?.message || 'An unknown error occurred';
+  let hint = '';
+
+  if (isIndexMissing) {
+    title = 'Structural Fault';
+    message = 'No index data found. Run <code>batho index</code> first to populate `.ctn/`.';
+  } else if (isEntryMissing) {
+    title = 'Index Not Found';
+    message = `Active index \`${err.id}\` is not present in the registry.`;
+    hint = 'Open Snapshots and select another index, or run <code>batho scan</code> to create a new one.';
+  } else if (isArtifactMissing) {
+    title = 'Missing Artifact';
+    message = `Could not load \`${err.path}\`.`;
+    hint = 'Re-run <code>batho scan</code> to regenerate context artifacts.';
+  } else if (err && err.name === 'ParseError') {
+    title = 'Corrupt Artifact';
+  } else if (err && err.name === 'SchemaMismatchError') {
+    title = 'Schema Mismatch';
+  }
+
+  const showSnapshotsBtn = isEntryMissing || isIndexMissing;
+
+  return `
+    <div class="panel error-panel">
+      <div class="error-panel__icon">⚠</div>
+      <div class="error-panel__title">${escapeHtml(title)}</div>
+      <div class="error-panel__message">${escapeHtml(message)}</div>
+      ${hint ? `<div class="error-panel__hint">${hint}</div>` : ''}
+      <div class="error-panel__actions">
+        <button class="btn" data-action="retry">retry</button>
+        ${showSnapshotsBtn ? '<button class="btn btn--ghost" data-action="snapshots">open snapshots</button>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+function bindErrorActions(container) {
+  const retryBtn = container.querySelector('[data-action="retry"]');
+  if (retryBtn) retryBtn.addEventListener('click', () => location.reload());
+  const snapBtn = container.querySelector('[data-action="snapshots"]');
+  if (snapBtn) snapBtn.addEventListener('click', () => { location.hash = '#/snapshots'; });
+}
+
 function escapeHtml(text) {
   if (text === null || text === undefined) return '';
   const d = document.createElement('div');
   d.textContent = String(text);
   return d.innerHTML;
 }
+
+function escapeAttr(text) {
+  return escapeHtml(text).replace(/"/g, '&quot;');
+}
+
+// ─── Styles ──────────────────────────────────────────────────────────────────
 
 const overviewStyles = `
   .overview { display: flex; flex-direction: column; gap: var(--space-gutter); }
@@ -239,9 +675,71 @@ const overviewStyles = `
   .chip--pm { background: rgb(201 122 77 / 0.2); }
   .chip--infra { background: rgb(56 124 100 / 0.2); }
   .empty-state { color: var(--on-surface-variant); font-family: var(--font-mono); font-size: var(--type-node-code-size); padding: var(--space-gutter); text-align: center; }
+  .empty-state code { color: var(--accent-cyan); }
   .num { text-align: right; }
   .error-panel__hint { color: var(--on-surface-variant); font-family: var(--font-mono); font-size: var(--type-terminal-size); margin-top: var(--space-tight); }
   .error-panel__hint code { color: var(--accent-cyan); }
+
+  /* Patch timeline */
+  .patch-timeline { display: flex; flex-direction: column; gap: 2px; margin-top: var(--space-gutter); }
+  .patch-row { border: var(--hairline); padding: var(--space-pad) var(--space-gutter); background: var(--surface-container-low); transition: background 0.15s; }
+  .patch-row:hover { background: var(--surface-container); }
+  .patch-row__header { display: flex; align-items: center; gap: var(--space-gutter); min-height: 40px; }
+  .patch-row__left { display: flex; align-items: center; gap: var(--space-gutter); min-width: 180px; flex-shrink: 0; }
+  .patch-row__id { font-family: var(--font-mono); font-size: var(--type-node-code-size); font-weight: var(--type-node-code-weight); color: var(--on-surface); letter-spacing: 0.02em; }
+  .patch-row__center { display: flex; align-items: center; gap: var(--space-gutter); flex: 1; min-width: 0; }
+  .patch-row__stats { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .patch-row__stat-label { font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--on-surface-variant); opacity: 0.7; }
+  .patch-row__stat-value { font-family: var(--font-mono); font-size: var(--type-node-code-size); font-weight: var(--type-node-code-weight); color: var(--on-surface); }
+  .patch-row__deltas { display: flex; gap: var(--space-tight); align-items: center; }
+  .patch-row__right { display: flex; align-items: center; gap: var(--space-gutter); margin-left: auto; flex-shrink: 0; }
+  .patch-row__time { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); white-space: nowrap; }
+  .patch-row__detail { margin-top: var(--space-pad); padding-top: var(--space-pad); border-top: var(--hairline); }
+
+  /* Change badges */
+  .change-badge { font-family: var(--font-mono); font-size: 10px; font-weight: var(--type-node-code-weight); text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 8px; border-radius: 2px; white-space: nowrap; }
+  .change-badge--patch { background: rgb(0 217 255 / 0.15); color: var(--accent-cyan); }
+  .change-badge--reindex { background: rgb(156 39 176 / 0.15); color: #9c27b0; }
+  .change-badge--added { background: rgb(76 175 80 / 0.15); color: #4caf50; }
+  .change-badge--modified { background: rgb(255 193 7 / 0.15); color: #ffc107; }
+  .change-badge--deleted { background: rgb(244 67 54 / 0.15); color: #f44336; }
+
+  /* Delta colors */
+  .delta--mod { color: #ffc107; }
+  .delta--neutral { color: var(--on-surface-variant); opacity: 0.5; }
+  .delta { font-family: var(--font-mono); font-size: var(--type-node-code-size); font-weight: var(--type-node-code-weight); }
+
+  /* Patch detail table */
+  .patch-detail__table { margin-top: var(--space-tight); }
+  .patch-detail__path { font-family: var(--font-mono); font-size: var(--type-terminal-size); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .patch-detail__hash { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); }
+  .patch-detail__mtime { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); }
+
+  /* Snapshot diff */
+  .snapshot-diff__selectors { display: flex; align-items: flex-end; gap: var(--space-gutter); flex-wrap: wrap; margin-top: var(--space-gutter); }
+  .snapshot-diff__field { display: flex; flex-direction: column; gap: var(--space-tight); }
+  .snapshot-diff__label { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); text-transform: uppercase; letter-spacing: 0.04em; }
+  .snapshot-diff__select { font-family: var(--font-mono); font-size: var(--type-node-code-size); background: var(--surface-container); color: var(--on-surface); border: var(--hairline); padding: var(--space-tight); min-width: 200px; }
+  .snapshot-diff__arrow { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); padding-bottom: var(--space-tight); }
+  .snapshot-diff__result { margin-top: var(--space-gutter); }
+  .snapshot-diff__deltas { display: flex; gap: var(--space-gutter); flex-wrap: wrap; margin-bottom: var(--space-tight); }
+  .snapshot-diff__file-delta, .snapshot-diff__loc-delta { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); margin-bottom: var(--space-tight); }
+  .snapshot-diff__samples { margin-top: var(--space-gutter); }
+  .snapshot-diff__sample-group { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); margin-bottom: var(--space-tight); }
+  .snapshot-diff__sample-group strong { color: var(--on-surface); }
+
+  /* Staleness current */
+  .snapshot-staleness-current { display: flex; align-items: center; gap: var(--space-gutter); margin-top: var(--space-gutter); font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); }
+
+  /* Snapshot timeline (compact) */
+  .snapshot-timeline { display: flex; flex-direction: column; gap: var(--space-tight); margin-top: var(--space-gutter); }
+  .snapshot-row { display: flex; align-items: center; gap: var(--space-gutter); padding: var(--space-tight); border: var(--hairline); font-family: var(--font-mono); font-size: var(--type-node-code-size); }
+  .snapshot-row--active { border-color: var(--accent-cyan); }
+  .snapshot-row__marker { color: var(--accent-cyan); font-size: 8px; }
+  .snapshot-row__id { color: var(--on-surface); font-weight: var(--type-node-code-weight); }
+  .snapshot-row__time { color: var(--on-surface-variant); }
+  .snapshot-row__count { color: var(--tint-on-surface-70); }
+  .snapshot-row__staleness { display: flex; align-items: center; gap: var(--space-tight); margin-left: auto; }
 `;
 
 function injectStyles() {

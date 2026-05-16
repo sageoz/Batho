@@ -6,7 +6,7 @@ const ROUTES = [
   { path: '#/overview', icon: 'index', label: 'Overview' },
   { path: '#/hypergraph', icon: 'graph', label: 'Hypergraph' },
   { path: '#/files', icon: 'files', label: 'Files' },
-  { path: '#/relationships', icon: 'relationships', label: 'Relationships' },
+  { path: '#/relationships', icon: 'relationships', label: 'Entities' },
   { path: '#/rules', icon: 'rules', label: 'Rules' },
   { path: '#/snapshots', icon: 'snapshots', label: 'Snapshots' },
   { path: '#/metrics', icon: 'metrics', label: 'Metrics' },

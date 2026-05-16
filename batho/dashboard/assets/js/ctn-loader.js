@@ -1,13 +1,13 @@
 /**
- * CTN loader - loads artifacts from .ctn/ directory.
+ * CTN loader - loads artifacts via the Batho bridge REST API.
  *
  * Behavior notes:
  * - JSON keys are normalized from snake_case to camelCase, EXCEPT when a key
  *   looks like an opaque identifier (contains digits, dashes, dots, slashes,
  *   colons or whitespace). This prevents corruption of index_ids, plugin
  *   names, rule names, etc. that happen to contain `_x` substrings.
- * - `MissingArtifactError.path` is the URL that 404'd, allowing callers to
- *   distinguish "no .ctn/index.json" from "no overview.md for this index".
+ * - `MissingArtifactError.path` is the bridge URL that 404'd, allowing callers
+ *   to distinguish "no index" from "no overview for this index".
  */
 
 class MissingArtifactError extends Error {
@@ -77,6 +77,26 @@ function normalize(value) {
   return value;
 }
 
+const BRIDGE_BASE = '/api/v1/bridge';
+
+async function bridgeGet(path) {
+  const url = `${BRIDGE_BASE}/${path}`;
+  let response;
+  try {
+    response = await fetch(url);
+  } catch (e) {
+    throw new MissingArtifactError(url);
+  }
+  if (!response.ok) throw new MissingArtifactError(url);
+  const envelope = await response.json();
+  if (!envelope.ok) {
+    const err = new MissingArtifactError(url);
+    err.message = envelope.error?.message || err.message;
+    throw err;
+  }
+  return envelope.data;
+}
+
 async function fetchWithProgress(url, onProgress) {
   let response;
   try {
@@ -127,28 +147,45 @@ async function parseJsonWithProgress(url, onProgress) {
 }
 
 export async function loadIndex(onProgress) {
-  const url = '/.ctn/index.json';
-  const data = await parseJsonWithProgress(url, onProgress);
+  const response = await bridgeGet('indexes');
 
-  if (typeof data.current_index_id !== 'string') {
-    throw new SchemaMismatchError('current_index_id must be a string');
-  }
-  if (typeof data.indexes !== 'object' || data.indexes === null) {
-    throw new SchemaMismatchError('indexes must be an object');
+  // The bridge now returns an object with data[], current_index_id,
+  // persistence_model, and schema_version at the top level.
+  const entries = Array.isArray(response) ? response : (response.data || []);
+  let currentIndexId = response.current_index_id || '';
+  const persistenceModel = response.persistence_model || null;
+  const schemaVersion = response.schema_version || null;
+
+  if (!Array.isArray(entries)) {
+    throw new SchemaMismatchError('indexes must be an array');
   }
 
   // Preserve original index_id keys; camelize entry contents so callers can
   // use idiomatic JS field names like `entry.fileCount` / `entry.repoHash`.
   const indexes = {};
-  for (const [id, entry] of Object.entries(data.indexes)) {
+
+  for (const entry of entries) {
+    const id = entry.index_id;
+    if (!id) continue;
     indexes[id] = normalize(entry);
   }
 
+  // Fallback: if no current_index_id from the API, pick the latest by timestamp.
+  if (!currentIndexId && entries.length > 0) {
+    let latestTimestamp = '';
+    for (const entry of entries) {
+      if (entry.timestamp && entry.timestamp > latestTimestamp) {
+        latestTimestamp = entry.timestamp;
+        currentIndexId = entry.index_id;
+      }
+    }
+  }
+
   return {
-    currentIndexId: data.current_index_id,
+    currentIndexId: currentIndexId || (entries.length > 0 ? entries[0].index_id : ''),
     indexes,
-    persistenceModel: data.persistence_model,
-    schemaVersion: data.schema_version,
+    persistenceModel,
+    schemaVersion,
   };
 }
 
@@ -210,17 +247,31 @@ function parseOverviewMd(raw) {
   return doc;
 }
 
-export async function loadGraph(_indexId) {
-  throw new NotImplementedError('loadGraph');
+export async function loadGraph(indexId) {
+  if (!indexId) throw new SchemaMismatchError('loadGraph requires an indexId');
+  const data = await bridgeGet(`artifacts/graph_json?index_id=${encodeURIComponent(indexId)}`);
+
+  const entities = (data.entities || []).map(normalize);
+  const relationships = (data.relationships || []).map(normalize);
+  const entitiesById = {};
+  for (const e of entities) {
+    if (e.id) entitiesById[e.id] = e;
+  }
+
+  return { entities, relationships, entitiesById };
 }
 
-export async function loadBsg(_indexId) {
-  throw new NotImplementedError('loadBsg');
+export async function loadBsg(indexId) {
+  if (!indexId) throw new SchemaMismatchError('loadBsg requires an indexId');
+  const data = await bridgeGet(`artifacts/bsg_json?index_id=${encodeURIComponent(indexId)}`);
+  return normalize(data);
 }
 
-export async function loadOverview(indexId) {
-  if (!indexId) throw new SchemaMismatchError('loadOverview requires an indexId');
-  const url = `/.ctn/${encodeURIComponent(indexId)}/context/overview.md`;
+export async function loadSnapshotJson(snapshotId) {
+  if (!snapshotId) throw new SchemaMismatchError('loadSnapshotJson requires a snapshotId');
+
+  // The dashboard server serves /.ctn/* directly from the ctn directory.
+  const url = `/.ctn/snapshots/${encodeURIComponent(snapshotId)}.json`;
   let response;
   try {
     response = await fetch(url);
@@ -228,18 +279,102 @@ export async function loadOverview(indexId) {
     throw new MissingArtifactError(url);
   }
   if (!response.ok) throw new MissingArtifactError(url);
-  const raw = await response.text();
-  return parseOverviewMd(raw);
+  const data = await response.json();
+  return normalize(data);
 }
 
-export async function loadFilesMd(_indexId) {
-  throw new NotImplementedError('loadFilesMd');
+export async function loadOverview(indexId) {
+  if (!indexId) throw new SchemaMismatchError('loadOverview requires an indexId');
+  const data = await bridgeGet(`artifacts/context_overview_json?index_id=${encodeURIComponent(indexId)}`);
+
+  // Map snake_case JSON from the bridge to the shape the dashboard expects.
+  const fileDistribution = (data.file_distribution || []).map((d) => ({
+    category: d.category,
+    files: d.files,
+    percent: d.percentage,
+  }));
+
+  const languageBreakdown = (data.language_breakdown || []).map((d) => ({
+    language: d.language,
+    files: d.files,
+    percent: d.percentage,
+  }));
+
+  return {
+    raw: null,
+    generatedAt: data.generated_at,
+    summary: {
+      totalFiles: data.summary?.total_files ?? 0,
+      totalEntities: data.summary?.total_entities ?? 0,
+      totalRelationships: data.summary?.total_relationships ?? 0,
+    },
+    fileDistribution,
+    languageBreakdown,
+  };
+}
+
+export async function loadFiles(indexId) {
+  if (!indexId) throw new SchemaMismatchError('loadFiles requires an indexId');
+  const data = await bridgeGet(`artifacts/context_files_json?index_id=${encodeURIComponent(indexId)}`);
+
+  // Map snake_case JSON to camelCase for dashboard consumption.
+  const categories = (data.categories || []).map((cat) => ({
+    name: cat.name,
+    fileCount: cat.file_count,
+    entityCount: cat.entity_count,
+    directories: (cat.directories || []).map((dir) => ({
+      path: dir.path,
+      files: (dir.files || []).map((f) => ({
+        name: f.name,
+        relativePath: f.relative_path,
+        entitySummary: f.entity_summary ? {
+          total: f.entity_summary.total || 0,
+          breakdown: f.entity_summary.breakdown || {},
+        } : { total: 0, breakdown: {} },
+        entities: (f.entities || []).map(normalize),
+      })),
+    })),
+  }));
+
+  return {
+    schemaVersion: data.schema_version,
+    generatedAt: data.generated_at,
+    repo: data.repo,
+    summary: {
+      totalFiles: data.summary?.total_files ?? 0,
+      totalEntities: data.summary?.total_entities ?? 0,
+    },
+    categories,
+  };
+}
+
+export async function loadPatchesIndex() {
+  const data = await bridgeGet('patches');
+  // Normalize patch entries from snake_case to camelCase
+  const patches = (data.patches || []).map(normalize);
+  return {
+    schemaVersion: data.schema_version,
+    patches,
+    totalPatches: data.total_patches ?? patches.length,
+    lastUpdated: data.last_updated ?? null,
+  };
+}
+
+export async function loadPatchDetail(operationId) {
+  if (!operationId) throw new SchemaMismatchError('loadPatchDetail requires an operationId');
+  const data = await bridgeGet(`patches/${encodeURIComponent(operationId)}`);
+  return normalize(data);
+}
+
+export async function loadSnapshotDiff(baseId, newId) {
+  if (!baseId || !newId) throw new SchemaMismatchError('loadSnapshotDiff requires both baseId and newId');
+  const data = await bridgeGet(`snapshots/diff?base=${encodeURIComponent(baseId)}&new=${encodeURIComponent(newId)}`);
+  return normalize(data);
 }
 
 export async function loadMetrics() {
-  const url = '/.ctn/local/metrics/metrics.json';
   try {
-    const data = await parseJsonWithProgress(url);
+    const data = await bridgeGet('artifacts/metrics_json');
     return normalize(data);
   } catch (e) {
     if (e.name === 'MissingArtifactError') return null;
@@ -255,8 +390,25 @@ export async function loadFileHashes() {
   throw new NotImplementedError('loadFileHashes');
 }
 
-export async function loadGraphStreaming(_id, _onProgress) {
-  throw new NotImplementedError('loadGraphStreaming');
+export async function loadGraphStreaming(indexId, onProgress) {
+  if (!indexId) throw new SchemaMismatchError('loadGraphStreaming requires an indexId');
+  const url = `${BRIDGE_BASE}/artifacts/graph_json?index_id=${encodeURIComponent(indexId)}`;
+
+  try {
+    const raw = await parseJsonWithProgress(url, onProgress);
+    const entities = (raw.entities || []).map(normalize);
+    const relationships = (raw.relationships || []).map(normalize);
+    const entitiesById = {};
+    for (const e of entities) {
+      if (e.id) entitiesById[e.id] = e;
+    }
+    return { entities, relationships, entitiesById };
+  } catch (e) {
+    if (e.name === 'ParseError' || e.name === 'MissingArtifactError') {
+      return loadGraph(indexId);
+    }
+    throw e;
+  }
 }
 
 export function invalidate(indexId) {

@@ -43,6 +43,7 @@ from batho.context.query import QueryService
 from batho.context.storage import (
     backfill_registry,
     cleanup_registry,
+    compact_registry,
     get_registry_stats,
     rebuild_query_index,
     register_artifact,
@@ -1099,6 +1100,9 @@ def _strip_files(
         and r.target_id not in remove_ids
         and r.source_id not in targets
     ]
+    graph._rel_ids = {r.id for r in graph.relationships}
+    graph._adj_out = None
+    graph._adj_in = None
 
 
 def _reindex_files(
@@ -2147,6 +2151,14 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
     patch_start = time.perf_counter()
     _reindex_files(root, files, indexer, graph)
 
+    # Resolve imports and apply semantic overlay (same as full index)
+    from batho.context.symbol_index import SymbolIndex
+    from batho.bsg import apply_semantic_overlay
+
+    symbol_index = SymbolIndex.build(graph)
+    graph = indexer._resolve_imports(graph, symbol_index=symbol_index)
+    apply_semantic_overlay(graph=graph, root_path=root, logger=LOGGER)
+
     bsg_map = BSGMap.build(
         graph, root=str(root), serialization_config=_get_serialization_config()
     )
@@ -2840,6 +2852,16 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 0 if summary.failed == 0 else 1
 
 
+def cmd_storage_compact(args: argparse.Namespace) -> int:
+    """Compact artifact registry by deduplicating same logical_path entries."""
+    root = Path(args.root).resolve()
+    ctn_dir = _ensure_ctn_dir(root)
+    dry_run = not bool(args.apply)
+    result = compact_registry(ctn_dir, dry_run=dry_run)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
 def cmd_storage_rebuild_indexes(args: argparse.Namespace) -> int:
     """Rebuild persisted query indexes for an existing graph artifact."""
     root = Path(args.root).resolve()
@@ -3459,6 +3481,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     storage_rebuild_indexes.set_defaults(func=cmd_storage_rebuild_indexes)
 
+    storage_compact = storage_sub.add_parser(
+        "compact",
+        help="Deduplicate registry entries (dry-run by default)",
+    )
+    storage_compact.add_argument("--root", required=True, help="Path to repo root")
+    storage_compact.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply compaction (default prints dry-run candidates)",
+    )
+    storage_compact.set_defaults(func=cmd_storage_compact)
+
     query = sub.add_parser("query", help="Query persisted graph indexes")
     query.add_argument("--root", required=True, help="Path to repo root")
     query.add_argument("--index-id", default=None, help="Optional index id to query")
@@ -3525,6 +3559,11 @@ def build_parser() -> argparse.ArgumentParser:
     from batho.cli.dashboard import register_cli_subcommands as _register_dashboard_subcommands
 
     _register_dashboard_subcommands(sub)
+
+    # Bridge: artifact registry REST and MCP server
+    from batho.cli.bridge import register_cli_subcommands as _register_bridge_subcommands
+
+    _register_bridge_subcommands(sub)
 
     return parser
 

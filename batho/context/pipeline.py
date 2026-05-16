@@ -81,13 +81,14 @@ def process_file_worker(
         Tuple of (filepath, entities, relationships, cached_hit) or None on error.
     """
     try:
-        # Check AST cache for existing entities
+        # Check AST cache for existing entities and relationships
         if cache_enabled:
             cache = ASTCache(cache_path=cache_path)
-            cached_entities = cache.get_cached_entities(
+            cached_result = cache.get_cached_entities(
                 filepath, content_hash, current_mtime, size
             )
-            if cached_entities is not None:
+            if cached_result is not None:
+                cached_entities, cached_relationships = cached_result
                 # Cache hit - stamp snapshot_id on cached entities if provided
                 if snapshot_id:
                     stamped_entities = []
@@ -107,8 +108,8 @@ def process_file_worker(
                             parent_id=entity.parent_id,
                         )
                         stamped_entities.append(stamped_entity)
-                    return (filepath, stamped_entities, [], True)
-                return (filepath, cached_entities, [], True)
+                    return (filepath, stamped_entities, cached_relationships, True)
+                return (filepath, cached_entities, cached_relationships, True)
 
         # Cache miss or cache disabled - parse the file
         from .languages.detector import default_detector
@@ -136,12 +137,13 @@ def process_file_worker(
             except TypeError:
                 entities, relationships = file_extractor.parse_file(filepath, content)
 
-        # Cache the extracted entities if cache is enabled
+        # Cache the extracted entities and relationships if cache is enabled
         # Skip caching empty results to avoid re-parsing files that legitimately have no entities
         if cache_enabled and entities:
             cache = ASTCache(cache_path=cache_path)
             cache.cache_entities(
-                filepath, content_hash, entities, current_mtime, size, ttl_days
+                filepath, content_hash, entities, current_mtime, size, ttl_days,
+                relationships=relationships,
             )
 
         return (filepath, entities, relationships, False)

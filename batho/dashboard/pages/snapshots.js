@@ -30,8 +30,9 @@ export async function renderSnapshots(params) {
 
     const rows = sorted.map((entry, i) => {
       const prev = sorted[i + 1];
-      const isActive = entry.id === currentId;
-      const shortId = (entry.id || '').replace(/^batho_/, '').slice(0, 12);
+      const entryId = entry.indexId || entry.index_id || entry.id;
+      const isActive = entryId === currentId;
+      const shortId = (entryId || '').replace(/^batho_/, '').slice(0, 12);
       const shortHash = entry.repoHash
         ? entry.repoHash.slice(0, 8) + '…' + entry.repoHash.slice(-4)
         : '—';
@@ -47,7 +48,7 @@ export async function renderSnapshots(params) {
       const staleness = entry.stalenessScore ?? 0;
       const stalenessPct = Math.round(staleness * 100);
 
-      return { entry, isActive, shortId, shortHash, delta, staleness, stalenessPct };
+      return { entry, entryId, isActive, shortId, shortHash, delta, staleness, stalenessPct };
     });
 
     container.innerHTML = `
@@ -90,15 +91,16 @@ export async function renderSnapshots(params) {
 }
 
 function renderErrorPanel(err) {
-  const isCtnIndexMissing =
-    err && err.name === 'MissingArtifactError' && typeof err.path === 'string' && err.path.endsWith('/.ctn/index.json');
+  const isIndexMissing =
+    err && err.name === 'MissingArtifactError' && typeof err.path === 'string' &&
+    (err.path.endsWith('/.ctn/index.json') || err.path.includes('/indexes'));
 
   let title = 'Error';
   let message = err?.message || 'An unknown error occurred';
 
-  if (isCtnIndexMissing) {
+  if (isIndexMissing) {
     title = 'Structural Fault';
-    message = 'No `.ctn/` folder found. Run `batho scan` first to populate `.ctn/`.';
+    message = 'No index data found. Run <code>batho index</code> first to populate `.ctn/`.';
   } else if (err?.name === 'MissingArtifactError') {
     title = 'Missing Artifact';
     message = `Could not load \`${err.path}\`.`;
@@ -126,7 +128,7 @@ function bindErrorActions(container) {
 }
 
 function renderSnapshotRow(row) {
-  const { entry, isActive, shortId, shortHash, delta, staleness, stalenessPct } = row;
+  const { entry, entryId, isActive, shortId, shortHash, delta, staleness, stalenessPct } = row;
 
   const markerClass = isActive ? 'timeline__marker--active' : 'timeline__marker--inactive';
   const activeBadge = isActive ? '<span class="timeline__active-badge">● ACTIVE</span>' : '';
@@ -163,7 +165,7 @@ function renderSnapshotRow(row) {
         </div>
         ${deltaHtml}
         <div class="timeline__actions">
-          ${!isActive ? `<button class="btn btn--ghost" data-action="make-active" data-index-id="${escapeAttr(entry.id)}">make active</button>` : ''}
+          ${!isActive ? `<button class="btn btn--ghost" data-action="make-active" data-index-id="${escapeAttr(entryId)}">make active</button>` : ''}
           <div class="timeline__staleness ${stalenessClass}">
             <span>staleness</span>
             <div class="timeline__staleness-bar">

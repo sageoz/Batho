@@ -12,6 +12,7 @@ import os
 import socket
 import sys
 import threading
+import urllib.parse
 import webbrowser
 from importlib.resources import files as _pkg_files
 from pathlib import Path
@@ -102,7 +103,14 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, dashboard_dir: Path, ctn_dir: Path, **kwargs):
         self._dashboard_dir = dashboard_dir
         self._ctn_dir = ctn_dir
+        self._bridge_api = None
         super().__init__(*args, **kwargs)
+
+    def _get_bridge_api(self):
+        from batho.bridge.http_api import BridgeAPIHandler
+        if self._bridge_api is None:
+            self._bridge_api = BridgeAPIHandler(self._ctn_dir)
+        return self._bridge_api
 
     def translate_path(self, path: str) -> str:
         """Translate URL to filesystem path using dual-root logic."""
@@ -121,12 +129,35 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         """Handle GET requests."""
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/v1/bridge/"):
+            query = urllib.parse.parse_qs(parsed.query)
+            body, status, headers = self._get_bridge_api().dispatch(parsed.path, query)
+            self.send_response(status)
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path not in ["/", "/dashboard", "/dashboard/"] and \
            not self.path.startswith("/dashboard/") and \
            not self.path.startswith("/.ctn/"):
             self.send_error(404, "Not Found")
             return
         super().do_GET()
+
+    def do_OPTIONS(self):
+        """Handle OPTIONS requests for CORS preflight."""
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/v1/bridge/"):
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.end_headers()
+            return
+        self.send_error(405, "Method Not Allowed")
 
     def do_POST(self):
         """Reject POST requests."""

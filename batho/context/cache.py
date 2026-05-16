@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from batho.context.schema import Entity
+from batho.context.schema import Entity, Relationship
 from batho.utils.logging import get_logger
 
 logger = get_logger(__name__, component="ast_cache")
@@ -54,6 +54,7 @@ class ASTCache:
         self._local = threading.local()
         self.logger = get_logger(__name__, component="ast_cache")
         self._initialize_db()
+        self._migrate_schema()
 
     def _get_connection(self) -> sqlite3.Connection:
         """
@@ -78,6 +79,7 @@ class ASTCache:
                     file_hash TEXT PRIMARY KEY,
                     file_path TEXT NOT NULL,
                     entities TEXT NOT NULL,
+                    relationships TEXT,
                     mtime REAL NOT NULL,
                     size INTEGER NOT NULL,
                     cached_at TEXT NOT NULL,
@@ -95,6 +97,20 @@ class ASTCache:
                 "cache_initialized",
                 cache_path=str(self._path),
             )
+
+    def _migrate_schema(self) -> None:
+        """Add missing columns to existing cache databases."""
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(cache_entries)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "relationships" not in columns:
+                cursor.execute(
+                    "ALTER TABLE cache_entries ADD COLUMN relationships TEXT"
+                )
+                conn.commit()
+                self.logger.info("cache_schema_migrated", added_column="relationships")
 
     def file_hash(self, file_path: str, content: bytes) -> str:
         """
@@ -123,11 +139,11 @@ class ASTCache:
         content_hash: str,
         mtime: float,
         size: int,
-    ) -> list[Entity] | None:
+    ) -> tuple[list[Entity], list[Relationship]] | None:
         """
-        Retrieve cached entities for a file if cache hit and valid.
+        Retrieve cached entities and relationships for a file if cache hit and valid.
 
-        Validates mtime and size before returning cached entities.
+        Validates mtime and size before returning cached results.
 
         Args:
             file_path: Path to the file.
@@ -136,14 +152,14 @@ class ASTCache:
             size: Current file size in bytes.
 
         Returns:
-            List of cached Entity objects if valid cache hit, None otherwise.
+            Tuple of (entities, relationships) if valid cache hit, None otherwise.
         """
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT entities, mtime, size, cached_at, ttl_days
+                SELECT entities, relationships, mtime, size, cached_at, ttl_days
                 FROM cache_entries
                 WHERE file_hash = ?
                 """,
@@ -199,16 +215,19 @@ class ASTCache:
                 conn.commit()
                 return None
 
-            # Cache hit - deserialize entities
+            # Cache hit - deserialize entities and relationships
             try:
                 entities_data = json.loads(row["entities"])
                 entities = [Entity.from_dict(e) for e in entities_data]
+                relationships_data = json.loads(row["relationships"] or "[]")
+                relationships = [Relationship.from_dict(r) for r in relationships_data]
                 self.logger.debug(
                     "cache_hit",
                     file_path=file_path,
                     entity_count=len(entities),
+                    relationship_count=len(relationships),
                 )
-                return entities
+                return entities, relationships
             except (json.JSONDecodeError, TypeError) as e:
                 self.logger.warning(
                     "cache_deserialize_failed",
@@ -231,9 +250,10 @@ class ASTCache:
         mtime: float,
         size: int,
         ttl_days: int = 30,
+        relationships: list[Relationship] | None = None,
     ) -> None:
         """
-        Cache extracted entities for a file.
+        Cache extracted entities and relationships for a file.
 
         Args:
             file_path: Path to the file.
@@ -242,26 +262,29 @@ class ASTCache:
             mtime: File modification time.
             size: File size in bytes.
             ttl_days: Time-to-live in days (default 30).
+            relationships: Optional list of Relationship objects to cache.
         """
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # Serialize entities to JSON
+            # Serialize entities and relationships to JSON
             entities_json = json.dumps([e.to_dict() for e in entities])
+            relationships_json = json.dumps([r.to_dict() for r in (relationships or [])])
             cached_at = datetime.now(timezone.utc).isoformat()
 
             # Insert or replace
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO cache_entries
-                (file_hash, file_path, entities, mtime, size, cached_at, ttl_days)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (file_hash, file_path, entities, relationships, mtime, size, cached_at, ttl_days)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     content_hash,
                     file_path,
                     entities_json,
+                    relationships_json,
                     mtime,
                     size,
                     cached_at,
@@ -273,6 +296,7 @@ class ASTCache:
                 "cache_entities_stored",
                 file_path=file_path,
                 entity_count=len(entities),
+                relationship_count=len(relationships or []),
             )
 
     def invalidate_cache(self, pattern: str | None = None) -> None:

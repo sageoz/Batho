@@ -853,7 +853,8 @@ class CodeGraphIndexer:
                 content_hash = self._cache.file_hash(filepath, content)
                 ttl_days = bsg_cache_cfg.get("ttl_days", 30)
                 self._cache.cache_entities(
-                    filepath, content_hash, entities, mtime, size, ttl_days
+                    filepath, content_hash, entities, mtime, size, ttl_days,
+                    relationships=rels,
                 )
             except OSError:
                 pass
