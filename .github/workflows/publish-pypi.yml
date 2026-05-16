@@ -57,10 +57,8 @@ jobs:
           echo "Checking sdist contents..."
           tar tzf dist/*.tar.gz | head -20
 
-      - name: Install twine and check metadata
-        run: |
-          uv pip install twine --system
-          twine check dist/*
+      - name: Check package metadata with twine
+        run: uv run --with twine twine check dist/*
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

@@ -103,9 +103,7 @@ jobs:
           unzip -l dist/*.whl | awk 'NR>3 && $4 != "" && $4 !~ /^-+$/ {print $4}' | sort | uniq -d | grep -q . && exit 1 || echo "No duplicates found"
 
       - name: Check package metadata with twine
-        run: |
-          uv pip install twine --system
-          twine check dist/*
+        run: uv run --with twine twine check dist/*
 
       - name: Test local install
         run: |
