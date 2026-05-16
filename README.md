@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://test.pypi.org/project/batho/"><img src="https://img.shields.io/pypi/v/batho?color=blue" alt="PyPI"></a>
+  <a href="https://pypi.org/project/batho/"><img src="https://img.shields.io/pypi/v/batho?color=blue" alt="PyPI"></a>
   <a href="https://github.com/sageoz/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   <a href="#supported-languages"><img src="https://img.shields.io/badge/languages-40+-orange" alt="Languages"></a>
 </p>
@@ -198,6 +198,8 @@ pip install batho          # pip
 uv pip install batho       # uv
 pip install -e .           # development (editable)
 ```
+
+**PyPI:** https://pypi.org/project/batho/
 
 ---
 
