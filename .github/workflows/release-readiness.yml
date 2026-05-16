@@ -100,7 +100,7 @@ jobs:
         run: |
           ls -lh dist/
           echo "Checking for duplicate files in wheel..."
-          unzip -l dist/*.whl | awk '{print $4}' | sort | uniq -d && exit 1 || echo "No duplicates found"
+          unzip -l dist/*.whl | awk 'NR>3 && $4 != "" && $4 !~ /^-+$/ {print $4}' | sort | uniq -d | grep -q . && exit 1 || echo "No duplicates found"
 
       - name: Check package metadata with twine
         run: |
