@@ -254,8 +254,9 @@ class TestASTCache:
         # Retrieve them
         cached = cache.get_cached_entities("test.py", "hash123", 1234.0, 100)
         assert cached is not None
-        assert len(cached) == 1
-        assert cached[0].name == "test_func"
+        entities_out, relationships_out = cached
+        assert len(entities_out) == 1
+        assert entities_out[0].name == "test_func"
 
     def test_cache_miss_wrong_hash(self, tmp_path: Path):
         cache_path = str(tmp_path / "cache.db")

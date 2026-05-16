@@ -15,7 +15,7 @@ from batho.bridge.artifact_loader import (
     ChecksumMismatchError,
 )
 from batho.bridge.constants import DEFAULT_BRIDGE_HTTP_PORT, KNOWN_ARTIFACT_TYPES
-from batho.bridge.models import BridgeErrorResponse, BridgeResponse
+from batho.bridge.models import BridgeErrorResponse, BridgeResponse, IndexListResponse
 from batho.bridge.registry_client import ArtifactRegistryBridge
 from batho.utils.logging import get_logger
 
@@ -76,14 +76,23 @@ class BridgeAPIHandler:
                 "GET /artifacts/{artifact_type}?index_id=",
                 "GET /artifacts/content?path=",
                 "GET /stats",
+                "GET /patches",
+                "GET /patches/{operation_id}",
+                "GET /snapshots/diff?base=&new=",
             ]})
 
         if segments[0] == "indexes":
             return self._handle_indexes(segments, query)
+        if segments[0] == "index-meta":
+            return self._handle_index_meta()
         if segments[0] == "artifacts":
             return self._handle_artifacts(segments, query)
         if segments[0] == "stats":
             return self._handle_stats()
+        if segments[0] == "patches":
+            return self._handle_patches(segments, query)
+        if segments[0] == "snapshots" and len(segments) >= 2 and segments[1] == "diff":
+            return self._handle_snapshot_diff(query)
 
         return _err("unknown_endpoint", f"Unknown endpoint: {route}", status=404)
 
@@ -92,15 +101,19 @@ class BridgeAPIHandler:
     ) -> tuple[bytes, int, dict[str, str]]:
         if len(segments) == 1:
             # GET /indexes
-            entries = self._bridge.list_indexes()
-            return _ok(
-                [e.model_dump(exclude_none=True) for e in entries],
+            entries, current_index_id, persistence_model, schema_version = self._bridge.list_indexes()
+            resp = IndexListResponse(
+                data=[e.model_dump(exclude_none=True) for e in entries],
+                current_index_id=current_index_id,
+                persistence_model=persistence_model,
+                schema_version=schema_version,
                 meta={"count": len(entries)},
             )
+            return _json_response(resp.model_dump(exclude_none=True))
         if len(segments) == 2:
             # GET /indexes/{index_id}
             index_id = segments[1]
-            entries = self._bridge.list_indexes()
+            entries, _, _, _ = self._bridge.list_indexes()
             for entry in entries:
                 if entry.index_id == index_id:
                     return _ok(entry.model_dump(exclude_none=True))
@@ -186,6 +199,131 @@ class BridgeAPIHandler:
             )
 
         return _err("invalid_path", "Invalid artifacts path", status=404)
+
+    def _handle_patches(
+        self, segments: list[str], query: dict[str, list[str]]
+    ) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /patches and /patches/{operation_id} endpoints."""
+        if len(segments) == 1:
+            # GET /patches — return patches/index.json
+            try:
+                data = self._loader.load_json("patches_index")
+            except ArtifactNotFoundError as exc:
+                return _err("artifact_not_found", str(exc), status=404)
+            except ChecksumMismatchError as exc:
+                return _err("checksum_mismatch", str(exc), status=409)
+            except ArtifactParseError as exc:
+                return _err("parse_error", str(exc), status=500)
+            return _ok(data, meta={"artifact_type": "patches_index"})
+
+        if len(segments) == 2:
+            # GET /patches/{operation_id} — return individual patch detail
+            operation_id = segments[1]
+            patch_path = self.ctn_dir / "patches" / f"patch_{operation_id}.json"
+            if not patch_path.exists():
+                return _err(
+                    "patch_not_found",
+                    f"Patch detail not found: {operation_id}",
+                    status=404,
+                )
+            try:
+                raw = patch_path.read_text(encoding="utf-8")
+                data = json.loads(raw)
+            except (OSError, json.JSONDecodeError) as exc:
+                return _err("parse_error", str(exc), status=500)
+            return _ok(data, meta={"operation_id": operation_id})
+
+        return _err("invalid_path", "Invalid patches path", status=404)
+
+    def _handle_snapshot_diff(
+        self, query: dict[str, list[str]]
+    ) -> tuple[bytes, int, dict[str, str]]:
+        """Handle GET /snapshots/diff?base={id}&new={id}.
+
+        Computes a lightweight entity delta between two snapshot files.
+        """
+        base_id = _first(query.get("base"))
+        new_id = _first(query.get("new"))
+        if not base_id or not new_id:
+            return _err(
+                "missing_param",
+                "Both 'base' and 'new' snapshot IDs are required",
+            )
+
+        base_path = self.ctn_dir / "snapshots" / f"{base_id}.json"
+        new_path = self.ctn_dir / "snapshots" / f"{new_id}.json"
+
+        if not base_path.exists():
+            return _err(
+                "snapshot_not_found",
+                f"Base snapshot not found: {base_id}",
+                status=404,
+            )
+        if not new_path.exists():
+            return _err(
+                "snapshot_not_found",
+                f"New snapshot not found: {new_id}",
+                status=404,
+            )
+
+        try:
+            base_data = json.loads(base_path.read_text(encoding="utf-8"))
+            new_data = json.loads(new_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return _err("parse_error", str(exc), status=500)
+
+        # Compute entity delta
+        base_entities = {}
+        new_entities = {}
+        for ent in base_data.get("entities", []):
+            eid = ent.get("id") or ent.get("fqn")
+            if eid:
+                base_entities[eid] = ent.get("hash", "")
+        for ent in new_data.get("entities", []):
+            eid = ent.get("id") or ent.get("fqn")
+            if eid:
+                new_entities[eid] = ent.get("hash", "")
+
+        added = [eid for eid in new_entities if eid not in base_entities]
+        removed = [eid for eid in base_entities if eid not in new_entities]
+        modified = [
+            eid for eid in new_entities
+            if eid in base_entities and new_entities[eid] != base_entities[eid]
+        ]
+        unchanged = [
+            eid for eid in new_entities
+            if eid in base_entities and new_entities[eid] == base_entities[eid]
+        ]
+
+        base_file_count = len(base_data.get("files", base_data.get("file_entries", [])))
+        new_file_count = len(new_data.get("files", new_data.get("file_entries", [])))
+        base_loc = base_data.get("stats", {}).get("loc_total", 0)
+        new_loc = new_data.get("stats", {}).get("loc_total", 0)
+
+        diff = {
+            "base_snapshot_id": base_id,
+            "new_snapshot_id": new_id,
+            "entities": {
+                "added": len(added),
+                "removed": len(removed),
+                "modified": len(modified),
+                "unchanged": len(unchanged),
+                "added_ids": added[:50],
+                "removed_ids": removed[:50],
+                "modified_ids": modified[:50],
+            },
+            "files": {
+                "base_count": base_file_count,
+                "new_count": new_file_count,
+                "delta": new_file_count - base_file_count,
+            },
+            "loc": {
+                "base": base_loc,
+                "new": new_loc,
+                "delta": new_loc - base_loc,
+            },
+        }
+        return _ok(diff)
 
     def _handle_stats(self) -> tuple[bytes, int, dict[str, str]]:
         stats = self._bridge.stats()

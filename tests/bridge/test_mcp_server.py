@@ -53,8 +53,9 @@ def test_mcp_list_indexes(tmp_path: Path) -> None:
     mcp = create_mcp_server(ctn_dir)
     result = _call_tool_sync(mcp, "bridge_list_indexes", {})
     parsed = json.loads(result[0].text)
-    assert len(parsed) == 1
-    assert parsed[0]["index_id"] == "idx_001"
+    assert parsed["current_index_id"] == "idx_001"
+    assert len(parsed["indexes"]) == 1
+    assert parsed["indexes"][0]["index_id"] == "idx_001"
 
 
 def test_mcp_get_artifact(tmp_path: Path) -> None:

@@ -103,10 +103,13 @@ def test_list_indexes(tmp_path: Path) -> None:
     (ctn_dir / "index.json").write_text(json.dumps(index_data), encoding="utf-8")
 
     bridge = ArtifactRegistryBridge(ctn_dir)
-    entries = bridge.list_indexes()
+    entries, current_index_id, persistence_model, schema_version = bridge.list_indexes()
     assert len(entries) == 2
     ids = {e.index_id for e in entries}
     assert ids == {"idx_a", "idx_b"}
+    assert current_index_id == "idx_a"
+    assert persistence_model is None
+    assert schema_version is None
 
 
 def test_search_artifacts(tmp_path: Path) -> None:

@@ -37,17 +37,20 @@ def create_mcp_server(ctn_dir: Path) -> FastMCP:
     @mcp.tool()
     def bridge_list_indexes() -> str:
         """List all available index IDs and timestamps."""
-        entries = bridge.list_indexes()
-        result = [
-            {"index_id": e.index_id, "timestamp": e.timestamp, "root": e.root}
-            for e in entries
-        ]
+        entries, current_index_id, _, _ = bridge.list_indexes()
+        result = {
+            "current_index_id": current_index_id,
+            "indexes": [
+                {"index_id": e.index_id, "timestamp": e.timestamp, "root": e.root}
+                for e in entries
+            ],
+        }
         return json.dumps(result, indent=2)
 
     @mcp.tool()
     def bridge_get_index(index_id: str) -> str:
         """Get metadata for a specific index."""
-        entries = bridge.list_indexes()
+        entries, _, _, _ = bridge.list_indexes()
         for entry in entries:
             if entry.index_id == index_id:
                 return json.dumps(entry.model_dump(exclude_none=True), indent=2)

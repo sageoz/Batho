@@ -1,0 +1,267 @@
+/* Hypergraph page styles */
+
+/* ─── Shell Layout ────────────────────────────────────────────────────────── */
+.graph-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.graph-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-pad);
+  padding: var(--space-gutter) var(--space-pad);
+  border-bottom: var(--hairline);
+  background: var(--surface-container-low);
+  flex-shrink: 0;
+}
+
+.graph-header__title {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+.graph-header__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-gutter);
+  flex: 1;
+  min-width: 0;
+}
+
+/* ─── Layout Switcher ────────────────────────────────────────────────────── */
+.graph-layout-switcher {
+  display: flex;
+  gap: 0;
+  border: var(--hairline);
+}
+
+.graph-layout-btn {
+  padding: var(--space-tight) var(--space-gutter);
+  font-family: var(--font-mono);
+  font-size: var(--type-terminal-size);
+  font-weight: var(--type-node-code-weight);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
+  border: none;
+  border-right: var(--hairline);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.graph-layout-btn:last-child {
+  border-right: none;
+}
+
+.graph-layout-btn:hover {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+}
+
+.graph-layout-btn--active {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.graph-layout-btn--active:hover {
+  background: var(--primary-container);
+}
+
+/* ─── Focus Bar ───────────────────────────────────────────────────────────── */
+.graph-focus-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-tight);
+  flex: 1;
+  max-width: 280px;
+}
+
+.graph-focus-input {
+  flex: 1;
+  padding: var(--space-tight) var(--space-gutter);
+  font-family: var(--font-mono);
+  font-size: var(--type-node-code-size);
+  background: var(--surface-container);
+  color: var(--on-surface);
+  border: var(--hairline);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.graph-focus-input:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+.graph-focus-input::placeholder {
+  color: var(--on-surface-variant);
+  opacity: 0.5;
+}
+
+.graph-focus-clear {
+  font-size: 16px;
+  padding: 2px 6px;
+  line-height: 1;
+}
+
+/* ─── Body (sidebar + canvas) ────────────────────────────────────────────── */
+.graph-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── Sidebar ─────────────────────────────────────────────────────────────── */
+.graph-sidebar {
+  width: 180px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: var(--space-gutter);
+  border-right: var(--hairline);
+  background: var(--surface-container-low);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-pad);
+}
+
+.graph-sidebar__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-tight);
+}
+
+.graph-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-tight);
+}
+
+.graph-path-input {
+  width: 100%;
+  padding: var(--space-tight) var(--space-gutter);
+  font-family: var(--font-mono);
+  font-size: var(--type-terminal-size);
+  background: var(--surface-container);
+  color: var(--on-surface);
+  border: var(--hairline);
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+
+.graph-path-input:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+.graph-path-input::placeholder {
+  color: var(--on-surface-variant);
+  opacity: 0.5;
+}
+
+/* ─── Canvas ──────────────────────────────────────────────────────────────── */
+.graph-canvas-wrap {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.graph-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+/* ─── Progress Bar ────────────────────────────────────────────────────────── */
+.graph-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-gutter);
+  padding: var(--space-tight) var(--space-pad);
+  border-top: var(--hairline);
+  background: var(--surface-container-low);
+  flex-shrink: 0;
+  transition: opacity 0.4s ease;
+}
+
+.graph-progress--done {
+  opacity: 0.4;
+}
+
+.graph-progress__bar {
+  flex: 1;
+  height: 4px;
+  background: var(--surface-container-high);
+  border: var(--hairline);
+  overflow: hidden;
+}
+
+.graph-progress__fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent-cyan), var(--primary));
+  transition: width 0.3s ease;
+}
+
+.graph-progress__label {
+  font-family: var(--font-mono);
+  font-size: var(--type-terminal-size);
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Error / hint inside drawer body ─────────────────────────────────────── */
+.error-panel__hint {
+  color: var(--on-surface-variant);
+  font-family: var(--font-mono);
+  font-size: var(--type-terminal-size);
+  margin-top: var(--space-tight);
+}
+
+.error-panel__hint code {
+  color: var(--accent-cyan);
+}
+
+/* ─── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 700px) {
+  .graph-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .graph-header__controls {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .graph-focus-bar {
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .graph-sidebar {
+    width: 140px;
+  }
+}
+
+/* ─── Reduced motion ─────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .graph-progress__fill {
+    transition: none;
+  }
+  .graph-layout-btn,
+  .graph-focus-input,
+  .graph-path-input {
+    transition: none;
+  }
+}

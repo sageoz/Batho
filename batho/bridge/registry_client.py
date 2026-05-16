@@ -106,19 +106,26 @@ class ArtifactRegistryBridge:
 
         return _dict_to_index_entry(current_index_id, entry)
 
-    def list_indexes(self) -> list[IndexEntry]:
-        """Return all index entries from ``.ctn/index.json``."""
+    def list_indexes(self) -> tuple[list[IndexEntry], str, str | None, str | None]:
+        """Return all index entries plus current_index_id from ``.ctn/index.json``.
+
+        Returns ``(entries, current_index_id, persistence_model, schema_version)``.
+        """
         index_path = self.ctn_dir / "index.json"
         if not index_path.exists():
-            return []
+            return [], "", None, None
         try:
             data = json.loads(index_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             LOGGER.warning("index_json_read_failed", path=str(index_path), error=str(exc))
-            return []
+            return [], "", None, None
 
+        current_index_id = data.get("current_index_id", "")
+        persistence_model = data.get("persistence_model")
+        schema_version = data.get("schema_version")
         indexes = data.get("indexes", {})
-        return [_dict_to_index_entry(idx_id, entry) for idx_id, entry in indexes.items()]
+        entries = [_dict_to_index_entry(idx_id, entry) for idx_id, entry in indexes.items()]
+        return entries, current_index_id, persistence_model, schema_version
 
     def search_artifacts(self, query: str, artifact_type: str | None = None) -> list[ArtifactRecord]:
         """Fuzzy search on logical paths."""
@@ -201,6 +208,11 @@ def _dict_to_index_entry(index_id: str, entry: dict[str, Any]) -> IndexEntry:
         stack=entry.get("stack", {}),
         outputs=entry.get("outputs", {}),
         stats=entry.get("stats", {}),
+        metrics=entry.get("metrics", {}),
+        build=entry.get("build", {}),
+        schemas=entry.get("schemas", {}),
+        persistence=entry.get("persistence", {}),
+        snapshot_id=entry.get("snapshot_id", ""),
     )
 
 

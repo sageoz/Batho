@@ -13,6 +13,8 @@ KNOWN_ARTIFACT_TYPES: set[str] = {
     "index_metadata",
     "metrics_json",
     "file_hashes_json",
+    "patches_index",
+    "patch_detail",
 }
 
 # Default logical path patterns relative to .ctn/ for each artifact type.
@@ -27,6 +29,8 @@ DEFAULT_PATH_PATTERNS: dict[str, str] = {
     "index_metadata": "index.json",
     "metrics_json": "local/metrics/metrics.json",
     "file_hashes_json": "local/state/file_hashes.json",
+    "patches_index": "patches/index.json",
+    "patch_detail": "patches/patch_{operation_id}.json",
 }
 
 # Artifact types that require an index_id for path resolution

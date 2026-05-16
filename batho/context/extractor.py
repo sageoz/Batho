@@ -617,19 +617,22 @@ class ASTExtractor(abc.ABC):
                     RelationshipType.REFERENCES,
                 ):
                     source_ent = _find_enclosing(node.start_byte)
+                    source_id = source_ent.id if source_ent is not None else filepath
                     target_ent = by_name.get(ref_text)
-                    if (
-                        source_ent is not None
-                        and target_ent is not None
-                        and source_ent.id != target_ent.id
-                    ):
-                        _add(source_ent.id, target_ent.id, rel_type, line_no, rel_meta)
+                    if target_ent is not None and source_id != target_ent.id:
+                        _add(source_id, target_ent.id, rel_type, line_no, rel_meta)
+                    elif target_ent is None:
+                        _add(
+                            source_id,
+                            f"unresolved:{ref_text}",
+                            rel_type,
+                            line_no,
+                            rel_meta,
+                        )
 
                 elif rel_type == RelationshipType.IMPORTS:
                     source_ent = _find_enclosing(node.start_byte)
-                    if source_ent is None:
-                        continue
-                    source_id = source_ent.id
+                    source_id = source_ent.id if source_ent is not None else filepath
                     targets = _expand_import_targets(ref_text)
                     if not targets:
                         continue

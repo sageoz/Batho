@@ -48,7 +48,7 @@ export async function renderSnapshots(params) {
       const staleness = entry.stalenessScore ?? 0;
       const stalenessPct = Math.round(staleness * 100);
 
-      return { entry, isActive, shortId, shortHash, delta, staleness, stalenessPct };
+      return { entry, entryId, isActive, shortId, shortHash, delta, staleness, stalenessPct };
     });
 
     container.innerHTML = `
@@ -128,7 +128,7 @@ function bindErrorActions(container) {
 }
 
 function renderSnapshotRow(row) {
-  const { entry, isActive, shortId, shortHash, delta, staleness, stalenessPct } = row;
+  const { entry, entryId, isActive, shortId, shortHash, delta, staleness, stalenessPct } = row;
 
   const markerClass = isActive ? 'timeline__marker--active' : 'timeline__marker--inactive';
   const activeBadge = isActive ? '<span class="timeline__active-badge">● ACTIVE</span>' : '';

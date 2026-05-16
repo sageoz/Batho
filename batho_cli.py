@@ -1100,6 +1100,9 @@ def _strip_files(
         and r.target_id not in remove_ids
         and r.source_id not in targets
     ]
+    graph._rel_ids = {r.id for r in graph.relationships}
+    graph._adj_out = None
+    graph._adj_in = None
 
 
 def _reindex_files(
@@ -2147,6 +2150,14 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
 
     patch_start = time.perf_counter()
     _reindex_files(root, files, indexer, graph)
+
+    # Resolve imports and apply semantic overlay (same as full index)
+    from batho.context.symbol_index import SymbolIndex
+    from batho.bsg import apply_semantic_overlay
+
+    symbol_index = SymbolIndex.build(graph)
+    graph = indexer._resolve_imports(graph, symbol_index=symbol_index)
+    apply_semantic_overlay(graph=graph, root_path=root, logger=LOGGER)
 
     bsg_map = BSGMap.build(
         graph, root=str(root), serialization_config=_get_serialization_config()

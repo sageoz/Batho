@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from batho.context.cache import ASTCache
-from batho.context.schema import Entity, EntityType
+from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 
 
 def _entity(file_path: str, name: str) -> Entity:
@@ -68,6 +68,28 @@ def test_get_cached_entities_removes_corrupt_entries(tmp_path: Path) -> None:
         ).fetchone()
     assert rows is not None
     assert rows[0] == 0
+
+
+def test_cache_roundtrip_with_relationships(tmp_path: Path) -> None:
+    cache = ASTCache(cache_path=str(tmp_path / "cache.db"))
+    entity = _entity("src/a.py", "a")
+    rel = Relationship(
+        source_id=entity.id,
+        target_id="unresolved:foo",
+        type=RelationshipType.IMPORTS,
+    )
+    cache.cache_entities(
+        "src/a.py", "hash-rel", [entity], 1.0, 10, relationships=[rel]
+    )
+
+    result = cache.get_cached_entities("src/a.py", "hash-rel", 1.0, 10)
+    assert result is not None
+    entities, relationships = result
+    assert len(entities) == 1
+    assert entities[0].name == "a"
+    assert len(relationships) == 1
+    assert relationships[0].source_id == entity.id
+    assert relationships[0].type == RelationshipType.IMPORTS
 
 
 def test_invalidate_cache_without_pattern_clears_all_entries(tmp_path: Path) -> None:

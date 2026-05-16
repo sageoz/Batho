@@ -45,6 +45,22 @@ class IndexEntry(BaseModel):
     stack: dict[str, Any] = Field(default_factory=dict)
     outputs: dict[str, str] = Field(default_factory=dict)
     stats: dict[str, Any] = Field(default_factory=dict)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    build: dict[str, Any] = Field(default_factory=dict)
+    schemas: dict[str, Any] = Field(default_factory=dict)
+    persistence: dict[str, Any] = Field(default_factory=dict)
+    snapshot_id: str = ""
+
+
+class IndexListResponse(BaseModel):
+    """Response envelope for the indexes list endpoint."""
+
+    ok: bool = True
+    data: list[IndexEntry] = Field(default_factory=list)
+    current_index_id: str = ""
+    persistence_model: str | None = None
+    schema_version: str | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class BridgeResponse(BaseModel):
@@ -79,6 +95,7 @@ class RegistryStats(BaseModel):
 __all__ = [
     "ArtifactRecord",
     "IndexEntry",
+    "IndexListResponse",
     "BridgeResponse",
     "BridgeErrorResponse",
     "RegistryStats",
