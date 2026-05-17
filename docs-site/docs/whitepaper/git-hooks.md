@@ -8,6 +8,8 @@ description: "Git client-side hook automation with YAML configuration"
 
 ## 6.1 Architecture
 
+Batho's Git hooks provide automated quality gates and workflow enforcement:
+
 ```mermaid
 flowchart LR
     A[.batho/hooks.yaml] --> B{Hook Type}
@@ -22,6 +24,8 @@ flowchart LR
 ```
 
 ## 6.2 Hook Lifecycle
+
+The hook lifecycle provides a consistent workflow for configuration and management:
 
 | Stage | Command | Action |
 |-------|---------|--------|
@@ -49,3 +53,34 @@ All standard Git client-side hooks are supported:
 | `pre-receive` | Server-side validation stub |
 | `update` | Branch-specific policies |
 | `post-update` | Deploy triggers |
+
+## 6.4 Configuration Example
+
+```yaml
+# .batho/hooks.yaml
+hooks:
+  pre-commit:
+    - name: "Check formatting"
+      command: "ruff format --check ."
+    - name: "Lint"
+      command: "ruff check ."
+    - name: "Type check"
+      command: "mypy ."
+  
+  pre-push:
+    - name: "Run tests"
+      command: "pytest"
+    - name: "Security scan"
+      command: "bandit -r src/"
+  
+  post-checkout:
+    - name: "Re-index"
+      command: "batho index --root ."
+```
+
+## 6.5 Best Practices
+
+1. **Fast pre-commit**: Keep pre-commit hooks under 2 seconds
+2. **Cache dependencies**: Use cached virtual environments
+3. **Parallel execution**: Run independent checks in parallel
+4. **Fail fast**: Order checks by likelihood of failure

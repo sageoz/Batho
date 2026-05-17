@@ -8,6 +8,8 @@ description: "Subsystem inventory and technology stack"
 
 ## 2.1 Subsystem Inventory
 
+Batho is composed of tightly-integrated subsystems that work together to provide code intelligence capabilities. Each subsystem has a well-defined responsibility and can be tested independently.
+
 | Subsystem | Module Path | Purpose | Status |
 |-----------|-------------|---------|--------|
 | AST Extraction | `batho/context/extractor.py` | tree-sitter based multi-language parsing | Production |
@@ -30,16 +32,77 @@ description: "Subsystem inventory and technology stack"
 
 ## 2.2 Technology Stack
 
+### Runtime Environment
+
 | Layer | Technology | Version |
 |-------|------------|---------|
 | Language Runtime | Python | 3.11+ |
 | AST Parsing | tree-sitter | 0.25+ |
 | Language Pack | tree-sitter-language-pack | Latest |
 | Configuration | Pydantic | 2.x |
-| CLI Framework | argparse (stdlib) | — |
-| Web Dashboard | Vanilla JS + Static HTML | — |
-| REST API | stdlib http.server | — |
-| MCP Server | stdio / sse transport | — |
+
+### Interface Layer
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| CLI Framework | argparse (stdlib) | Command-line interface |
+| Web Dashboard | Vanilla JS + Static HTML | Interactive visualization |
+| REST API | stdlib http.server | Programmatic access |
+| MCP Server | stdio / sse transport | LLM integration |
+
+### Data Layer
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
 | Cache / Registry | SQLite | 3.x |
+| Snapshots | JSON files | Time-travel storage |
+| Metrics | JSON files | Performance tracking |
+
+### Development & Testing
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
 | Testing | pytest + pytest-cov | 8.x / 5.x |
 | Build Tool | uv | Latest |
+| Type Checking | TypeScript | 6.x |
+| Linting | ruff, mypy | Code quality |
+
+## 2.3 Subsystem Interactions
+
+Subsystems communicate through well-defined interfaces:
+
+```mermaid
+graph TD
+    CLI --> Extractor
+    CLI --> Graph
+    CLI --> Bridge
+    CLI --> Dashboard
+    
+    Extractor --> Cache
+    Extractor --> Graph
+    Extractor --> Pipeline
+    
+    Graph --> SymbolIndex
+    Graph --> BSG
+    Graph --> TimeMachine
+    
+    SymbolIndex --> Graph
+    
+    BSG --> Rules
+    BSG --> Bridge
+    BSG --> Snapshots
+    
+    Rules --> BSG
+    
+    TimeMachine --> Snapshots
+    TimeMachine --> CLI
+    
+    Bridge --> Dashboard
+```
+
+## 2.4 Data Flow Between Subsystems
+
+1. **Extraction Phase**: CLI → Extractor → Cache + Graph
+2. **Resolution Phase**: Graph → SymbolIndex → Graph (cross-file resolution)
+3. **Intelligence Phase**: Graph → BSG → Rules → BSG (semantic tagging)
+4. **Output Phase**: BSG → Snapshots + Bridge + Dashboard

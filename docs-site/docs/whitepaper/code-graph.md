@@ -8,7 +8,7 @@ description: "Entity model, graph consistency, and cross-file resolution"
 
 ## 3.1 Entity Model
 
-The graph is built on two primitives: **Entities** and **Relationships**.
+The graph is built on two primitives: **Entities** and **Relationships**. This model enables efficient querying and cross-referencing across large codebases.
 
 ### Entity Types
 
@@ -41,6 +41,8 @@ The graph is built on two primitives: **Entities** and **Relationships**.
 
 ## 3.2 Graph Consistency Model
 
+The `InMemoryGraph` ensures deterministic processing through lazy indexing and automatic deduplication:
+
 ```mermaid
 flowchart LR
     A[Parse File] --> B{Entity Exists?}
@@ -52,15 +54,61 @@ flowchart LR
     F --> G[Validate Cross-refs]
 ```
 
-The `InMemoryGraph` uses lazy adjacency indexing:
+**Key Guarantees:**
 - Index built on first `neighbors()` call
 - Invalidated on every relationship mutation
 - Duplicate relationships silently deduplicated via `has_relationship()`
 
 ## 3.3 Cross-File Resolution
 
-The `SymbolIndex` performs a two-pass resolution:
-1. **Local pass**: Resolve symbols within each file
-2. **Global pass**: Match unresolved imports against exported symbols across the repository
+The `SymbolIndex` performs a two-pass resolution to enable cross-module references:
 
-Unresolved targets are tagged with `unresolved:` prefix and tracked for later resolution.
+```mermaid
+flowchart TB
+    A[Local Pass] --> B[Resolve symbols within each file]
+    B --> C[Global Pass]
+    C --> D[Match unresolved imports against exports]
+    D --> E{Resolved?}
+    E -->|Yes| F[Tag with resolved symbol]
+    E -->|No| G[Tag with unresolved: prefix]
+    G --> H[Track for later resolution]
+```
+
+**Resolution Process:**
+1. **Local pass**: Resolve symbols within each file's scope
+2. **Global pass**: Match unresolved imports against exported symbols across the repository
+3. **Tracking**: Unresolved targets are tagged with `unresolved:` prefix and tracked for later resolution
+
+## 3.4 Example: Cross-File Reference
+
+Consider a Python project with two files:
+
+**models.py:**
+```python
+class User:
+    def __init__(self, name: str):
+        self.name = name
+```
+
+**services.py:**
+```python
+from models import User
+
+def create_user(name: str) -> User:
+    return User(name)
+```
+
+**Graph Representation:**
+```json
+{
+  "entities": [
+    {"id": "models.py::User", "type": "CLASS", "file": "models.py"},
+    {"id": "models.py::User.__init__", "type": "METHOD", "file": "models.py"},
+    {"id": "services.py::create_user", "type": "FUNCTION", "file": "services.py"}
+  ],
+  "relationships": [
+    {"from": "services.py", "to": "models", "type": "IMPORTS"},
+    {"from": "services.py::create_user", "to": "models.py::User", "type": "USES"}
+  ]
+}
+```

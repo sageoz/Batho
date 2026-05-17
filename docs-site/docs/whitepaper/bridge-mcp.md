@@ -8,6 +8,8 @@ description: "REST API, MCP server capabilities, and transport modes"
 
 ## 8.1 Bridge Modes
 
+The Artifact Bridge provides multiple access modes:
+
 ```mermaid
 flowchart LR
     A[batho bridge serve] --> B[REST API Server]
@@ -33,9 +35,31 @@ flowchart LR
 | `/patches/{operation_id}` | GET | Patch operation detail |
 | `/snapshots/diff` | GET | Diff two snapshots (base + new) |
 
+### Example: Get File Content with BSG Enrichment
+
+```bash
+curl "http://localhost:8080/file-content?path=src/services/user.py"
+```
+
+Response:
+```json
+{
+  "file_path": "src/services/user.py",
+  "content": "# File content...",
+  "entities": [
+    {
+      "id": "UserService",
+      "type": "CLASS",
+      "start_line": 10,
+      "end_line": 50
+    }
+  ]
+}
+```
+
 ## 8.3 MCP Server Capabilities
 
-The MCP server exposes Batho's graph as a model context provider:
+The MCP server exposes Batho's graph as a model context provider for LLMs:
 
 | Tool | Description |
 |------|-------------|
@@ -46,3 +70,36 @@ The MCP server exposes Batho's graph as a model context provider:
 | `bridge_get_artifact_by_path` | Load artifact content by exact logical path |
 | `bridge_search_artifacts` | Fuzzy search artifacts by logical path |
 | `bridge_get_stats` | Return registry statistics |
+
+### MCP Usage Example
+
+```python
+# In an MCP client
+tools = await mcp.list_tools()
+indexes = await mcp.call_tool("bridge_list_indexes")
+artifact = await mcp.call_tool("bridge_get_artifact_by_path", {
+    "artifact_type": "bsg",
+    "path": "bsg.json"
+})
+```
+
+## 8.4 Transport Modes
+
+| Mode | Command | Use Case |
+|------|---------|----------|
+| **stdio** | `batho bridge serve --transport stdio` | MCP client integration |
+| **SSE** | `batho bridge serve --transport sse --port 8080` | Web-based LLM access |
+
+## 8.5 Configuration
+
+```yaml
+# batho.yaml
+bridge:
+  rest:
+    enabled: true
+    port: 8080
+    host: "0.0.0.0"
+  mcp:
+    enabled: true
+    transport: "stdio"  # or "sse"
+```

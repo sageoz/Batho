@@ -50,3 +50,16 @@ description: "Schema versions, directory structure, and glossary"
 | **Relationship** | A directed edge between entities |
 | **Snapshot** | Immutable point-in-time capture of the code graph |
 | **Symbol Index** | Cross-file lookup table for imports and exports |
+
+## 12.4 Error Codes
+
+| Code | Description |
+|------|-------------|
+| `E001` | File not found |
+| `E002` | Parse error |
+| `E003` | Cache corruption |
+| `E004` | Snapshot mismatch |
+| `E005` | Permission denied |
+| `E100` | Configuration error |
+| `E200` | Plugin load failure |
+| `E300` | Storage error |

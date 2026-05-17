@@ -8,6 +8,8 @@ description: "Web dashboard architecture, pages, and launch options"
 
 ## 7.1 Dashboard Architecture
 
+The dashboard provides an interactive interface for code intelligence exploration:
+
 ```mermaid
 flowchart TB
     subgraph Client["Browser"]
@@ -50,8 +52,36 @@ flowchart TB
 ## 7.3 Launch Options
 
 ```bash
-batho dashboard --root .                    # Default: port 8080
-batho dashboard --root . --port 3000        # Custom port
-batho dashboard --root . --host 0.0.0.0    # External access
-batho dashboard --root . --no-browser       # Skip auto-open
+# Default launch
+batho dashboard --root .
+
+# Custom port
+batho dashboard --root . --port 3000
+
+# External access
+batho dashboard --root . --host 0.0.0.0
+
+# Skip browser auto-open
+batho dashboard --root . --no-browser
 ```
+
+## 7.4 Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl/Cmd + K` | Global search |
+| `Ctrl/Cmd + D` | Toggle dark mode |
+| `Ctrl/Cmd + 0` | Reset zoom (graph) |
+| `Ctrl/Cmd + +` | Zoom in (graph) |
+| `Ctrl/Cmd + -` | Zoom out (graph) |
+| `G` | Toggle grid (graph) |
+| `F` | Fit to screen (graph) |
+
+## 7.5 Export Options
+
+| Format | Command |
+|--------|---------|
+| PNG | Right-click graph → Export PNG |
+| SVG | Right-click graph → Export SVG |
+| JSON | `batho export --format json --root .` |
+| CSV | `batho export --format csv --root .` |
