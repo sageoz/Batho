@@ -1,0 +1,33 @@
+/**
+ * Any CSS included here will be global. The classic template
+ * bundles Infima by default. Infima is a CSS framework designed to
+ * work well for content-centric websites.
+ */
+
+/* You can override the default Infima variables here. */
+/* Batho Brand Colors — derived from assets/batho.svg gradients */
+:root {
+  --ifm-color-primary: #2563EB;
+  --ifm-color-primary-dark: #1D4ED8;
+  --ifm-color-primary-darker: #1E40AF;
+  --ifm-color-primary-darkest: #1E3A8A;
+  --ifm-color-primary-light: #3B82F6;
+  --ifm-color-primary-lighter: #60A5FA;
+  --ifm-color-primary-lightest: #93C5FD;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(37, 99, 235, 0.1);
+}
+
+/* For readability concerns, you should choose a lighter palette in dark mode. */
+[data-theme='dark'] {
+  --ifm-color-primary: #60A5FA;
+  --ifm-color-primary-dark: #3B82F6;
+  --ifm-color-primary-darker: #2563EB;
+  --ifm-color-primary-darkest: #1D4ED8;
+  --ifm-color-primary-light: #93C5FD;
+  --ifm-color-primary-lighter: #BFDBFE;
+  --ifm-color-primary-lightest: #DBEAFE;
+  --docusaurus-highlighted-code-line-bg: rgba(96, 165, 250, 0.15);
+  --ifm-background-color: #0f172a;
+  --ifm-navbar-background-color: #0f172a;
+}
