@@ -20,9 +20,6 @@ batho index --root . --verbose --snapshot
 # Generate compressed bsg for LLM injection
 batho bsg --root . --mode compressed --budget 12000
 
-# Create snapshot
-batho index --root . --snapshot
-
 # Auto-detect and patch changes
 batho patch --root . --scan
 
@@ -41,3 +38,10 @@ batho --help
 ```
 
 Batho scans your codebase, extracts every function, class, import, and relationship, and writes structured output to `.ctn/`.
+
+## Next Steps
+
+- [Installation](/docs/getting-started/installation) - Detailed installation options
+- [Configuration](/docs/getting-started/configuration) - Configure Batho for your needs
+- [CLI Reference](/docs/cli-reference) - Complete command documentation
+- [Whitepaper](/docs/whitepaper) - Deep technical reference

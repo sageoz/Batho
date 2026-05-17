@@ -34,6 +34,83 @@ Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic
 
 ---
 
+## System Architecture at a Glance
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
+flowchart TB
+    subgraph Input["Source Inputs"]
+        REPO["Git Repository<br/>(40+ Languages)"]
+        CFG["batho.yaml Configuration"]
+    end
+
+    subgraph Engine["Batho Core Engine"]
+        EX["AST Extractor<br/>(tree-sitter)"]
+        CG["Code Graph<br/>(InMemoryGraph + SymbolIndex)"]
+        BSG["BSG Engine<br/>(Compression + Plugin Rules)"]
+        TM["Time Machine<br/>(Snapshots and Patches)"]
+    end
+
+    subgraph Output["Consumption Interfaces"]
+        CLI["batho CLI<br/>(Commands and Queries)"]
+        DASH["Dashboard<br/>(Vanilla JS UI)"]
+        BRIDGE["Artifact Bridge<br/>(REST and MCP)"]
+        HOOKS["Git Hooks<br/>(Governance Automation)"]
+    end
+
+    REPO -->|"Parse"| EX
+    CFG -->|"Configure"| BSG
+    EX -->|"Entities"| CG
+    CG -->|"Graph"| BSG
+    BSG -->|"Compressed BSG"| TM
+    TM -->|"Query"| CLI
+    TM -->|"Visualize"| DASH
+    TM -->|"Serve"| BRIDGE
+    TM -->|"Validate"| HOOKS
+
+    style Input fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style Engine fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style Output fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+```
+
+**Figure 1: Batho v1 System Architecture Overview** - High-level data flow from source inputs through the core engine to consumption interfaces.
+
+---
+
+## List of Figures
+
+| Figure | Title | Section |
+|--------|-------|---------|
+| Figure 1 | Batho v1 System Architecture Overview | Overview |
+| Figure 2 | High-Level System Architecture | Architecture Overview |
+| Figure 3 | Data Flow Pipeline | Architecture Overview |
+| Figure 4 | Subsystem Interactions | Core Subsystems |
+| Figure 5 | Graph Consistency Model | Code Graph Engine |
+| Figure 6 | Cross-File Resolution Process | Code Graph Engine |
+| Figure 7 | Token Budget Algorithm | BSG Compression |
+| Figure 8 | Incremental Patch Lifecycle | Time Machine |
+| Figure 9 | Git Hooks Architecture | Git Hooks Enterprise |
+| Figure 10 | Dashboard Architecture | Interactive Dashboard |
+| Figure 11 | Bridge Modes | Artifact Bridge & MCP |
+| Figure 12 | Security Architecture Overview | Security & Governance |
+| Figure 13 | Zero-Code-Execution Guarantee | Security & Governance |
+| Figure 14 | BSG Interceptor Pipeline | Security & Governance |
+| Figure 15 | Interceptor Sequence | Security & Governance |
+| Figure 16 | Audit Logging Pipeline | Security & Governance |
+| Figure 17 | Integrity Chain | Security & Governance |
+| Figure 18 | Chain of Custody Flow | Security & Governance |
+| Figure 19 | Threat Model | Security & Governance |
+| Figure 20 | Cache Strategy | Performance & Scalability |
+| Figure 21 | Deployment Architecture | Deployment & Operations |
+| Figure 22 | Configuration Loading Flow | Deployment & Operations |
+| Figure 23 | CI/CD Pipeline Flow | Deployment & Operations |
+| Figure 24 | Command Taxonomy | Deployment & Operations |
+| Figure 25 | Monitoring Stack | Deployment & Operations |
+| Figure 26 | Backup Flow | Deployment & Operations |
+| Figure 27 | Schema Dependency Graph | Appendix |
+
+---
+
 ## Table of Contents
 
 1. [Architecture Overview](/docs/whitepaper/architecture)

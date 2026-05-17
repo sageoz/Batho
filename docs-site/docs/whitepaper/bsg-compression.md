@@ -27,6 +27,7 @@ Batho Structured Graph (BSG) supports multiple rendering modes to accommodate di
 The compressed rendering algorithm prioritizes entities based on importance scoring:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart TB
     A[Start Render] --> B{Mode?}
     B -->|compressed| C[Token Budget = N]
@@ -38,7 +39,19 @@ flowchart TB
     H -->|No| G
     H -->|Yes| I[Truncate with Hash]
     I --> J[Output JSON]
+
+    style A fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style C fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style D fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style E fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style F fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style I fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style J fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
 ```
+
+<div class="sr-only">Figure 7: Token Budget Algorithm - Flowchart showing how the compressed rendering mode prioritizes entities within token constraints. Start Render, check Mode. If compressed, set Token Budget to N and use Priority Queue by Importance. Include High-Priority Entities until Budget Exhausted. If budget exhausted, Truncate with Hash and Output JSON. If full mode, No Budget Cap and Output JSON. If hierarchical, Tree Structure and Output JSON.</div>
+
+**Figure 7: Token Budget Algorithm** - Flowchart showing how the compressed rendering mode prioritizes entities within token constraints.
 
 ### Priority Scoring Factors
 

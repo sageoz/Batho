@@ -11,1357 +11,232 @@
 
 <p align="center">
   <a href="https://pypi.org/project/batho/"><img src="https://img.shields.io/pypi/v/batho?color=blue" alt="PyPI"></a>
+  <a href="https://github.com/sageoz/batho/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/v1.0.0-release-orange" alt="v1.0.0"></a>
   <a href="https://github.com/sageoz/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
-  <a href="#supported-languages"><img src="https://img.shields.io/badge/languages-40+-orange" alt="Languages"></a>
+  <a href="https://batho.sageoz.org"><img src="https://img.shields.io/badge/docs-batho.sageoz.org-green" alt="Documentation"></a>
 </p>
 
 <br>
 
-> A code intelligence engine that transforms raw, massive codebases into queryable, Time-Aware Structured Graph. By safely parsing source code into an AST and extracting a highly structured relational Hypergraph, Batho acts as the ultimate memory layer for your repositories and codebase. Whether you are generating token-budgeted context to prevent AI agent amnesia, enforcing governance via webhook orchestration, or tracking code changes over time using time-based structured graph snapshots.
+## 📚 Official Documentation
 
+For complete documentation, guides, and API reference, visit **[batho.sageoz.org](https://batho.sageoz.org)**.
 
----
-## Quick Start
-
-Get running in 30 seconds:
+## 🚀 Quick Start
 
 ```bash
 # Install
-uv add batho 
-# or
 pip install batho
 
-# Index your project
-batho index --root . --verbose --snapshot
+# Launch the interactive Dashboard
+batho dashboard --root .
 
-# Generate compressed bsg for LLM injection
+# Index your project
+batho index --root . --snapshot
+
+# Generate compressed BSG for LLM injection
 batho bsg --root . --mode compressed --budget 12000
 
-# Create snapshot
-batho index --root . --snapshot  
+# Start the Artifact Bridge (REST API + MCP server)
+batho bridge serve --root .
 
 # Auto-detect and patch changes
 batho patch --root . --scan
-
-# Install Git hooks for automated checks
-batho hooks install --all
-
-# Launch the interactive Dashboard (v1)
-batho dashboard --root .
-
-# Start the artifact bridge (REST API + MCP server)
-batho bridge serve --root .
-batho bridge mcp --transport stdio
-
-# Show all commands
-batho --help
-
 ```
 
-Batho scans your codebase, extracts every function, class, import, and relationship, and writes structured output to `.ctn/`.
+## ✨ Key Features
 
+- **40+ language AST parsing** — Python, TypeScript, Rust, Go, Java, and more
+- **Interactive Web Dashboard (v1)** — Hypergraph visualization, file browser, search, metrics
+- **10x context compression** — Fit entire codebases into LLM context windows
+- **Time Machine snapshots** — Track codebase evolution with incremental patching
+- **Git Hooks Enterprise** — YAML-driven client-side hook automation
+- **Artifact Bridge** — REST API + MCP server for IDE integrations
+- **SQLite-backed caching** — 95%+ cache hit rates for incremental updates
+- **Zero code execution** — Safe to run in CI, pre-commit, or on untrusted repos
 
-## Why Batho?
+## 🆕 What's New in v1.0.0
+
+The interactive **Dashboard** is the centerpiece of v1:
+
+- **9 pages**: Overview, Hypergraph, Files, File Viewer, Relationships, Rules, Metrics, Snapshots, Search
+- **Keyboard shortcuts**: `Ctrl/Cmd + K` for search, `Ctrl/Cmd + D` for dark mode, graph zoom controls
+- **Export options**: PNG, SVG, JSON, CSV
+- **Real-time code intelligence** with 859+ automated tests
+
+**Artifact Bridge** enables IDE integrations:
+
+- REST API server (`batho bridge serve`)
+- MCP server for Claude, Cursor, and other AI tools
+- Cloud sync capabilities
+
+## 🔄 How It Works
+
+1. **Parse** — tree-sitter extracts functions, classes, variables, imports with full signatures
+2. **Graph** — Entities and relationships (IMPORTS, CALLS, USES, DEFINES) form a code graph
+3. **Compress** — BSG renders the graph in multiple formats: compressed, full, JSON, hierarchical
+4. **Visualize** — Dashboard renders interactive hypergraphs, file explorers, metrics, and snapshots
+5. **Track** — Time Machine snapshots let you diff code intelligence over time
+
+## 💡 Why Batho?
 
 Modern AI tools need **structured code understanding** — not just raw file contents. Batho bridges that gap.
 
 | What you get | Why it matters |
 |---|---|
 | **40+ language AST parsing** | One tool for polyglot repos — Python, TypeScript, Rust, Go, Java, and more |
+| **Interactive Web Dashboard** | Explore your codebase visually with hypergraphs, file browser, and metrics |
 | **10x context compression** | Fit entire codebases into LLM context windows |
 | **Time Machine snapshots** | Track how your codebase evolves between releases |
-| **Zero Code Execution** | Safe to run in CI, pre-commit, or on untrusted repos |
-| **Caching** | mtime+SHA skips unchanged files — re-indexes in seconds |
-| **CI/CD Pipeline Hooks** | Turnkey GitHub Actions and GitLab CI templates |
-| **Web Dashboard (v1)** | Interactive hypergraph, file browser, metrics, and snapshots |
-| **Incremental patching** | 10-100x faster updates with complete lineage tracking |
+| **Artifact Bridge** | REST API + MCP server for IDE integrations |
+| **SQLite-backed caching** | 95%+ cache hit rates for incremental updates |
+| **Zero code execution** | Safe to run in CI, pre-commit, or on untrusted repos |
 
-## How It Works
+## 📊 BSG Modes
 
-1. **Parse** — tree-sitter extracts functions, classes, variables, imports with full signatures
-2. **Graph** — Entities and relationships (IMPORTS, CALLS, USES, DEFINES) form a code graph
-3. **Compress** — BSG renders the graph in multiple formats: compressed, full, JSON, hierarchical
-4. **Visualize** — Dashboard v1 renders interactive hypergraphs, file explorers, metrics, and snapshots
-5. **Track** — Time Machine snapshots let you diff code intelligence over time
-
----
-
-## Features
-
-### Multi-Language AST Extraction
-
-Batho uses [tree-sitter](https://tree-sitter.github.io/tree-sitter/) for precise, language-aware parsing:
-
-- **Functions** — name, signature, parameters, return type, docstring
-- **Classes** — name, base classes, methods, attributes
-- **Interfaces/Traits** — method signatures
-- **Variables** — declarations, types, assignments
-- **Imports** — module paths, selective imports
-
-Relationships captured: `IMPORTS` · `CALLS` · `USES` · `DEFINES`
-
-### BSG (Batho Structured Graph) Compression
-
-Transforms full code graphs into compact representations:
+Batho Structured Graph (BSG) can be rendered in multiple formats:
 
 ```bash
-
-# Generate full bsg with signatures
-batho bsg --root . --mode full
-
-# Generate hierarchical directory view
-batho bsg --root . --mode hierarchical
-
-# Generate compressed bsg for LLM injection
+# Compressed for LLM injection (4K–40K tokens)
 batho bsg --root . --mode compressed --budget 12000
 
+# Full with signatures + line numbers
+batho bsg --root . --mode full
+
+# Hierarchical directory-tree view
+batho bsg --root . --mode hierarchical
 ```
 
-| Mode | Best for | Output File |
-|------|----------|-------------|
-| **Full** | Developer reference with signatures + line numbers | `bsg_full.json` |
-| **Hierarchical** | Directory-tree overviews | `bsg_hierarchical.json` |
-| **Compressed** | LLM prompt injection (4K–40K tokens) | `bsg_compressed.json` |
+## 🕐 Time Machine
 
-
-### Batho Time Machine
+Track codebase evolution with versioned snapshots:
 
 ```bash
-batho index --root . --snapshot                    # Create snapshot
-batho snapshots --root .                           # List all snapshots
-batho diff-snapshots --root . SNAP_A SNAP_B        # Compare versions
+# Create snapshot
+batho index --root . --snapshot --snapshot-label "release-candidate"
+
+# List all snapshots
+batho snapshots --root .
+
+# Compare two snapshots
+batho diff-snapshots --root . SNAP_A SNAP_B
 ```
 
-Versioned snapshots with UUID + timestamp, entity/relationship diffs, and staleness scoring for automated re-indexing.
+## 🪝 Git Hooks
 
-### Incremental Patching with Tracking
-
-```bash
-# Auto-detect and patch changes
-batho patch --root . --scan
-
-# List all patch operations
-batho patches --root . --format timeline
-
-# Show detailed patch info
-batho patch-info --root . --patch-id ID
-
-# Apply patch from diff file
-batho apply-patch --root . --base-snapshot ID --diff-file changes.diff
-
-# Cherry-pick patch to different snapshot
-batho cherry-pick --root . --patch-id ID --target-snapshot ID
-```
-
-### Smart Indexing
-
-- **mtime + SHA-256 cache** — unchanged files are skipped instantly
-- **Parallel extraction** — auto-scaled threads (CPU × 2, capped at 32)
-- **Binary detection** — magic bytes + entropy analysis
-- **Ignore support** — `.gitignore` + `.bathoignore` via pathspec
-- **Per-file isolation** — one bad file never aborts the scan
-
-
-### Web Dashboard (v1)
-
-Interactive code intelligence visualization served directly from your `.ctn/` artifacts. No bridge server required.
+YAML-driven Git client-side hook automation:
 
 ```bash
-# Launch the dashboard (auto-opens browser)
-batho dashboard --root .
-
-# Custom port / host
-batho dashboard --root . --port 3000 --host 0.0.0.0
-
-# Skip auto-open
-batho dashboard --root . --no-browser
-
-# Open to a specific route
-batho dashboard --root . --open-route '#/hypergraph/files'
-```
-
-**Dashboard pages:**
-
-| Page | What it shows |
-|------|--------------|
-| **Overview** | Repo stats, language breakdown, file distribution |
-| **Hypergraph** | Three-level drill-down: files → file symbols → node neighborhood |
-| **Files** | Hierarchical file browser with entity counts |
-| **File Viewer** | Syntax-highlighted source with BSG entity highlighting sidebar |
-| **Relationships** | Filtered relationship tables (imports, calls, extends) |
-| **Plugins** | Loaded BSG rule plugins and their metadata |
-| **Metrics** | Indexing performance, cache hit rates, worker stats |
-| **Snapshots** | Time Machine snapshot list with diff capabilities |
-| **Search** | Full-text search across entities and files |
-
-The dashboard reads `.ctn/index.json` and artifact files directly — it falls back to the bridge REST API only for computed endpoints (diffs, search). This means it works even when the bridge is offline.
-
-### Stack Detection
-
-Automatically identifies your tech stack from config files:
-
-| Category | Frameworks / Tools |
-|----------|-------------------|
-| **Python** | FastAPI, Django, Flask |
-| **Node.js** | React, Vue, Express, NestJS |
-| **Java** | Spring, Maven, Gradle |
-| **.NET** | ASP.NET, Entity Framework |
-| **Go** | Gin, Echo |
-| **Ruby** | Rails, Sinatra |
-| **Rust** | Cargo |
-| **Mobile** | Android, iOS |
-| **Data/ML** | PyTorch, TensorFlow, Pandas |
-
----
-
-## Supported Languages
-
-| Category | Languages |
-|----------|-----------|
-| **Web / Backend** | Python, TypeScript, JavaScript, Go, Java, Ruby, PHP, C#, Scala, Kotlin |
-| **Systems** | Rust, C, C++, Zig, Objective-C |
-| **Mobile** | Swift, Kotlin (Android), Objective-C (iOS) |
-| **Functional** | Haskell, Erlang, OCaml, Elixir, Julia, Agda |
-| **Scripting** | Bash, Perl, Lua, R |
-| **Other** | Dart, Verilog, Hack |
-| **Markup / Config** | JSON, YAML, TOML, HTML, CSS/SCSS/SASS/LESS, Markdown, HCL/Terraform |
-
-> Parser availability depends on installed `tree_sitter_language_pack` grammars. Missing grammars are skipped gracefully.
-
----
-
-## Installation
-
-```bash
-pip install batho          # pip
-uv pip install batho       # uv
-pip install -e .           # development (editable)
-```
-
-**PyPI:** https://pypi.org/project/batho/
-
----
-
-## Developer Setup (uv)
-
-Use this section when you want to contribute to Batho locally, run tests, and verify the CLI from source.
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/sageoz/batho.git
-cd batho
-```
-
-### 2. Install project dependencies for development and testing
-
-```bash
-uv sync --all-groups --all-extras
-```
-
-This creates and syncs the project environment with runtime, test, and dev dependencies.
-
-### 3. Run tests
-
-```bash
-# Full suite
-uv run pytest
-
-# Optional: focused checks while iterating
-uv run pytest tests/core/test_config.py -q
-uv run pytest tests/utils/test_logging.py -q
-```
-
-### 4. Run the CLI directly from local source
-
-This path is best during development because it always uses your current working tree.
-
-```bash
-uv run python -m batho_cli --help
-uv run python -m batho_cli index --root .
-```
-
-### 5. Reinstall the global batho command from your local source
-
-Use this when you want the plain batho command to reflect your latest local code.
-
-```bash
-uv tool install --reinstall .
-hash -r
-batho index --root .
-```
-
-### 6. Quick troubleshooting
-
-If behavior differs between local and global runs, compare both paths:
-
-```bash
-uv run python -m batho_cli index --root .
-batho index --root .
-```
-
-If they differ, reinstall the tool again:
-
-```bash
-uv tool install --reinstall .
-hash -r
-```
-
----
-
-## CLI Reference
-
-```bash
-# Show all commands
-batho --help
-
-# Show command-specific help
-batho <command> --help
-```
-
-### Command Matrix
-
-| Command | Purpose |
-|------|---------|
-| `index` | Build/update graph + BSG artifacts for a repo |
-| `stats` | Show current index metadata and health summary |
-| `snapshots` | List stored snapshots |
-| `diff-snapshots` | Diff two snapshots |
-| `patch` | Apply incremental updates from scan/diff/files |
-| `patches` | List patch operations |
-| `patch-info` | Show patch operation details |
-| `patch-chain` | Show chain of patches for a snapshot |
-| `apply-patch` | Apply patch by diff file or patch id |
-| `cherry-pick` | Apply a patch to another snapshot |
-| `sync` | Sync pending artifacts to configured cloud endpoint |
-| `hooks` | Git client-side hook management (install/remove/run) |
-| `invalidate` | Clear index file cache |
-| `cache` | AST cache management (`stats`, `invalidate`, `clear`) |
-| `storage` | Persistent artifact registry tools (`backfill`, `verify`, `cleanup`, `stats`, `rebuild-indexes`, `compact`) |
-| `query` | Query persisted entity/relationship indexes |
-| `dashboard` | Launch the interactive web dashboard |
-| `bsg` | Render BSG outputs (`compressed`, `full`, `hierarchical`) |
-
-### Indexing & Snapshots
-
-```bash
-# Full index
-batho index --root /path/to/repo --verbose
-
-# Force full rebuild (disable incremental path)
-batho index --root /path/to/repo --full
-
-# Force cache reset before indexing (clears file cache + AST cache)
-batho index --root /path/to/repo --force
-
-# Deterministic fresh parse run (bypass AST cache for this invocation)
-batho index --root /path/to/repo --force --no-ast-cache --verbose
-
-# Index and create snapshot
-batho index --root /path/to/repo --snapshot --snapshot-label "release-candidate"
-
-# Snapshot inspection
-batho snapshots --root /path/to/repo
-batho diff-snapshots --root /path/to/repo --snapshot-a SNAP_A --snapshot-b SNAP_B
-```
-
-### Patch Lifecycle
-
-```bash
-# Auto-detect file changes and patch
-batho patch --root /path/to/repo --scan
-
-# Force traditional index-based patching (disable snapshot optimization)
-batho patch --root . --scan --force-index-patch
-
-# Patch from unified diff
-batho patch --root /path/to/repo --diff /path/to/changes.diff
-
-# Patch specific files
-batho patch --root /path/to/repo src/a.py src/b.py
-
-# Patch history and details
-batho patches --root /path/to/repo --format timeline
-batho patch-info --root /path/to/repo --patch-id PATCH_ID --format summary
-batho patch-chain --root /path/to/repo --snapshot-id SNAP_ID --full
-
-# Advanced patch operations
-batho apply-patch --root /path/to/repo --base-snapshot SNAP_ID --diff-file /path/to/changes.diff
-batho cherry-pick --root /path/to/repo --patch-id PATCH_ID --target-snapshot SNAP_ID
-```
-
-### BSG Rendering & Querying
-
-```bash
-# Render BSG formats
-batho bsg --root /path/to/repo --mode compressed --budget 12000
-batho bsg --root /path/to/repo --mode full
-batho bsg --root /path/to/repo --mode hierarchical
-
-# Query persisted graph indexes
-batho query --root /path/to/repo --entity-type function --limit 50
-batho query --root /path/to/repo --file-path src/api.py
-batho query --root /path/to/repo --relationship-type calls --rebuild-index
-```
-
-### Cache & Storage Operations
-
-```bash
-# Index cache cleanup
-batho invalidate --root /path/to/repo
-
-# AST cache management
-batho cache stats
-batho cache invalidate "**/*.py"
-batho cache clear
-
-# Persistent storage management
-batho storage backfill --root /path/to/repo
-batho storage verify --root /path/to/repo --repair
-batho storage cleanup --root /path/to/repo          # dry-run
-batho storage cleanup --root /path/to/repo --apply  # execute cleanup
-batho storage stats --root /path/to/repo
-batho storage rebuild-indexes --root /path/to/repo
-batho storage compact --root /path/to/repo            # dry-run
-batho storage compact --root /path/to/repo --apply    # execute compaction
-```
-
-### Cloud Sync Operations
-
-```bash
-# Preview pending artifacts (no upload)
-batho sync --root /path/to/repo --dry-run
-
-# Sync pending artifacts to cloud endpoint
-export BATHO_CLOUD_SYNC_ENABLED=true
-export BATHO_CLOUD_ENDPOINT="https://sync.batho.dev/v1"
-export BATHO_CLOUD_API_KEY="batho_live_xxxxx"
-batho sync --root /path/to/repo
-
-# Retry only failed artifact uploads
-batho sync --root /path/to/repo --retry-failed
-
-# Show local sync status summary
-batho sync --root /path/to/repo --status
-```
-
-### Bridge (Artifact Registry REST + MCP)
-
-Expose `.ctn/` artifacts via HTTP and MCP for dashboard/IDE integrations.
-
-```bash
-# Start REST API server (default http://127.0.0.1:8766)
-batho bridge serve --root /path/to/repo
-batho bridge serve --root /path/to/repo --host 0.0.0.0 --port 8766
-
-# Start MCP server (stdio for IDE integration)
-batho bridge mcp --root /path/to/repo --transport stdio
-
-# Start MCP server (SSE for remote clients)
-batho bridge mcp --root /path/to/repo --transport sse --port 8767
-
-# Check registry status
-batho bridge status --root /path/to/repo
-
-# Verify all artifacts are loadable
-batho bridge verify --root /path/to/repo
-```
-
-**REST endpoints** (mounted under `/api/v1/bridge/`):
-- `GET /indexes` — List all indexes
-- `GET /indexes/{index_id}` — Get specific index metadata
-- `GET /artifacts?type={artifact_type}&limit={n}` — List artifact records
-- `GET /artifacts/{artifact_type}?index_id={id}` — Load artifact JSON content
-- `GET /artifacts/{artifact_type}/content?path={logical_path}` — Load by logical path
-- `GET /stats` — Registry statistics
-
-**MCP tools**: `bridge_list_indexes`, `bridge_get_index`, `bridge_list_artifacts`,
-`bridge_get_artifact`, `bridge_get_artifact_by_path`, `bridge_search_artifacts`,
-`bridge_get_stats`.
-
-### Git Hooks Management
-
-YAML-driven Git client-side hook automation with enterprise reliability.
-
-```bash
-# List configured hooks and templates
-batho hooks list --root /path/to/repo
-
-# Check installation status
-batho hooks status --hook pre-commit
-
-# Install all enabled hooks (auto-bootstraps .batho/hooks.yaml if missing)
+# Install all enabled hooks
 batho hooks install --all
 
-# Install specific hook with force (overwrites unmanaged)
-batho hooks install --hook pre-commit --force
-
-# Remove managed hooks
-batho hooks remove --all
-
-# Run hook manually (supports custom hooks for CI/CD)
-batho hooks run --hook enterprise-nightly --verbose
+# Run hook manually
+batho hooks run --hook pre-commit
 ```
 
-Configuration in `.batho/hooks.yaml`:
+Configure in `.batho/hooks.yaml`:
 
 ```yaml
 version: hooks.v1
-defaults:
-  shell: /bin/sh
-  timeout: 60
 hooks:
   pre-commit:
     enabled: true
     stages:
       - run: ruff check .
       - run: pytest --co -q
-  pre-push:
-    enabled: true
-    stages:
-      - run: pytest -x --tb=short
 ```
 
-Enable in `batho.yaml`:
+## 🔒 Security
 
-```yaml
-hooks:
-  enabled: true
-  include: true
-```
+| Guarantee | Details |
+|-----------|---------|
+| **Parse-only** | Never executes your code — safe on untrusted repos |
+| **Binary detection** | Magic bytes + Shannon entropy analysis |
+| **Ignore rules** | Respects `.gitignore` and `.bathoignore` |
+| **Fully offline** | Zero network calls — runs air-gapped |
 
-### Index Flags
+## 🌍 Supported Languages
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--max-workers` | `0` (auto) | Worker threads — 0 uses CPU × 2, capped at 32 |
-| `--max-file-size-kb` | `500` | Skip files larger than this |
-| `--extensions` | all supported | Restrict indexing to selected extensions |
-| `--full` | off | Disable incremental reuse and force full rebuild |
-| `--force` | off | Clear index file cache and AST cache before indexing |
-| `--no-ast-cache` | off | Bypass AST cache for the current indexing run |
-| `--base-snapshot` | auto | Prefer this snapshot for incremental indexing |
-| `--output-json` | none | Optional override path for graph JSON output |
-| `--metrics-output` | from config | Write metrics JSON to explicit path |
-| `--verbose` | off | Print progress to stdout |
-| `--snapshot` | off | Create snapshot after indexing |
-| `--snapshot-label` | none | Attach label to generated snapshot |
+| Category | Languages |
+|----------|-----------|
+| **Web / Backend** | Python, TypeScript, JavaScript, Go, Java, Ruby, PHP, C#, Scala, Kotlin |
+| **Systems** | Rust, C, C++, Zig, Objective-C |
+| **Mobile** | Swift, Kotlin, Objective-C |
+| **Functional** | Haskell, Erlang, OCaml, Elixir, Julia |
+| **Scripting** | Bash, Perl, Lua, R |
+| **Markup / Config** | JSON, YAML, TOML, HTML, CSS, Markdown, HCL/Terraform |
 
-### Global Logging Flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--log-level` | from config | Override logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) |
-| `-q`, `--quiet` | from config | Suppress non-error CLI output and log events below `ERROR` |
-| `--log-json` | off | Force JSON log output (useful in CI) |
-| `--log-file` | from config | Write logs to the specified file path |
-
-### BSG Options
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--mode` | `compressed` | Rendering mode: compressed, full, hierarchical |
-| `--budget` | `12000` | Token budget for compressed mode |
-
-### Patch Options
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--scan` | off | Auto-scan for changes |
-| `--dry-run` | off | Preview changes without applying |
-| `--base-snapshot` | auto | Use specific snapshot as base |
-| `--force-index-patch` | off | Force traditional index-based patching |
-| `--diff` | none | Apply patch from unified diff |
-| `files...` | none | Patch explicit changed files |
-
----
-
-## Output
-
-```
-.ctn/
-├── index.json                   # Index metadata + staleness + persistence model
-├── artifact_registry.db         # SQLite artifact registry (durable outputs)
-├── file_cache.json              # Index file cache
-├── file_hashes.json             # Content-hash tracker for incremental scans
-├── metrics.json                 # Optional metrics output
-├── interception_stats.json      # Rule interception matrix
-├── evolution_ledger.json        # Failure synthesis ledger
-├── snapshots/                   # Time Machine snapshots
-│   └── batho_<project>_<sha>_<ts>.json
-├── patches/                     # Patch operation history
-│   ├── index.json
-│   └── patch_<operation_id>.json
-└── <index_id>/
-    ├── graph.json               # Entities + relationships
-    ├── bsg.json                 # Structured symbol graph
-    ├── bsg_compressed.json      # LLM-ready compressed output
-    ├── bsg_full.json            # Full textual BSG output
-    ├── bsg_hierarchical.json    # Hierarchical textual BSG output
-    └── context/
-        ├── overview.md
-        └── files.md
-```
-
-Default AST cache database location: `.ctn/local/cache/ast_cache.db` (configured by `bsg.cache.path`).
-
----
-
-## Paths & Index Reference
-
-### CTN Directory Structure
+## 📁 Output Structure
 
 Batho stores all artifacts in `.ctn/` (CTN = Code Tracking Network):
 
-| Path | Purpose |
-|------|---------|
-| `.ctn/index.json` | Master index registry with all indexes and current index pointer |
-| `.ctn/artifact_registry.db` | SQLite database for durable artifact storage |
-| `.ctn/file_cache.json` | File metadata cache for incremental indexing |
-| `.ctn/file_hashes.json` | SHA-256 hashes for change detection |
-| `.ctn/metrics.json` | Indexing performance metrics |
-| `.ctn/snapshots/` | Time Machine snapshots (full graph state at point in time) |
-| `.ctn/patches/` | Incremental patch operations history |
-| `.ctn/<index_id>/` | Per-index artifacts directory |
-
-### Index ID Format
-
-Index IDs follow the pattern:
 ```
-batho_<project>_<sha>_<timestamp>Z
+.ctn/
+├── index.json                   # Index metadata + staleness
+├── artifact_registry.db         # SQLite artifact registry
+├── file_cache.json              # File metadata cache
+├── snapshots/                   # Time Machine snapshots
+├── patches/                     # Incremental patch operations
+└── <index_id>/
+    ├── graph.json               # Entities + relationships
+    ├── bsg_compressed.json      # LLM-ready compressed output
+    ├── bsg_full.json            # Full textual BSG output
+    └── bsg_hierarchical.json    # Hierarchical textual BSG output
 ```
 
-Example: `batho_batho_9c63cb000f014e8ac3a8fc6ba7c7c38b_20260517T042712192543Z`
+## ⚙️ Configuration
 
-- `batho` - Tool identifier
-- `batho` - Project name
-- `9c63cb...` - Content hash (first 32 chars of SHA-256)
-- `20260517T042712192543Z` - ISO 8601 timestamp (UTC)
-
-### Referencing Indexes
-
-Most commands accept an optional index ID. If omitted, the "current" index from `.ctn/index.json` is used.
-
-```bash
-# Use current index (default)
-batho stats --root .
-batho bsg --root . --mode full
-
-# Use specific index by full ID
-batho stats --root . --index-id batho_batho_9c63cb000f014e8ac3a8fc6ba7c7c38b_20260517T042712192543Z
-
-# Use short ID (first 12 chars of hash)
-batho stats --root . --index-id 9c63cb000f01
-```
-
-### Command Index-Path Resolution
-
-Commands that generate or read indexes follow this resolution order:
-
-1. **Explicit `--index-id`** - Use specified index
-2. **Explicit `--index-path`** - Use specified directory (legacy)
-3. **Current index** - Read from `.ctn/index.json` → `current_index_id`
-4. **Latest index** - Most recent by timestamp if no current set
-5. **Create new** - For index-generating commands
-
-### Snapshot ID Format
-
-Snapshots have a similar but distinct format:
-```
-batho_<project>_<sha>_<timestamp>Z.json
-```
-
-Example: `batho_batho_356ec43cea6881cbab65bce49843f07b_20260517T113935149223Z.json`
-
-Stored in: `.ctn/snapshots/`
-
-### Patch Operation ID Format
-
-Patch IDs follow the pattern:
-```
-batho_<uuid>_<timestamp>Z
-```
-
-Example: `batho_17f6049982ee47e4b8c68ff5b3a43507_20260517T042745283845Z`
-
-Stored in: `.ctn/patches/patch_<operation_id>.json`
-
-### Working with Index Paths
-
-```bash
-# List all indexes
-batho stats --root .
-
-# List all snapshots
-batho snapshots --root .
-
-# List all patches
-batho patches --root .
-
-# Get info about specific index
-batho stats --root . --index-id <id>
-
-# Switch current index
-# (Modify .ctn/index.json current_index_id field)
-
-# View index metadata
-cat .ctn/index.json | jq '.current_index_id'
-cat .ctn/index.json | jq '.indexes | keys'
-```
-
-### Path Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BATHO_CTN_DIR` | `.ctn` | Base CTN directory path |
-| `BATHO_CTN_REGISTRY` | `.ctn/artifact_registry.db` | Registry database path |
-| `BATHO_CTN_CACHE` | `.ctn/local/cache/ast_cache.db` | AST cache path |
-| `BATHO_CTN_FILE_CACHE` | `.ctn/file_cache.json` | File cache path |
-| `BATHO_CTN_FILE_HASHES` | `.ctn/file_hashes.json` | File hashes path |
-| `BATHO_CTN_METRICS` | `.ctn/metrics.json` | Metrics output path |
-
-### Command Quick Reference
-
-#### Index Management
-```bash
-batho index --root <path>              # Create/update index
-batho index --root <path> --snapshot   # Index + create snapshot
-batho stats --root <path>              # Show index stats
-batho invalidate --root <path>           # Clear file cache
-```
-
-#### Snapshot Operations
-```bash
-batho snapshots --root <path>                    # List snapshots
-batho diff-snapshots --root <path> <a> <b>     # Compare snapshots
-```
-
-#### Patch Operations
-```bash
-batho patch --root <path> --scan       # Auto-detect and patch
-batho patch --root <path> --scan --force-index-patch  # Force index-based patching
-batho patches --root <path>            # List patch history
-batho patch-info --root <path> <id>    # Show patch details
-```
-
-#### BSG Generation
-```bash
-batho bsg --root <path> --mode full           # Full BSG
-batho bsg --root <path> --mode compressed     # Compressed for LLM
-batho bsg --root <path> --mode hierarchical   # Hierarchical view
-```
-
-#### Storage Management
-```bash
-batho storage stats --root <path>      # Registry statistics
-batho storage verify --root <path>     # Verify artifacts
-batho storage cleanup --root <path>    # Clean old artifacts
-batho storage compact --root <path>    # Deduplicate registry
-```
-
-#### Query Layer
-```bash
-batho query --root <path> --entity-type function
-batho query --root <path> --file-path src/main.py
-batho query --root <path> --relationship-type calls
-```
-
-#### Dashboard
-```bash
-batho dashboard --root <path>                    # Launch dashboard (auto-opens browser)
-batho dashboard --root <path> --port 3000        # Custom port
-batho dashboard --root <path> --no-browser       # Skip auto-open
-```
-
-#### Bridge Server
-```bash
-batho bridge serve --root <path>       # Start REST API
-batho bridge mcp --root <path>         # Start MCP server
-batho bridge status --root <path>      # Check status
-```
-
-#### Git Hooks
-```bash
-batho hooks list --root <path>         # List hooks
-batho hooks install --root <path>      # Install hooks
-batho hooks run --root <path> <hook>   # Run hook manually
-```
-
-<details>
-<summary><strong>graph.json example</strong></summary>
-
-```json
-{
-  "schema_version": "graph.v1",
-  "entities": [
-    {"id": "e1", "name": "login", "type": "function", "file": "auth.py", "start_line": 10, "end_line": 25}
-  ],
-  "relationships": [
-    {"source_id": "e1", "target_id": "e2", "type": "IMPORTS"}
-  ]
-}
-```
-
-</details>
-
-<details>
-<summary><strong>bsg.json example</strong></summary>
-
-```json
-{
-  "schema_version": "bsg.v1",
-  "nodes": [
-    {
-      "id": "e1",
-      "type": "FUNCTION",
-      "name": "login",
-      "file": "src/auth.py",
-      "start_line": 10,
-      "end_line": 25
-    }
-  ],
-  "edges": [],
-  "indexes": {
-    "nodes_by_file": {
-      "src/auth.py": ["e1"]
-    }
-  }
-}
-```
-
-</details>
-
----
-
-## Configuration
-
-Batho works out of the box with zero config. For production use, configure with the unified root config file `./batho.yaml` (or start from `batho.yaml.example`) plus optional environment overrides.
-
-Configuration precedence:
-
-1. Built-in defaults
-2. `./batho.yaml`
-3. Environment variables (override file values)
-4. CLI flags (override for a specific run)
-
-Output behavior:
-
-- User-facing command output is written to stdout.
-- Warnings/errors and operational logs are written to stderr.
-
-### Core Config Areas
-
-| Area | Keys | What it controls |
-|----------|------|------------------|
-| `logging` | `level`, `json_format`, `quiet`, `file`, `format` | Process-wide logging and CLI verbosity behavior |
-| `paths` | `ctn_dir` | Artifact output directory |
-| `indexer` | `max_file_size_kb`, `max_workers`, `max_indexed_files`, `ignore_*`, `metrics_output` | Base indexing limits and outputs |
-| `rules` | `enabled`, `builtin_plugins`, `custom_rules_*`, `strict_validation` | Rule plugins and metadata enrichment |
-| `bsg.parallel` | `enabled`, `max_workers`, `chunk_size` | Parallel file extraction |
-| `bsg.ignore` | `enabled`, `file` | `.bathoignore` integration |
-| `bsg.cache` | `enabled`, `path`, `max_size_mb`, `ttl_days` | AST cache behavior |
-| `bsg.incremental` | `enabled`, `fallback_to_full`, `auto_detect_git` | Incremental indexing strategy |
-| `bsg.symbol_resolution` | `enabled`, `fuzzy_matching`, `cache_symbols` | Cross-file symbol resolution |
-| `bsg.serialization` | `method`, `compression`, `batch_size` | BSG render strategy |
-| `bsg.parsing` | `error_recovery`, `partial_parsing`, `max_file_size_mb`, `skip_comments` | Parser behavior |
-| `bsg.query` | `enabled`, `index_on_write`, `cache_enabled`, `cache_size`, `default_limit`, `query_timeout_ms` | Persistent query indexes |
-| `bsg.storage` | `enabled`, `backend`, `registry_path`, `content_scope`, `cloud_sync_ready`, `mmap_enabled`, `retention.*` | Durable artifact registry and retention |
-| `hooks` | `enabled`, `include` | Git client-side hook automation pointer |
-
-### Environment Variables (Common)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BATHO_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `BATHO_LOG_JSON` | `null` | Force JSON logs (`true`) or leave auto mode (`unset`) |
-| `BATHO_LOG_QUIET` | `false` | Suppress non-error output globally |
-| `BATHO_LOG_FILE` | unset | Optional log file path |
-| `BATHO_CTN_DIR` | `.ctn` | Output directory |
-| `BATHO_MAX_FILE_SIZE_KB` | `500` | Max file size to parse |
-| `BATHO_MAX_INDEXED_FILES` | `200000` | Hard cap on indexed files |
-| `BATHO_INDEX_WORKERS` | `0` | Worker threads (0 = auto) |
-| `BATHO_METRICS_OUTPUT` | `.ctn/metrics.json` | Metrics output path |
-| `BATHO_PLUGINS_ENABLED` | config value | `#/plugins` | BSG plugin catalog (Phase 4) |
-| `BATHO_PLUGINS_CUSTOM_PLUGINS_PATH` | unset | YAML file containing custom BSG plugins |
-| `BATHO_PLUGINS_BUILTIN_PLUGINS` | `bsg_core` | Comma-separated built-in plugin names |
-| `BATHO_PLUGINS_DISABLED_PLUGINS` | unset | Comma-separated plugin names to disable |
-| `BATHO_BSG_STORAGE_ENABLED` | `true` | Enable durable artifact registry |
-| `BATHO_BSG_STORAGE_REGISTRY_PATH` | `.ctn/artifact_registry.db` | Registry database path |
-| `BATHO_BSG_STORAGE_MMAP_ENABLED` | `false` | Enable mmap reads for large persisted JSON |
-| `BATHO_BSG_QUERY_INDEX_ON_WRITE` | `true` | Build query index at write time |
-| `BATHO_BSG_QUERY_CACHE_SIZE` | `256` | Query service cache size |
-
-> For the complete env override set, see `batho/config.py`.
-
-### Config File
-
-```yaml
-# ./batho.yaml
-logging:
-  level: DEBUG
-  json_format: true
-  quiet: false
-  file: .ctn/batho.log
-  format: "%(message)s"
-
-indexer:
-  max_file_size_kb: 1000
-  max_workers: 16
-  ignore_patterns:
-    - "**/vendor/**"
-    - "**/dist/**"
-
-flags:
-  strict: true
-  fail_on_warning: true
-
-rules:
-  enabled: true
-  builtin_plugins: [bsg_core]
-  disabled_rules: []
-  custom_rules_path: ./bsg-rules.yaml
-  custom_rules_inline:
-    - name: payment-cluster
-      entity_types: ["function", "method"]
-      name_patterns: ["*payment*", "*invoice*"]
-      metadata:
-        bsg.cluster_hint: billing
-
-  # Validation controls
-  strict_validation: false
-  fail_on_rule_error: false
-
-bsg:
-  parallel:
-    enabled: true
-    max_workers: 16
-    chunk_size: 50
-  cache:
-    enabled: true
-    path: .ctn/local/cache/ast_cache.db
-    max_size_mb: 1024
-    ttl_days: 30
-  query:
-    enabled: true
-    index_on_write: true
-    cache_enabled: true
-    cache_size: 256
-    default_limit: 200
-  storage:
-    enabled: true
-    backend: sqlite
-    registry_path: .ctn/artifact_registry.db
-    content_scope: durable
-    cloud_sync_ready: true
-    mmap_enabled: false
-    retention:
-      enabled: true
-      snapshot_ttl_days: 90
-      patch_ttl_days: 90
-      metrics_ttl_days: 30
-      context_ttl_days: 90
-```
-
-### Scenario Playbooks
-
-#### 1) Local Dev (fast feedback)
-
-```yaml
-indexer:
-  max_workers: 0
-  max_file_size_kb: 500
-bsg:
-  incremental:
-    enabled: true
-  cache:
-    enabled: true
-```
-
-```bash
-batho index --root .
-batho patch --root . --scan
-batho bsg --root . --mode compressed --budget 12000
-```
-
-#### 2) Large Monorepo (throughput)
-
-```yaml
-indexer:
-  max_file_size_kb: 2000
-bsg:
-  parallel:
-    enabled: true
-    max_workers: 16
-  ignore:
-    enabled: true
-    file: .bathoignore
-  storage:
-    mmap_enabled: true
-```
-
-```bash
-batho index --root /repo --snapshot
-batho storage stats --root /repo
-batho query --root /repo --relationship-type calls --limit 200
-```
-
-#### 3) CI/CD (deterministic + observable)
+Batho works out of the box with zero config. For production use, configure with `./batho.yaml`:
 
 ```yaml
 logging:
   level: INFO
-  json_format: true
 indexer:
-  metrics_output: .ctn/metrics.json
+  max_file_size_kb: 500
+  max_workers: 16
 bsg:
+  cache:
+    enabled: true
   storage:
     enabled: true
 ```
 
-```bash
-batho index --root . --log-json --snapshot
-batho stats --root .
-batho storage verify --root .
-```
+## 📖 Documentation
 
-#### 4) Persistent Storage Hygiene (cloud-sync-ready v1)
+For complete documentation including:
+- CLI reference and command guide
+- Configuration options
+- Architecture and deployment
+- BSG plugin system
+- Git hooks automation
 
-```bash
-# register existing artifacts
-batho storage backfill --root .
+Visit **[batho.sageoz.org](https://batho.sageoz.org)**
 
-# verify and repair drift
-batho storage verify --root . --repair
-
-# inspect registry + graph cache health
-batho storage stats --root .
-
-# rebuild query indexes
-batho storage rebuild-indexes --root .
-
-# retention dry-run / apply
-batho storage cleanup --root .
-batho storage cleanup --root . --apply
-
-# deduplicate registry (dry-run first)
-batho storage compact --root .
-batho storage compact --root . --apply
-```
-
-### BSG Rule Plugins
-
-Batho now applies BSG rules through internal plugin modules, not the root rules folder.
-
-- Built-in rules are loaded from packaged plugins (default: `bsg_core`).
-- Custom rules can be defined inline in `batho.yaml` via `rules.custom_rules_inline`.
-- Custom rules can also be loaded from `rules.custom_rules_path` YAML files.
-- Rule actions currently focus on deterministic metadata enrichment for graph entities (for example `bsg.category`, `bsg.scope_tier`, `bsg.service_tag`).
-
-Custom rules YAML accepts either a top-level list or a `rules:` list.
-
-```yaml
-rules:
-  - name: mark-test-files
-    file_patterns: ["tests/**", "**/*_test.py"]
-    metadata:
-      bsg.category: TEST
-
-  - name: derive-service-tag
-    file_patterns: ["services/*/**"]
-    actions:
-      derive_service_tag: true
-```
-
----
-
-## Using Batho with AI
-
-Batho is built to power AI-assisted development. Here are common patterns:
-
-### Feed LLM Context
+## 💻 Installation
 
 ```bash
-# Generate compressed bsg for LLM injection
-batho bsg --root . --mode compressed --budget 12000
-# → Output saved to .ctn/{index_id}/bsg_compressed.json
-# → Load and inject into your LLM prompt as codebase context
+pip install batho
 ```
 
-Or programmatically:
+**PyPI:** https://pypi.org/project/batho/
 
-```python
-import json
-from pathlib import Path
-
-# Load compressed bsg generated by CLI
-with open('.ctn/{index_id}/bsg_compressed.json', 'r') as f:
-    data = json.load(f)
-    compressed_text = data['compressed_text']
-    stats = data['stats']
-# → Inject 'compressed_text' into your LLM prompt as codebase context
-```
-
-### Codebase Q&A
-
-```python
-# Find all functions that call 'authenticate'
-for rel in graph.relationships:
-    target = graph.get_entity(rel.target_id)
-    if target and target.name == "authenticate":
-        source = graph.get_entity(rel.source_id)
-        print(f"{source.name} → authenticate  ({source.file})")
-```
----
-## Use Batho as a Python Library (Custom Scripts)
-
-Batho is not only a CLI. You can import it as a Python library to build custom automation scripts, CI workflows, and internal developer tools.
-
-### Public Python API
-
-The `batho` package exports core APIs directly:
-
-- Indexing and graph: `CodeGraphIndexer`, `InMemoryGraph`, `BSGMap`
-- Time Machine: `create_snapshot`, `list_snapshots`, `load_snapshot`, `diff_snapshots`
-- Incremental patching: `FileChange`, `FileChangeType`, `FileChangeTracker`, `incremental_patch`
-- Git-aware change discovery: `get_changed_file_status_since`
-- Query layer: `QueryService`
-
-### Example: Index + Snapshot from a Script
-
-```python
-from pathlib import Path
-
-from batho import BSGMap, CodeGraphIndexer, create_snapshot
-
-root = Path(".").resolve()
-ctn_dir = root / ".ctn"
-ctn_dir.mkdir(parents=True, exist_ok=True)
-
-indexer = CodeGraphIndexer(cache_path=str(ctn_dir / "file_cache.json"), root=str(root))
-graph = indexer.build_graph(root=str(root), snapshot_id="script-run")
-
-bsg = BSGMap.build(graph, root=str(root))
-snapshot_id = create_snapshot(ctn_dir, root, graph, bsg, label="nightly-script")
-
-print({"entities": len(graph.entities), "relationships": len(graph.relationships), "snapshot": snapshot_id})
-```
-
-### Example: Incremental Patch in Automation
-
-```python
-from pathlib import Path
-
-from batho import FileChangeTracker, incremental_patch
-
-root = Path(".").resolve()
-ctn_dir = root / ".ctn"
-base_snapshot_id = "<existing_snapshot_id>"
-
-tracker = FileChangeTracker(root)
-hash_cache_path = ctn_dir / "file_hashes.json"
-tracker.load(hash_cache_path)
-changes = tracker.scan_for_changes(max_file_size_kb=500)
-tracker.save(hash_cache_path)
-
-if changes:
-    result = incremental_patch(ctn_dir, base_snapshot_id, changes)
-    print(result)
-else:
-    print("No changes detected")
-```
-
-### Example: Query Indexed Data Programmatically
-
-```python
-from pathlib import Path
-
-from batho import QueryService
-
-ctn_dir = Path(".ctn")
-query = QueryService(ctn_dir)
-
-functions = query.entities_by_type("function", limit=20)
-for row in functions:
-    print(f"{row['name']} -> {row['file']}")
-```
-
-
----
-### Impact Analysis (Pre-Refactoring)
-
-```python
-# Find every caller of a function before changing it
-for rel in graph.relationships:
-    if rel.target_id == target_id and rel.type.name == "CALLS":
-        caller = graph.get_entity(rel.source_id)
-        print(f"  Will be affected: {caller.name} in {caller.file}")
-```
-
-### RAG / Vector Embedding
+## 🛠️ Developer Setup
 
 ```bash
-batho index --root /path/to/repo
-batho bsg --root /path/to/repo --mode compressed
-# → Embed .ctn/*/bsg_compressed.json chunks into your vector DB
+# Clone the repository
+git clone https://github.com/sageoz/batho.git
+cd batho
+
+# Install dependencies
+uv sync --all-groups --all-extras
+
+# Run tests
+uv run pytest
+
+# Run CLI from source
+uv run python -m batho_cli --help
 ```
 
-### Agentic AI
+## 📄 License
 
-Autonomous agents can use Batho's structured graph to navigate codebases, resolve imports, and understand call chains — without reading every file.
-
----
-
-## Integrations
-
-### CI/CD (GitHub Actions)
-
-```yaml
-name: Code Index
-on: [push, pull_request]
-jobs:
-  index:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: pip install batho
-      - run: batho index --root . --verbose --log-json --snapshot
-      - run: batho stats --root .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: batho-output
-          path: .ctn/
-```
-
-### Pre-commit Hook
-
-```yaml
-# .pre-commit-config.yaml
-- repo: local
-  hooks:
-    - id: batho-index
-      name: Batho Code Index
-      entry: batho index --root .
-      language: system
-      pass_filenames: false
-      always_run: true
-    - id: batho-patch
-      name: Batho Incremental Patch
-      entry: batho patch --root . --scan
-      language: system
-      pass_filenames: false
-      always_run: true
-```
-
-### VS Code Task
-
-```json
-{
-  "version": "2.0.0",
-  "tasks": [{
-    "label": "Batho Index",
-    "type": "shell",
-    "command": "batho index --root ${workspaceFolder} --verbose --snapshot"
-  },
-  {
-    "label": "Batho Patch",
-    "type": "shell",
-    "command": "batho patch --root ${workspaceFolder} --scan"
-  }]
-}
-```
-
----
-
-## Security & Compliance
-
-| Guarantee | Details |
-|-----------|---------|
-| **Parse-only** | Batho never executes your code — safe on untrusted repos |
-| **Binary detection** | Magic bytes + Shannon entropy analysis |
-| **Ignore rules** | Respects `.gitignore` and `.bathoignore` |
-| **Atomic writes** | Temp file + rename — no partial outputs on crash |
-| **Fully offline** | Zero network calls — runs air-gapped |
-
-For regulated environments, add SBOM and license checks in CI:
-
-```bash
-pip install cyclonedx-bom && cyclonedx-py -o sbom.xml
-pip install pip-licenses && pip-licenses --allow-only "Apache Software License"
-```
-
----
-
-## Performance
-
-| Repo Size | Workers (auto) | Typical Time |
-|-----------|----------------|--------------|
-| < 50 files | 4 | < 2s |
-| 50–200 files | 8 | 2–5s |
-| 200–1K files | 16 | 5–15s |
-| 1K+ files | 32 | varies |
-
-**Tips for large monorepos (2M+ LOC):**
-- Run on fast local SSD
-- Use `--log-json` to reduce console overhead
-- Add build artifacts to `.bathoignore`:
-  ```
-  node_modules/
-  vendor/
-  dist/
-  build/
-  __pycache__/
-  ```
-
----
-
-## Architecture
-
-```
-batho/
-├── batho_cli.py                  # CLI command entrypoints
-└── batho/
-    ├── __init__.py               # Public Python API exports
-    ├── config.py                 # Configuration and env overrides
-    ├── time_machine.py           # Snapshots, diffs, incremental patching
-    ├── context/
-    │   ├── codegraph.py          # Graph indexing and extraction pipeline
-    │   ├── pipeline.py           # Parallel worker orchestration
-    │   ├── bsg_map.py            # Multi-format BSG renderer
-    │   ├── query.py              # Query service over persisted artifacts
-    │   └── languages/            # Per-language tree-sitter extractors
-    └── utils/
-        ├── logging.py            # Structured logging
-        ├── hash.py               # SHA-256 helpers
-        └── ignore.py             # .gitignore / .bathoignore handling
-```
-
----
-
-## Contributing
-
-Batho is open source and welcomes contributions. Whether it's a bug report, a new language extractor, or a docs improvement — we'd love your help.
-
-1. Fork the repo
-2. Create a feature branch
-3. Run the test suite: `uv run pytest`
-4. Submit a pull request
-
----
-
-## License
-
-Apache 2.0 — see [LICENSE](LICENSE)
-
----
-
-## 🎉 Thank You!
-
-
-**Ready to get started?** [Install Batho](#installation) and index your first project in 30 seconds.
-
----
-
-<p align="center">
-  <strong>🚀 Batho v1.0.0 - Code Intelligence for the AI Era</strong><br>
-  <a href="https://pypi.org/project/batho/">PyPI</a> · <a href="https://github.com/sageoz/batho/issues">Issues</a> · <a href="https://github.com/sageoz/batho/discussions">Discussions</a> · <a href="https://github.com/sageoz/batho/blob/main/docs/updated.md">Full Documentation</a>
-</p>
+Apache License 2.0 - see [LICENSE](LICENSE) for details.

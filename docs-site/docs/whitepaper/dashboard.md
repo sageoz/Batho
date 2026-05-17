@@ -11,6 +11,7 @@ description: "Web dashboard architecture, pages, and launch options"
 The dashboard provides an interactive interface for code intelligence exploration:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart TB
     subgraph Client["Browser"]
         UI[Vanilla JS UI]
@@ -18,8 +19,8 @@ flowchart TB
     end
 
     subgraph Server["batho dashboard"]
-        Static["Static File Server (.ctn/ artifacts)"]
-        Computed["Computed Endpoints (diffs, search)"]
+        Static["Static File Server<br/>(.ctn/ artifacts)"]
+        Computed["Computed Endpoints<br/>(diffs, search)"]
     end
 
     subgraph Data["Data Sources"]
@@ -33,7 +34,13 @@ flowchart TB
     UI --> Computed
     Static --> Data
     Computed --> Data
+
+    style Client fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style Server fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style Data fill:#fff3e0,stroke:#f57c00,stroke-width:2px
 ```
+
+**Figure 10: Dashboard Architecture** - Three-tier architecture showing browser client, server components, and data sources.
 
 ## 7.2 Dashboard Pages
 

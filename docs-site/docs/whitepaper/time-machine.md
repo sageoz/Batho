@@ -31,6 +31,7 @@ Snapshots capture the complete state of the code graph at a point in time:
 The patch lifecycle ensures atomic updates with proper validation:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 stateDiagram-v2
     [*] --> Detected: File hash scan
     Detected --> Validated: Check patch limits
@@ -42,7 +43,19 @@ stateDiagram-v2
     Applied --> RolledBack: Application failure
     RolledBack --> [*]: Log and exit
     Snapshotted --> [*]: Record PatchOperation
+
+    note right of Detected
+        Initial state:
+        File changes detected
+    end note
+
+    note right of Snapshotted
+        Final state:
+        New snapshot persisted
+    end note
 ```
+
+**Figure 8: Incremental Patch Lifecycle** - State diagram showing the atomic update process with validation and rollback support.
 
 ### Patch States
 

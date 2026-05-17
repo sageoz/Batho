@@ -72,33 +72,44 @@ Batho is composed of tightly-integrated subsystems that work together to provide
 Subsystems communicate through well-defined interfaces:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 graph TD
     CLI --> Extractor
     CLI --> Graph
     CLI --> Bridge
     CLI --> Dashboard
-    
+
     Extractor --> Cache
     Extractor --> Graph
     Extractor --> Pipeline
-    
+
     Graph --> SymbolIndex
     Graph --> BSG
     Graph --> TimeMachine
-    
+
     SymbolIndex --> Graph
-    
+
     BSG --> Rules
     BSG --> Bridge
     BSG --> Snapshots
-    
+
     Rules --> BSG
-    
+
     TimeMachine --> Snapshots
     TimeMachine --> CLI
-    
+
     Bridge --> Dashboard
+
+    style CLI fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style Extractor fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style Graph fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style Bridge fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style Dashboard fill:#fff3e0,stroke:#f57c00,stroke-width:2px
 ```
+
+<div class="sr-only">Figure 4: Subsystem Interactions - Dependency graph showing how Batho subsystems communicate through well-defined interfaces. CLI connects to Extractor, Graph, Bridge, and Dashboard. Extractor connects to Cache, Graph, and Pipeline. Graph connects to SymbolIndex, BSG, and TimeMachine. SymbolIndex provides feedback to Graph. BSG connects to Rules, Bridge, and Snapshots. Rules provides feedback to BSG. TimeMachine connects to Snapshots and CLI. Bridge connects to Dashboard.</div>
+
+**Figure 4: Subsystem Interactions** - Dependency graph showing how Batho subsystems communicate through well-defined interfaces.
 
 ## 2.4 Data Flow Between Subsystems
 

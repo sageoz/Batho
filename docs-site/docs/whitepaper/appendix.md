@@ -17,6 +17,43 @@ description: "Schema versions, directory structure, and glossary"
 | File Cache | `file-cache.v1` | `.ctn/local/cache/ast_cache.db` |
 | BSG Plugin | `bsg-plugin.v1` | `batho/bsg/schemas/bsg-plugin-schema-v1.json` |
 
+### Schema Dependency Graph
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
+flowchart TB
+    subgraph Config["Configuration Layer"]
+        BATHO_YAML["batho.yaml<br/>(JSON-Schema validated)"]
+        PLUGIN_SCHEMA["bsg-plugin-schema-v1.json<br/>(Rule definitions)"]
+    end
+
+    subgraph Runtime["Runtime Artifacts"]
+        IDX["index.json<br/>(index-metadata.v1)"]
+        GRAPH["graph.json<br/>(graph.v1)"]
+        BSG["bsg.json<br/>(bsg.v1)"]
+        SNAP["snapshot.json<br/>(snapshot.v1)"]
+    end
+
+    subgraph Cache["Cache Layer"]
+        AST_DB["ast_cache.db<br/>(file-cache.v1)"]
+    end
+
+    BATHO_YAML -->|"Configures"| IDX
+    BATHO_YAML -->|"Defines rules"| PLUGIN_SCHEMA
+    PLUGIN_SCHEMA -->|"Applies to"| BSG
+    IDX -->|"References"| GRAPH
+    GRAPH -->|"Compresses to"| BSG
+    BSG -->|"Snapshot at time T"| SNAP
+    IDX -->|"Entity lookup"| AST_DB
+    GRAPH -->|"Entity details"| AST_DB
+
+    style Config fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style Runtime fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style Cache fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+```
+
+**Figure 27: Schema Dependency Graph** - Dependency diagram showing the relationships between configuration schemas, runtime artifacts, and cache layers.
+
 ## 12.2 Directory Structure
 
 ```

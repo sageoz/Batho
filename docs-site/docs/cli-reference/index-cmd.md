@@ -22,9 +22,9 @@ batho index --root /path/to/repo --verbose
 | `--max-file-size-kb` | `500` | Skip files larger than this |
 | `--extensions` | all supported | Restrict indexing to selected extensions |
 | `--full` | off | Disable incremental reuse and force full rebuild |
-| `--force` | off | Clear index file cache and AST cache before indexing |
+| `--force` | off | Clear AST cache before indexing |
 | `--no-ast-cache` | off | Bypass AST cache for the current indexing run |
-| `--base-snapshot` | auto | Prefer this snapshot for incremental indexing |
+| `--base-snapshot` | `None` | Optional base snapshot ID for incremental indexing (auto-detects latest if omitted) |
 | `--output-json` | none | Optional override path for graph JSON output |
 | `--metrics-output` | from config | Write metrics JSON to explicit path |
 | `--verbose` | off | Print progress to stdout |

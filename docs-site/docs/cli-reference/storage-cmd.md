@@ -1,37 +1,31 @@
 ---
 sidebar_position: 9
-title: "storage, cache & invalidate"
-description: "Storage, cache, and index management commands"
+title: "storage"
+description: "Persistent artifact registry management"
 ---
 
-# `storage`, `cache` & `invalidate` Commands
+# `storage` Command
 
-## `invalidate`
+Persistent artifact registry tools for managing the SQLite-based artifact storage system.
 
-Clear index file cache.
-
-```bash
-batho invalidate --root /path/to/repo
-```
-
-## `cache`
-
-AST cache management.
+## Usage
 
 ```bash
-# Show cache statistics
-batho cache stats
-
-# Invalidate matching patterns
-batho cache invalidate "**/*.py"
-
-# Clear all cache entries
-batho cache clear
+batho storage <subcommand> --root /path/to/repo
 ```
 
-## `storage`
+## Subcommands
 
-Persistent artifact registry tools.
+| Subcommand | Purpose |
+|-----------|---------|
+| `backfill` | Register existing durable .ctn artifacts in the SQLite registry |
+| `verify` | Verify registry consistency and optionally repair metadata drift |
+| `cleanup` | Apply retention cleanup (dry-run by default) |
+| `stats` | Show registry and persisted graph cache statistics |
+| `rebuild-indexes` | Rebuild persisted query indexes from graph.json |
+| `compact` | Deduplicate registry entries (dry-run by default) |
+
+## Examples
 
 ```bash
 # Backfill registry from existing artifacts
@@ -58,3 +52,8 @@ batho storage compact --root /path/to/repo
 # Execute compaction
 batho storage compact --root /path/to/repo --apply
 ```
+
+## Related Commands
+
+- [cache](/docs/cli-reference/cache-cmd) - AST cache management
+- [invalidate](/docs/cli-reference/invalidate-cmd) - Clear index file cache

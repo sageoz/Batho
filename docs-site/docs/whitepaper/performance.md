@@ -43,6 +43,7 @@ Performance metrics from production workloads:
 The caching strategy minimizes redundant work:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart LR
     A[File Discovered] --> B{In Cache?}
     B -->|Yes| C{mtime + SHA Match?}
@@ -51,7 +52,15 @@ flowchart LR
     B -->|No| E
     D --> F[Add to Graph]
     E --> F
+
+    style A fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style B fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style D fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style E fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style F fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
 ```
+
+**Figure 20: Cache Strategy** - Flowchart showing the caching logic that minimizes redundant parsing through mtime and SHA-256 validation.
 
 ### Cache Layers
 

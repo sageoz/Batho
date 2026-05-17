@@ -11,6 +11,7 @@ description: "Git client-side hook automation with YAML configuration"
 Batho's Git hooks provide automated quality gates and workflow enforcement:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart LR
     A[.batho/hooks.yaml] --> B{Hook Type}
     B -->|pre-commit| C[Lint / Format / Type-check]
@@ -21,7 +22,17 @@ flowchart LR
     D --> G
     E --> G
     F --> G
+
+    style A fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style B fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style C fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style D fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style E fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style F fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style G fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
 ```
+
+**Figure 9: Git Hooks Architecture** - Flowchart showing how YAML-defined hooks map to Git hook scripts.
 
 ## 6.2 Hook Lifecycle
 

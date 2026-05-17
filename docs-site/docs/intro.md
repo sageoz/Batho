@@ -77,6 +77,8 @@ flowchart TB
     Hooks --> CLI
 ```
 
+<div class="sr-only">Architecture diagram showing Batho's data flow: Source Inputs (Git Repository, batho.yaml, hooks.yaml) feed into Batho Core Engine (AST Extractor, InMemoryGraph, AST Cache, SymbolIndex, IncrementalGraphUpdater) which connects to Intelligence Layer (BSGMap, BSG Rule Plugins) and produces Output & Interfaces (Time Machine Snapshots, Web Dashboard, Artifact Bridge, batho CLI).</div>
+
 ## Status
 
 | Metric | Value |

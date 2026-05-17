@@ -11,13 +11,23 @@ description: "REST API, MCP server capabilities, and transport modes"
 The Artifact Bridge provides multiple access modes:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart LR
     A[batho bridge serve] --> B[REST API Server]
     A --> C[MCP Server]
     B --> D[Artifact Registry REST]
     C --> F[stdio Transport]
     C --> G[sse Transport]
+
+    style A fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style B fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style C fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style D fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style F fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style G fill:#fce4ec,stroke:#c2185b,stroke-width:2px
 ```
+
+**Figure 11: Bridge Modes** - Flowchart showing the dual-mode operation of the Artifact Bridge (REST API and MCP server).
 
 ## 8.2 REST API Endpoints
 

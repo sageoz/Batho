@@ -44,6 +44,7 @@ The graph is built on two primitives: **Entities** and **Relationships**. This m
 The `InMemoryGraph` ensures deterministic processing through lazy indexing and automatic deduplication:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart LR
     A[Parse File] --> B{Entity Exists?}
     B -->|Yes| C[Update Entity]
@@ -52,7 +53,17 @@ flowchart LR
     D --> E
     E --> F[Lazy Rebuild Index]
     F --> G[Validate Cross-refs]
+
+    style A fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style C fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style D fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style E fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style G fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
 ```
+
+<div class="sr-only">Figure 5: Graph Consistency Model - Flowchart showing the lazy indexing and consistency validation process in InMemoryGraph. Process: Parse File, check if Entity Exists. If Yes, Update Entity and invalidate adjacency. If No, Add Entity and invalidate adjacency. Then Lazy Rebuild Index, then Validate Cross-refs.</div>
+
+**Figure 5: Graph Consistency Model** - Flowchart showing the lazy indexing and consistency validation process in InMemoryGraph.
 
 **Key Guarantees:**
 - Index built on first `neighbors()` call
@@ -64,6 +75,7 @@ flowchart LR
 The `SymbolIndex` performs a two-pass resolution to enable cross-module references:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart TB
     A[Local Pass] --> B[Resolve symbols within each file]
     B --> C[Global Pass]
@@ -72,7 +84,18 @@ flowchart TB
     E -->|Yes| F[Tag with resolved symbol]
     E -->|No| G[Tag with unresolved: prefix]
     G --> H[Track for later resolution]
+
+    style A fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style B fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style C fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style F fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style G fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style H fill:#fce4ec,stroke:#c2185b,stroke-width:2px
 ```
+
+<div class="sr-only">Figure 6: Cross-File Resolution Process - Two-pass resolution flow showing how SymbolIndex resolves imports across files. Local Pass resolves symbols within each file. Global Pass matches unresolved imports against exports. If resolved, tag with resolved symbol. If not resolved, tag with unresolved prefix and track for later resolution.</div>
+
+**Figure 6: Cross-File Resolution Process** - Two-pass resolution flow showing how SymbolIndex resolves imports across files.
 
 **Resolution Process:**
 1. **Local pass**: Resolve symbols within each file's scope
