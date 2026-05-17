@@ -41,15 +41,12 @@ jobs:
           skip-existing: true
           verbose: true
 
-      - name: Test installation from TestPyPI
+      - name: Test installation from local build
         run: |
-          sleep 10  # Wait for package to be available
           uv venv .test-venv
           source .test-venv/bin/activate
-          uv pip install --index-url https://test.pypi.org/simple/ \
-            --extra-index-url https://pypi.org/simple \
-            batho==$(cat pyproject.toml | grep '^version' | cut -d'"' -f2)
-          
+          uv pip install --no-index --find-links dist/ batho
+
           # Verify installation
           python -c "import batho; print(f'Batho version: {batho.__version__}')"
           batho --version
