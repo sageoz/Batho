@@ -1495,8 +1495,12 @@ function showNodeDrawer(data) {
   } else if (_currentLevel === 3 && data.id) {
     actionsHtml += `<button class="drawer-action drawer-action--primary" data-action="refocus">🎯 Refocus Here</button>`;
   }
+  // View Source button - always show if file is available
+  if (data.file) {
+    actionsHtml += `<button class="drawer-action drawer-action--source" data-action="view-source">👁 View Source</button>`;
+  }
   if (_currentLevel === 3 && data.file) {
-    actionsHtml += `<button class="drawer-action" data-action="l2">📄 Back to File</button>`;
+    actionsHtml += `<button class="drawer-action" data-action="l2">📄 Back to File Graph</button>`;
   }
   if (_currentLevel === 2 && data.file) {
     actionsHtml += `<button class="drawer-action" data-action="l1">📁 All Files</button>`;
@@ -1521,6 +1525,8 @@ function showNodeDrawer(data) {
         router.navigate('/hypergraph/files');
       } else if (action === 'open-file' && data.file) {
         router.navigate('/hypergraph/file/' + encodeURIComponent(data.file));
+      } else if (action === 'view-source' && data.file) {
+        router.navigate('/file/' + encodeURIComponent(data.file));
       } else if (action === 'refocus' && data.id) {
         router.navigate('/hypergraph/node/' + encodeURIComponent(data.id));
       }

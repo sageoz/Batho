@@ -15,6 +15,11 @@ from batho.bridge.artifact_loader import (
     ChecksumMismatchError,
 )
 from batho.bridge.constants import DEFAULT_BRIDGE_HTTP_PORT, KNOWN_ARTIFACT_TYPES
+from batho.bridge.file_service import (
+    FileNotFoundError as FileServiceNotFoundError,
+    SecurityError,
+    build_file_content_response,
+)
 from batho.bridge.models import BridgeErrorResponse, BridgeResponse, IndexListResponse
 from batho.bridge.registry_client import ArtifactRegistryBridge
 from batho.utils.logging import get_logger
@@ -75,6 +80,7 @@ class BridgeAPIHandler:
                 "GET /artifacts?type=&index_id=&limit=",
                 "GET /artifacts/{artifact_type}?index_id=",
                 "GET /artifacts/content?path=",
+                "GET /file-content?path=&index_id=",
                 "GET /stats",
                 "GET /patches",
                 "GET /patches/{operation_id}",
@@ -87,6 +93,8 @@ class BridgeAPIHandler:
             return self._handle_index_meta()
         if segments[0] == "artifacts":
             return self._handle_artifacts(segments, query)
+        if segments[0] == "file-content":
+            return self._handle_file_content(query)
         if segments[0] == "stats":
             return self._handle_stats()
         if segments[0] == "patches":
@@ -199,6 +207,69 @@ class BridgeAPIHandler:
             )
 
         return _err("invalid_path", "Invalid artifacts path", status=404)
+
+    def _handle_file_content(
+        self, query: dict[str, list[str]]
+    ) -> tuple[bytes, int, dict[str, str]]:
+        """Handle GET /file-content?path={filepath}&index_id={optional}.
+
+        Returns file content with optional BSG entity enrichment.
+        """
+        file_path = _first(query.get("path"))
+        if not file_path:
+            return _err("missing_param", "Query parameter 'path' is required")
+
+        # Find project root from ctn_dir (parent of .ctn)
+        project_root = self.ctn_dir.parent
+
+        # Optionally load BSG data for entity enrichment
+        index_id = _first(query.get("index_id"))
+        LOGGER.info("file_content_request", path=file_path, index_id=index_id)
+        bsg_data = None
+        if index_id:
+            try:
+                bsg_data = self._loader.load_json("bsg_json", index_id=index_id)
+                LOGGER.info("bsg_data_loaded", index_id=index_id, nodes_count=len(bsg_data.get("nodes", [])))
+            except Exception as e:
+                # BSG data is optional - continue without it
+                LOGGER.warning("bsg_data_load_failed", index_id=index_id, error=str(e))
+                pass
+        else:
+            LOGGER.info("no_index_id_provided", path=file_path)
+
+        try:
+            response = build_file_content_response(
+                file_path=file_path,
+                root=project_root,
+                bsg_data=bsg_data,
+                include_entities=bsg_data is not None,
+            )
+        except SecurityError as exc:
+            return _err("security_error", str(exc), status=403)
+        except FileServiceNotFoundError as exc:
+            return _err("file_not_found", str(exc), status=404)
+        except Exception as exc:
+            LOGGER.error(
+                "file_content_error",
+                path=file_path,
+                error=str(exc),
+            )
+            return _err("internal_error", f"Failed to read file: {exc}", status=500)
+
+        # Include has_entities in response data so frontend can access it
+        response["hasEntities"] = response.get("entityCount", 0) > 0
+        
+        LOGGER.info("file_content_response", 
+                   path=file_path, 
+                   has_entities=response["hasEntities"], 
+                   entity_count=response.get("entityCount", 0))
+
+        return _ok(
+            response,
+            meta={
+                "path": file_path,
+            },
+        )
 
     def _handle_patches(
         self, segments: list[str], query: dict[str, list[str]]

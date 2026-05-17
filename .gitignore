@@ -49,3 +49,6 @@ bsg_analysis.ipynb
 .DS_Store
 issue.md
 plans/*
+tests/testdata/repositories/flask/.ctn/index.json
+tests/testdata/repositories/multi_language/.ctn/index.json
+tests/testdata/repositories/simple_python/.ctn/index.json

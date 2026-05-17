@@ -443,6 +443,16 @@ export function invalidate(indexId) {
   console.log(`[ctn-loader] invalidate(${indexId})`);
 }
 
+export async function loadFileContent(filePath, indexId) {
+  if (!filePath) throw new SchemaMismatchError('loadFileContent requires a filePath');
+  const encodedPath = encodeURIComponent(filePath);
+  const indexParam = indexId ? `&index_id=${encodeURIComponent(indexId)}` : '';
+  const url = `file-content?path=${encodedPath}${indexParam}`;
+  console.log('[ctn-loader] loadFileContent URL:', url, 'indexId:', indexId);
+  const data = await bridgeGet(url);
+  return normalize(data);
+}
+
 export {
   MissingArtifactError,
   ParseError,

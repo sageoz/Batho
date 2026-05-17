@@ -9,6 +9,7 @@ import { loadIndex } from './ctn-loader.js';
 import { renderOverview } from '../../pages/overview.js';
 import { renderHypergraph } from '../../pages/hypergraph.js';
 import { renderFiles } from '../../pages/files.js';
+import { renderFile } from '../../pages/file.js';
 import { renderRelationships } from '../../pages/relationships.js';
 import { renderRules } from '../../pages/rules.js';
 import { renderSnapshots } from '../../pages/snapshots.js';
@@ -84,6 +85,7 @@ async function init() {
   router.register('#/hypergraph/file/:fileId', renderHypergraph);
   router.register('#/hypergraph/node/:nodeId', renderHypergraph);
   router.register('#/files', renderFiles);
+  router.register('#/file/:filePath', renderFile);
   router.register('#/relationships', renderRelationships);
   router.register('#/rules', renderRules);
   router.register('#/snapshots', renderSnapshots);

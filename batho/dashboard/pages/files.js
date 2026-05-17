@@ -97,12 +97,12 @@ export async function renderFiles(params) {
                 ).join('')}</div>`
               : '';
             return `
-              <div class="file-row" data-path="${escapeAttr(f.relativePath)}">
+              <div class="file-row file-row--clickable" data-path="${escapeAttr(f.relativePath)}" title="Click to view file">
                 <div class="file-row__name">${escapeHtml(f.name)}</div>
                 <div class="file-row__path">${escapeHtml(f.relativePath)}</div>
                 <div class="file-row__entities">${formatInt(f.entitySummary.total)} entities ${breakdownChips}</div>
                 <button class="file-row__hypergraph" data-hypergraph-path="${escapeAttr(f.relativePath)}" title="View in Hypergraph (L2)" aria-label="View ${escapeAttr(f.relativePath)} in Hypergraph">⌥</button>
-                <div class="file-row__expand" data-file-path="${escapeAttr(f.relativePath)}">▸</div>
+                <div class="file-row__expand" data-file-path="${escapeAttr(f.relativePath)}" title="Show entities">▸</div>
               </div>
               ${entityListHtml}
             `;
@@ -146,6 +146,18 @@ export async function renderFiles(params) {
           e.stopPropagation();
           const path = e.currentTarget.dataset.hypergraphPath;
           if (path) router.navigate('/hypergraph/file/' + encodeURIComponent(path));
+        });
+      });
+
+      // Click on file row to open file viewer
+      contentMount.querySelectorAll('.file-row').forEach((row) => {
+        row.addEventListener('click', (e) => {
+          // Don't navigate if clicking on hypergraph button or expand button
+          if (e.target.closest('.file-row__hypergraph') || e.target.closest('.file-row__expand')) {
+            return;
+          }
+          const path = row.dataset.path;
+          if (path) router.navigate('/file/' + encodeURIComponent(path));
         });
       });
     }
@@ -265,6 +277,16 @@ const filesStyles = `
   .dir-group__path { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); padding: var(--space-tight) 0; border-bottom: 1px solid var(--outline-variant); margin-bottom: var(--space-tight); }
   .file-row { display: flex; align-items: center; gap: var(--space-gutter); padding: var(--space-tight) 0; border-bottom: 1px solid var(--outline-variant); }
   .file-row:hover { background: var(--surface-container-high); }
+  .file-row--clickable { cursor: pointer; position: relative; }
+  .file-row--clickable::after {
+    content: '👁';
+    position: absolute;
+    right: 8px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    font-size: 12px;
+  }
+  .file-row--clickable:hover::after { opacity: 0.5; }
   .file-row__name { font-family: var(--font-mono); font-size: var(--type-node-code-size); color: var(--on-surface); min-width: 120px; }
   .file-row__path { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file-row__entities { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); display: flex; gap: var(--space-tight); flex-wrap: wrap; }

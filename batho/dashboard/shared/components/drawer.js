@@ -272,6 +272,17 @@ const drawerStyles = `
     border-color: var(--accent-cyan);
     box-shadow: 0 2px 8px rgba(125, 249, 255, 0.2);
   }
+  .drawer-action--source {
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.15) 0%, var(--surface-container) 100%);
+    border-color: rgba(96, 165, 250, 0.5);
+    color: #60a5fa;
+  }
+  .drawer-action--source:hover {
+    background: rgba(96, 165, 250, 0.25);
+    border-color: #60a5fa;
+    color: #93c5fd;
+    box-shadow: 0 2px 8px rgba(96, 165, 250, 0.15);
+  }
 
   /* Hint at bottom */
   .drawer-hint {
