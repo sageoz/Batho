@@ -36,18 +36,18 @@ Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic
 
 ## Table of Contents
 
-1. [Architecture Overview](./architecture)
-2. [Core Subsystems](./core-subsystems)
-3. [Deterministic Code Graph Engine](./code-graph)
-4. [BSG Compression & LLM Injection](./bsg-compression)
-5. [Time Machine & Incremental Patching](./time-machine)
-6. [Git Hooks Enterprise](./git-hooks)
-7. [Interactive Dashboard](./dashboard)
-8. [Artifact Bridge & MCP Integration](./bridge-mcp)
-9. [Security & Governance](./security)
-10. [Performance & Scalability](./performance)
-11. [Deployment & Operations](./deployment)
-12. [Appendix: Schema Reference](./appendix)
+1. [Architecture Overview](/docs/whitepaper/architecture)
+2. [Core Subsystems](/docs/whitepaper/core-subsystems)
+3. [Deterministic Code Graph Engine](/docs/whitepaper/code-graph)
+4. [BSG Compression & LLM Injection](/docs/whitepaper/bsg-compression)
+5. [Time Machine & Incremental Patching](/docs/whitepaper/time-machine)
+6. [Git Hooks Enterprise](/docs/whitepaper/git-hooks)
+7. [Interactive Dashboard](/docs/whitepaper/dashboard)
+8. [Artifact Bridge & MCP Integration](/docs/whitepaper/bridge-mcp)
+9. [Security & Governance](/docs/whitepaper/security)
+10. [Performance & Scalability](/docs/whitepaper/performance)
+11. [Deployment & Operations](/docs/whitepaper/deployment)
+12. [Appendix: Schema Reference](/docs/whitepaper/appendix)
 
 ---
 

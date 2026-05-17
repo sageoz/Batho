@@ -13,7 +13,7 @@ const config: Config = {
 
   url: 'https://sageoz.github.io',
   baseUrl: '/batho/',
-  trailingSlash: false,
+  trailingSlash: true,
 
   organizationName: 'sageoz',
   projectName: 'batho',

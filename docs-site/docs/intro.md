@@ -22,9 +22,9 @@ description: "Batho — Bidirectional AST Traversal & Hypergraph Orchestrator"
 
 ## Quick Links
 
-- [Getting Started](./getting-started/quick-start) — Install and run Batho in 30 seconds
-- [Whitepaper](./whitepaper) — Deep technical reference for every subsystem
-- [CLI Reference](./cli-reference) — Complete command documentation
+- [Getting Started](/docs/getting-started/quick-start) — Install and run Batho in 30 seconds
+- [Whitepaper](/docs/whitepaper) — Deep technical reference for every subsystem
+- [CLI Reference](/docs/cli-reference) — Complete command documentation
 - [GitHub](https://github.com/sageoz/batho) — Source code and issues
 - [PyPI](https://pypi.org/project/batho/) — Install from Python Package Index
 
@@ -91,4 +91,4 @@ flowchart TB
 
 ---
 
-Ready to dive in? Start with the [Quick Start Guide](./getting-started/quick-start).
+Ready to dive in? Start with the [Quick Start Guide](/docs/getting-started/quick-start).
