@@ -113,19 +113,31 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
         return self._bridge_api
 
     def translate_path(self, path: str) -> str:
-        """Translate URL to filesystem path using dual-root logic."""
-        if path.startswith("/dashboard/"):
-            rel_path = path[len("/dashboard/"):]
+        """Translate URL to filesystem path using dual-root logic.
+        Strips query parameters so cache-busting strings like ?v=2 work."""
+        parsed = urllib.parse.urlparse(path)
+        clean_path = parsed.path
+        if clean_path.startswith("/dashboard/"):
+            rel_path = clean_path[len("/dashboard/"):]
             return str(self._dashboard_dir / rel_path)
-        elif path.startswith("/.ctn/"):
-            rel_path = path[len("/.ctn/"):]
+        elif clean_path.startswith("/.ctn/"):
+            rel_path = clean_path[len("/.ctn/"):]
             return str(self._ctn_dir / rel_path)
-        elif path == "/dashboard" or path == "/dashboard/":
+        elif clean_path == "/dashboard" or clean_path == "/dashboard/":
             return str(self._dashboard_dir / "index.html")
-        elif path == "/" or path == "":
+        elif clean_path == "/" or clean_path == "":
             return str(self._dashboard_dir / "index.html")
         else:
             return str(self._dashboard_dir / "index.html")
+
+    def end_headers(self):
+        """Add cache-control for dashboard assets to prevent stale caches."""
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/dashboard/") or parsed.path.startswith("/.ctn/"):
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        super().end_headers()
 
     def do_GET(self):
         """Handle GET requests."""
@@ -140,9 +152,10 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if self.path not in ["/", "/dashboard", "/dashboard/"] and \
-           not self.path.startswith("/dashboard/") and \
-           not self.path.startswith("/.ctn/"):
+        clean_path = parsed.path
+        if clean_path not in ["/", "/dashboard", "/dashboard/"] and \
+           not clean_path.startswith("/dashboard/") and \
+           not clean_path.startswith("/.ctn/"):
             self.send_error(404, "Not Found")
             return
         super().do_GET()

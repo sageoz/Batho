@@ -235,24 +235,96 @@ export function buildFileGraph(bsg) {
 }
 
 /**
+ * Normalize a file path for fuzzy comparison: strip leading `./` or `/`,
+ * replace backslashes with forward slashes, and collapse repeated slashes.
+ * @param {string} p
+ * @returns {string}
+ */
+function _normalizePath(p) {
+  if (!p) return '';
+  return p.replace(/^\.?\/+/, '').replace(/\\/g, '/').replace(/\/+/g, '/');
+}
+
+/**
+ * Try to resolve a file path against the BSG node set using progressive
+ * matching: exact → normalized → suffix.
+ *
+ * @param {object} bsg
+ * @param {string} filePath
+ * @returns {{ canonicalPath: string, matchType: 'exact'|'normalized'|'suffix'|'none' }}
+ */
+function _resolveFilePath(bsg, filePath) {
+  const idx = _nodesByFile(bsg);
+
+  // 1. Exact match via index
+  if (idx && Array.isArray(idx[filePath])) {
+    return { canonicalPath: filePath, matchType: 'exact' };
+  }
+
+  // 2. Exact match via scan
+  for (const n of bsg.nodes || []) {
+    if (n && n.file === filePath) return { canonicalPath: filePath, matchType: 'exact' };
+  }
+
+  // 3. Normalized match
+  const normalized = _normalizePath(filePath);
+  if (idx) {
+    for (const file of Object.keys(idx)) {
+      if (_normalizePath(file) === normalized) return { canonicalPath: file, matchType: 'normalized' };
+    }
+  }
+  for (const n of bsg.nodes || []) {
+    if (n && n.file && _normalizePath(n.file) === normalized) {
+      return { canonicalPath: n.file, matchType: 'normalized' };
+    }
+  }
+
+  // 4. Suffix match (target ends with candidate or vice versa)
+  const allFiles = idx ? Object.keys(idx) : [];
+  if (!allFiles.length) {
+    const seen = new Set();
+    for (const n of bsg.nodes || []) {
+      if (n && n.file && !seen.has(n.file)) { seen.add(n.file); allFiles.push(n.file); }
+    }
+  }
+  for (const file of allFiles) {
+    const nf = _normalizePath(file);
+    if (nf.endsWith(normalized) || normalized.endsWith(nf)) {
+      return { canonicalPath: file, matchType: 'suffix' };
+    }
+  }
+
+  return { canonicalPath: filePath, matchType: 'none' };
+}
+
+/**
  * Build the Level 2 intra-file graph for a single file.
+ *
+ * Uses progressive fuzzy matching when an exact path match fails:
+ * exact → normalized (strip `./`, `\` → `/`) → suffix match.
  *
  * @param {object} bsg
  * @param {string} filePath - relative file path matching `node.file`.
- * @returns {{nodes: object[], edges: object[], file: string}}
+ * @returns {{nodes: object[], edges: object[], file: string, matchType: string}}
  */
 export function buildFileSubgraph(bsg, filePath) {
-  if (!bsg || !filePath) return { nodes: [], edges: [], file: filePath || '' };
+  if (!bsg || !filePath) return { nodes: [], edges: [], file: filePath || '', matchType: 'none' };
+
+  const { canonicalPath, matchType } = _resolveFilePath(bsg, filePath);
+
+  if (matchType === 'none') {
+    return { nodes: [], edges: [], file: filePath, matchType };
+  }
 
   // Use index when available; otherwise scan.
   const idx = _nodesByFile(bsg);
   let nodeIds;
-  if (idx && Array.isArray(idx[filePath])) {
-    nodeIds = new Set(idx[filePath]);
+  if (idx && Array.isArray(idx[canonicalPath])) {
+    nodeIds = new Set(idx[canonicalPath]);
   } else {
     nodeIds = new Set();
     for (const n of bsg.nodes || []) {
-      if (n && n.file === filePath) nodeIds.add(n.id);
+      if (n && n.file === canonicalPath) nodeIds.add(n.id);
     }
   }
 
@@ -270,7 +342,23 @@ export function buildFileSubgraph(bsg, filePath) {
     if (nodeIds.has(source) && nodeIds.has(target)) edges.push(e);
   }
 
-  return { nodes, edges, file: filePath };
+  return { nodes, edges, file: canonicalPath, matchType };
+}
+
+/**
+ * Get all unique file paths present in the BSG.
+ * @param {object} bsg
+ * @returns {string[]}
+ */
+export function listBsgFiles(bsg) {
+  if (!bsg) return [];
+  const idx = _nodesByFile(bsg);
+  if (idx) return Object.keys(idx);
+  const seen = new Set();
+  for (const n of bsg.nodes || []) {
+    if (n && n.file) seen.add(n.file);
+  }
+  return [...seen];
 }
 
 /**

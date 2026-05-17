@@ -32,11 +32,15 @@ export function createHeaderBar(props = {}) {
   }).join('');
 
   container.innerHTML = `
-    <div class="header-bar__brand">
-      <span class="header-bar__logo">▮</span>
+    <a class="header-bar__brand" href="#/overview" title="Batho — Bidirectional AST Traversal & Hypergraph Orchestrator">
+      <img class="header-bar__logo" src="/dashboard/assets/img/batho-logo.svg" alt="" width="20" height="20" />
       <span class="header-bar__title">BATHO</span>
+      <span class="header-bar__tagline">code intelligence cockpit</span>
+    </a>
+    <div class="header-bar__path" title="${escapeHtml(repoRoot)}">
+      <span class="header-bar__path-icon" aria-hidden="true">▸</span>
+      <span class="header-bar__path-text">${escapeHtml(repoRoot)}</span>
     </div>
-    <div class="header-bar__path">${escapeHtml(repoRoot)}</div>
     <div class="header-bar__index-wrapper">
       ${showStalenessBadge ? '<div class="glow-badge"><div class="glow-badge__dot"></div></div>' : ''}
       <details class="header-bar__dropdown">
@@ -88,7 +92,11 @@ export function createHeaderBar(props = {}) {
 async function selectIndex(newIndexId, container) {
   if (newIndexId === currentActiveId) return;
 
-  localStorage.setItem('batho.activeIndexId', newIndexId);
+  try {
+    localStorage.setItem('batho.activeIndexId', newIndexId);
+  } catch (e) {
+    console.warn('[batho] Failed to save active index to localStorage:', e);
+  }
 
   const entry = currentIndexes[newIndexId];
   if (entry) {
@@ -151,7 +159,11 @@ export function updateHeaderBar(container, props) {
   const warningsEl = container.querySelector('.header-bar__warnings');
   const wrapper = container.querySelector('.header-bar__index-wrapper');
 
-  if (props.repoRoot !== undefined && pathEl) pathEl.textContent = props.repoRoot;
+  if (props.repoRoot !== undefined && pathEl) {
+    const textEl = pathEl.querySelector('.header-bar__path-text');
+    if (textEl) textEl.textContent = props.repoRoot;
+    pathEl.title = props.repoRoot;
+  }
   if (props.indexId !== undefined && indexValueEl) {
     indexValueEl.textContent = props.indexId.replace(/^batho_/, '').slice(0, 12);
     currentActiveId = props.indexId;
@@ -190,14 +202,55 @@ export function updateHeaderBar(container, props) {
   }
 }
 
-function escapeHtml(text) { const d = document.createElement('div'); d.textContent = text; return d.innerHTML; }
+function escapeHtml(text) {
+  if (text === null || text === undefined) return '';
+  const d = document.createElement('div');
+  d.textContent = String(text);
+  return d.innerHTML;
+}
 
 const headerBarStyles = `
-  .header-bar { display: flex; align-items: center; height: 32px; padding: 0 var(--space-pad); background: var(--surface-container); border-bottom: var(--hairline); gap: var(--space-pad); }
-  .header-bar__brand { display: flex; align-items: center; gap: var(--space-tight); }
-  .header-bar__logo { font-family: var(--font-mono); font-size: 16px; color: var(--accent-cyan); }
+  .header-bar {
+    display: flex; align-items: center;
+    height: 32px; padding: 0 var(--space-pad);
+    background: linear-gradient(180deg, var(--surface-container) 0%, var(--surface-container-low) 100%);
+    border-bottom: var(--hairline-strong);
+    gap: var(--space-pad);
+    position: relative;
+  }
+  .header-bar::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+    background: linear-gradient(90deg, transparent 0%, var(--primary-container) 20%, var(--accent-cyan) 50%, var(--primary-container) 80%, transparent 100%);
+    opacity: 0.35; pointer-events: none;
+  }
+  .header-bar__brand {
+    display: flex; align-items: center; gap: var(--space-gutter);
+    text-decoration: none; color: inherit;
+    padding: var(--space-tight) var(--space-gutter);
+    border-right: var(--hairline);
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .header-bar__brand:hover { background: var(--surface-container-high); text-decoration: none; }
+  .header-bar__brand:focus-visible { outline: 1px solid var(--accent-cyan); outline-offset: -1px; }
+  .header-bar__logo { width: 20px; height: 20px; display: block; flex-shrink: 0; filter: drop-shadow(0 0 3px rgba(207, 188, 255, 0.35)); }
   .header-bar__title { font-family: var(--font-mono); font-size: var(--type-heading-glyph-size); font-weight: var(--type-heading-glyph-weight); letter-spacing: var(--type-heading-glyph-tracking); text-transform: uppercase; color: var(--on-surface); }
-  .header-bar__path { flex: 1; font-family: var(--font-mono); font-size: var(--type-node-code-size); color: var(--tint-on-surface-70); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .header-bar__tagline {
+    font-family: var(--font-sans); font-size: 9px; font-weight: 400;
+    color: var(--on-surface-variant); opacity: 0.7;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    border-left: var(--hairline); padding-left: var(--space-gutter);
+    margin-left: var(--space-tight);
+  }
+  @media (max-width: 720px) { .header-bar__tagline { display: none; } }
+  .header-bar__path {
+    flex: 1; display: flex; align-items: center; gap: var(--space-tight);
+    font-family: var(--font-mono); font-size: var(--type-node-code-size);
+    color: var(--tint-on-surface-70);
+    overflow: hidden; min-width: 0;
+  }
+  .header-bar__path-icon { color: var(--accent-cyan); opacity: 0.6; font-size: 10px; flex-shrink: 0; }
+  .header-bar__path-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .header-bar__index-wrapper { display: flex; align-items: center; gap: var(--space-tight); }
   .header-bar__dropdown { position: relative; }
   .header-bar__index { display: flex; align-items: center; gap: var(--space-tight); padding: var(--space-tight) var(--space-gutter); background: var(--surface-container-low); border: var(--hairline); cursor: pointer; list-style: none; }
