@@ -20,7 +20,7 @@ from batho.bridge.models import (
 )
 from batho.bridge.registry_client import ArtifactRegistryBridge
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "ArtifactContent",

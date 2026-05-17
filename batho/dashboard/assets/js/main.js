@@ -11,7 +11,7 @@ import { renderHypergraph } from '../../pages/hypergraph.js';
 import { renderFiles } from '../../pages/files.js';
 import { renderFile } from '../../pages/file.js';
 import { renderRelationships } from '../../pages/relationships.js';
-import { renderRules } from '../../pages/rules.js';
+import { renderPlugins } from '../../pages/rules.js';
 import { renderSnapshots } from '../../pages/snapshots.js';
 import { renderMetrics } from '../../pages/metrics.js';
 import { renderSearch } from '../../pages/search.js';
@@ -87,7 +87,7 @@ async function init() {
   router.register('#/files', renderFiles);
   router.register('#/file/:filePath', renderFile);
   router.register('#/relationships', renderRelationships);
-  router.register('#/rules', renderRules);
+  router.register('#/plugins', renderPlugins);
   router.register('#/snapshots', renderSnapshots);
   router.register('#/metrics', renderMetrics);
   router.register('#/search', renderSearch);
@@ -97,7 +97,7 @@ async function init() {
     container.innerHTML = `
       <div class="not-found__code">404</div>
       <div class="not-found__divider"></div>
-      <div class="not-found__message">Route is not part of the cockpit.</div>
+      <div class="not-found__message">Route is not part of the app.</div>
       <button class="btn" data-navigate="#/overview">return to overview</button>
     `;
     container

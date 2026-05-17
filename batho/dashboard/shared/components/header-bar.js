@@ -33,28 +33,53 @@ export function createHeaderBar(props = {}) {
 
   container.innerHTML = `
     <a class="header-bar__brand" href="#/overview" title="Batho — Bidirectional AST Traversal & Hypergraph Orchestrator">
-      <img class="header-bar__logo" src="/dashboard/assets/img/batho-logo.svg" alt="" width="20" height="20" />
-      <span class="header-bar__title">BATHO</span>
-      <span class="header-bar__tagline">code intelligence cockpit</span>
+      <div class="header-bar__brand-text">
+        <span class="header-bar__title">BATHO</span>
+        <span class="header-bar__tagline">code intelligence engine</span>
+      </div>
     </a>
+    <div class="header-bar__divider"></div>
     <div class="header-bar__path" title="${escapeHtml(repoRoot)}">
-      <span class="header-bar__path-icon" aria-hidden="true">▸</span>
+      <svg class="header-bar__path-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+      </svg>
       <span class="header-bar__path-text">${escapeHtml(repoRoot)}</span>
     </div>
+    <div class="header-bar__spacer"></div>
     <div class="header-bar__index-wrapper">
-      ${showStalenessBadge ? '<div class="glow-badge"><div class="glow-badge__dot"></div></div>' : ''}
+      ${showStalenessBadge ? `
+        <div class="header-bar__staleness" title="Index is stale">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+        </div>
+      ` : ''}
       <details class="header-bar__dropdown">
         <summary class="header-bar__index">
-          <span class="header-bar__index-label">IDX</span>
+          <svg class="header-bar__index-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+          <span class="header-bar__index-label">Index</span>
           <span class="header-bar__index-value">${escapeHtml(indexId.replace(/^batho_/, '').slice(0, 12))}</span>
-          <span class="header-bar__index-arrow">▾</span>
+          <svg class="header-bar__index-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
         </summary>
         <div class="header-bar__dropdown-menu">
+          <div class="header-bar__dropdown-header">Select Index</div>
           ${optionsHtml}
         </div>
       </details>
     </div>
-    ${warningCount > 0 ? `<div class="header-bar__warnings"><span class="header-bar__warning-icon">⚠</span><span class="header-bar__warning-count">${warningCount}</span></div>` : ''}
+    ${warningCount > 0 ? `
+      <div class="header-bar__warnings" title="${warningCount} BSG quality warnings">
+        <svg class="header-bar__warning-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <span class="header-bar__warning-count">${warningCount}</span>
+      </div>
+    ` : ''}
   `;
 
   const dropdown = container.querySelector('.header-bar__dropdown');
@@ -212,63 +237,70 @@ function escapeHtml(text) {
 const headerBarStyles = `
   .header-bar {
     display: flex; align-items: center;
-    height: 32px; padding: 0 var(--space-pad);
+    height: 56px; padding: 0 var(--space-pad-lg);
     background: linear-gradient(180deg, var(--surface-container) 0%, var(--surface-container-low) 100%);
     border-bottom: var(--hairline-strong);
-    gap: var(--space-pad);
+    gap: var(--space-md);
     position: relative;
+    flex-shrink: 0;
   }
   .header-bar::after {
     content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
     background: linear-gradient(90deg, transparent 0%, var(--primary-container) 20%, var(--accent-cyan) 50%, var(--primary-container) 80%, transparent 100%);
-    opacity: 0.35; pointer-events: none;
+    opacity: 0.4; pointer-events: none;
   }
   .header-bar__brand {
-    display: flex; align-items: center; gap: var(--space-gutter);
+    display: flex; align-items: center; gap: var(--space-sm);
     text-decoration: none; color: inherit;
-    padding: var(--space-tight) var(--space-gutter);
-    border-right: var(--hairline);
+    padding: var(--space-xs) var(--space-sm) var(--space-xs) 0;
     cursor: pointer;
-    transition: background 0.15s ease;
+    transition: all 0.15s ease;
+    border-radius: var(--radius-sm);
   }
-  .header-bar__brand:hover { background: var(--surface-container-high); text-decoration: none; }
+  .header-bar__brand:hover { background: var(--surface-container-high); }
   .header-bar__brand:focus-visible { outline: 1px solid var(--accent-cyan); outline-offset: -1px; }
-  .header-bar__logo { width: 20px; height: 20px; display: block; flex-shrink: 0; filter: drop-shadow(0 0 3px rgba(207, 188, 255, 0.35)); }
-  .header-bar__title { font-family: var(--font-mono); font-size: var(--type-heading-glyph-size); font-weight: var(--type-heading-glyph-weight); letter-spacing: var(--type-heading-glyph-tracking); text-transform: uppercase; color: var(--on-surface); }
+  .header-bar__brand-text { display: flex; flex-direction: column; gap: 0; line-height: 1.2; }
+  .header-bar__title { font-family: var(--font-mono); font-size: 15px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--on-surface); }
   .header-bar__tagline {
-    font-family: var(--font-sans); font-size: 9px; font-weight: 400;
-    color: var(--on-surface-variant); opacity: 0.7;
-    letter-spacing: 0.08em; text-transform: uppercase;
-    border-left: var(--hairline); padding-left: var(--space-gutter);
-    margin-left: var(--space-tight);
+    font-family: var(--font-sans); font-size: 11px; font-weight: 400;
+    color: var(--on-surface-variant); opacity: 0.8;
+    letter-spacing: 0.06em;
   }
   @media (max-width: 720px) { .header-bar__tagline { display: none; } }
+  .header-bar__divider { width: 1px; height: 24px; background: var(--outline-variant); }
   .header-bar__path {
-    flex: 1; display: flex; align-items: center; gap: var(--space-tight);
-    font-family: var(--font-mono); font-size: var(--type-node-code-size);
-    color: var(--tint-on-surface-70);
+    display: flex; align-items: center; gap: var(--space-sm);
+    font-family: var(--font-mono); font-size: 13px;
+    color: var(--on-surface-variant);
     overflow: hidden; min-width: 0;
+    max-width: 400px;
   }
-  .header-bar__path-icon { color: var(--accent-cyan); opacity: 0.6; font-size: 10px; flex-shrink: 0; }
+  .header-bar__path-icon { color: var(--accent-cyan); opacity: 0.7; flex-shrink: 0; width: 16px; height: 16px; }
   .header-bar__path-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .header-bar__index-wrapper { display: flex; align-items: center; gap: var(--space-tight); }
+  .header-bar__spacer { flex: 1; min-width: 0; }
+  .header-bar__index-wrapper { display: flex; align-items: center; gap: var(--space-sm); }
+  .header-bar__staleness { color: #fbbf24; display: flex; align-items: center; }
   .header-bar__dropdown { position: relative; }
-  .header-bar__index { display: flex; align-items: center; gap: var(--space-tight); padding: var(--space-tight) var(--space-gutter); background: var(--surface-container-low); border: var(--hairline); cursor: pointer; list-style: none; }
+  .header-bar__index { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); background: var(--surface-container-high); border: var(--hairline); border-radius: var(--radius-md); cursor: pointer; list-style: none; transition: all 0.15s ease; }
   .header-bar__index::-webkit-details-marker { display: none; }
-  .header-bar__index:hover { background: var(--surface-container); }
-  .header-bar__index-label { font-family: var(--font-sans); font-size: var(--type-ui-label-size); font-weight: var(--type-ui-label-weight); color: var(--on-surface-variant); }
-  .header-bar__index-value { font-family: var(--font-mono); font-size: var(--type-node-code-size); color: var(--on-surface); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .header-bar__index-arrow { font-size: 8px; color: var(--on-surface-variant); }
-  .header-bar__dropdown-menu { position: absolute; top: 100%; right: 0; z-index: 100; min-width: 240px; max-height: 300px; overflow-y: auto; background: var(--surface-container); border: var(--hairline); box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
-  .header-bar__dropdown-item { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: var(--space-tight) var(--space-gutter); background: none; border: none; border-bottom: 1px solid var(--outline-variant); color: var(--on-surface); cursor: pointer; font-family: var(--font-mono); font-size: var(--type-node-code-size); text-align: left; }
-  .header-bar__dropdown-item:last-child { border-bottom: none; }
+  .header-bar__index:hover { background: var(--surface-container); border-color: var(--accent-cyan); }
+  .header-bar__index-icon { color: var(--on-surface-variant); flex-shrink: 0; width: 16px; height: 16px; }
+  .header-bar__index-label { font-family: var(--font-sans); font-size: 11px; font-weight: 600; color: var(--on-surface-variant); text-transform: uppercase; letter-spacing: 0.04em; }
+  .header-bar__index-value { font-family: var(--font-mono); font-size: 13px; color: var(--on-surface); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .header-bar__index-arrow { color: var(--on-surface-variant); transition: transform 0.2s ease; flex-shrink: 0; }
+  .header-bar__dropdown[open] .header-bar__index-arrow { transform: rotate(180deg); }
+  .header-bar__dropdown-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 300; min-width: 300px; max-height: 400px; overflow-y: auto; background: var(--surface-container); border: var(--hairline); border-radius: var(--radius-md); box-shadow: 0 12px 32px rgba(0,0,0,0.5); padding: var(--space-sm); }
+  .header-bar__dropdown-header { font-family: var(--font-sans); font-size: 11px; font-weight: 600; color: var(--on-surface-variant); text-transform: uppercase; letter-spacing: 0.06em; padding: var(--space-xs) var(--space-sm) var(--space-sm); border-bottom: var(--hairline); margin-bottom: var(--space-xs); }
+  .header-bar__dropdown-item { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: var(--space-sm); background: none; border: none; border-radius: var(--radius-sm); color: var(--on-surface); cursor: pointer; font-family: var(--font-mono); font-size: 13px; text-align: left; transition: all 0.15s ease; margin-bottom: 2px; }
+  .header-bar__dropdown-item:last-child { margin-bottom: 0; }
   .header-bar__dropdown-item:hover { background: var(--surface-container-high); }
-  .header-bar__dropdown-item--active { background: var(--surface-container-high); color: var(--accent-cyan); }
-  .header-bar__dropdown-item-id { font-weight: var(--type-node-code-weight); }
-  .header-bar__dropdown-item-time { font-size: var(--type-terminal-size); color: var(--on-surface-variant); }
-  .header-bar__warnings { display: flex; align-items: center; gap: var(--space-tight); padding: var(--space-tight) var(--space-gutter); color: var(--tertiary); }
-  .header-bar__warning-icon { font-size: 12px; }
-  .header-bar__warning-count { font-family: var(--font-mono); font-size: var(--type-node-code-size); }
+  .header-bar__dropdown-item--active { background: rgb(34 211 238 / 0.1); color: var(--accent-cyan); border: 1px solid rgb(34 211 238 / 0.3); }
+  .header-bar__dropdown-item-id { font-weight: 600; }
+  .header-bar__dropdown-item-time { font-size: 12px; color: var(--on-surface-variant); }
+  .header-bar__warnings { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); color: #fbbf24; background: rgb(251 191 36 / 0.1); border: 1px solid rgb(251 191 36 / 0.3); border-radius: var(--radius-md); cursor: pointer; transition: all 0.15s ease; }
+  .header-bar__warnings:hover { background: rgb(251 191 36 / 0.2); }
+  .header-bar__warning-icon { flex-shrink: 0; width: 16px; height: 16px; }
+  .header-bar__warning-count { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
   .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 `;
 

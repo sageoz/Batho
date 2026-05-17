@@ -53,6 +53,11 @@ const router = {
     return { path: '#' + path, params };
   },
 
+  async refresh() {
+    // Re-handle the current route without changing the URL
+    return this.handle();
+  },
+
   async handle() {
     const { path, params } = this.parseHash(location.hash || this.defaultRoute);
     this.emit('change', { path, params });
@@ -97,7 +102,7 @@ const router = {
     container.innerHTML = `
       <div class="not-found__code">404</div>
       <div class="not-found__divider"></div>
-      <div class="not-found__message">Route ${path} is not part of the cockpit.</div>
+      <div class="not-found__message">Route ${path} is not part of the app.</div>
       <button class="btn" data-navigate="#/overview">return to overview</button>
     `;
     container.querySelector('[data-navigate]').addEventListener('click', () => this.navigate('#/overview'));

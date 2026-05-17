@@ -15,7 +15,16 @@ let _cachedActiveIndexId = null;
 export async function renderOverview(params) {
   const container = document.createElement('div');
   container.className = 'page page--overview';
-  container.innerHTML = `<div class="panel" aria-busy="true"><div class="loading"><span class="loading__cursor"></span><span>scanning …</span></div></div>`;
+  container.innerHTML = `
+    <div class="panel overview-loading" aria-busy="true">
+      <div class="overview-loading__content">
+        <svg class="overview-loading__spinner" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+        </svg>
+        <span>Loading overview…</span>
+      </div>
+    </div>
+  `;
 
   try {
     const savedIndexId = localStorage.getItem('batho.activeIndexId');
@@ -51,16 +60,33 @@ export async function renderOverview(params) {
       }
     );
 
-    // Build header
+    // Build header with icons
     const headerHtml = `
       <div class="overview-header">
-        <h1 class="panel__title">Overview</h1>
+        <div class="overview-header__title-row">
+          <h1 class="panel__title">
+            <svg class="overview-title-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            Overview
+          </h1>
+          <span class="overview-header__badge ${entry.stalenessScore > 0.5 ? 'overview-header__badge--warn' : 'overview-header__badge--ok'}">
+            ${entry.stalenessScore > 0.5 ? '⚠ stale' : '✓ current'}
+          </span>
+        </div>
         <div class="overview-meta">
+          <span class="overview-meta__icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          </span>
           <span class="overview-meta__root" title="${escapeHtml(entry.root || '')}">${escapeHtml(entry.root || '—')}</span>
           <span class="overview-meta__sep">·</span>
+          <span class="overview-meta__icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </span>
           <span class="overview-meta__time">${formatRelativeTime(entry.timestamp)}</span>
           <span class="overview-meta__sep">·</span>
-          <span class="overview-meta__id">idx ${escapeHtml(activeIndexId.replace(/^batho_/, '').slice(0, 8))}…</span>
+          <span class="overview-meta__icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          </span>
+          <span class="overview-meta__id">${escapeHtml(activeIndexId.replace(/^batho_/, '').slice(0, 12))}</span>
         </div>
       </div>
     `;
@@ -68,7 +94,12 @@ export async function renderOverview(params) {
     // Overview missing note
     const overviewMissingNote = overviewDoc
       ? ''
-      : '<div class="overview-note">overview.json not found for this index — re-run <code>batho index</code> to generate context artifacts.</div>';
+      : `
+        <div class="overview-note">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 6px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          overview.json not found for this index — re-run <code>batho index</code> to generate context artifacts.
+        </div>
+      `;
 
     container.innerHTML = `
       <div class="overview">
@@ -175,7 +206,16 @@ function _renderSummaryTab(entry, overviewDoc, metrics, activeIndexId) {
 // ─── Patches Tab ─────────────────────────────────────────────────────────────
 
 async function _renderPatchesTab(mount) {
-  mount.innerHTML = `<div class="panel" aria-busy="true"><div class="loading"><span class="loading__cursor"></span><span>loading patches …</span></div></div>`;
+  mount.innerHTML = `
+    <div class="panel patches-loading" aria-busy="true">
+      <div class="patches-loading__content">
+        <svg class="patches-loading__spinner" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+        </svg>
+        <span>Loading patches…</span>
+      </div>
+    </div>
+  `;
 
   try {
     const patchesData = await loadPatchesIndex();
@@ -183,9 +223,12 @@ async function _renderPatchesTab(mount) {
 
     if (patches.length === 0) {
       mount.innerHTML = `
-        <div class="panel">
-          <div class="panel__title">Patches</div>
-          <div class="empty-state">No patches recorded yet. Run <code>batho patch</code> to create your first patch.</div>
+        <div class="panel empty-panel">
+          <div class="empty-panel__icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </div>
+          <div class="empty-panel__title">No patches recorded</div>
+          <div class="empty-panel__desc">Run <code>batho patch</code> to create your first patch.</div>
         </div>
       `;
       return;
@@ -259,7 +302,9 @@ async function _renderPatchesTab(mount) {
   } catch (err) {
     mount.innerHTML = `
       <div class="panel error-panel">
-        <div class="error-panel__icon">⚠</div>
+        <div class="error-panel__icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
         <div class="error-panel__title">Error</div>
         <div class="error-panel__message">${escapeHtml(err.message || 'Failed to load patches')}</div>
       </div>
@@ -578,12 +623,12 @@ function renderLanguageBreakdown(languages) {
 
 function renderStackChips(stack) {
   const allChips = [];
-  if (stack.languages?.length) allChips.push(...stack.languages.map((s) => ({ label: s, type: 'lang' })));
-  if (stack.frameworks?.length) allChips.push(...stack.frameworks.map((s) => ({ label: s, type: 'fw' })));
-  if (stack.packageManagers?.length) allChips.push(...stack.packageManagers.map((s) => ({ label: s, type: 'pm' })));
-  if (stack.infra?.length) allChips.push(...stack.infra.map((s) => ({ label: s, type: 'infra' })));
-  if (!allChips.length) return '<div class="empty-state">no stack detected</div>';
-  const chips = allChips.map((c) => `<span class="chip chip--${c.type}">${escapeHtml(c.label)}</span>`).join('');
+  if (stack.languages?.length) allChips.push(...stack.languages.map((s) => ({ label: s, type: 'lang', icon: '⌘' })));
+  if (stack.frameworks?.length) allChips.push(...stack.frameworks.map((s) => ({ label: s, type: 'fw', icon: '◆' })));
+  if (stack.packageManagers?.length) allChips.push(...stack.packageManagers.map((s) => ({ label: s, type: 'pm', icon: '⚡' })));
+  if (stack.infra?.length) allChips.push(...stack.infra.map((s) => ({ label: s, type: 'infra', icon: '□' })));
+  if (!allChips.length) return '<div class="empty-state"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.5; margin-bottom: 8px;"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg><div>no stack detected</div></div>';
+  const chips = allChips.map((c) => `<span class="chip chip--${c.type}"><span class="chip__icon">${c.icon}</span>${escapeHtml(c.label)}</span>`).join('');
   return `<div class="stack-chips">${chips}</div>`;
 }
 
@@ -597,35 +642,44 @@ function renderErrorPanel(err) {
   let title = 'Error';
   let message = err?.message || 'An unknown error occurred';
   let hint = '';
+  let icon = '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
 
   if (isIndexMissing) {
     title = 'Structural Fault';
     message = 'No index data found. Run <code>batho index</code> first to populate `.ctn/`.';
+    icon = '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>';
   } else if (isEntryMissing) {
     title = 'Index Not Found';
     message = `Active index \`${err.id}\` is not present in the registry.`;
     hint = 'Open Snapshots and select another index, or run <code>batho scan</code> to create a new one.';
+    icon = '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>';
   } else if (isArtifactMissing) {
     title = 'Missing Artifact';
     message = `Could not load \`${err.path}\`.`;
     hint = 'Re-run <code>batho scan</code> to regenerate context artifacts.';
+    icon = '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="18"/></svg>';
   } else if (err && err.name === 'ParseError') {
     title = 'Corrupt Artifact';
+    icon = '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
   } else if (err && err.name === 'SchemaMismatchError') {
     title = 'Schema Mismatch';
+    icon = '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>';
   }
 
   const showSnapshotsBtn = isEntryMissing || isIndexMissing;
 
   return `
     <div class="panel error-panel">
-      <div class="error-panel__icon">⚠</div>
+      <div class="error-panel__icon">${icon}</div>
       <div class="error-panel__title">${escapeHtml(title)}</div>
       <div class="error-panel__message">${escapeHtml(message)}</div>
       ${hint ? `<div class="error-panel__hint">${hint}</div>` : ''}
       <div class="error-panel__actions">
-        <button class="btn" data-action="retry">retry</button>
-        ${showSnapshotsBtn ? '<button class="btn btn--ghost" data-action="snapshots">open snapshots</button>' : ''}
+        <button class="btn" data-action="retry">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          retry
+        </button>
+        ${showSnapshotsBtn ? '<button class="btn btn--ghost" data-action="snapshots"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>open snapshots</button>' : ''}
       </div>
     </div>
   `;
@@ -653,32 +707,69 @@ function escapeAttr(text) {
 
 const overviewStyles = `
   .overview { display: flex; flex-direction: column; gap: var(--space-gutter); }
+  
+  /* Loading states */
+  .overview-loading, .patches-loading { display: flex; align-items: center; justify-content: center; min-height: 200px; }
+  .overview-loading__content, .patches-loading__content { display: flex; align-items: center; gap: var(--space-gutter); color: var(--on-surface-variant); font-family: var(--font-mono); font-size: var(--type-node-code-size); }
+  .overview-loading__spinner, .patches-loading__spinner { animation: overview-loading-spin 1s linear infinite; color: var(--secondary); }
+  @keyframes overview-loading-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  
+  /* Header */
   .overview-header { display: flex; flex-direction: column; gap: var(--space-tight); }
+  .overview-header__title-row { display: flex; align-items: center; gap: var(--space-gutter); flex-wrap: wrap; }
+  .overview-title-icon { color: var(--primary); opacity: 0.9; }
+  .overview-header__badge { font-family: var(--font-mono); font-size: var(--type-terminal-size); padding: 2px 8px; border-radius: 12px; text-transform: lowercase; }
+  .overview-header__badge--ok { background: var(--tint-success-15); color: var(--accent-emerald); }
+  .overview-header__badge--warn { background: var(--tint-warning-15); color: var(--accent-amber); }
+  
   .overview-meta { display: flex; align-items: center; gap: var(--space-tight); font-family: var(--font-mono); font-size: var(--type-node-code-size); color: var(--on-surface-variant); flex-wrap: wrap; }
+  .overview-meta__icon { display: flex; align-items: center; opacity: 0.6; }
   .overview-meta__sep { opacity: 0.5; }
   .overview-meta__root { color: var(--tint-on-surface-70); max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .overview-meta__id { color: var(--accent-cyan); }
-  .overview-note { margin-top: var(--space-tight); padding: var(--space-tight) var(--space-gutter); border-left: 2px solid var(--tertiary); background: var(--surface-container-low); font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); }
-  .overview-note code { color: var(--accent-cyan); }
+  .overview-meta__id { color: var(--primary); }
+  
+  /* Note */
+  .overview-note { margin-top: var(--space-tight); padding: var(--space-tight) var(--space-gutter); border-left: 2px solid var(--accent-amber); background: var(--surface-container-low); font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); display: flex; align-items: center; }
+  .overview-note code { color: var(--secondary); background: var(--surface-container-high); padding: 1px 4px; border-radius: var(--radius-sm); }
+  
+  /* Empty panel */
+  .empty-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: calc(var(--space-gutter) * 3); text-align: center; }
+  .empty-panel__icon { color: var(--on-surface-variant); opacity: 0.4; margin-bottom: var(--space-gutter); }
+  .empty-panel__title { font-size: var(--type-section-header-size); font-weight: var(--type-section-header-weight); color: var(--on-surface); margin-bottom: var(--space-tight); }
+  .empty-panel__desc { color: var(--on-surface-variant); font-family: var(--font-mono); font-size: var(--type-node-code-size); }
+  .empty-panel__desc code { color: var(--secondary); background: var(--surface-container-high); padding: 2px 6px; border-radius: var(--radius-sm); }
+  
+  /* Error panel */
+  .error-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: calc(var(--space-gutter) * 3); text-align: center; min-height: 300px; }
+  .error-panel__icon { color: var(--error); opacity: 0.8; margin-bottom: var(--space-gutter); }
+  .error-panel__title { font-size: var(--type-section-header-size); font-weight: var(--type-section-header-weight); color: var(--on-surface); margin-bottom: var(--space-tight); }
+  .error-panel__message { color: var(--on-surface-variant); font-family: var(--font-mono); font-size: var(--type-node-code-size); margin-bottom: var(--space-gutter); max-width: 400px; }
+  .error-panel__hint { color: var(--on-surface-variant); font-family: var(--font-mono); font-size: var(--type-terminal-size); margin-bottom: var(--space-gutter); }
+  .error-panel__hint code { color: var(--secondary); background: var(--surface-container-high); padding: 2px 4px; border-radius: var(--radius-sm); }
+  .error-panel__actions { display: flex; gap: var(--space-tight); }
+  .error-panel__actions .btn { display: inline-flex; align-items: center; gap: 4px; }
+  
   .kpi-section { margin: var(--space-gutter) 0; }
   .dist-section { display: flex; flex-direction: column; gap: var(--space-tight); margin-top: var(--space-gutter); }
   .dist-row { display: flex; align-items: center; gap: var(--space-gutter); }
-  .dist-row__bar { flex: 1; height: 6px; background: linear-gradient(to right, var(--accent-cyan) 0% var(--pct), var(--surface-container-high) var(--pct) 100%); border: var(--hairline); }
+  .dist-row__bar { flex: 1; height: 6px; background: linear-gradient(to right, var(--primary-container) 0% var(--pct), var(--surface-container-high) var(--pct) 100%); border: var(--hairline); border-radius: var(--radius-sm); }
   .dist-row__label { min-width: 120px; font-family: var(--font-mono); font-size: var(--type-node-code-size); color: var(--on-surface-variant); }
   .dist-row__label em { color: var(--on-surface); font-style: normal; }
   .overview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-gutter); }
   @media (max-width: 900px) { .overview-grid { grid-template-columns: 1fr; } }
   .panel--language .table { margin-top: var(--space-gutter); }
   .panel--stack .stack-chips { display: flex; flex-wrap: wrap; gap: var(--space-tight); margin-top: var(--space-gutter); }
-  .chip--lang { background: rgb(103 80 164 / 0.2); }
-  .chip--fw { background: rgb(77 68 101 / 0.3); }
-  .chip--pm { background: rgb(201 122 77 / 0.2); }
-  .chip--infra { background: rgb(56 124 100 / 0.2); }
+  .chip { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: var(--type-terminal-size); padding: 3px 8px; border-radius: 12px; border: var(--hairline); }
+  .chip__icon { opacity: 0.7; font-size: 10px; }
+  .chip--lang { background: var(--tint-primary-15); border-color: var(--primary-container); }
+  .chip--fw { background: rgba(6, 182, 212, 0.15); border-color: var(--secondary-container); }
+  .chip--pm { background: var(--tint-warning-15); border-color: var(--accent-amber-dim); }
+  .chip--infra { background: var(--tint-success-15); border-color: var(--tertiary-container); }
   .empty-state { color: var(--on-surface-variant); font-family: var(--font-mono); font-size: var(--type-node-code-size); padding: var(--space-gutter); text-align: center; }
-  .empty-state code { color: var(--accent-cyan); }
+  .empty-state code { color: var(--secondary); }
   .num { text-align: right; }
   .error-panel__hint { color: var(--on-surface-variant); font-family: var(--font-mono); font-size: var(--type-terminal-size); margin-top: var(--space-tight); }
-  .error-panel__hint code { color: var(--accent-cyan); }
+  .error-panel__hint code { color: var(--secondary); }
 
   /* Patch timeline */
   .patch-timeline { display: flex; flex-direction: column; gap: 2px; margin-top: var(--space-gutter); }
@@ -697,15 +788,15 @@ const overviewStyles = `
   .patch-row__detail { margin-top: var(--space-pad); padding-top: var(--space-pad); border-top: var(--hairline); }
 
   /* Change badges */
-  .change-badge { font-family: var(--font-mono); font-size: 10px; font-weight: var(--type-node-code-weight); text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 8px; border-radius: 2px; white-space: nowrap; }
-  .change-badge--patch { background: rgb(0 217 255 / 0.15); color: var(--accent-cyan); }
-  .change-badge--reindex { background: rgb(156 39 176 / 0.15); color: #9c27b0; }
-  .change-badge--added { background: rgb(76 175 80 / 0.15); color: #4caf50; }
-  .change-badge--modified { background: rgb(255 193 7 / 0.15); color: #ffc107; }
-  .change-badge--deleted { background: rgb(244 67 54 / 0.15); color: #f44336; }
+  .change-badge { font-family: var(--font-mono); font-size: 10px; font-weight: var(--type-node-code-weight); text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 8px; border-radius: var(--radius-sm); white-space: nowrap; }
+  .change-badge--patch { background: rgba(6, 182, 212, 0.15); color: var(--secondary); }
+  .change-badge--reindex { background: var(--tint-primary-15); color: var(--primary); }
+  .change-badge--added { background: var(--tint-success-15); color: var(--accent-emerald); }
+  .change-badge--modified { background: var(--tint-warning-15); color: var(--accent-amber); }
+  .change-badge--deleted { background: var(--tint-error-15); color: #ef4444; }
 
   /* Delta colors */
-  .delta--mod { color: #ffc107; }
+  .delta--mod { color: var(--accent-amber); }
   .delta--neutral { color: var(--on-surface-variant); opacity: 0.5; }
   .delta { font-family: var(--font-mono); font-size: var(--type-node-code-size); font-weight: var(--type-node-code-weight); }
 
@@ -734,8 +825,8 @@ const overviewStyles = `
   /* Snapshot timeline (compact) */
   .snapshot-timeline { display: flex; flex-direction: column; gap: var(--space-tight); margin-top: var(--space-gutter); }
   .snapshot-row { display: flex; align-items: center; gap: var(--space-gutter); padding: var(--space-tight); border: var(--hairline); font-family: var(--font-mono); font-size: var(--type-node-code-size); }
-  .snapshot-row--active { border-color: var(--accent-cyan); }
-  .snapshot-row__marker { color: var(--accent-cyan); font-size: 8px; }
+  .snapshot-row--active { border-color: var(--primary-container); }
+  .snapshot-row__marker { color: var(--primary); font-size: 8px; }
   .snapshot-row__id { color: var(--on-surface); font-weight: var(--type-node-code-weight); }
   .snapshot-row__time { color: var(--on-surface-variant); }
   .snapshot-row__count { color: var(--tint-on-surface-70); }

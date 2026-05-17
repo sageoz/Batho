@@ -359,33 +359,18 @@ def get_log_level() -> int:
     return get_config_cached()["logging"]["level"]
 
 
-def get_build_info() -> dict[str, str]:
-    """Expose package version/build info for CLI and metadata."""
-
-    try:
-        version = importlib.metadata.version("batho")
-    except importlib.metadata.PackageNotFoundError:
-        version = _env("BATHO_VERSION", "0.1.0") or "0.1.0"
-    build = _env("BATHO_BUILD", "") or ""
-    return {"version": version, "build": build}
-
-
 def get_config() -> Dict[str, Any]:
     """Return validated config as a plain dict with batho.yaml resolved from cwd."""
     return get_config_with_root(Path.cwd())
 
 
-def get_log_level() -> int:
-    return get_config_cached()["logging"]["level"]
-
-
 def get_build_info() -> dict[str, str]:
     """Expose package version/build info for CLI and metadata."""
 
     try:
         version = importlib.metadata.version("batho")
     except importlib.metadata.PackageNotFoundError:
-        version = _env("BATHO_VERSION", "0.1.0") or "0.1.0"
+        version = _env("BATHO_VERSION", "1.0.0") or "1.0.0"
     build = _env("BATHO_BUILD", "") or ""
     return {"version": version, "build": build}
 

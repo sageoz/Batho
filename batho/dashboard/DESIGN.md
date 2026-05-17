@@ -1,11 +1,108 @@
 # Batho Dashboard Design
 
-The canonical dashboard design tokens live in:
-- `plans/dashboard/01-design-system.md` — Design tokens and components
+## Professional Enterprise Design System
+
+The Batho Dashboard follows a **Modern Enterprise** design aesthetic with subtle technological undertones — precise, reliable, and sophisticated. The interface prioritizes clarity and density without sacrificing breathability.
+
+### Design Tokens
+
+CSS tokens are defined in `assets/css/tokens.css`:
+
+**Surface Hierarchy (Midnight Palette):**
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--background` | `#131317` | Page background |
+| `--surface` | `#1a1a1f` | Main surfaces |
+| `--surface-container` | `#1f1f23` | Cards, panels |
+| `--surface-container-high` | `#2a292e` | Elevated elements |
+| `--surface-container-highest` | `#353439` | Highest elevation |
+
+**Color Palette:**
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--primary` | `#4f46e5` | Primary actions, focus states |
+| `--primary-container` | `#4f46e5` | Primary buttons |
+| `--on-primary-container` | `#dad7ff` | Text on primary |
+| `--secondary` | `#06b6d4` | Technical accents |
+| `--tertiary` | `#10b981` | Success states |
+| `--error` | `#ffb4ab` | Error states |
+| `--accent-amber` | `#f59e0b` | Warnings |
+
+**Typography:**
+- **Headings**: Space Grotesk, 600 weight (modern, geometric)
+- **UI Text**: Inter, 400-500 weight (maximum legibility)
+- **Code**: JetBrains Mono, 400 weight (developer-friendly)
+
+**Spacing Scale:**
+- `--space-xs`: 4px
+- `--space-sm`: 8px
+- `--space-md`: 12px
+- `--space-lg`: 16px
+- `--space-xl`: 24px
+- `--space-2xl`: 32px
+
+**Shape:**
+- `--radius-sm`: 4px (small elements)
+- `--radius-md`: 8px (buttons, cards, panels)
+- `--radius-lg`: 12px (large cards)
+- `--radius-full`: 9999px (badges, pills)
+
+**Shadows:**
+- `--shadow-sm`: 0 1px 2px 0 rgb(0 0 0 / 0.30)
+- `--shadow-md`: 0 4px 6px -1px rgb(0 0 0 / 0.30)
+- `--shadow-lg`: 0 10px 15px -3px rgb(0 0 0 / 0.30)
+
+**Transitions:**
+- `--transition-fast`: 100ms ease
+- `--transition-base`: 150ms ease
+- `--transition-slow`: 250ms ease
+
+### Component Classes
+
+**Cards & Panels:**
+```css
+.panel          /* Basic panel with border-radius and shadow */
+.card           /* Hover-elevating card */
+.stat-card      /* KPI stat card with hover lift */
+```
+
+**Buttons:**
+```css
+.btn            /* Base button (rounded, 8px radius) */
+.btn--primary   /* Indigo primary */
+.btn--secondary /* Outlined secondary */
+.btn--ghost     /* Transparent ghost */
+.btn--sm        /* Small size */
+.btn--lg        /* Large size */
+```
+
+**Badges:**
+```css
+.badge              /* Base pill badge */
+.badge--primary     /* Indigo accent */
+.badge--success     /* Emerald */
+.badge--warning     /* Amber */
+.badge--error       /* Coral */
+```
+
+**Legacy Classes (Backward Compatible):**
+```css
+.stat-tile      /* Legacy stat display */
+.chip           /* Legacy chips */
+.glow-badge     /* Legacy status badge */
+```
+
+### Files
+- `assets/css/tokens.css` — Design tokens
+- `assets/css/base.css` — Reset, typography, layout
+- `assets/css/components.css` — Buttons, cards, tables
+- `assets/css/animations.css` — Motion
+- `assets/css/graph.css` — Cytoscape styling
+
+See also:
+- `plans/dashboard/01-design-system.md` — Original design tokens
 - `plans/dashboard/00-architecture.md` — Architecture overview
 - `plans/dashboard/02-data-contracts.md` — Data schemas
-
-See `phase-0-skeleton.md` for the original implementation plan.
 
 ## Hypergraph: Three-level drill-down
 

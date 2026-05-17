@@ -1,5 +1,5 @@
 /* ============================================================================
-   Hypergraph Page — Brutalist Cockpit
+   Hypergraph Page — Code Intelligence Engine
    ----------------------------------------------------------------------------
    Layout: column shell with a 3-row grid (header / body / progress) and a
    2-column body (sidebar + canvas). All chrome lives inside surface tokens;
@@ -439,7 +439,7 @@
   isolation: isolate;
 }
 
-/* Subtle grid pattern for the cockpit feel */
+/* Subtle grid pattern for the dashboard feel */
 .graph-canvas-wrap::before {
   content: '';
   position: absolute;

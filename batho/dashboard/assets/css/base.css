@@ -24,6 +24,7 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: geometricPrecision;
+    overflow: hidden;
   }
 
   a {
@@ -66,16 +67,19 @@
   }
 
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
   }
 
   ::-webkit-scrollbar-track {
     background: var(--surface-container-low);
+    border-radius: var(--radius-sm);
   }
 
   ::-webkit-scrollbar-thumb {
     background: var(--surface-container-highest);
+    border-radius: var(--radius-sm);
+    border: 2px solid var(--surface-container-low);
   }
 
   ::-webkit-scrollbar-thumb:hover {
@@ -86,26 +90,45 @@
 @layer layout {
   .app {
     display: grid;
-    grid-template-columns: 40px 1fr;
-    grid-template-rows: 32px 1fr;
+    grid-template-columns: 72px 1fr;
+    grid-template-rows: 56px 1fr;
     height: 100vh;
     width: 100vw;
     overflow: hidden;
+    background: var(--background);
   }
 
   .app__rail {
     grid-row: 1 / -1;
+    border-right: var(--hairline);
+    background: var(--surface-container-low);
+    position: sticky;
+    top: 0;
+    left: 0;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   .app__header {
     grid-column: 2;
     border-bottom: var(--hairline);
+    background: var(--surface-container);
+    display: flex;
+    align-items: center;
+    padding: 0 var(--space-pad-lg);
+    position: sticky;
+    top: 0;
+    z-index: 150;
+    min-height: 56px;
   }
 
   .app__main {
     grid-column: 2;
     overflow: auto;
-    padding: var(--space-pad);
+    padding: var(--space-pad-lg);
     min-width: 0;
     min-height: 0;
     display: flex;
@@ -131,8 +154,10 @@
 
   .panel {
     border: var(--hairline);
+    border-radius: var(--radius-md);
     padding: var(--space-pad);
     background: var(--surface-container);
+    box-shadow: var(--shadow-sm);
   }
 
   .panel--low {
@@ -145,5 +170,85 @@
 
   .panel--highest {
     background: var(--surface-container-highest);
+  }
+
+  /* Professional Card Component */
+  .card {
+    border: var(--hairline);
+    border-radius: var(--radius-md);
+    background: var(--surface-container);
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow var(--transition-base);
+  }
+
+  .card:hover {
+    box-shadow: var(--shadow-md);
+  }
+
+  .card__header {
+    padding: var(--space-pad) var(--space-pad-lg);
+    border-bottom: var(--hairline);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .card__title {
+    font-family: var(--font-heading);
+    font-size: var(--type-headline-sm-size);
+    font-weight: var(--type-headline-sm-weight);
+    color: var(--on-surface);
+  }
+
+  .card__body {
+    padding: var(--space-pad-lg);
+  }
+
+  /* KPI Stat Card */
+  .stat-card {
+    border: var(--hairline);
+    border-radius: var(--radius-md);
+    padding: var(--space-pad-lg);
+    background: var(--surface-container);
+    box-shadow: var(--shadow-sm);
+    transition: all var(--transition-base);
+  }
+
+  .stat-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+
+  .stat-card__label {
+    font-family: var(--font-sans);
+    font-size: var(--type-label-caps-size);
+    font-weight: var(--type-label-caps-weight);
+    letter-spacing: var(--type-label-caps-tracking);
+    text-transform: uppercase;
+    color: var(--on-surface-variant);
+    margin-bottom: var(--space-sm);
+  }
+
+  .stat-card__value {
+    font-family: var(--font-heading);
+    font-size: 36px;
+    font-weight: 700;
+    color: var(--on-surface);
+    line-height: 1.2;
+  }
+
+  .stat-card__delta {
+    font-family: var(--font-mono);
+    font-size: var(--type-terminal-size);
+    color: var(--accent-emerald);
+    margin-top: var(--space-xs);
+  }
+
+  .stat-card__delta--warn {
+    color: var(--accent-amber);
+  }
+
+  .stat-card__delta--error {
+    color: var(--error);
   }
 }

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/batho.svg" alt="Batho" width="160" height="160" />
+  <img src="assets/batho.svg" alt="Batho" width="220" height="220" />
 </p>
 
 <h1 align="center">B.A.T.H.O</h1>
@@ -46,6 +46,9 @@ batho patch --root . --scan
 # Install Git hooks for automated checks
 batho hooks install --all
 
+# Launch the interactive Dashboard (v1)
+batho dashboard --root .
+
 # Start the artifact bridge (REST API + MCP server)
 batho bridge serve --root .
 batho bridge mcp --transport stdio
@@ -70,6 +73,7 @@ Modern AI tools need **structured code understanding** — not just raw file con
 | **Zero Code Execution** | Safe to run in CI, pre-commit, or on untrusted repos |
 | **Caching** | mtime+SHA skips unchanged files — re-indexes in seconds |
 | **CI/CD Pipeline Hooks** | Turnkey GitHub Actions and GitLab CI templates |
+| **Web Dashboard (v1)** | Interactive hypergraph, file browser, metrics, and snapshots |
 | **Incremental patching** | 10-100x faster updates with complete lineage tracking |
 
 ## How It Works
@@ -77,7 +81,8 @@ Modern AI tools need **structured code understanding** — not just raw file con
 1. **Parse** — tree-sitter extracts functions, classes, variables, imports with full signatures
 2. **Graph** — Entities and relationships (IMPORTS, CALLS, USES, DEFINES) form a code graph
 3. **Compress** — BSG renders the graph in multiple formats: compressed, full, JSON, hierarchical
-4. **Track** — Time Machine snapshots let you diff code intelligence over time
+4. **Visualize** — Dashboard v1 renders interactive hypergraphs, file explorers, metrics, and snapshots
+5. **Track** — Time Machine snapshots let you diff code intelligence over time
 
 ---
 
@@ -156,6 +161,40 @@ batho cherry-pick --root . --patch-id ID --target-snapshot ID
 - **Ignore support** — `.gitignore` + `.bathoignore` via pathspec
 - **Per-file isolation** — one bad file never aborts the scan
 
+
+### Web Dashboard (v1)
+
+Interactive code intelligence visualization served directly from your `.ctn/` artifacts. No bridge server required.
+
+```bash
+# Launch the dashboard (auto-opens browser)
+batho dashboard --root .
+
+# Custom port / host
+batho dashboard --root . --port 3000 --host 0.0.0.0
+
+# Skip auto-open
+batho dashboard --root . --no-browser
+
+# Open to a specific route
+batho dashboard --root . --open-route '#/hypergraph/files'
+```
+
+**Dashboard pages:**
+
+| Page | What it shows |
+|------|--------------|
+| **Overview** | Repo stats, language breakdown, file distribution |
+| **Hypergraph** | Three-level drill-down: files → file symbols → node neighborhood |
+| **Files** | Hierarchical file browser with entity counts |
+| **File Viewer** | Syntax-highlighted source with BSG entity highlighting sidebar |
+| **Relationships** | Filtered relationship tables (imports, calls, extends) |
+| **Plugins** | Loaded BSG rule plugins and their metadata |
+| **Metrics** | Indexing performance, cache hit rates, worker stats |
+| **Snapshots** | Time Machine snapshot list with diff capabilities |
+| **Search** | Full-text search across entities and files |
+
+The dashboard reads `.ctn/index.json` and artifact files directly — it falls back to the bridge REST API only for computed endpoints (diffs, search). This means it works even when the bridge is offline.
 
 ### Stack Detection
 
@@ -300,6 +339,7 @@ batho <command> --help
 | `cache` | AST cache management (`stats`, `invalidate`, `clear`) |
 | `storage` | Persistent artifact registry tools (`backfill`, `verify`, `cleanup`, `stats`, `rebuild-indexes`, `compact`) |
 | `query` | Query persisted entity/relationship indexes |
+| `dashboard` | Launch the interactive web dashboard |
 | `bsg` | Render BSG outputs (`compressed`, `full`, `hierarchical`) |
 
 ### Indexing & Snapshots
@@ -330,6 +370,9 @@ batho diff-snapshots --root /path/to/repo --snapshot-a SNAP_A --snapshot-b SNAP_
 ```bash
 # Auto-detect file changes and patch
 batho patch --root /path/to/repo --scan
+
+# Force traditional index-based patching (disable snapshot optimization)
+batho patch --root . --scan --force-index-patch
 
 # Patch from unified diff
 batho patch --root /path/to/repo --diff /path/to/changes.diff
@@ -562,6 +605,188 @@ hooks:
 
 Default AST cache database location: `.ctn/local/cache/ast_cache.db` (configured by `bsg.cache.path`).
 
+---
+
+## Paths & Index Reference
+
+### CTN Directory Structure
+
+Batho stores all artifacts in `.ctn/` (CTN = Code Tracking Network):
+
+| Path | Purpose |
+|------|---------|
+| `.ctn/index.json` | Master index registry with all indexes and current index pointer |
+| `.ctn/artifact_registry.db` | SQLite database for durable artifact storage |
+| `.ctn/file_cache.json` | File metadata cache for incremental indexing |
+| `.ctn/file_hashes.json` | SHA-256 hashes for change detection |
+| `.ctn/metrics.json` | Indexing performance metrics |
+| `.ctn/snapshots/` | Time Machine snapshots (full graph state at point in time) |
+| `.ctn/patches/` | Incremental patch operations history |
+| `.ctn/<index_id>/` | Per-index artifacts directory |
+
+### Index ID Format
+
+Index IDs follow the pattern:
+```
+batho_<project>_<sha>_<timestamp>Z
+```
+
+Example: `batho_batho_9c63cb000f014e8ac3a8fc6ba7c7c38b_20260517T042712192543Z`
+
+- `batho` - Tool identifier
+- `batho` - Project name
+- `9c63cb...` - Content hash (first 32 chars of SHA-256)
+- `20260517T042712192543Z` - ISO 8601 timestamp (UTC)
+
+### Referencing Indexes
+
+Most commands accept an optional index ID. If omitted, the "current" index from `.ctn/index.json` is used.
+
+```bash
+# Use current index (default)
+batho stats --root .
+batho bsg --root . --mode full
+
+# Use specific index by full ID
+batho stats --root . --index-id batho_batho_9c63cb000f014e8ac3a8fc6ba7c7c38b_20260517T042712192543Z
+
+# Use short ID (first 12 chars of hash)
+batho stats --root . --index-id 9c63cb000f01
+```
+
+### Command Index-Path Resolution
+
+Commands that generate or read indexes follow this resolution order:
+
+1. **Explicit `--index-id`** - Use specified index
+2. **Explicit `--index-path`** - Use specified directory (legacy)
+3. **Current index** - Read from `.ctn/index.json` → `current_index_id`
+4. **Latest index** - Most recent by timestamp if no current set
+5. **Create new** - For index-generating commands
+
+### Snapshot ID Format
+
+Snapshots have a similar but distinct format:
+```
+batho_<project>_<sha>_<timestamp>Z.json
+```
+
+Example: `batho_batho_356ec43cea6881cbab65bce49843f07b_20260517T113935149223Z.json`
+
+Stored in: `.ctn/snapshots/`
+
+### Patch Operation ID Format
+
+Patch IDs follow the pattern:
+```
+batho_<uuid>_<timestamp>Z
+```
+
+Example: `batho_17f6049982ee47e4b8c68ff5b3a43507_20260517T042745283845Z`
+
+Stored in: `.ctn/patches/patch_<operation_id>.json`
+
+### Working with Index Paths
+
+```bash
+# List all indexes
+batho stats --root .
+
+# List all snapshots
+batho snapshots --root .
+
+# List all patches
+batho patches --root .
+
+# Get info about specific index
+batho stats --root . --index-id <id>
+
+# Switch current index
+# (Modify .ctn/index.json current_index_id field)
+
+# View index metadata
+cat .ctn/index.json | jq '.current_index_id'
+cat .ctn/index.json | jq '.indexes | keys'
+```
+
+### Path Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BATHO_CTN_DIR` | `.ctn` | Base CTN directory path |
+| `BATHO_CTN_REGISTRY` | `.ctn/artifact_registry.db` | Registry database path |
+| `BATHO_CTN_CACHE` | `.ctn/local/cache/ast_cache.db` | AST cache path |
+| `BATHO_CTN_FILE_CACHE` | `.ctn/file_cache.json` | File cache path |
+| `BATHO_CTN_FILE_HASHES` | `.ctn/file_hashes.json` | File hashes path |
+| `BATHO_CTN_METRICS` | `.ctn/metrics.json` | Metrics output path |
+
+### Command Quick Reference
+
+#### Index Management
+```bash
+batho index --root <path>              # Create/update index
+batho index --root <path> --snapshot   # Index + create snapshot
+batho stats --root <path>              # Show index stats
+batho invalidate --root <path>           # Clear file cache
+```
+
+#### Snapshot Operations
+```bash
+batho snapshots --root <path>                    # List snapshots
+batho diff-snapshots --root <path> <a> <b>     # Compare snapshots
+```
+
+#### Patch Operations
+```bash
+batho patch --root <path> --scan       # Auto-detect and patch
+batho patch --root <path> --scan --force-index-patch  # Force index-based patching
+batho patches --root <path>            # List patch history
+batho patch-info --root <path> <id>    # Show patch details
+```
+
+#### BSG Generation
+```bash
+batho bsg --root <path> --mode full           # Full BSG
+batho bsg --root <path> --mode compressed     # Compressed for LLM
+batho bsg --root <path> --mode hierarchical   # Hierarchical view
+```
+
+#### Storage Management
+```bash
+batho storage stats --root <path>      # Registry statistics
+batho storage verify --root <path>     # Verify artifacts
+batho storage cleanup --root <path>    # Clean old artifacts
+batho storage compact --root <path>    # Deduplicate registry
+```
+
+#### Query Layer
+```bash
+batho query --root <path> --entity-type function
+batho query --root <path> --file-path src/main.py
+batho query --root <path> --relationship-type calls
+```
+
+#### Dashboard
+```bash
+batho dashboard --root <path>                    # Launch dashboard (auto-opens browser)
+batho dashboard --root <path> --port 3000        # Custom port
+batho dashboard --root <path> --no-browser       # Skip auto-open
+```
+
+#### Bridge Server
+```bash
+batho bridge serve --root <path>       # Start REST API
+batho bridge mcp --root <path>         # Start MCP server
+batho bridge status --root <path>      # Check status
+```
+
+#### Git Hooks
+```bash
+batho hooks list --root <path>         # List hooks
+batho hooks install --root <path>      # Install hooks
+batho hooks run --root <path> <hook>   # Run hook manually
+```
+
 <details>
 <summary><strong>graph.json example</strong></summary>
 
@@ -656,10 +881,10 @@ Output behavior:
 | `BATHO_MAX_INDEXED_FILES` | `200000` | Hard cap on indexed files |
 | `BATHO_INDEX_WORKERS` | `0` | Worker threads (0 = auto) |
 | `BATHO_METRICS_OUTPUT` | `.ctn/metrics.json` | Metrics output path |
-| `BATHO_RULES_ENABLED` | config value | Enable BSG rule plugin stage |
-| `BATHO_RULES_CUSTOM_RULES_PATH` | unset | YAML file containing custom BSG rules |
-| `BATHO_RULES_BUILTIN_PLUGINS` | `bsg_core` | Comma-separated built-in plugin names |
-| `BATHO_RULES_DISABLED_RULES` | unset | Comma-separated rule names to disable |
+| `BATHO_PLUGINS_ENABLED` | config value | `#/plugins` | BSG plugin catalog (Phase 4) |
+| `BATHO_PLUGINS_CUSTOM_PLUGINS_PATH` | unset | YAML file containing custom BSG plugins |
+| `BATHO_PLUGINS_BUILTIN_PLUGINS` | `bsg_core` | Comma-separated built-in plugin names |
+| `BATHO_PLUGINS_DISABLED_PLUGINS` | unset | Comma-separated plugin names to disable |
 | `BATHO_BSG_STORAGE_ENABLED` | `true` | Enable durable artifact registry |
 | `BATHO_BSG_STORAGE_REGISTRY_PATH` | `.ctn/artifact_registry.db` | Registry database path |
 | `BATHO_BSG_STORAGE_MMAP_ENABLED` | `false` | Enable mmap reads for large persisted JSON |

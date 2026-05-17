@@ -29,13 +29,12 @@ const BSG_CACHE_PREFIX = 'batho.bsg:';
 const BSG_CACHE_LIMIT_BYTES = 6_000_000;
 const L2_NODE_BUDGET = 2000;
 
-// Default layout per level. L2 prefers breadthfirst (file structure tends to
-// have a clear hierarchy), L3 uses concentric (center node in the middle),
-// and L1 falls back to cose for organic file clustering.
+// Default layout for all levels is COSE (organic spring embedding).
+// COSE provides the best visual clustering for all graph types.
 const DEFAULT_LAYOUT_BY_LEVEL = {
   1: 'cose',
-  2: 'breadthfirst',
-  3: 'concentric',
+  2: 'cose',
+  3: 'cose',
 };
 
 // --- module-scoped state ---------------------------------------------------
@@ -72,6 +71,7 @@ let _cyContainer = null;
 let _nodePositionsByLevel = { 1: new Map(), 2: new Map(), 3: new Map() };
 let _pendingSingleTap = null;
 let _lastTapNodeId = null;
+let _lastFilterKeys = {};
 
 function makeEmptyFilterState() {
   return {
@@ -129,6 +129,10 @@ export async function renderHypergraph(params, routeMeta) {
     try { _pageAbortController.abort(); } catch (_) {}
     _pageAbortController = null;
   }
+  if (_cyResizeObserver) {
+    try { _cyResizeObserver.disconnect(); } catch (_) {}
+    _cyResizeObserver = null;
+  }
   _focusNodeId = null;
 
   const container = document.createElement('div');
@@ -150,18 +154,16 @@ export async function renderHypergraph(params, routeMeta) {
   // Reset filter state when entering a new level/target combination to prevent
   // stale filters from hiding all nodes
   const filterKey = `${level}:${target}`;
-  const lastFilterKey = `_lastFilterKey_${level}`;
-  if (window[lastFilterKey] !== filterKey) {
-    window[lastFilterKey] = filterKey;
+  if (_lastFilterKeys[level] !== filterKey) {
+    _lastFilterKeys[level] = filterKey;
     _filterStateByLevel[level] = makeEmptyFilterState();
     console.debug('[batho] Reset filter state for', filterKey);
   }
 
   _currentLevel = level;
   _currentTarget = target;
-  _currentLayout = params.get('layout') && LAYOUTS.includes(params.get('layout'))
-    ? params.get('layout')
-    : DEFAULT_LAYOUT_BY_LEVEL[level];
+  // Always use COSE layout regardless of URL params - ignore any layout param
+  _currentLayout = DEFAULT_LAYOUT_BY_LEVEL[level];
 
   container.innerHTML = renderShellHtml();
   _drawer = createDrawer();
@@ -259,11 +261,8 @@ export async function renderHypergraph(params, routeMeta) {
       });
     }
 
-    window.addEventListener('batho:index-changed', () => {
-      // Force a clean reload when the active index changes — we have to
-      // refetch the bsg artifact.
-      router.handle();
-    }, { once: true, signal: _pageAbortController.signal });
+    // Global batho:index-changed listener in main.js handles re-rendering.
+    // Do not add a duplicate here to avoid concurrent router.handle() calls.
   } catch (err) {
     hideSkeleton(container); // Ensure skeleton is hidden on error
     container.innerHTML = renderErrorPanel(err);
@@ -774,7 +773,8 @@ function loadLevel(container, level, target) {
 
     // Phase 2.1 — Progressive loading for large L1 graphs.
     if (level === 1 && elements.length > 500) {
-        loadElementsProgressive(container, elements, () => {
+      loadElementsProgressive(container, elements, () => {
+        clearTimeout(skeletonSafetyTimeout);
         // Final pass: add any remaining edges whose endpoints are now available
         const remainingEdges = elements.filter(el => {
           if (!el.data.source || !el.data.target) return false; // Not an edge
@@ -1116,9 +1116,9 @@ function renderBreadcrumb(container, level, target) {
     { label: 'Files', route: '/hypergraph/files', active: level === 1, icon: '📁' },
   ];
 
+  let nodeRecForL3 = null;
   if (level >= 2) {
     let fileForCrumb = target;
-    let nodeRecForL3 = null;
     if (level === 3) {
       nodeRecForL3 = _bsgData?.nodes?.find?.((n) => n.id === target);
       fileForCrumb = nodeRecForL3?.file || '';
