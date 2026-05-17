@@ -45,7 +45,7 @@ jobs:
         run: |
           uv venv .test-venv
           source .test-venv/bin/activate
-          uv pip install --no-index --find-links dist/ batho
+          uv pip install --find-links dist/ "batho==$(cat pyproject.toml | grep '^version' | cut -d'"' -f2)"
 
           # Verify installation
           python -c "import batho; print(f'Batho version: {batho.__version__}')"
