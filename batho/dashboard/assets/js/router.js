@@ -1,13 +1,31 @@
 /**
  * Hash-based router with register/navigate/on('change') API.
+ *
+ * Supports a single style of dynamic segment: any path component of the form
+ * `:name` matches an arbitrary URL-encoded value and is exposed back to
+ * handlers via `params.get('name')`. Exact routes are tried first, then
+ * patterned routes in registration order, then the `*` wildcard fallback.
  */
 
 const router = {
   routes: new Map(),
+  // Patterned routes that contain `:param` segments. Keyed by the original
+  // pattern string to keep them deduped; values include a compiled regex
+  // and the ordered list of param names so we can populate URLSearchParams.
+  patternedRoutes: new Map(),
   listeners: new Map(),
   defaultRoute: '#/overview',
 
-  register(path, handler) { this.routes.set(path, handler); },
+  register(path, handler) {
+    if (path.includes(':')) {
+      this.patternedRoutes.set(path, {
+        handler,
+        ...compilePattern(path),
+      });
+    } else {
+      this.routes.set(path, handler);
+    }
+  },
 
   navigate(path, params = {}) {
     const queryString = Object.keys(params).length > 0
@@ -38,7 +56,22 @@ const router = {
   async handle() {
     const { path, params } = this.parseHash(location.hash || this.defaultRoute);
     this.emit('change', { path, params });
-    const handler = this.routes.get(path);
+
+    let handler = this.routes.get(path);
+    let matchedRoute = path;
+
+    if (!handler) {
+      for (const [pattern, entry] of this.patternedRoutes) {
+        const match = entry.regex.exec(path);
+        if (!match) continue;
+        for (let i = 0; i < entry.paramNames.length; i += 1) {
+          params.set(entry.paramNames[i], decodeURIComponent(match[i + 1] || ''));
+        }
+        handler = entry.handler;
+        matchedRoute = pattern;
+        break;
+      }
+    }
 
     if (!handler) {
       const wildcard = this.routes.get('*');
@@ -49,7 +82,7 @@ const router = {
       return;
     }
 
-    try { this.mount(await handler(params)); }
+    try { this.mount(await handler(params, { path, matchedRoute })); }
     catch (err) { this.emit('error', err); this.mount(this.renderError(err)); }
   },
 
@@ -97,5 +130,23 @@ const router = {
     this.handle();
   }
 };
+
+/**
+ * Compile a route pattern containing `:name` segments into a regex and an
+ * ordered list of param names. Each `:name` greedily matches a single
+ * (URL-encoded) path component but allows encoded slashes (`%2F`).
+ *
+ * Example: `'#/hypergraph/file/:fileId'` →
+ *   { regex: /^#\/hypergraph\/file\/([^/]+)$/, paramNames: ['fileId'] }
+ */
+function compilePattern(pattern) {
+  const paramNames = [];
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  const regexSrc = escaped.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (_, name) => {
+    paramNames.push(name);
+    return '([^/]+)';
+  });
+  return { regex: new RegExp('^' + regexSrc + '$'), paramNames };
+}
 
 export { router };

@@ -1,3 +1,5 @@
+import { streamParseGraph } from './graph-stream.js';
+
 /**
  * CTN loader - loads artifacts via the Batho bridge REST API.
  *
@@ -92,6 +94,17 @@ async function bridgeGet(path) {
   if (!envelope.ok) {
     const err = new MissingArtifactError(url);
     err.message = envelope.error?.message || err.message;
+    throw err;
+  }
+  return envelope.data;
+}
+
+async function bridgeGetWithProgress(path, onProgress) {
+  const url = `${BRIDGE_BASE}/${path}`;
+  const envelope = await parseJsonWithProgress(url, onProgress);
+  if (!envelope?.ok) {
+    const err = new MissingArtifactError(url);
+    err.message = envelope?.error?.message || err.message;
     throw err;
   }
   return envelope.data;
@@ -247,9 +260,21 @@ function parseOverviewMd(raw) {
   return doc;
 }
 
-export async function loadGraph(indexId) {
+export async function loadGraph(indexId, onProgress) {
   if (!indexId) throw new SchemaMismatchError('loadGraph requires an indexId');
-  const data = await bridgeGet(`artifacts/graph_json?index_id=${encodeURIComponent(indexId)}`);
+  const path = `artifacts/graph_json?index_id=${encodeURIComponent(indexId)}`;
+  let data;
+
+  if (onProgress) {
+    try {
+      const url = `${BRIDGE_BASE}/${path}`;
+      data = await streamParseGraph(url, onProgress);
+    } catch (_) {
+      data = await bridgeGetWithProgress(path, onProgress);
+    }
+  } else {
+    data = await bridgeGet(path);
+  }
 
   const entities = (data.entities || []).map(normalize);
   const relationships = (data.relationships || []).map(normalize);
@@ -261,9 +286,12 @@ export async function loadGraph(indexId) {
   return { entities, relationships, entitiesById };
 }
 
-export async function loadBsg(indexId) {
+export async function loadBsg(indexId, onProgress) {
   if (!indexId) throw new SchemaMismatchError('loadBsg requires an indexId');
-  const data = await bridgeGet(`artifacts/bsg_json?index_id=${encodeURIComponent(indexId)}`);
+  const path = `artifacts/bsg_json?index_id=${encodeURIComponent(indexId)}`;
+  const data = onProgress
+    ? await bridgeGetWithProgress(path, onProgress)
+    : await bridgeGet(path);
   return normalize(data);
 }
 

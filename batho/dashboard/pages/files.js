@@ -5,6 +5,7 @@
 import { loadIndex, loadFiles, loadGraph, MissingArtifactError } from '../assets/js/ctn-loader.js';
 import { formatInt } from '../assets/js/format.js';
 import { filterByGlob } from '../assets/js/glob.js';
+import { router } from '../assets/js/router.js';
 import { createDataTable, setRows } from '../shared/components/data-table.js';
 import { entityChipHtml } from '../shared/components/entity-chip.js';
 
@@ -100,6 +101,7 @@ export async function renderFiles(params) {
                 <div class="file-row__name">${escapeHtml(f.name)}</div>
                 <div class="file-row__path">${escapeHtml(f.relativePath)}</div>
                 <div class="file-row__entities">${formatInt(f.entitySummary.total)} entities ${breakdownChips}</div>
+                <button class="file-row__hypergraph" data-hypergraph-path="${escapeAttr(f.relativePath)}" title="View in Hypergraph (L2)" aria-label="View ${escapeAttr(f.relativePath)} in Hypergraph">⌥</button>
                 <div class="file-row__expand" data-file-path="${escapeAttr(f.relativePath)}">▸</div>
               </div>
               ${entityListHtml}
@@ -136,6 +138,14 @@ export async function renderFiles(params) {
             entityList.style.display = isHidden ? '' : 'none';
             e.currentTarget.textContent = isHidden ? '▾' : '▸';
           }
+        });
+      });
+
+      contentMount.querySelectorAll('.file-row__hypergraph').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const path = e.currentTarget.dataset.hypergraphPath;
+          if (path) router.navigate('/hypergraph/file/' + encodeURIComponent(path));
         });
       });
     }
@@ -259,6 +269,18 @@ const filesStyles = `
   .file-row__path { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file-row__entities { font-family: var(--font-mono); font-size: var(--type-terminal-size); color: var(--on-surface-variant); display: flex; gap: var(--space-tight); flex-wrap: wrap; }
   .file-row__expand { cursor: pointer; color: var(--accent-cyan); padding: 0 var(--space-tight); }
+  .file-row__hypergraph {
+    cursor: pointer;
+    color: var(--on-surface-variant);
+    background: transparent;
+    border: var(--hairline);
+    padding: 2px var(--space-tight);
+    font-family: var(--font-mono);
+    font-size: var(--type-terminal-size);
+    line-height: 1;
+    border-radius: 2px;
+  }
+  .file-row__hypergraph:hover { color: var(--accent-cyan); border-color: var(--accent-cyan); }
   .file-entities { padding: var(--space-tight) var(--space-gutter); display: flex; flex-wrap: wrap; gap: var(--space-tight); border-bottom: 1px solid var(--outline-variant); }
   .empty-state { color: var(--on-surface-variant); font-family: var(--font-mono); font-size: var(--type-node-code-size); padding: var(--space-gutter); text-align: center; }
   .empty-state code { color: var(--accent-cyan); }

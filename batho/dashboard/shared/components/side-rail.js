@@ -4,7 +4,10 @@
 
 const ROUTES = [
   { path: '#/overview', icon: 'index', label: 'Overview' },
-  { path: '#/hypergraph', icon: 'graph', label: 'Hypergraph' },
+  // Hypergraph nav target points at L1 directly; the `activePrefix` is used
+  // by the highlight logic so L2/L3 routes (e.g. `#/hypergraph/file/...`)
+  // also light up this rail item.
+  { path: '#/hypergraph/files', icon: 'graph', label: 'Hypergraph (files → node)', activePrefix: '#/hypergraph' },
   { path: '#/files', icon: 'files', label: 'Files' },
   { path: '#/relationships', icon: 'relationships', label: 'Entities' },
   { path: '#/rules', icon: 'rules', label: 'Rules' },
@@ -36,6 +39,7 @@ export function createSideRail(router) {
     item.className = 'side-rail__item';
     item.href = route.path;
     item.dataset.route = route.path;
+    if (route.activePrefix) item.dataset.activePrefix = route.activePrefix;
     item.title = route.label;
     item.innerHTML = `<span class="side-rail__icon">${ICONS[route.icon]}</span>`;
     item.addEventListener('click', (e) => { e.preventDefault(); router.navigate(route.path); });
@@ -45,7 +49,11 @@ export function createSideRail(router) {
   container.appendChild(nav);
   router.on('change', ({ path }) => {
     container.querySelectorAll('.side-rail__item').forEach(item => {
-      item.classList.toggle('side-rail__item--active', item.dataset.route === path);
+      const prefix = item.dataset.activePrefix;
+      const active = prefix
+        ? (path === prefix || path.startsWith(prefix + '/'))
+        : item.dataset.route === path;
+      item.classList.toggle('side-rail__item--active', active);
     });
   });
   return container;

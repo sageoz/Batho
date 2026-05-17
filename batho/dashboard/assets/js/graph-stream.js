@@ -146,6 +146,19 @@ async function fallbackParse(response, onProgress) {
   const text = await response.text();
   try {
     const data = JSON.parse(text);
+    if (data && typeof data === 'object' && Object.prototype.hasOwnProperty.call(data, 'ok')) {
+      if (!data.ok) {
+        const message = data.error?.message || 'Missing artifact';
+        throw new Error(message);
+      }
+      const payload = data.data || {};
+      const entities = payload.entities || [];
+      const relationships = payload.relationships || [];
+      if (onProgress) {
+        onProgress({ entities, relationships, percent: 100 });
+      }
+      return { entities, relationships };
+    }
     const entities = data.entities || [];
     const relationships = data.relationships || [];
     if (onProgress) {

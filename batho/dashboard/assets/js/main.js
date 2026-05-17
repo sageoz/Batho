@@ -70,7 +70,19 @@ async function init() {
   app.appendChild(aside);
 
   router.register('#/overview', renderOverview);
-  router.register('#/hypergraph', renderHypergraph);
+  // Hypergraph is now a three-level drill-down viewer. The bare route
+  // redirects to the L1 file graph; the patterned routes capture the
+  // file or node identifier for L2 / L3 respectively.
+  router.register('#/hypergraph', () => {
+    router.navigate('/hypergraph/files');
+    const placeholder = document.createElement('div');
+    placeholder.className = 'panel panel--stub';
+    placeholder.innerHTML = '<div class="loading"><span class="loading__cursor"></span><span>redirecting…</span></div>';
+    return placeholder;
+  });
+  router.register('#/hypergraph/files', renderHypergraph);
+  router.register('#/hypergraph/file/:fileId', renderHypergraph);
+  router.register('#/hypergraph/node/:nodeId', renderHypergraph);
   router.register('#/files', renderFiles);
   router.register('#/relationships', renderRelationships);
   router.register('#/rules', renderRules);
