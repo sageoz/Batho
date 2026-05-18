@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "batho"
-version = "1.0.0"
-description = "Enterprise-ready multi-language code indexer with interactive web dashboard, BSG compression, and Time Machine snapshots."
+version = "1.1.0"
+description = "Enterprise-ready multi-language code indexer with interactive web dashboard, BSG compression, MCP hub, and Time Machine snapshots."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
@@ -41,6 +41,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
     "pytest-xdist>=3.0.0",
     "pytest-timeout>=2.3.0",
@@ -80,6 +81,7 @@ fail_under = 0
 dev = [
     "black>=26.3.1",
     "isort>=8.0.1",
+    "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",

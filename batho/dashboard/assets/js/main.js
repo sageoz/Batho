@@ -15,6 +15,7 @@ import { renderPlugins } from '../../pages/rules.js';
 import { renderSnapshots } from '../../pages/snapshots.js';
 import { renderMetrics } from '../../pages/metrics.js';
 import { renderSearch } from '../../pages/search.js';
+import { renderMcp } from '../../pages/mcp.js';
 
 async function init() {
   const app = document.getElementById('app');
@@ -91,6 +92,7 @@ async function init() {
   router.register('#/snapshots', renderSnapshots);
   router.register('#/metrics', renderMetrics);
   router.register('#/search', renderSearch);
+  router.register('#/mcp', renderMcp);
   router.register('*', async () => {
     const container = document.createElement('div');
     container.className = 'panel panel--stub not-found';

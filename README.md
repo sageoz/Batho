@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://pypi.org/project/batho/"><img src="https://img.shields.io/pypi/v/batho?color=blue" alt="PyPI"></a>
-  <a href="https://github.com/sageoz/batho/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/v1.0.0-release-orange" alt="v1.0.0"></a>
+  <a href="https://github.com/sageoz/batho/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/v1.1.0-release-orange" alt="v1.1.0"></a>
   <a href="https://github.com/sageoz/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   <a href="https://batho.sageoz.org"><img src="https://img.shields.io/badge/docs-batho.sageoz.org-green" alt="Documentation"></a>
 </p>
@@ -55,20 +55,56 @@ batho patch --root . --scan
 - **SQLite-backed caching** — 95%+ cache hit rates for incremental updates
 - **Zero code execution** — Safe to run in CI, pre-commit, or on untrusted repos
 
-## 🆕 What's New in v1.0.0
+## 🆕 What's New in v1.1.0
 
-The interactive **Dashboard** is the centerpiece of v1:
+The **MCP Hub** is the centerpiece of v1.1.0:
+
+- **Multi-workspace support**: Manage 100+ codebases from one endpoint
+- **Cross-repo search**: Search across all workspaces simultaneously
+- **Lazy mount + LRU residency**: Host many workspaces with minimal RAM
+- **Prometheus telemetry**: Full observability with `/api/v1/metrics`
+- **Structured logging**: Every tool call logged with latency and status
+- **Stress-tested**: 1000 concurrent requests, failure injection
+
+**Interactive Dashboard** (v1.0 features):
 
 - **9 pages**: Overview, Hypergraph, Files, File Viewer, Relationships, Rules, Metrics, Snapshots, Search
 - **Keyboard shortcuts**: `Ctrl/Cmd + K` for search, `Ctrl/Cmd + D` for dark mode, graph zoom controls
 - **Export options**: PNG, SVG, JSON, CSV
-- **Real-time code intelligence** with 859+ automated tests
+- **Real-time code intelligence** with 900+ automated tests
 
-**Artifact Bridge** enables IDE integrations:
+## 🤖 MCP Server
 
-- REST API server (`batho bridge serve`)
-- MCP server for Claude, Cursor, and other AI tools
-- Cloud sync capabilities
+Batho exposes an MCP (Model Context Protocol) server for AI tool integration:
+
+```bash
+# Start MCP server
+batho mcp serve
+
+# Or via REST API
+batho bridge serve
+```
+
+**Configure in `~/.batho/mcp.yaml`:**
+
+```yaml
+server:
+  host: "127.0.0.1"
+  port: 8765
+
+workspaces:
+  - id: "my-project"
+    ctn_dir: "/path/to/project/.ctn"
+```
+
+**Tools available:**
+- `workspace_list`, `workspace_health`, `workspace_stats`
+- `artifact_get`, `artifact_list`, `artifact_search`
+- `file_read`, `file_list`, `file_outline`
+- `graph_get`, `graph_search`, `graph_relationships`
+- `cross_search`, `cross_symbols`, `cross_dependencies`
+
+See [MCP Documentation](https://batho.sageoz.org/docs/mcp) for full reference.
 
 ## 🔄 How It Works
 

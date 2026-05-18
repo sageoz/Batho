@@ -14,6 +14,7 @@ const ROUTES = [
   { path: '#/metrics', icon: 'metrics', label: 'Metrics', group: 'tools' },
   { path: '#/snapshots', icon: 'snapshots', label: 'Snapshots', group: 'tools' },
   { path: '#/search', icon: 'search', label: 'Search', group: 'tools' },
+  { path: '#/mcp', icon: 'mcp', label: 'MCP', group: 'tools' },
 ];
 
 const ICONS = {
@@ -25,6 +26,7 @@ const ICONS = {
   snapshots: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
   metrics: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
   search: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+  mcp: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6"/><path d="M9 13h6"/><path d="M9 17h4"/></svg>`,
 };
 
 export function createSideRail(router) {

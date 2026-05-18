@@ -119,6 +119,10 @@ class ArtifactLoader:
 
         return None
 
+    def resolve_path(self, artifact_type: str, *, index_id: str | None = None) -> Path | None:
+        """Public wrapper around internal artifact path resolution."""
+        return self._resolve_path(artifact_type, index_id=index_id)
+
     def load_json(
         self,
         artifact_type: str,

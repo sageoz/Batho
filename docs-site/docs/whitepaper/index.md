@@ -54,7 +54,7 @@ flowchart TB
     subgraph Output["Consumption Interfaces"]
         CLI["batho CLI<br/>(Commands and Queries)"]
         DASH["Dashboard<br/>(Vanilla JS UI)"]
-        BRIDGE["Artifact Bridge<br/>(REST and MCP)"]
+        BRIDGE["MCP Hub<br/>(REST, MCP, Multi-workspace)"]
         HOOKS["Git Hooks<br/>(Governance Automation)"]
     end
 
@@ -91,7 +91,7 @@ flowchart TB
 | Figure 8 | Incremental Patch Lifecycle | Time Machine |
 | Figure 9 | Git Hooks Architecture | Git Hooks Enterprise |
 | Figure 10 | Dashboard Architecture | Interactive Dashboard |
-| Figure 11 | Bridge Modes | Artifact Bridge & MCP |
+| Figure 11 | MCP Hub Architecture | Artifact Bridge & MCP Hub |
 | Figure 12 | Security Architecture Overview | Security & Governance |
 | Figure 13 | Zero-Code-Execution Guarantee | Security & Governance |
 | Figure 14 | BSG Interceptor Pipeline | Security & Governance |
@@ -120,7 +120,7 @@ flowchart TB
 5. [Time Machine & Incremental Patching](/docs/whitepaper/time-machine)
 6. [Git Hooks Enterprise](/docs/whitepaper/git-hooks)
 7. [Interactive Dashboard](/docs/whitepaper/dashboard)
-8. [Artifact Bridge & MCP Integration](/docs/whitepaper/bridge-mcp)
+8. [Artifact Bridge & MCP Hub](/docs/whitepaper/bridge-mcp)
 9. [Security & Governance](/docs/whitepaper/security)
 10. [Performance & Scalability](/docs/whitepaper/performance)
 11. [Deployment & Operations](/docs/whitepaper/deployment)
@@ -132,6 +132,7 @@ flowchart TB
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.1.0 | 2026-05-18 | Batho Core Team | Added MCP Hub multi-workspace documentation |
 | 1.0.0 | 2026-05-17 | Batho Core Team | Initial whitepaper for Batho v1 |
 
 ---

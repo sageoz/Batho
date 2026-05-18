@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from batho.bridge.constants import ARTIFACT_RECORD_FIELDS, DEFAULT_PAGE_LIMIT
 from batho.bridge.models import ArtifactRecord, IndexEntry, RegistryStats
@@ -13,6 +13,9 @@ from batho.context.storage import ArtifactRegistry, get_artifact_registry
 from batho.utils.logging import get_logger
 
 LOGGER = get_logger(__name__, component="bridge")
+
+
+ConnectionFactory = Callable[[], sqlite3.Connection]
 
 
 def _safe_json_loads(payload: str) -> dict[str, Any]:
@@ -28,27 +31,64 @@ def _safe_json_loads(payload: str) -> dict[str, Any]:
 class ArtifactRegistryBridge:
     """Thin bridge over ``ArtifactRegistry`` with typed query methods."""
 
-    def __init__(self, ctn_dir: Path) -> None:
+    def __init__(
+        self,
+        ctn_dir: Path,
+        connection_factory: ConnectionFactory | None = None,
+        pool: ConnectionPool | None = None,
+    ) -> None:
         self.ctn_dir = ctn_dir.resolve()
-        self._registry: ArtifactRegistry = get_artifact_registry(self.ctn_dir)
+        self._connection_factory = connection_factory
+        self._pool = pool
+        self._registry: ArtifactRegistry | None = None
+        if connection_factory is None and pool is None:
+            self._registry = get_artifact_registry(self.ctn_dir)
+
+    def _get_connection(self) -> sqlite3.Connection:
+        """Get a connection using the pool, factory, or registry."""
+        if self._pool:
+            return self._pool.acquire()
+        if self._connection_factory:
+            return self._connection_factory()
+        if self._registry:
+            return self._registry._connect(row_factory=True)
+        raise RuntimeError("No connection source available")
+
+    def _release_connection(self, conn: sqlite3.Connection) -> None:
+        """Release a connection back to the source."""
+        if self._pool:
+            self._pool.release(conn)
+        else:
+            conn.close()
 
     @property
     def registry_path(self) -> Path:
-        return self._registry.registry_path
+        if self._pool:
+            return self._pool._db_path
+        if self._registry:
+            return self._registry.registry_path
+        return self.ctn_dir / "artifact_registry.sqlite3"
 
     @property
     def enabled(self) -> bool:
-        return bool(self._registry.enabled and self._registry._ready)
+        if self._pool:
+            return self.registry_path.exists()
+        if self._connection_factory:
+            return self.registry_path.exists()
+        return bool(self._registry and self._registry.enabled and self._registry._ready)
 
     def list_artifact_types(self) -> list[str]:
         """Return distinct artifact types present in the registry."""
         if not self.enabled:
             return []
-        with self._registry._connect(row_factory=True) as conn:
+        conn = self._get_connection()
+        try:
             rows = conn.execute(
                 "SELECT DISTINCT artifact_type FROM artifacts WHERE deleted = 0 ORDER BY artifact_type"
             ).fetchall()
-        return [str(row["artifact_type"]) for row in rows]
+            return [str(row["artifact_type"]) for row in rows]
+        finally:
+            self._release_connection(conn)
 
     def get_artifacts_by_type(
         self, artifact_type: str, *, limit: int | None = None
@@ -57,7 +97,8 @@ class ArtifactRegistryBridge:
         if not self.enabled:
             return []
         limit = limit if limit is not None else DEFAULT_PAGE_LIMIT
-        with self._registry._connect(row_factory=True) as conn:
+        conn = self._get_connection()
+        try:
             rows = conn.execute(
                 "SELECT artifact_id, content_id, artifact_type, logical_path, physical_path, "
                 "checksum, size_bytes, schema_version, producer, run_id, sync_status, "
@@ -67,13 +108,16 @@ class ArtifactRegistryBridge:
                 "ORDER BY updated_at DESC LIMIT ?",
                 (artifact_type, max(1, int(limit))),
             ).fetchall()
-        return [_row_to_record(row) for row in rows]
+            return [_row_to_record(row) for row in rows]
+        finally:
+            self._release_connection(conn)
 
     def get_artifact_by_logical_path(self, logical_path: str) -> ArtifactRecord | None:
         """Return the most recent active artifact by logical path."""
         if not self.enabled:
             return None
-        with self._registry._connect(row_factory=True) as conn:
+        conn = self._get_connection()
+        try:
             row = conn.execute(
                 "SELECT artifact_id, content_id, artifact_type, logical_path, physical_path, "
                 "checksum, size_bytes, schema_version, producer, run_id, sync_status, "
@@ -83,9 +127,11 @@ class ArtifactRegistryBridge:
                 "ORDER BY updated_at DESC LIMIT 1",
                 (logical_path,),
             ).fetchone()
-        if row is None:
-            return None
-        return _row_to_record(row)
+            if row is None:
+                return None
+            return _row_to_record(row)
+        finally:
+            self._release_connection(conn)
 
     def get_latest_index(self) -> IndexEntry | None:
         """Read ``.ctn/index.json`` and return the current index entry."""
@@ -132,7 +178,8 @@ class ArtifactRegistryBridge:
         if not self.enabled:
             return []
         pattern = f"%{query}%"
-        with self._registry._connect(row_factory=True) as conn:
+        conn = self._get_connection()
+        try:
             if artifact_type:
                 rows = conn.execute(
                     "SELECT artifact_id, content_id, artifact_type, logical_path, physical_path, "
@@ -153,10 +200,29 @@ class ArtifactRegistryBridge:
                     "ORDER BY updated_at DESC LIMIT ?",
                     (pattern, DEFAULT_PAGE_LIMIT),
                 ).fetchall()
-        return [_row_to_record(row) for row in rows]
+            return [_row_to_record(row) for row in rows]
+        finally:
+            self._release_connection(conn)
 
     def stats(self) -> RegistryStats:
         """Return registry statistics."""
+        if self._pool or self._connection_factory:
+            try:
+                conn = self._get_connection()
+                try:
+                    cursor = conn.execute("SELECT COUNT(*) as count FROM artifacts WHERE deleted = 0")
+                    row = cursor.fetchone()
+                    artifact_count = row["count"] if row else 0
+                    return RegistryStats(
+                        enabled=self.enabled,
+                        registry_path=str(self.registry_path),
+                        backend="sqlite",
+                        artifact_count=artifact_count,
+                    )
+                finally:
+                    self._release_connection(conn)
+            except Exception:
+                return RegistryStats(enabled=False)
         raw = self._registry.stats()
         return RegistryStats(
             enabled=raw.get("enabled", False),

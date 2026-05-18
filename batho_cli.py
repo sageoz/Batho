@@ -3560,10 +3560,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     _register_dashboard_subcommands(sub)
 
-    # Bridge: artifact registry REST and MCP server
-    from batho.cli.bridge import register_cli_subcommands as _register_bridge_subcommands
+    # MCP Hub: multi-workspace context server
+    from batho.cli.mcp import register_cli_subcommands as _register_mcp_subcommands
 
-    _register_bridge_subcommands(sub)
+    _register_mcp_subcommands(sub)
 
     return parser
 
