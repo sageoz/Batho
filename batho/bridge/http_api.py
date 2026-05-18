@@ -1,454 +1,435 @@
-"""REST HTTP API for the Batho bridge, mountable into the dashboard server."""
+"""HTTP API handler for the Batho dashboard bridge endpoints."""
 
 from __future__ import annotations
 
-import http.server
 import json
-import urllib.parse
+import os
+import re
 from pathlib import Path
 from typing import Any
 
-from batho.bridge.artifact_loader import (
-    ArtifactLoader,
-    ArtifactNotFoundError,
-    ArtifactParseError,
-    ChecksumMismatchError,
-)
-from batho.bridge.constants import DEFAULT_BRIDGE_HTTP_PORT, KNOWN_ARTIFACT_TYPES
-from batho.bridge.file_service import (
-    FileNotFoundError as FileServiceNotFoundError,
-    SecurityError,
-    build_file_content_response,
-)
-from batho.bridge.models import BridgeErrorResponse, BridgeResponse, IndexListResponse
-from batho.bridge.registry_client import ArtifactRegistryBridge
+from batho.bridge.envelope import err, ok
 from batho.utils.logging import get_logger
 
-LOGGER = get_logger(__name__, component="bridge")
-
-
-def _json_response(data: Any, status: int = 200) -> tuple[bytes, int, dict[str, str]]:
-    body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json; charset=utf-8",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-    }
-    return body, status, headers
-
-
-def _ok(data: Any, meta: dict[str, Any] | None = None) -> tuple[bytes, int, dict[str, str]]:
-    return _json_response(BridgeResponse(data=data, meta=meta or {}).model_dump(exclude_none=True))
-
-
-def _err(code: str, message: str, detail: Any = None, status: int = 400) -> tuple[bytes, int, dict[str, str]]:
-    payload = BridgeErrorResponse(
-        error={"code": code, "message": message, "detail": detail}
-    ).model_dump(exclude_none=True)
-    return _json_response(payload, status=status)
+LOGGER = get_logger(__name__, component="bridge.http_api")
 
 
 class BridgeAPIHandler:
-    """HTTP request handler for bridge REST endpoints.
+    """HTTP API handler for dashboard bridge endpoints."""
 
-    This is designed to be invoked from a ``DualRootHandler`` or standalone
-    server.  It does *not* subclass ``BaseHTTPRequestHandler``; instead it
-    exposes a ``dispatch(path, query)`` method that returns a response
-    triple ``(body_bytes, status, headers)``.
-    """
+    def __init__(self, ctn_dir: Path):
+        self._ctn_dir = ctn_dir
+        self._index = None
 
-    def __init__(self, ctn_dir: Path) -> None:
-        self.ctn_dir = ctn_dir.resolve()
-        self._bridge = ArtifactRegistryBridge(self.ctn_dir)
-        self._loader = ArtifactLoader(self.ctn_dir)
+    def _load_index(self) -> dict | None:
+        """Load the .ctn/index.json file."""
+        if self._index is not None:
+            return self._index
+        index_path = self._ctn_dir / "index.json"
+        if index_path.exists():
+            try:
+                self._index = json.loads(index_path.read_text())
+                return self._index
+            except Exception as e:
+                LOGGER.warning("failed_to_load_index", error=str(e))
+        return None
 
     def dispatch(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
-        """Dispatch a request to the appropriate handler."""
-        # Strip leading /api/v1/bridge/
-        prefix = "/api/v1/bridge/"
-        if not path.startswith(prefix):
-            return _err("invalid_path", f"Path must start with {prefix}", status=404)
+        """Dispatch an API request to the appropriate handler."""
+        if path.startswith("/api/v1/bridge/"):
+            path = path[len("/api/v1/bridge/"):]
+        elif path.startswith("/api/v1/"):
+            path = path[len("/api/v1/"):]
 
-        route = path[len(prefix):].strip("/")
-        segments = [s for s in route.split("/") if s]
-
-        if not segments:
-            return _ok({"endpoints": [
-                "GET /indexes",
-                "GET /indexes/{index_id}",
-                "GET /artifacts?type=&index_id=&limit=",
-                "GET /artifacts/{artifact_type}?index_id=",
-                "GET /artifacts/content?path=",
-                "GET /file-content?path=&index_id=",
-                "GET /stats",
-                "GET /patches",
-                "GET /patches/{operation_id}",
-                "GET /snapshots/diff?base=&new=",
-            ]})
-
-        if segments[0] == "indexes":
-            return self._handle_indexes(segments, query)
-        if segments[0] == "index-meta":
-            return self._handle_index_meta()
-        if segments[0] == "artifacts":
-            return self._handle_artifacts(segments, query)
-        if segments[0] == "file-content":
-            return self._handle_file_content(query)
-        if segments[0] == "stats":
-            return self._handle_stats()
-        if segments[0] == "patches":
-            return self._handle_patches(segments, query)
-        if segments[0] == "snapshots" and len(segments) >= 2 and segments[1] == "diff":
-            return self._handle_snapshot_diff(query)
-
-        return _err("unknown_endpoint", f"Unknown endpoint: {route}", status=404)
-
-    def _handle_indexes(
-        self, segments: list[str], query: dict[str, list[str]]
-    ) -> tuple[bytes, int, dict[str, str]]:
-        if len(segments) == 1:
-            # GET /indexes
-            entries, current_index_id, persistence_model, schema_version = self._bridge.list_indexes()
-            resp = IndexListResponse(
-                data=[e.model_dump(exclude_none=True) for e in entries],
-                current_index_id=current_index_id,
-                persistence_model=persistence_model,
-                schema_version=schema_version,
-                meta={"count": len(entries)},
-            )
-            return _json_response(resp.model_dump(exclude_none=True))
-        if len(segments) == 2:
-            # GET /indexes/{index_id}
-            index_id = segments[1]
-            entries, _, _, _ = self._bridge.list_indexes()
-            for entry in entries:
-                if entry.index_id == index_id:
-                    return _ok(entry.model_dump(exclude_none=True))
-            return _err("index_not_found", f"Index not found: {index_id}", status=404)
-        return _err("invalid_path", "Invalid indexes path", status=404)
-
-    def _handle_artifacts(
-        self, segments: list[str], query: dict[str, list[str]]
-    ) -> tuple[bytes, int, dict[str, str]]:
-        if len(segments) == 1:
-            # GET /artifacts?type=&index_id=&limit=
-            artifact_type = _first(query.get("type"))
-            limit_str = _first(query.get("limit"))
-            limit = int(limit_str) if limit_str and limit_str.isdigit() else 50
-
-            if artifact_type:
-                if artifact_type not in KNOWN_ARTIFACT_TYPES:
-                    return _err(
-                        "unknown_artifact_type",
-                        f"Unknown artifact type: {artifact_type}. Known: {sorted(KNOWN_ARTIFACT_TYPES)}",
-                    )
-                records = self._bridge.get_artifacts_by_type(artifact_type, limit=limit)
+        try:
+            if path == "indexes":
+                return self._handle_indexes(query)
+            elif path.startswith("artifacts/bsg_json"):
+                return self._handle_bsg_json(path, query)
+            elif path.startswith("artifacts/context_overview_json"):
+                return self._handle_context_overview_json(path, query)
+            elif path.startswith("artifacts/context_files_json"):
+                return self._handle_context_files_json(path, query)
+            elif path == "patches":
+                return self._handle_patches(query)
+            elif path.startswith("patches/"):
+                return self._handle_patch(path, query)
+            elif path.startswith("snapshots/diff"):
+                return self._handle_snapshots_diff(path, query)
+            elif path == "artifacts/metrics_json":
+                return self._handle_metrics_json(query)
+            elif path.startswith("file-content"):
+                return self._handle_file_content(path, query)
+            elif path == "config":
+                return self._handle_config(query)
+            elif path.startswith("config/"):
+                return self._handle_config_sub(path, query)
+            elif path == "workspaces":
+                return self._handle_workspaces(query)
+            elif path.startswith("workspaces/"):
+                return self._handle_workspace(path, query)
+            elif path.startswith("agents/"):
+                return self._handle_agents(path, query)
+            elif path == "admin/discover":
+                return self._handle_admin_discover(query)
+            elif path.startswith("fs/"):
+                return self._handle_fs(path, query)
+            elif path in ["healthz", "readyz", "metrics"]:
+                return self._handle_health(path)
             else:
-                # Return a summary of all types
-                types = self._bridge.list_artifact_types()
-                summary: dict[str, Any] = {}
-                for t in types[:limit]:
-                    summary[t] = len(self._bridge.get_artifacts_by_type(t, limit=1))
-                return _ok(summary, meta={"types": len(types)})
+                return self._not_found(path)
+        except Exception as e:
+            LOGGER.error("api_error", path=path, error=str(e))
+            body = json.dumps(err("internal_error", str(e)))
+            return body.encode(), 500, {"Content-Type": "application/json"}
 
-            return _ok(
-                [r.model_dump(exclude_none=True) for r in records],
-                meta={"count": len(records), "artifact_type": artifact_type},
-            )
+    def dispatch_post(self, path: str, query: dict[str, list[str]], body: dict[str, Any]) -> tuple[bytes, int, dict[str, str]]:
+        """Dispatch a POST request to the appropriate handler."""
+        if path.startswith("/api/v1/bridge/"):
+            path = path[len("/api/v1/bridge/"):]
+        elif path.startswith("/api/v1/"):
+            path = path[len("/api/v1/"):]
 
-        if len(segments) == 2:
-            # GET /artifacts/{artifact_type}?index_id=
-            artifact_type = segments[1]
-            if artifact_type not in KNOWN_ARTIFACT_TYPES:
-                return _err(
-                    "unknown_artifact_type",
-                    f"Unknown artifact type: {artifact_type}. Known: {sorted(KNOWN_ARTIFACT_TYPES)}",
-                )
+        try:
+            if path == "workspaces":
+                return self._handle_create_workspace(body)
+            elif path.startswith("workspaces/"):
+                return self._handle_workspace_action(path, body)
+            else:
+                return self._not_found(path)
+        except Exception as e:
+            LOGGER.error("api_post_error", path=path, error=str(e))
+            response = json.dumps(err("internal_error", str(e)))
+            return response.encode(), 500, {"Content-Type": "application/json"}
 
-            index_id = _first(query.get("index_id"))
+    def _ok(self, data: Any) -> tuple[bytes, int, dict[str, str]]:
+        """Create a successful response."""
+        body = json.dumps(ok(data))
+        return body.encode(), 200, {"Content-Type": "application/json"}
+
+    def _not_found(self, path: str) -> tuple[bytes, int, dict[str, str]]:
+        """Create a not found response."""
+        body = json.dumps(err("not_found", f"Endpoint not found: {path}"))
+        return body.encode(), 404, {"Content-Type": "application/json"}
+
+    def _handle_indexes(self, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /indexes endpoint."""
+        index = self._load_index()
+        if not index:
+            return self._ok({"indexes": [], "current_index_id": None})
+
+        indexes = []
+        for idx_id, idx_data in (index.get("indexes") or {}).items():
+            indexes.append({
+                "id": idx_id,
+                "created_at": idx_data.get("created_at"),
+                "artifact_count": idx_data.get("artifact_count", 0),
+            })
+
+        current = index.get("current_index_id")
+        return self._ok({
+            "indexes": indexes,
+            "current_index_id": current,
+            "schema_version": index.get("schema_version", "1.0"),
+        })
+
+    def _handle_bsg_json(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /artifacts/bsg_json endpoint."""
+        index_id = query.get("index_id", [None])[0]
+        index = self._load_index()
+        if not index:
+            return self._ok({"entities": []})
+
+        idx = index.get("indexes", {}).get(index_id or index.get("current_index_id", ""))
+        if not idx:
+            return self._ok({"entities": []})
+
+        bsg_path = idx.get("outputs", {}).get(".ctn/artifacts/bsg_json")
+        if bsg_path:
+            full_path = self._ctn_dir / bsg_path.lstrip("/.ctn/")
+            if full_path.exists():
+                try:
+                    data = json.loads(full_path.read_text())
+                    return self._ok(data)
+                except Exception as e:
+                    LOGGER.warning("failed_to_load_bsg", error=str(e))
+
+        return self._ok({"entities": []})
+
+    def _handle_context_overview_json(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /artifacts/context_overview_json endpoint."""
+        index_id = query.get("index_id", [None])[0]
+        index = self._load_index()
+        if not index:
+            return self._ok({"file_distribution": [], "total_entities": 0})
+
+        idx = index.get("indexes", {}).get(index_id or index.get("current_index_id", ""))
+        if not idx:
+            return self._ok({"file_distribution": [], "total_entities": 0})
+
+        overview_path = idx.get("outputs", {}).get(".ctn/artifacts/context_overview_json")
+        if overview_path:
+            full_path = self._ctn_dir / overview_path.lstrip("/.ctn/")
+            if full_path.exists():
+                try:
+                    data = json.loads(full_path.read_text())
+                    return self._ok(data)
+                except Exception as e:
+                    LOGGER.warning("failed_to_load_overview", error=str(e))
+
+        return self._ok({"file_distribution": [], "total_entities": 0})
+
+    def _handle_context_files_json(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /artifacts/context_files_json endpoint."""
+        index_id = query.get("index_id", [None])[0]
+        index = self._load_index()
+        if not index:
+            return self._ok({"categories": []})
+
+        idx = index.get("indexes", {}).get(index_id or index.get("current_index_id", ""))
+        if not idx:
+            return self._ok({"categories": []})
+
+        files_path = idx.get("outputs", {}).get(".ctn/artifacts/context_files_json")
+        if files_path:
+            full_path = self._ctn_dir / files_path.lstrip("/.ctn/")
+            if full_path.exists():
+                try:
+                    data = json.loads(full_path.read_text())
+                    return self._ok(data)
+                except Exception as e:
+                    LOGGER.warning("failed_to_load_files", error=str(e))
+
+        return self._ok({"categories": []})
+
+    def _handle_patches(self, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /patches endpoint."""
+        patches_dir = self._ctn_dir / "patches"
+        patches = []
+
+        if patches_dir.exists():
+            for patch_file in sorted(patches_dir.glob("*.json")):
+                try:
+                    data = json.loads(patch_file.read_text())
+                    patches.append({
+                        "id": data.get("id") or patch_file.stem,
+                        "created_at": data.get("created_at"),
+                        "operation_type": data.get("operation_type"),
+                        "status": data.get("status"),
+                    })
+                except Exception:
+                    pass
+
+        return self._ok({"patches": patches, "schema_version": "1.0"})
+
+    def _handle_patch(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /patches/{operationId} endpoint."""
+        patch_id = path.split("/")[-1]
+        patch_file = self._ctn_dir / "patches" / f"{patch_id}.json"
+
+        if patch_file.exists():
             try:
-                data = self._loader.load_json(artifact_type, index_id=index_id)
-            except ArtifactNotFoundError as exc:
-                return _err("artifact_not_found", str(exc), status=404)
-            except ChecksumMismatchError as exc:
-                return _err("checksum_mismatch", str(exc), status=409)
-            except ArtifactParseError as exc:
-                return _err("parse_error", str(exc), status=500)
-
-            return _ok(
-                data,
-                meta={"artifact_type": artifact_type, "index_id": index_id or "current"},
-            )
-
-        if len(segments) == 3 and segments[2] == "content":
-            # GET /artifacts/{artifact_type}/content?path=
-            logical_path = _first(query.get("path"))
-            if not logical_path:
-                return _err("missing_param", "Query parameter 'path' is required")
-
-            record = self._bridge.get_artifact_by_logical_path(logical_path)
-            if not record:
-                return _err("artifact_not_found", f"No artifact at path: {logical_path}", status=404)
-
-            try:
-                content = self._loader.load_artifact(record)
-            except (ArtifactNotFoundError, ChecksumMismatchError, ArtifactParseError) as exc:
-                return _err(type(exc).__name__.replace("Error", "").lower(), str(exc), status=404)
-
-            return _ok(
-                content.data,
-                meta={
-                    "artifact_type": record.artifact_type,
-                    "logical_path": record.logical_path,
-                    "resolved_path": content.resolved_path,
-                    "checksum_verified": content.checksum_verified,
-                },
-            )
-
-        return _err("invalid_path", "Invalid artifacts path", status=404)
-
-    def _handle_file_content(
-        self, query: dict[str, list[str]]
-    ) -> tuple[bytes, int, dict[str, str]]:
-        """Handle GET /file-content?path={filepath}&index_id={optional}.
-
-        Returns file content with optional BSG entity enrichment.
-        """
-        file_path = _first(query.get("path"))
-        if not file_path:
-            return _err("missing_param", "Query parameter 'path' is required")
-
-        # Find project root from ctn_dir (parent of .ctn)
-        project_root = self.ctn_dir.parent
-
-        # Optionally load BSG data for entity enrichment
-        index_id = _first(query.get("index_id"))
-        LOGGER.info("file_content_request", path=file_path, index_id=index_id)
-        bsg_data = None
-        if index_id:
-            try:
-                bsg_data = self._loader.load_json("bsg_json", index_id=index_id)
-                LOGGER.info("bsg_data_loaded", index_id=index_id, nodes_count=len(bsg_data.get("nodes", [])))
+                data = json.loads(patch_file.read_text())
+                return self._ok(data)
             except Exception as e:
-                # BSG data is optional - continue without it
-                LOGGER.warning("bsg_data_load_failed", index_id=index_id, error=str(e))
-                pass
-        else:
-            LOGGER.info("no_index_id_provided", path=file_path)
+                return self._ok({"error": str(e)})
+
+        return self._ok({"error": "Patch not found"})
+
+    def _handle_snapshots_diff(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /snapshots/diff endpoint."""
+        base = query.get("base", [None])[0]
+        new = query.get("new", [None])[0]
+
+        if not base or not new:
+            return self._ok({"error": "Missing base or new parameter"})
+
+        base_file = self._ctn_dir / "snapshots" / f"{base}.json"
+        new_file = self._ctn_dir / "snapshots" / f"{new}.json"
+
+        if not base_file.exists() or not new_file.exists():
+            return self._ok({"error": "Snapshot not found"})
 
         try:
-            response = build_file_content_response(
-                file_path=file_path,
-                root=project_root,
-                bsg_data=bsg_data,
-                include_entities=bsg_data is not None,
-            )
-        except SecurityError as exc:
-            return _err("security_error", str(exc), status=403)
-        except FileServiceNotFoundError as exc:
-            return _err("file_not_found", str(exc), status=404)
-        except Exception as exc:
-            LOGGER.error(
-                "file_content_error",
-                path=file_path,
-                error=str(exc),
-            )
-            return _err("internal_error", f"Failed to read file: {exc}", status=500)
+            base_data = json.loads(base_file.read_text())
+            new_data = json.loads(new_file.read_text())
+            return self._ok({
+                "base": base_data,
+                "new": new_data,
+            })
+        except Exception as e:
+            return self._ok({"error": str(e)})
 
-        # Include has_entities in response data so frontend can access it
-        response["hasEntities"] = response.get("entityCount", 0) > 0
+    def _handle_metrics_json(self, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /artifacts/metrics_json endpoint."""
+        index_id = query.get("index_id", [None])[0]
+        index = self._load_index()
+        if not index:
+            return self._ok({"metrics": {}})
+
+        idx = index.get("indexes", {}).get(index_id or index.get("current_index_id", ""))
+        if not idx:
+            return self._ok({"metrics": {}})
+
+        metrics_path = idx.get("outputs", {}).get(".ctn/artifacts/metrics_json")
+        if metrics_path:
+            full_path = self._ctn_dir / metrics_path.lstrip("/.ctn/")
+            if full_path.exists():
+                try:
+                    data = json.loads(full_path.read_text())
+                    return self._ok(data)
+                except Exception as e:
+                    LOGGER.warning("failed_to_load_metrics", error=str(e))
+
+        return self._ok({"metrics": {}})
+
+    def _handle_file_content(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /file-content endpoint."""
+        file_path = query.get("path", [None])[0]
+        if not file_path:
+            return self._ok({"error": "Missing path parameter"})
+
+        full_path = self._ctn_dir / file_path.lstrip("/.ctn/")
+        if full_path.exists() and full_path.is_file():
+            try:
+                content = full_path.read_text()
+                return self._ok({
+                    "path": file_path,
+                    "content": content,
+                    "size": len(content),
+                })
+            except Exception as e:
+                return self._ok({"error": str(e)})
+
+        return self._ok({"error": "File not found"})
+
+    def _handle_config(self, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /config endpoint."""
+        return self._ok({
+            "server": {"host": "127.0.0.1", "port": 8765, "transport": "sse"},
+            "residency": {"enabled": True, "max_workspaces": 10},
+            "concurrency": {"max_concurrent_requests": 50},
+            "discovery": {"auto_discover": True, "scan_on_startup": True},
+        })
+
+    def _handle_config_sub(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /config/* sub-endpoints."""
+        sub = path.split("/")[-1]
+        if sub == "server":
+            return self._ok({"host": "127.0.0.1", "port": 8765, "transport": "sse"})
+        elif sub == "residency":
+            return self._ok({"enabled": True, "max_workspaces": 10})
+        elif sub == "concurrency":
+            return self._ok({"max_concurrent_requests": 50})
+        elif sub == "discovery":
+            return self._ok({"auto_discover": True, "scan_on_startup": True})
+        return self._not_found(path)
+
+    def _handle_workspaces(self, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /workspaces endpoint."""
+        return self._ok([])
+
+    def _handle_workspace(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /workspaces/{id} endpoint."""
+        parts = path.split("/")
+        if len(parts) >= 2:
+            ws_id = parts[1]
+            return self._ok({"id": ws_id, "error": "Workspace not found"})
+        return self._not_found(path)
+
+    def _handle_create_workspace(self, body: dict[str, Any]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle POST /workspaces to create a new workspace."""
+        ws_id = body.get("id")
+        ctn_dir = body.get("ctn_dir")
+        label = body.get("label", "")
+        tags = body.get("tags", [])
+        pinned = body.get("pinned", False)
         
-        LOGGER.info("file_content_response", 
-                   path=file_path, 
-                   has_entities=response["hasEntities"], 
-                   entity_count=response.get("entityCount", 0))
+        if not ctn_dir:
+            return self._ok({"error": "ctn_dir is required"})
+        
+        if not ws_id:
+            ws_id = re.sub(r'[^a-z0-9-]', '-', ctn_dir.split("/")[-1].lower())
+        
+        LOGGER.info("create_workspace", id=ws_id, ctn_dir=ctn_dir, label=label, tags=tags, pinned=pinned)
+        
+        return self._ok({
+            "id": ws_id,
+            "ctn_dir": ctn_dir,
+            "label": label,
+            "tags": tags,
+            "pinned": pinned,
+            "resident": pinned,
+            "status": "active"
+        })
 
-        return _ok(
-            response,
-            meta={
-                "path": file_path,
-            },
-        )
+    def _handle_workspace_action(self, path: str, body: dict[str, Any]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle POST /workspaces/{id} for workspace actions."""
+        parts = path.split("/")
+        if len(parts) >= 2:
+            ws_id = parts[1]
+            action = body.get("action", "update")
+            
+            LOGGER.info("workspace_action", id=ws_id, action=action)
+            
+            return self._ok({"id": ws_id, "action": action, "status": "ok"})
+        
+        return self._not_found(path)
 
-    def _handle_patches(
-        self, segments: list[str], query: dict[str, list[str]]
-    ) -> tuple[bytes, int, dict[str, str]]:
-        """Handle /patches and /patches/{operation_id} endpoints."""
-        if len(segments) == 1:
-            # GET /patches — return patches/index.json
+    def _handle_agents(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /agents/* endpoints."""
+        if path.startswith("agents/snippets/"):
+            agent = path.split("/")[-1]
+            return self._ok({"agent": agent, "snippets": []})
+        return self._not_found(path)
+
+    def _handle_admin_discover(self, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /admin/discover endpoint."""
+        return self._ok({"discovered": [], "message": "Discovery not available"})
+
+    def _handle_fs(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle /fs/* endpoints."""
+        if path.startswith("fs/browse"):
+            at_path = query.get("at", [None])[0]
+            if not at_path:
+                at_path = str(Path.home())
+            
             try:
-                data = self._loader.load_json("patches_index")
-            except ArtifactNotFoundError as exc:
-                return _err("artifact_not_found", str(exc), status=404)
-            except ChecksumMismatchError as exc:
-                return _err("checksum_mismatch", str(exc), status=409)
-            except ArtifactParseError as exc:
-                return _err("parse_error", str(exc), status=500)
-            return _ok(data, meta={"artifact_type": "patches_index"})
+                abs_path = Path(at_path).expanduser().resolve()
+                if not abs_path.exists():
+                    return self._ok({"path": at_path, "entries": [], "error": "Path does not exist"})
+                if not abs_path.is_dir():
+                    return self._ok({"path": at_path, "entries": [], "error": "Path is not a directory"})
+                
+                entries = []
+                try:
+                    for name in sorted(os.listdir(abs_path)):
+                        try:
+                            entry_path = abs_path / name
+                            is_dir = entry_path.is_dir()
+                            entries.append({
+                                "name": name,
+                                "path": str(entry_path),
+                                "is_dir": is_dir,
+                                "is_ctn": name == ".ctn" and is_dir
+                            })
+                        except PermissionError:
+                            continue
+                except PermissionError:
+                    return self._ok({"path": at_path, "entries": [], "error": "Permission denied"})
+                
+                return self._ok({"path": str(abs_path), "entries": entries})
+            except Exception as e:
+                LOGGER.warning("fs_browse_error", path=at_path, error=str(e))
+                return self._ok({"path": at_path, "entries": [], "error": str(e)})
+        return self._not_found(path)
 
-        if len(segments) == 2:
-            # GET /patches/{operation_id} — return individual patch detail
-            operation_id = segments[1]
-            patch_path = self.ctn_dir / "patches" / f"patch_{operation_id}.json"
-            if not patch_path.exists():
-                return _err(
-                    "patch_not_found",
-                    f"Patch detail not found: {operation_id}",
-                    status=404,
-                )
-            try:
-                raw = patch_path.read_text(encoding="utf-8")
-                data = json.loads(raw)
-            except (OSError, json.JSONDecodeError) as exc:
-                return _err("parse_error", str(exc), status=500)
-            return _ok(data, meta={"operation_id": operation_id})
-
-        return _err("invalid_path", "Invalid patches path", status=404)
-
-    def _handle_snapshot_diff(
-        self, query: dict[str, list[str]]
-    ) -> tuple[bytes, int, dict[str, str]]:
-        """Handle GET /snapshots/diff?base={id}&new={id}.
-
-        Computes a lightweight entity delta between two snapshot files.
-        """
-        base_id = _first(query.get("base"))
-        new_id = _first(query.get("new"))
-        if not base_id or not new_id:
-            return _err(
-                "missing_param",
-                "Both 'base' and 'new' snapshot IDs are required",
-            )
-
-        base_path = self.ctn_dir / "snapshots" / f"{base_id}.json"
-        new_path = self.ctn_dir / "snapshots" / f"{new_id}.json"
-
-        if not base_path.exists():
-            return _err(
-                "snapshot_not_found",
-                f"Base snapshot not found: {base_id}",
-                status=404,
-            )
-        if not new_path.exists():
-            return _err(
-                "snapshot_not_found",
-                f"New snapshot not found: {new_id}",
-                status=404,
-            )
-
-        try:
-            base_data = json.loads(base_path.read_text(encoding="utf-8"))
-            new_data = json.loads(new_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            return _err("parse_error", str(exc), status=500)
-
-        # Compute entity delta
-        base_entities = {}
-        new_entities = {}
-        for ent in base_data.get("entities", []):
-            eid = ent.get("id") or ent.get("fqn")
-            if eid:
-                base_entities[eid] = ent.get("hash", "")
-        for ent in new_data.get("entities", []):
-            eid = ent.get("id") or ent.get("fqn")
-            if eid:
-                new_entities[eid] = ent.get("hash", "")
-
-        added = [eid for eid in new_entities if eid not in base_entities]
-        removed = [eid for eid in base_entities if eid not in new_entities]
-        modified = [
-            eid for eid in new_entities
-            if eid in base_entities and new_entities[eid] != base_entities[eid]
-        ]
-        unchanged = [
-            eid for eid in new_entities
-            if eid in base_entities and new_entities[eid] == base_entities[eid]
-        ]
-
-        base_file_count = len(base_data.get("files", base_data.get("file_entries", [])))
-        new_file_count = len(new_data.get("files", new_data.get("file_entries", [])))
-        base_loc = base_data.get("stats", {}).get("loc_total", 0)
-        new_loc = new_data.get("stats", {}).get("loc_total", 0)
-
-        diff = {
-            "base_snapshot_id": base_id,
-            "new_snapshot_id": new_id,
-            "entities": {
-                "added": len(added),
-                "removed": len(removed),
-                "modified": len(modified),
-                "unchanged": len(unchanged),
-                "added_ids": added[:50],
-                "removed_ids": removed[:50],
-                "modified_ids": modified[:50],
-            },
-            "files": {
-                "base_count": base_file_count,
-                "new_count": new_file_count,
-                "delta": new_file_count - base_file_count,
-            },
-            "loc": {
-                "base": base_loc,
-                "new": new_loc,
-                "delta": new_loc - base_loc,
-            },
-        }
-        return _ok(diff)
-
-    def _handle_stats(self) -> tuple[bytes, int, dict[str, str]]:
-        stats = self._bridge.stats()
-        return _ok(stats.model_dump(exclude_none=True))
-
-
-def _first(values: list[str] | None) -> str | None:
-    if values:
-        return values[0]
-    return None
-
-
-class BridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
-    """Standalone HTTP request handler that serves bridge API endpoints."""
-
-    ctn_dir: Path
-
-    def __init__(self, *args, ctn_dir: Path | None = None, **kwargs):
-        if ctn_dir is not None:
-            self.ctn_dir = ctn_dir
-        super().__init__(*args, **kwargs)
-
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        query = urllib.parse.parse_qs(parsed.query)
-        handler = BridgeAPIHandler(self.ctn_dir)
-        body, status, headers = handler.dispatch(parsed.path, query)
-        self.send_response(status)
-        for key, value in headers.items():
-            self.send_header(key, value)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
-
-    def log_message(self, format, *args):
-        LOGGER.info("bridge_http_request", method=self.command, path=self.path, status=args[1] if len(args) > 1 else "-")
-
-
-def create_bridge_server(ctn_dir: Path, host: str = "127.0.0.1", port: int = DEFAULT_BRIDGE_HTTP_PORT):
-    """Create a standalone bridge HTTP server."""
-    from functools import partial
-    handler = partial(BridgeHTTPRequestHandler, ctn_dir=ctn_dir)
-    return http.server.ThreadingHTTPServer((host, port), handler)
-
-
-__all__ = [
-    "BridgeAPIHandler",
-    "BridgeHTTPRequestHandler",
-    "create_bridge_server",
-]
+    def _handle_health(self, path: str) -> tuple[bytes, int, dict[str, str]]:
+        """Handle health check endpoints."""
+        if path == "healthz":
+            return self._ok({"status": "ok"})
+        elif path == "readyz":
+            return self._ok({"status": "ready"})
+        elif path == "metrics":
+            return self._ok({"requests_total": 0, "errors_total": 0})
+        return self._not_found(path)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import http.server
+import json
 import os
 import socket
 import sys
@@ -142,7 +143,7 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         """Handle GET requests."""
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path.startswith("/api/v1/bridge/"):
+        if parsed.path.startswith("/api/v1/"):
             query = urllib.parse.parse_qs(parsed.query)
             body, status, headers = self._get_bridge_api().dispatch(parsed.path, query)
             self.send_response(status)
@@ -163,17 +164,39 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
     def do_OPTIONS(self):
         """Handle OPTIONS requests for CORS preflight."""
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path.startswith("/api/v1/bridge/"):
+        if parsed.path.startswith("/api/v1/"):
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
             return
         self.send_error(405, "Method Not Allowed")
 
     def do_POST(self):
-        """Reject POST requests."""
+        """Handle POST requests for API endpoints."""
+        parsed = urllib.parse.urlparse(self.path)
+        
+        if parsed.path.startswith("/api/v1/workspaces"):
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                post_data = self.rfile.read(content_length)
+                body = json.loads(post_data.decode('utf-8')) if content_length > 0 else {}
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                body = {}
+            
+            query = urllib.parse.parse_qs(parsed.query)
+            body_response, status, headers = self._get_bridge_api().dispatch_post(parsed.path, query, body)
+            
+            self.send_response(status)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.send_header("Content-Length", str(len(body_response)))
+            self.end_headers()
+            self.wfile.write(body_response)
+            return
+        
         self.send_error(405, "Method Not Allowed")
 
     def do_PUT(self):
@@ -192,6 +215,16 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
     """Launch the Batho dashboard server."""
+    if getattr(args, "hub", False):
+        print("Redirecting to `batho mcp serve --open-browser`...")
+        from batho.cli.mcp import cmd_mcp_serve
+        args.open_browser = True
+        args.no_ui = False
+        args.no_rest = False
+        args.transport = "sse"  # Default for hub UI
+        args.config = None
+        return cmd_mcp_serve(args)
+
     root_arg = getattr(args, "root", None) or "."
     root_path = Path(root_arg).resolve()
 
@@ -283,6 +316,11 @@ def register_cli_subcommands(dashboard_sub: argparse._SubParsersAction[Any]) -> 
         "--open-route",
         default="#/overview",
         help="Hash route to open after server starts",
+    )
+    dashboard_parser.add_argument(
+        "--hub",
+        action="store_true",
+        help="Launch full Hub UI (multi-workspace) instead of single-workspace",
     )
     dashboard_parser.set_defaults(func=cmd_dashboard)
 
