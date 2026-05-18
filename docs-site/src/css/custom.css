@@ -1,12 +1,14 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
 /**
- * Any CSS included here will be global. The classic template
- * bundles Infima by default. Infima is a CSS framework designed to
- * work well for content-centric websites.
+ * Batho Design System
+ * -------------------
+ * Typography: JetBrains Mono (headings), IBM Plex Sans (body)
+ * Palette: Slate core with electric-blue accents and emerald CTAs
  */
 
-/* You can override the default Infima variables here. */
-/* Batho Brand Colors — derived from assets/batho.svg gradients */
 :root {
+  /* Core brand */
   --ifm-color-primary: #2563EB;
   --ifm-color-primary-dark: #1D4ED8;
   --ifm-color-primary-darker: #1E40AF;
@@ -14,11 +16,48 @@
   --ifm-color-primary-light: #3B82F6;
   --ifm-color-primary-lighter: #60A5FA;
   --ifm-color-primary-lightest: #93C5FD;
+
+  /* Accent & CTA */
+  --batho-accent: #22C55E;
+  --batho-accent-dark: #16A34A;
+  --batho-accent-light: #4ADE80;
+
+  /* Surfaces */
+  --batho-surface-0: #ffffff;
+  --batho-surface-1: #F8FAFC;
+  --batho-surface-2: #F1F5F9;
+  --batho-surface-3: #E2E8F0;
+
+  /* Typography */
+  --ifm-font-family-base: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+  --ifm-heading-font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
   --ifm-code-font-size: 95%;
+
+  /* Spacing scale */
+  --batho-space-1: 0.25rem;
+  --batho-space-2: 0.5rem;
+  --batho-space-3: 0.75rem;
+  --batho-space-4: 1rem;
+  --batho-space-6: 1.5rem;
+  --batho-space-8: 2rem;
+  --batho-space-12: 3rem;
+  --batho-space-16: 4rem;
+  --batho-space-20: 5rem;
+  --batho-space-24: 6rem;
+
+  /* Motion */
+  --batho-duration-fast: 150ms;
+  --batho-duration-base: 250ms;
+  --batho-duration-slow: 400ms;
+  --batho-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --batho-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Misc */
   --docusaurus-highlighted-code-line-bg: rgba(37, 99, 235, 0.1);
+  --ifm-navbar-height: 4rem;
 }
 
-/* For readability concerns, you should choose a lighter palette in dark mode. */
 [data-theme='dark'] {
   --ifm-color-primary: #60A5FA;
   --ifm-color-primary-dark: #3B82F6;
@@ -27,7 +66,129 @@
   --ifm-color-primary-light: #93C5FD;
   --ifm-color-primary-lighter: #BFDBFE;
   --ifm-color-primary-lightest: #DBEAFE;
+
+  --batho-surface-0: #0B1120;
+  --batho-surface-1: #0F172A;
+  --batho-surface-2: #1E293B;
+  --batho-surface-3: #334155;
+
   --docusaurus-highlighted-code-line-bg: rgba(96, 165, 250, 0.15);
-  --ifm-background-color: #0f172a;
-  --ifm-navbar-background-color: #0f172a;
+  --ifm-background-color: #0B1120;
+  --ifm-navbar-background-color: rgba(11, 17, 32, 0.85);
+}
+
+/* ---------------------------------------------------------------------------
+   Animations
+   --------------------------------------------------------------------------- */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes subtlePulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.7; }
+}
+
+/* ---------------------------------------------------------------------------
+   Utility classes
+   --------------------------------------------------------------------------- */
+.batho-animate-fadeInUp {
+  opacity: 0;
+  animation: fadeInUp var(--batho-duration-slow) var(--batho-ease-out) forwards;
+}
+
+.batho-animate-fadeIn {
+  opacity: 0;
+  animation: fadeIn var(--batho-duration-slow) var(--batho-ease-out) forwards;
+}
+
+.batho-delay-1 { animation-delay: 100ms; }
+.batho-delay-2 { animation-delay: 200ms; }
+.batho-delay-3 { animation-delay: 300ms; }
+.batho-delay-4 { animation-delay: 400ms; }
+.batho-delay-5 { animation-delay: 500ms; }
+.batho-delay-6 { animation-delay: 600ms; }
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .batho-animate-fadeInUp,
+  .batho-animate-fadeIn {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Global polish
+   --------------------------------------------------------------------------- */
+html {
+  scroll-behavior: smooth;
+}
+
+.navbar {
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--batho-surface-3);
+}
+
+.navbar__title {
+  font-family: var(--ifm-heading-font-family);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.footer {
+  border-top: 1px solid var(--batho-surface-3);
+}
+
+/* Hero button overrides for emerald CTA */
+.button--primary {
+  background: linear-gradient(135deg, var(--ifm-color-primary) 0%, var(--ifm-color-primary-dark) 100%);
+  border: none;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  transition: transform var(--batho-duration-fast) var(--batho-ease-out),
+              box-shadow var(--batho-duration-fast) var(--batho-ease-out);
+}
+
+.button--primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.35);
+}
+
+.button.button--secondary {
+  background-color: var(--batho-surface-2);
+  border-color: var(--batho-surface-3);
+  color: var(--ifm-color-emphasis-800);
+  font-weight: 600;
+  transition: border-color var(--batho-duration-fast) var(--batho-ease-out),
+              background-color var(--batho-duration-fast) var(--batho-ease-out);
+}
+
+[data-theme='dark'] .button.button--secondary {
+  background-color: rgba(30, 41, 59, 0.6);
+  border-color: rgba(148, 163, 184, 0.35);
+  color: #e2e8f0;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.08);
+}
+
+.button.button--secondary:hover {
+  border-color: var(--ifm-color-primary);
+  background-color: rgba(37, 99, 235, 0.08);
+  color: var(--ifm-color-primary);
+}
+
+/* Better code blocks */
+pre {
+  border-radius: 12px;
+}
+
+code {
+  font-family: var(--ifm-font-family-monospace);
+  font-variant-ligatures: none;
 }

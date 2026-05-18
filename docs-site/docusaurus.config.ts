@@ -3,7 +3,7 @@ import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
-  title: 'Batho',
+  title: 'BATHO',
   tagline: 'Bidirectional AST Traversal & Hypergraph Orchestrator',
   favicon: 'img/batho-logo.svg',
 
@@ -58,7 +58,7 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'Batho',
+      title: 'BATHO',
       logo: {
         alt: 'Batho Logo',
         src: 'img/batho-logo.svg',
