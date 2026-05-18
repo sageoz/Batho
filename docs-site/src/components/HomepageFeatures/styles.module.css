@@ -24,8 +24,8 @@
 .featureCard {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  text-align: center;
+  align-items: flex-start;
+  text-align: left;
   padding: var(--batho-space-8) var(--batho-space-4);
   background: var(--batho-surface-0);
   border: 1px solid var(--batho-surface-3);
@@ -58,30 +58,30 @@
    Feature Icon
    ------------------------------------------------------------------ */
 .featureIconWrap {
-  height: 56px;
-  width: 56px;
+  height: 48px;
+  width: 48px;
   max-width: 100%;
   margin-bottom: var(--batho-space-4);
   display: flex;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, rgba(37, 99, 235, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%);
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid rgba(37, 99, 235, 0.15);
   transition: background 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+}
+
+.featureIconWrap svg {
+  height: 24px;
+  width: 24px;
+  stroke: var(--ifm-color-primary);
+  stroke-width: 1.5;
 }
 
 .featureCard:hover .featureIconWrap {
   background: linear-gradient(135deg, rgba(37, 99, 235, 0.15) 0%, rgba(59, 130, 246, 0.1) 100%);
   border-color: rgba(37, 99, 235, 0.3);
   transform: scale(1.05);
-}
-
-.featureIconWrap svg {
-  height: 28px;
-  width: 28px;
-  stroke: var(--ifm-color-primary);
-  stroke-width: 1.5;
 }
 
 /* ------------------------------------------------------------------
@@ -106,11 +106,34 @@
 }
 
 .featureDesc::after {
-  content: ' →';
+  content: '';
+}
+
+/* Feature Link */
+.featureLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: var(--batho-space-3);
+  font-size: 0.9rem;
+  font-weight: 500;
   color: var(--ifm-color-primary);
-  opacity: 0;
-  transition: opacity 0.2s ease, transform 0.2s ease;
-  display: inline-block;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.featureLink:hover {
+  color: var(--ifm-color-primary-dark);
+  text-decoration: none;
+}
+
+.featureLinkArrow {
+  transition: transform 0.2s ease;
+}
+
+.featureLink:hover .featureLinkArrow {
+  transform: translateX(4px);
 }
 
 [data-theme='dark'] .featureCard:hover {

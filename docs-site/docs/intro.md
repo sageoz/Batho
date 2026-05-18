@@ -31,30 +31,31 @@ description: "Batho — Bidirectional AST Traversal & Hypergraph Orchestrator"
 ## Architecture at a Glance
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart TB
     subgraph Sources["Source Inputs"]
-        Repo["Git Repository (40+ Languages)"]
+        Repo["Git Repository<br/>(40+ Languages)"]
         Config["batho.yaml"]
         Hooks[".batho/hooks.yaml"]
     end
 
     subgraph Core["Batho Core Engine"]
-        Extractor["Multi-Language AST Extractor"]
-        Graph["InMemoryGraph"]
-        Cache["AST Cache (SQLite)"]
-        SymbolIndex["SymbolIndex"]
+        Extractor["Multi-Language AST Extractor<br/>(tree-sitter)"]
+        Graph["InMemoryGraph<br/>(Entities + Relationships)"]
+        Cache["AST Cache<br/>(SQLite)"]
+        SymbolIndex["SymbolIndex<br/>(Cross-file Resolution)"]
         Incremental["IncrementalGraphUpdater"]
     end
 
     subgraph Intelligence["Intelligence Layer"]
-        BSG["BSGMap (Structured Graph)"]
-        Rules["BSG Rule Plugins"]
+        BSG["BSGMap<br/>(Structured Graph)"]
+        Rules["BSG Rule Plugins<br/>(Semantic Overlay)"]
     end
 
     subgraph Output["Output & Interfaces"]
-        Snapshots["Time Machine Snapshots"]
-        Dashboard["Web Dashboard"]
-        Bridge["Artifact Bridge"]
+        Snapshots["Time Machine Snapshots<br/>(.ctn/snapshots/)"]
+        Dashboard["Web Dashboard v1"]
+        Bridge["Artifact Bridge<br/>(REST + MCP)"]
         CLI["batho CLI"]
     end
 
@@ -75,9 +76,16 @@ flowchart TB
     CLI --> Intelligence
     CLI --> Output
     Hooks --> CLI
+
+    style Sources fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style Core fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style Intelligence fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style Output fill:#fce4ec,stroke:#c2185b,stroke-width:2px
 ```
 
 <div class="sr-only">Architecture diagram showing Batho's data flow: Source Inputs (Git Repository, batho.yaml, hooks.yaml) feed into Batho Core Engine (AST Extractor, InMemoryGraph, AST Cache, SymbolIndex, IncrementalGraphUpdater) which connects to Intelligence Layer (BSGMap, BSG Rule Plugins) and produces Output & Interfaces (Time Machine Snapshots, Web Dashboard, Artifact Bridge, batho CLI).</div>
+
+**Figure: Batho System Architecture** - High-level data flow from source inputs through the core engine to consumption interfaces.
 
 ## Status
 

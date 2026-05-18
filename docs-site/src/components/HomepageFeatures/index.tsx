@@ -1,5 +1,6 @@
 import type {ReactNode} from 'react';
 import clsx from 'clsx';
+import Link from '@docusaurus/Link';
 import Heading from '@theme/Heading';
 import styles from './styles.module.css';
 
@@ -7,6 +8,7 @@ type FeatureItem = {
   title: string;
   icon: ReactNode;
   description: ReactNode;
+  link?: string;
 };
 
 const FeatureList: FeatureItem[] = [
@@ -26,6 +28,7 @@ const FeatureList: FeatureItem[] = [
         into structured entities and relationships.
       </>
     ),
+    link: '/docs/whitepaper/code-graph',
   },
   {
     title: '10x Context Compression',
@@ -42,6 +45,7 @@ const FeatureList: FeatureItem[] = [
         token-budgeted formats for LLM injection.
       </>
     ),
+    link: '/docs/whitepaper/bsg-compression',
   },
   {
     title: 'Time Machine Snapshots',
@@ -57,6 +61,7 @@ const FeatureList: FeatureItem[] = [
         and patch chaining.
       </>
     ),
+    link: '/docs/whitepaper/time-machine',
   },
   {
     title: 'Interactive Dashboard',
@@ -73,6 +78,7 @@ const FeatureList: FeatureItem[] = [
         relationship mapping.
       </>
     ),
+    link: '/docs/whitepaper/dashboard',
   },
   {
     title: 'Artifact Bridge',
@@ -88,6 +94,7 @@ const FeatureList: FeatureItem[] = [
         REST API + MCP server for IDE integrations and tool orchestration.
       </>
     ),
+    link: '/docs/whitepaper/bridge-mcp',
   },
   {
     title: 'Git Hooks Enterprise',
@@ -104,10 +111,11 @@ const FeatureList: FeatureItem[] = [
         YAML-driven client-side hook automation with stage-based execution.
       </>
     ),
+    link: '/docs/whitepaper/git-hooks',
   },
 ];
 
-function Feature({title, icon, description, delay}: FeatureItem & {delay: number}) {
+function Feature({title, icon, description, link, delay}: FeatureItem & {delay: number}) {
   const delayClass = `batho-delay-${Math.min(delay, 6)}`;
   return (
     <div className={clsx('col col--4', styles.featureCol)}>
@@ -117,6 +125,11 @@ function Feature({title, icon, description, delay}: FeatureItem & {delay: number
           {title}
         </Heading>
         <p className={styles.featureDesc}>{description}</p>
+        {link && (
+          <Link className={styles.featureLink} to={link}>
+            Learn more <span className={styles.featureLinkArrow}>→</span>
+          </Link>
+        )}
       </div>
     </div>
   );

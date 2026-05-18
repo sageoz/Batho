@@ -263,8 +263,9 @@ function HomepageHeader() {
     <header className={clsx('hero', styles.heroBanner)}>
       {/* Subtle grid background */}
       <div className={styles.heroGrid} aria-hidden="true" />
-      <div className={styles.heroDecorLeft} aria-hidden="true">{'{ }'}</div>
-      <div className={styles.heroDecorRight} aria-hidden="true">{'// idx → graph → bsg'}</div>
+      {/* Animated gradient orbs */}
+      <div className={styles.heroOrb1} aria-hidden="true" />
+      <div className={styles.heroOrb2} aria-hidden="true" />
       <div className={clsx('container', styles.heroContainer)}>
         <Animated delay={1}>
           <Heading as="h1" className={styles.heroTitle}>
@@ -296,6 +297,145 @@ function HomepageHeader() {
   );
 }
 
+function WorkflowStep({
+  number,
+  title,
+  description,
+  code,
+  delay,
+}: {
+  number: string;
+  title: string;
+  description: string;
+  code: string;
+  delay: number;
+}) {
+  const delayClass = `batho-delay-${Math.min(delay, 6)}`;
+  return (
+    <div className={clsx('batho-animate-fadeInUp', delayClass, styles.workflowStep)}>
+      <div className={styles.workflowNumber}>{number}</div>
+      <h3 className={styles.workflowTitle}>{title}</h3>
+      <p className={styles.workflowDesc}>{description}</p>
+      <div className={styles.workflowCode}>
+        <code>{code}</code>
+      </div>
+    </div>
+  );
+}
+
+function Workflow() {
+  const steps = [
+    {
+      number: '01',
+      title: 'Index',
+      description: 'Parse your entire codebase into a structured hypergraph with cross-file symbol resolution.',
+      code: 'batho index --root . --snapshot',
+    },
+    {
+      number: '02',
+      title: 'Compress',
+      description: 'Generate a token-budgeted BSG optimized for LLM context windows and semantic search.',
+      code: 'batho bsg --root . --mode compressed',
+    },
+    {
+      number: '03',
+      title: 'Patch',
+      description: 'Apply incremental updates 10-100x faster than full re-indexing with time-aware snapshots.',
+      code: 'batho patch --root . --scan',
+    },
+    {
+      number: '04',
+      title: 'Explore',
+      description: 'Launch the interactive dashboard to visualize code relationships and query the graph.',
+      code: 'batho dashboard --port 8080',
+    },
+  ];
+
+  return (
+    <section className={styles.workflow}>
+      <div className="container">
+        <Animated delay={1}>
+          <h2 className={styles.workflowSectionTitle}>How It Works</h2>
+        </Animated>
+        <Animated delay={2}>
+          <p className={styles.workflowSectionSubtitle}>
+            Four simple steps from code to intelligence
+          </p>
+        </Animated>
+        <div className={styles.workflowGrid}>
+          {steps.map((step, idx) => (
+            <WorkflowStep key={step.number} {...step} delay={idx + 2} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Metrics() {
+  const metrics = [
+    { value: '40+', label: 'Languages', desc: 'tree-sitter powered' },
+    { value: '10x', label: 'Compression', desc: 'for LLM injection' },
+    { value: '859+', label: 'Tests', desc: 'automated coverage' },
+    { value: '>95%', label: 'Cache Hit', desc: 'typical PR changes' },
+  ];
+
+  return (
+    <section className={styles.metrics}>
+      <div className="container">
+        <div className={styles.metricsGrid}>
+          {metrics.map((m, idx) => (
+            <div
+              key={m.label}
+              className={clsx(
+                'batho-animate-fadeInUp',
+                `batho-delay-${Math.min(idx + 1, 6)}`,
+                styles.metricCard
+              )}>
+              <div className={styles.metricValue}>{m.value}</div>
+              <div className={styles.metricLabel}>{m.label}</div>
+              <div className={styles.metricDesc}>{m.desc}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CTABanner() {
+  return (
+    <section className={styles.ctaBanner}>
+      <div className="container">
+        <div className={styles.ctaInner}>
+          <Animated delay={1}>
+            <h2 className={styles.ctaTitle}>Ready to transform your codebase?</h2>
+          </Animated>
+          <Animated delay={2}>
+            <p className={styles.ctaSubtitle}>
+              Get started with Batho in under a minute. No configuration required.
+            </p>
+          </Animated>
+          <Animated delay={3}>
+            <div className={styles.ctaButtons}>
+              <Link
+                className={clsx('button button--primary button--lg', styles.ctaButtonPrimary)}
+                to="/docs/getting-started/quick-start">
+                Get Started
+              </Link>
+              <Link
+                className={clsx('button button--secondary button--lg', styles.ctaButtonSecondary)}
+                to="https://github.com/sageoz/batho">
+                View on GitHub
+              </Link>
+            </div>
+          </Animated>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function Home(): ReactNode {
   return (
     <Layout
@@ -304,7 +444,10 @@ export default function Home(): ReactNode {
       <HomepageHeader />
       <main>
         <HomepageFeatures />
+        <Workflow />
+        <Metrics />
         <QuickStart />
+        <CTABanner />
       </main>
     </Layout>
   );
