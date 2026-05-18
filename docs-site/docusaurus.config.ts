@@ -11,7 +11,7 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://sageoz.github.io',
+  url: 'https://batho.sageoz.org',
   baseUrl: '/',
   trailingSlash: true,
 

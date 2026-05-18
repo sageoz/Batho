@@ -1,11 +1,6 @@
 name: Deploy Docs to GitHub Pages
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'docs-site/**'
-      - 'docs/**'
   workflow_dispatch:
 
 permissions:
@@ -43,3 +38,4 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./docs-site/build
           publish_branch: gh-pages
+          cname: batho.sageoz.org
