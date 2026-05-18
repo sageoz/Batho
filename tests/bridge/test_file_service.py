@@ -61,9 +61,9 @@ class TestSafeReadFile:
             safe_read_file("src", tmp_path)
 
     def test_ignored_file_blocked(self, tmp_path):
-        """Test that files matching .bathoignore are blocked."""
-        # Create .bathoignore
-        ignore_file = tmp_path / ".bathoignore"
+        """Test that files matching .gitignore are blocked."""
+        # Create .gitignore
+        ignore_file = tmp_path / ".gitignore"
         ignore_file.write_text("secret.py\n", encoding="utf-8")
 
         # Create ignored file
@@ -101,16 +101,16 @@ class TestSafeReadFile:
         result = safe_read_file(".pre-commit-config.yaml", tmp_path)
         assert result == "repos: []"
 
-    def test_hidden_file_with_bathoignore_blocked(self, tmp_path):
-        """Test that hidden files can still be blocked via .bathoignore."""
-        # Create .bathoignore that blocks the hidden file
-        ignore_file = tmp_path / ".bathoignore"
+    def test_hidden_file_with_gitignore_blocked(self, tmp_path):
+        """Test that hidden files can still be blocked via .gitignore."""
+        # Create .gitignore that blocks the hidden file
+        ignore_file = tmp_path / ".gitignore"
         ignore_file.write_text(".secret\n", encoding="utf-8")
 
         secret_file = tmp_path / ".secret"
         secret_file.write_text("password", encoding="utf-8")
 
-        # Should be blocked because it's in .bathoignore
+        # Should be blocked because it's in .gitignore
         with pytest.raises(SecurityError) as exc_info:
             safe_read_file(".secret", tmp_path)
         assert "ignored" in str(exc_info.value).lower()

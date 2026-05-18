@@ -1,11 +1,11 @@
 """
-backend/utils/ignore.py — Centralized ignore pattern utility for batho.
+batho/utils/ignore.py — Centralized ignore pattern utility for batho.
 
 Provides unified ignore pattern handling across the entire codebase.
-Combines default exclusions with .gitignore and .bathoignore files.
+Loads default patterns from default-ignore-patterns.yaml with .gitignore files.
 
 Usage:
-    from backend.utils.ignore import load_ignore_spec, is_ignored, DEFAULT_IGNORE_PATTERNS
+    from batho.utils.ignore import load_ignore_spec, is_ignored
 
     spec = load_ignore_spec(root_path)
     if is_ignored(file_path, root_path, spec):
@@ -20,133 +20,65 @@ from typing import Any
 from batho.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
 # ---------------------------------------------------------------------------
-# Default ignore patterns — applied even if ignore files don't exist
+# Default patterns file
 # ---------------------------------------------------------------------------
 
-DEFAULT_IGNORE_PATTERNS: list[str] = [
-    # Virtual environments
-    ".venv/",
-    "venv/",
-    "env/",
-    ".env/",
-    "virtualenv/",
-    # Node.js dependencies
-    "node_modules/",
-    "bower_components/",
-    # Python cache
-    "__pycache__/",
-    "*.pyc",
-    "*.pyo",
-    "*.pyd",
-    ".pytest_cache/",
-    ".mypy_cache/",
-    ".tox/",
-    # Version control
-    ".git/",
-    ".svn/",
-    ".hg/",
-    # Build artifacts
-    "build/",
-    "dist/",
-    "*.egg-info/",
-    ".eggs/",
-    "target/",  # Rust, Java
-    "out/",  # TypeScript, etc.
-    # IDE and tool directories
-    ".idea/",
-    ".vscode/",
-    ".vs/",
-    "*.swp",
-    "*.swo",
-    "*~",
-    # OS files
-    ".DS_Store",
-    "Thumbs.db",
-    # Lock files (usually very large)
-    "uv.lock",
-    "package-lock.json",
-    "yarn.lock",
-    "poetry.lock",
-    "Cargo.lock",
-    "Gemfile.lock",
-    # Misc
-    ".next/",  # Next.js build
-    ".nuxt/",  # Nuxt.js build
-    ".output/",
-    "coverage/",
-    "htmlcov/",
-    ".coverage",
-    ".sass-cache/",
-    ".parcel-cache/",
-    # Batho's own directories
-    ".ctn/",
-    ".batho/",
-    ".aider/",
-    ".roo/",
-    ".cline/",
-    ".kilo/",
-    # (not source-of-truth code)
-    "*.mod.c",  # Kernel module metadata — auto-generated
-    "*.mod.h",
-    ".config",  # Kconfig output — binary-ish
-    "vmlinux.symvers",  # Linker symbol table
-    "*.order",  # Build order files
-    "*.a",  # Static libs
-    "*.ko",  # Compiled modules
-    "scripts/kconfig/*",  # Kconfig parser — not user code
-    "Documentation/**/*.rst",  # Optional: skip docs for code-only graph
-    "tools/testing/**",  # Optional: skip kernel selftests
-    "arch/*/boot/compressed/",  # Compressed boot stubs
-]
+DEFAULT_PATTERNS_FILE = "default-ignore-patterns.yaml"
 
-# Patterns that should always be ignored for file watching
-WATCH_IGNORE_PATTERNS: list[str] = [
-    "**/.git/**",
-    "**/node_modules/**",
-    "**/.venv/**",
-    "**/venv/**",
-    "**/__pycache__/**",
-    "**/.ctn/**",
-    "**/.batho/**",
-    "**/dist/**",
-    "**/build/**",
-    "**/*.log",
-    "**/.pytest_cache/**",
-    "**/.mypy_cache/**",
-    "**/.tox/**",
-    "**/.next/**",
-    "**/.nuxt/**",
-    "**/.output/**",
-    "**/.idea/**",
-    "**/.vscode/**",
-    "**/.vs/**",
-    "**/*.swp",
-    "**/*.swo",
-    "**/*~",
-    "**/.DS_Store",
-    "**/Thumbs.db",
-    "**/target/**",
-    "**/out/**",
-    "**/.aider/**",
-    "**/.roo/**",
-    "**/.cline/**",
-    "**/.kilo/**",
-    "**/testdata/**",
-    "**/test_data/**",
-    "**/fixtures/**",
-    "**/mock_data/**",
-]
 
-# Agent-related patterns that should be ignored
-AGENT_IGNORE_PATTERNS: list[str] = [
-    "**/.aider.chat.history.md",
-    "**/.aider.input.history",
-    "**/.roo/**/*.md",
-    "**/.cline/**/*.md",
-    "**/.kilo/**/*.md",
-    "**/.kilo/**/*.log",
-]
+def get_default_patterns_path() -> Path:
+    """Get the path to the default ignore patterns YAML file."""
+    return Path(__file__).parent.parent / DEFAULT_PATTERNS_FILE
+
+
+def load_default_patterns_from_yaml(
+    patterns_file: Path | None = None,
+) -> list[str]:
+    """
+    Load default patterns from YAML file. Returns empty list if file unavailable.
+
+    Args:
+        patterns_file: Optional path to custom patterns YAML file.
+                       If None, uses built-in default-ignore-patterns.yaml.
+
+    Returns:
+        List of default ignore patterns, or empty list if file not found.
+    """
+    if patterns_file is None:
+        patterns_file = get_default_patterns_path()
+
+    if not patterns_file.exists():
+        logger.debug(
+            "default_patterns_file_not_found",
+            path=str(patterns_file),
+        )
+        return []
+
+    try:
+        import yaml  # type: ignore[import-untyped]
+
+        with open(patterns_file, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+
+        if data and isinstance(data, dict):
+            patterns = data.get("patterns", [])
+            if isinstance(patterns, list):
+                logger.debug(
+                    "default_patterns_loaded_from_yaml",
+                    path=str(patterns_file),
+                    count=len(patterns),
+                )
+                return patterns
+    except Exception as e:
+        logger.warning(
+            "failed_to_load_default_patterns_yaml",
+            path=str(patterns_file),
+            error=str(e),
+        )
+
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +90,7 @@ def load_ignore_spec(
     root: Path,
     extra_patterns: list[str] | None = None,
     ignore_files: list[str] | None = None,
-    bathoignore_path: str | None = None,
+    default_patterns_file: Path | str | None = None,
 ) -> Any:
     """
     Load combined ignore patterns using pathspec.
@@ -166,31 +98,31 @@ def load_ignore_spec(
     Always includes default exclusions for common directories like .venv,
     node_modules, __pycache__, etc. to prevent indexing dependencies.
 
-    If .bathoignore exists at repo root, merges its patterns with global patterns.
-    If .bathoignore does NOT exist, uses only global patterns.
+    Only loads .gitignore patterns (no backward compatibility for .bathoignore).
 
     Args:
         root: The workspace root path.
         extra_patterns: Additional patterns to include.
         ignore_files: List of ignore file names to load (relative to root).
-                      Defaults to [".gitignore", ".bathoignore"].
-        bathoignore_path: Optional custom path to .bathoignore file.
+                      Defaults to [".gitignore"].
+        default_patterns_file: Optional path (str or Path) to custom default patterns YAML.
+                               If None, uses built-in defaults.
 
     Returns:
         A pathspec PathSpec object, or a list of patterns as fallback.
     """
-    patterns: list[str] = list(DEFAULT_IGNORE_PATTERNS)
+    patterns_file_path: Path | None = None
+    if default_patterns_file:
+        patterns_file_path = Path(default_patterns_file) if isinstance(default_patterns_file, str) else default_patterns_file
+
+    patterns: list[str] = load_default_patterns_from_yaml(patterns_file_path)
 
     if extra_patterns:
         patterns.extend(extra_patterns)
 
-    # Default ignore files to check
+    # Default ignore files to check - only .gitignore (no .bathoignore support)
     if ignore_files is None:
-        ignore_files = [".gitignore", ".bathoignore"]
-
-    # If custom bathoignore path is provided, use it instead of default
-    if bathoignore_path:
-        ignore_files = [bathoignore_path]
+        ignore_files = [".gitignore"]
 
     for ignore_file_name in ignore_files:
         ignore_file = root / ignore_file_name

@@ -34,7 +34,7 @@ Yes. `pip install batho` works, but `uv` is recommended for faster installs and 
 
 ### How do I ignore files?
 
-Batho respects `.gitignore` automatically. You can also create a `.bathoignore` file for Batho-specific exclusions.
+Batho respects `.gitignore` automatically along with default ignore patterns for common build artifacts and dependencies.
 
 ### What is the `.ctn/` directory?
 

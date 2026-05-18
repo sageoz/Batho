@@ -18,6 +18,7 @@ indexer:
   max_files: null
   ignore_patterns: []
   ignore_files: null
+  default_patterns_file: null
   metrics_output: .ctn/local/metrics/metrics.json
   fail_on_warning: false
   strict: false
@@ -87,7 +88,7 @@ bsg:
     chunk_size: 50
   ignore:
     enabled: true
-    file: .bathoignore
+    file: ""  # Deprecated: .bathoignore support removed
   cache:
     enabled: true
     path: .ctn/local/cache/ast_cache.db

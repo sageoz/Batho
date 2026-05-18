@@ -121,6 +121,10 @@ class IndexerConfig(BaseModel):
         default=DEFAULT_IGNORE_FILES,
         description="Ignore file names to load (None uses defaults)",
     )
+    default_patterns_file: str | None = Field(
+        default=None,
+        description="Path to custom default patterns YAML (null = use built-in)",
+    )
     metrics_output: str | None = Field(
         default=DEFAULT_METRICS_OUTPUT,
         description="Optional path to write metrics JSON",
@@ -170,7 +174,7 @@ class BsgParallelConfig(BaseModel):
 
 class BsgIgnoreConfig(BaseModel):
     enabled: bool = Field(default=True)
-    file: str = Field(default=".bathoignore")
+    file: str = Field(default="")  # Deprecated: .bathoignore support removed
 
 
 class BsgCacheConfig(BaseModel):
@@ -406,6 +410,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             "max_files": None,
             "ignore_patterns": [],
             "ignore_files": DEFAULT_IGNORE_FILES,
+            "default_patterns_file": None,
             "metrics_output": DEFAULT_METRICS_OUTPUT,
             "fail_on_warning": False,
             "strict": False,
@@ -462,7 +467,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             },
             "ignore": {
                 "enabled": True,
-                "file": ".bathoignore",
+                "file": "",  # Deprecated: .bathoignore support removed
             },
             "cache": {
                 "enabled": True,
@@ -568,6 +573,9 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
     env_ignore_files = _env_list("BATHO_IGNORE_FILES")
     if env_ignore_files is not None:
         base_cfg["indexer"]["ignore_files"] = env_ignore_files
+    env_default_patterns_file = _env("BATHO_DEFAULT_PATTERNS_FILE")
+    if env_default_patterns_file is not None:
+        base_cfg["indexer"]["default_patterns_file"] = env_default_patterns_file
     env_metrics_output = _env("BATHO_METRICS_OUTPUT")
     if env_metrics_output is not None:
         base_cfg["indexer"]["metrics_output"] = env_metrics_output
@@ -673,7 +681,12 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
     )
     env_bathoignore_file = _env("BATHO_BSG_IGNORE_FILE")
     if env_bathoignore_file:
-        base_cfg["bsg"]["ignore"]["file"] = env_bathoignore_file
+        import logging
+
+        logging.getLogger("batho.config").warning(
+            "BATHO_BSG_IGNORE_FILE is deprecated and ignored (no .bathoignore support): %s",
+            env_bathoignore_file,
+        )
     base_cfg["bsg"]["cache"]["enabled"] = _env_bool(
         "BATHO_BSG_CACHE_ENABLED", base_cfg["bsg"]["cache"]["enabled"]
     )
@@ -955,7 +968,7 @@ bsg:
     chunk_size: 50
   ignore:
     enabled: true
-    file: .bathoignore
+    file: ""  # Deprecated: .bathoignore support removed
   cache:
     enabled: true
     path: .ctn/local/cache/ast_cache.db

@@ -1,0 +1,92 @@
+# Default ignore patterns for Batho indexing
+# These patterns are applied in addition to .gitignore
+# Format: gitignore-style glob patterns
+version: ignore-patterns.v1
+
+patterns:
+  # Virtual environments
+  - ".venv/"
+  - "venv/"
+  - "env/"
+  - ".env/"
+  - "virtualenv/"
+
+  # Node.js dependencies
+  - "node_modules/"
+  - "bower_components/"
+
+  # Python cache
+  - "__pycache__/"
+  - "*.pyc"
+  - "*.pyo"
+  - "*.pyd"
+  - ".pytest_cache/"
+  - ".mypy_cache/"
+  - ".tox/"
+
+  # Version control
+  - ".git/"
+  - ".svn/"
+  - ".hg/"
+
+  # Build artifacts
+  - "build/"
+  - "dist/"
+  - "*.egg-info/"
+  - ".eggs/"
+  - "target/"
+  - "out/"
+
+  # IDE and tool directories
+  - ".idea/"
+  - ".vscode/"
+  - ".vs/"
+  - "*.swp"
+  - "*.swo"
+  - "*~"
+
+  # OS files
+  - ".DS_Store"
+  - "Thumbs.db"
+
+  # Lock files
+  - "uv.lock"
+  - "package-lock.json"
+  - "yarn.lock"
+  - "poetry.lock"
+  - "Cargo.lock"
+  - "Gemfile.lock"
+
+  # Framework build directories
+  - ".next/"
+  - ".nuxt/"
+  - ".output/"
+
+  # Coverage and cache
+  - "coverage/"
+  - "htmlcov/"
+  - ".coverage"
+  - ".sass-cache/"
+  - ".parcel-cache/"
+
+  # Batho's own directories
+  - ".ctn/"
+  - ".batho/"
+  - ".aider/"
+  - ".roo/"
+  - ".cline/"
+  - ".kilo/"
+
+  # Kernel-specific patterns
+  - "*.mod.c"
+  - "*.mod.h"
+  - ".config"
+  - "vmlinux.symvers"
+  - "*.order"
+  - "*.a"
+  - "*.ko"
+  - "scripts/kconfig/*"
+  - "Documentation/**/*.rst"
+  - "tools/testing/**"
+  - "arch/*/boot/compressed/"
+

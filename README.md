@@ -152,7 +152,7 @@ hooks:
 |-----------|---------|
 | **Parse-only** | Never executes your code — safe on untrusted repos |
 | **Binary detection** | Magic bytes + Shannon entropy analysis |
-| **Ignore rules** | Respects `.gitignore` and `.bathoignore` |
+| **Ignore rules** | Respects `.gitignore` and default patterns |
 | **Fully offline** | Zero network calls — runs air-gapped |
 
 ## 🌍 Supported Languages

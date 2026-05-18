@@ -178,9 +178,9 @@ class TestGetConfig:
         assert cfg["indexer"]["ignore_patterns"] == ["dist/", "build/"]
 
     def test_env_override_ignore_files(self, monkeypatch):
-        monkeypatch.setenv("BATHO_IGNORE_FILES", ".gitignore,.bathoignore")
+        monkeypatch.setenv("BATHO_IGNORE_FILES", ".gitignore")
         cfg = get_config()
-        assert cfg["indexer"]["ignore_files"] == [".gitignore", ".bathoignore"]
+        assert cfg["indexer"]["ignore_files"] == [".gitignore"]
 
     def test_env_override_rules_enabled(self, monkeypatch):
         monkeypatch.setenv("BATHO_RULES_ENABLED", "true")

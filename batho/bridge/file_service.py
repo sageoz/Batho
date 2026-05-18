@@ -96,7 +96,7 @@ def safe_read_file(requested_path: str, root: Path | str) -> str:
         )
         raise SecurityError(f"Path outside project root: {requested_path}")
 
-    # Security: Check if file is ignored by .bathoignore
+    # Security: Check if file is ignored by .gitignore or default patterns
     # Note: include_hidden=False because hidden files like .pre-commit-config.yaml
     # are legitimate source files that users should be able to view
     if should_ignore_path(full_path, root_path, include_hidden=False):

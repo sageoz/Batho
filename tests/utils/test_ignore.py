@@ -7,39 +7,12 @@ from pathlib import Path
 import pytest
 
 from batho.utils.ignore import (
-    DEFAULT_IGNORE_PATTERNS,
-    WATCH_IGNORE_PATTERNS,
     is_ignored,
     load_ignore_spec,
     rglob_ignored_filtered,
     should_ignore_path,
     walk_ignored_filtered,
 )
-
-
-# ---------------------------------------------------------------------------
-# DEFAULT_IGNORE_PATTERNS
-# ---------------------------------------------------------------------------
-
-class TestDefaultPatterns:
-
-    def test_contains_venv(self):
-        assert ".venv/" in DEFAULT_IGNORE_PATTERNS
-
-    def test_contains_node_modules(self):
-        assert "node_modules/" in DEFAULT_IGNORE_PATTERNS
-
-    def test_contains_pycache(self):
-        assert "__pycache__/" in DEFAULT_IGNORE_PATTERNS
-
-    def test_contains_git(self):
-        assert ".git/" in DEFAULT_IGNORE_PATTERNS
-
-    def test_contains_ctn(self):
-        assert ".ctn/" in DEFAULT_IGNORE_PATTERNS
-
-    def test_watch_patterns_exist(self):
-        assert len(WATCH_IGNORE_PATTERNS) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -58,11 +31,6 @@ class TestLoadIgnoreSpec:
         # .log files should be ignored
         assert is_ignored(tmp_path / "error.log", tmp_path, spec)
 
-    def test_loads_bathoignore(self, tmp_path: Path):
-        (tmp_path / ".bathoignore").write_text("custom_dir/\n")
-        spec = load_ignore_spec(tmp_path)
-        assert is_ignored(tmp_path / "custom_dir" / "file.py", tmp_path, spec)
-
     def test_extra_patterns(self, tmp_path: Path):
         spec = load_ignore_spec(tmp_path, extra_patterns=["extra_dir/"])
         assert is_ignored(tmp_path / "extra_dir" / "foo.py", tmp_path, spec)
@@ -71,24 +39,6 @@ class TestLoadIgnoreSpec:
         (tmp_path / ".myignore").write_text("secret/\n")
         spec = load_ignore_spec(tmp_path, ignore_files=[".myignore"])
         assert is_ignored(tmp_path / "secret" / "key.pem", tmp_path, spec)
-
-    def test_custom_bathoignore_path_and_read_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        custom = tmp_path / "custom.ignore"
-        custom.write_text("cache/\n", encoding="utf-8")
-        spec = load_ignore_spec(tmp_path, bathoignore_path="custom.ignore")
-        assert is_ignored(tmp_path / "cache" / "x.py", tmp_path, spec)
-
-        original = Path.read_text
-
-        def _raise_once(self: Path, *args, **kwargs):
-            if self.name == ".gitignore":
-                raise OSError("boom")
-            return original(self, *args, **kwargs)
-
-        (tmp_path / ".gitignore").write_text("broken/\n", encoding="utf-8")
-        monkeypatch.setattr(Path, "read_text", _raise_once)
-        spec2 = load_ignore_spec(tmp_path)
-        assert spec2 is not None
 
     def test_pathspec_import_fallback_to_list(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         original_import = builtins.__import__
@@ -218,3 +168,66 @@ class TestWalkFiltered:
         matches = list(rglob_ignored_filtered(tmp_path, "*.txt", spec=spec, skip_hidden=False))
         assert len(matches) == 1
         assert matches[0].name == "keep.txt"
+
+
+class TestLoadDefaultPatternsFromYaml:
+    """Tests for loading default patterns from YAML file."""
+
+    def test_loads_from_builtin_yaml(self):
+        """Test that default patterns are loaded from built-in YAML."""
+        from batho.utils.ignore import load_default_patterns_from_yaml
+
+        patterns = load_default_patterns_from_yaml()
+        assert ".venv/" in patterns
+        assert "node_modules/" in patterns
+        assert "__pycache__/" in patterns
+
+    def test_loads_custom_yaml(self, tmp_path: Path):
+        """Test loading patterns from custom YAML file."""
+        from batho.utils.ignore import load_default_patterns_from_yaml
+
+        custom_yaml = tmp_path / "custom-patterns.yaml"
+        custom_yaml.write_text(
+            'version: ignore-patterns.v1\npatterns:\n  - "custom_dir/"\n  - "*.custom"\n',
+            encoding="utf-8",
+        )
+
+        patterns = load_default_patterns_from_yaml(custom_yaml)
+        assert "custom_dir/" in patterns
+        assert "*.custom" in patterns
+
+    def test_returns_empty_when_file_missing(self, tmp_path: Path):
+        """Test empty list returned when YAML file doesn't exist."""
+        from batho.utils.ignore import load_default_patterns_from_yaml
+
+        patterns = load_default_patterns_from_yaml(tmp_path / "nonexistent.yaml")
+        assert patterns == []
+
+    def test_returns_empty_on_invalid_yaml(self, tmp_path: Path):
+        """Test empty list returned when YAML is invalid."""
+        from batho.utils.ignore import load_default_patterns_from_yaml
+
+        invalid_yaml = tmp_path / "invalid.yaml"
+        invalid_yaml.write_text("invalid: yaml: content: [", encoding="utf-8")
+
+        patterns = load_default_patterns_from_yaml(invalid_yaml)
+        assert patterns == []
+
+    def test_load_ignore_spec_with_custom_yaml(self, tmp_path: Path):
+        """Test load_ignore_spec passes custom patterns file to YAML loader."""
+        custom_yaml = tmp_path / "my-patterns.yaml"
+        custom_yaml.write_text(
+            "version: ignore-patterns.v1\npatterns:\n  - my_custom/\n",
+            encoding="utf-8",
+        )
+
+        spec = load_ignore_spec(tmp_path, default_patterns_file=str(custom_yaml))
+        assert is_ignored(tmp_path / "my_custom" / "file.py", tmp_path, spec)
+
+    def test_get_default_patterns_path(self):
+        """Test that default patterns path points to correct file."""
+        from batho.utils.ignore import get_default_patterns_path
+
+        path = get_default_patterns_path()
+        assert path.name == "default-ignore-patterns.yaml"
+        assert path.exists()

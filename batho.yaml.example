@@ -18,6 +18,7 @@ indexer:
   max_files: null           # Optional hard cap for files processed
   ignore_patterns: []       # Extra glob patterns
   ignore_files: null        # null uses defaults; or provide list of ignore filenames
+  default_patterns_file: null  # Path to custom default patterns YAML (null = use built-in)
   metrics_output: .ctn/local/metrics/metrics.json
   fail_on_warning: false
   strict: false
@@ -107,7 +108,7 @@ bsg:
 
   ignore:
     enabled: true
-    file: .bathoignore
+    file: ""  # Deprecated: .bathoignore support removed
 
   cache:
     enabled: true

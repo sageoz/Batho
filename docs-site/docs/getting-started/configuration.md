@@ -24,7 +24,7 @@ Batho works out of the box with zero config. For production use, configure with 
 | `indexer` | `max_file_size_kb`, `max_workers`, `max_indexed_files`, `ignore_*`, `metrics_output` | Base indexing limits and outputs |
 | `rules` | `enabled`, `builtin_plugins`, `custom_rules_*`, `strict_validation` | Rule plugins and metadata enrichment |
 | `bsg.parallel` | `enabled`, `max_workers`, `chunk_size` | Parallel file extraction |
-| `bsg.ignore` | `enabled`, `file` | `.bathoignore` integration |
+| `bsg.ignore` | `enabled` | `.gitignore` integration |
 | `bsg.cache` | `enabled`, `path`, `max_size_mb`, `ttl_days` | AST cache behavior |
 | `bsg.incremental` | `enabled`, `fallback_to_full`, `auto_detect_git` | Incremental indexing strategy |
 | `bsg.symbol_resolution` | `enabled`, `fuzzy_matching`, `cache_symbols` | Cross-file symbol resolution |

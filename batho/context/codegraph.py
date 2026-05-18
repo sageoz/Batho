@@ -7,7 +7,7 @@ Improvements over prototype:
 - Parallel file extraction using multiprocessing (CPU-bound, bypasses GIL)
 - Per-file exception isolation: one bad file never aborts the whole scan
 - Binary file detection and size guard
-- pathspec-based .gitignore / .bathoignore support
+- pathspec-based .gitignore support
 - Synchronous (no async): cleaner for CLI and daemon usage
 
 The InMemoryGraph is returned inline — no external persistence needed for
@@ -411,7 +411,7 @@ class CodeGraphIndexer:
     - AST entity caching with SQLite: skips unchanged files entirely
     - Parallel extraction with multiprocessing (bypasses GIL for CPU-bound parsing)
     - Per-file exception isolation
-    - .gitignore + .bathoignore support via pathspec
+    - .gitignore support via pathspec
     - Binary file detection and size guard
     - Cross-file import resolution pass
 
@@ -544,11 +544,6 @@ class CodeGraphIndexer:
                 cache_cfg = dict(bsg_cfg.get("cache", {}))
                 cache_cfg["enabled"] = bool(ast_cache_enabled)
                 bsg_cfg["cache"] = cache_cfg
-            bsg_ignore_cfg = bsg_cfg.get("ignore", {})
-            bathoignore_path = (
-                bsg_ignore_cfg.get("file") if bsg_ignore_cfg.get("enabled") else None
-            )
-
             # Set parsing config for all extractors
             from .languages.registry import set_parsing_config
 
@@ -559,7 +554,7 @@ class CodeGraphIndexer:
                 root_path,
                 extra_patterns=cfg["indexer"].get("ignore_patterns"),
                 ignore_files=cfg["indexer"].get("ignore_files"),
-                bathoignore_path=bathoignore_path,
+                default_patterns_file=cfg["indexer"].get("default_patterns_file"),
             )
 
             # --- Collect files to process ---

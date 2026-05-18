@@ -124,7 +124,6 @@ _SPECIAL_FILENAME_MAP: dict[str, tuple[str, float]] = {
     # Ignore files (treated as config)
     ".gitignore": ("gitignore", 1.0),
     ".dockerignore": ("gitignore", 1.0),
-    ".bathoignore": ("gitignore", 1.0),
     # Build/Package files
     "PKGBUILD": ("bash", 0.8),
     # Scripts without extension
