@@ -1,15 +1,7 @@
 """
-backend/context/cache.py — SQLite-based AST entity cache.
+backend/context/cache.py — Legacy cache implementations (deprecated).
 
-Replaces the old file state cache with a more powerful cache that stores
-actual extracted entities keyed by file content hash.
-
-Features:
-- SQLite-based storage in .ctn/local/cache/ast_cache.db (per-project)
-- Thread-safe operations with connection pooling
-- TTL-based expiration
-- Size-based LRU eviction
-- mtime and size validation for cache hits
+Use batho.context.unified_cache.BathoCache for new code.
 """
 
 from __future__ import annotations
@@ -18,6 +10,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+import warnings
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -48,6 +41,11 @@ class ASTCache:
         Args:
             cache_path: Path to the SQLite cache database (per-project).
         """
+        warnings.warn(
+            "ASTCache is deprecated; use BathoCache from unified_cache",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._path = Path(cache_path).resolve()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -467,6 +465,129 @@ class ASTCache:
 
     def close(self) -> None:
         """Close the database connection for the current thread."""
+        with self._lock:
+            if hasattr(self._local, "conn") and self._local.conn is not None:
+                self._local.conn.close()
+                self._local.conn = None
+
+
+# ---------------------------------------------------------------------------
+# File Hash Cache (for patch operations)
+# ---------------------------------------------------------------------------
+
+
+class FileHashCache:
+    """
+    SQLite-based cache for file hashes used in patch operations.
+
+    Replaces the old JSON-based file_hashes.json with a more efficient
+    SQLite storage that supports fast lookups and atomic updates.
+    """
+
+    def __init__(self, cache_path: str = ".ctn/local/cache/file_hash_cache.db") -> None:
+        warnings.warn(
+            "FileHashCache is deprecated; use BathoCache from unified_cache",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self._path = Path(cache_path).resolve()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._local = threading.local()
+        self._initialize_db()
+
+    def _get_connection(self) -> sqlite3.Connection:
+        if not hasattr(self._local, "conn") or self._local.conn is None:
+            self._local.conn = sqlite3.connect(
+                self._path, check_same_thread=False, timeout=30.0
+            )
+            self._local.conn.row_factory = sqlite3.Row
+        return self._local.conn
+
+    def _initialize_db(self) -> None:
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS file_hashes (
+                    file_path TEXT PRIMARY KEY,
+                    content_hash TEXT NOT NULL,
+                    mtime REAL NOT NULL,
+                    size INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_content_hash ON file_hashes(content_hash)
+            """)
+            conn.commit()
+
+    def load_all(self) -> dict[str, str]:
+        """Load all file hashes as a dictionary."""
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_path, content_hash FROM file_hashes")
+            return {row["file_path"]: row["content_hash"] for row in cursor.fetchall()}
+
+    def save_all(self, file_hashes: dict[str, str], root: Path) -> None:
+        """Save all file hashes to the cache."""
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM file_hashes")
+            now = datetime.now(timezone.utc).isoformat()
+            for file_path, content_hash in file_hashes.items():
+                full_path = root / file_path
+                try:
+                    stat = full_path.stat()
+                    cursor.execute(
+                        """
+                        INSERT INTO file_hashes (file_path, content_hash, mtime, size, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (file_path, content_hash, stat.st_mtime, stat.st_size, now),
+                    )
+                except OSError as e:
+                    logger.warning("file_hash_save_skipped", path=file_path, error=str(e))
+            conn.commit()
+
+    def get(self, file_path: str) -> str | None:
+        """Get hash for a single file."""
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT content_hash FROM file_hashes WHERE file_path = ?",
+                (file_path,),
+            )
+            row = cursor.fetchone()
+            return row["content_hash"] if row else None
+
+    def set(self, file_path: str, content_hash: str, mtime: float, size: int) -> None:
+        """Set hash for a single file."""
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            now = datetime.now(timezone.utc).isoformat()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO file_hashes (file_path, content_hash, mtime, size, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (file_path, content_hash, mtime, size, now),
+            )
+            conn.commit()
+
+    def delete(self, file_path: str) -> None:
+        """Delete hash for a file."""
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM file_hashes WHERE file_path = ?", (file_path,))
+            conn.commit()
+
+    def close(self) -> None:
         with self._lock:
             if hasattr(self._local, "conn") and self._local.conn is not None:
                 self._local.conn.close()

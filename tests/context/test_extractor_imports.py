@@ -5,6 +5,7 @@ from __future__ import annotations
 from batho.context.extractor import _expand_import_targets, _normalize_import_target
 from batho.context.languages.python import PythonExtractor
 from batho.context.languages.r import RExtractor
+from batho.context.schema import EntityType
 
 
 class TestImportNormalization:
@@ -32,15 +33,28 @@ run_analysis <- function() {
     require('ggplot2')
 }
 """
-        _, relationships = extractor.parse_file("sample.R", source)
+        entities, relationships = extractor.parse_file("sample.R", source)
 
-        targets = sorted(
+        # Verify UNRESOLVED entities were created for dplyr and ggplot2
+        unresolved_names = sorted(
+            e.name
+            for e in entities
+            if e.type == EntityType.UNRESOLVED
+        )
+        assert "dplyr" in unresolved_names
+        assert "ggplot2" in unresolved_names
+
+        # Verify that relationships target the UNRESOLVED entity IDs
+        unresolved_ids = set(
+            e.id for e in entities if e.type == EntityType.UNRESOLVED
+        )
+        import_targets = sorted(
             rel.target_id
             for rel in relationships
             if rel.type.name == "IMPORTS"
         )
-        assert "unresolved:dplyr" in targets
-        assert "unresolved:ggplot2" in targets
+        for target in import_targets:
+            assert target in unresolved_ids, f"Target {target} should be an UNRESOLVED entity ID"
 
 
 class TestLeadingCommentDocFallback:

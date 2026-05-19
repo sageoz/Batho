@@ -32,10 +32,10 @@ def test_process_file_worker_returns_cached_entities(monkeypatch, tmp_path: Path
         def __init__(self, cache_path: str):
             self.cache_path = cache_path
 
-        def get_cached_entities(self, *_args):
+        def get_ast(self, *_args):
             return cached, cached_rels
 
-    monkeypatch.setattr(pipeline, "ASTCache", _Cache)
+    monkeypatch.setattr(pipeline, "BathoCache", _Cache)
 
     result = pipeline.process_file_worker(
         tmp_path / "cached.py",
@@ -62,10 +62,10 @@ def test_process_file_worker_returns_none_for_invalid_extractor(monkeypatch, tmp
         def __init__(self, cache_path: str):
             self.cache_path = cache_path
 
-        def get_cached_entities(self, *_args):
+        def get_ast(self, *_args):
             return None
 
-        def cache_entities(self, *_args):
+        def set_ast(self, *_args):
             return None
 
     class _Detector:
@@ -74,7 +74,7 @@ def test_process_file_worker_returns_none_for_invalid_extractor(monkeypatch, tmp
             return object()
 
     monkeypatch.setattr(pipeline, "ASTExtractor", _BaseExtractor)
-    monkeypatch.setattr(pipeline, "ASTCache", _Cache)
+    monkeypatch.setattr(pipeline, "BathoCache", _Cache)
     monkeypatch.setattr("batho.context.languages.detector.default_detector", _Detector())
     monkeypatch.setattr("batho.context.languages.registry.get_extractor", lambda _suffix: None)
 
@@ -111,21 +111,21 @@ def test_process_file_worker_parses_and_caches(monkeypatch, tmp_path: Path) -> N
         def __init__(self, cache_path: str):
             self.cache_path = cache_path
 
-        def get_cached_entities(self, *_args):
+        def get_ast(self, *_args):
             return None
 
-        def cache_entities(
+        def set_ast(
             self,
-            filepath: str,
-            content_hash: str,
+            file_hash: str,
+            file_path: str,
             entities: list[Entity],
+            relationships: list[Relationship],
             current_mtime: float,
             size: int,
             ttl_days: int,
-            relationships: list[Relationship] | None = None,
         ) -> None:
-            _ = current_mtime, size
-            cache_calls.append((filepath, content_hash, len(entities), ttl_days))
+            _ = current_mtime, size, relationships
+            cache_calls.append((file_hash, file_path, len(entities), ttl_days))
 
     class _Detector:
         @staticmethod
@@ -133,7 +133,7 @@ def test_process_file_worker_parses_and_caches(monkeypatch, tmp_path: Path) -> N
             return _Extractor()
 
     monkeypatch.setattr(pipeline, "ASTExtractor", _BaseExtractor)
-    monkeypatch.setattr(pipeline, "ASTCache", _Cache)
+    monkeypatch.setattr(pipeline, "BathoCache", _Cache)
     monkeypatch.setattr("batho.context.languages.detector.default_detector", _Detector())
     monkeypatch.setattr("batho.context.languages.registry.get_extractor", lambda _suffix: None)
 
@@ -152,7 +152,7 @@ def test_process_file_worker_parses_and_caches(monkeypatch, tmp_path: Path) -> N
     )
 
     assert result == ("src/ok.py", [entity], [rel], False)
-    assert cache_calls == [("src/ok.py", "hash-3", 1, 14)]
+    assert cache_calls == [("hash-3", "src/ok.py", 1, 14)]
 
 
 def test_process_file_worker_handles_exceptions(monkeypatch, tmp_path: Path) -> None:

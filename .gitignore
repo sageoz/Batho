@@ -23,10 +23,6 @@ coverage.xml
 test-results.xml
 test_output.puml
 
-# Supabase and .ctn artifacts
-supabase/
-.ctn/
-
 # Editor/OS files
 .DS_Store
 Thumbs.db
@@ -35,7 +31,7 @@ Thumbs.db
 *.bak
 *.tmp
 ~$*
-
+/.ctn/*
 # IDE/project files
 .vscode/
 .idea/
@@ -49,6 +45,6 @@ bsg_analysis.ipynb
 .DS_Store
 issue.md
 plans/*
-tests/testdata/repositories/flask/.ctn/index.json
-tests/testdata/repositories/multi_language/.ctn/index.json
-tests/testdata/repositories/simple_python/.ctn/index.json
+tests/testdata/repositories/flask/.ctn/*
+tests/testdata/repositories/multi_language/.ctn/*
+tests/testdata/repositories/simple_python/.ctn/*

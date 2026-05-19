@@ -42,6 +42,9 @@ class SymbolIndex:
 
         # Preserve existing deterministic behavior by building from sorted IDs.
         for entity in sorted(graph.entities.values(), key=lambda item: item.id):
+            # Skip UNRESOLVED entities — they are placeholders, not real symbols
+            if entity.type == EntityType.UNRESOLVED:
+                continue
             files_by_id[entity.id] = entity.file
             names_by_id[entity.id] = entity.name
             _add(entity.name, entity.id)

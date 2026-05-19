@@ -1322,7 +1322,7 @@ def cmd_index(args: argparse.Namespace) -> int:
     ctn_dir = _ensure_ctn_dir(root)
     local_dirs = _ensure_local_dirs(ctn_dir)
 
-    cache_path = local_dirs["cache"] / "ast_cache.db"
+    cache_path = ctn_dir / "local" / "cache.db"
     build_start = time.perf_counter()
     no_ast_cache = bool(getattr(args, "no_ast_cache", False))
 
@@ -1500,7 +1500,7 @@ def cmd_index(args: argparse.Namespace) -> int:
                 max_workers=args.max_workers,
                 max_file_size_kb=args.max_file_size_kb,
                 verbose=args.verbose,
-                snapshot_id=index_id,
+                index_id=index_id,
                 ast_cache_enabled=(not no_ast_cache),
             )
             bsg_map = BSGMap.build(
@@ -1555,7 +1555,7 @@ def cmd_index(args: argparse.Namespace) -> int:
                 bsg_path,
                 bsg_map.render_json_streaming(
                     build_ms=index_build_ms,
-                    default_snapshot_id=index_id,
+                    default_index_id=index_id,
                     default_service_tag=root.name,
                     extra_fields={"stack": stack_info},
                 ),
@@ -1569,7 +1569,7 @@ def cmd_index(args: argparse.Namespace) -> int:
         else:
             bsg_json = bsg_map.render_json(
                 build_ms=index_build_ms,
-                default_snapshot_id=index_id,
+                default_index_id=index_id,
                 default_service_tag=root.name,
             )
             bsg_json["stack"] = stack_info
@@ -1791,6 +1791,32 @@ def cmd_index(args: argparse.Namespace) -> int:
 
     if stats.get("errors"):
         print(f"⚠️  Indexed with {stats['errors']} parse errors (partial success).")
+
+    # Update file tracking to mark indexed files
+    try:
+        from batho.context.unified_cache import BathoCache
+
+        cache = BathoCache(cache_path=str(cache_path))
+        indexed_files = {entity.file for entity in graph.entities.values()}
+        for file_path in indexed_files:
+            try:
+                full_path = root / file_path
+                if full_path.exists():
+                    stat = full_path.stat()
+                    from batho.utils.hash import compute_file_hash
+                    content_hash = compute_file_hash(full_path)
+                    cache.set_file_hash(
+                        file_path=file_path,
+                        content_hash=content_hash,
+                        mtime=stat.st_mtime,
+                        size=stat.st_size,
+                        is_indexed=True,
+                    )
+            except Exception as e:
+                LOGGER.warning("file_tracking_update_failed", file=file_path, error=str(e))
+        LOGGER.info("file_tracking_updated", indexed_count=len(indexed_files))
+    except Exception as e:
+        LOGGER.warning("file_tracking_update_error", error=str(e))
 
     _emit_bsg_quality_warnings(quality_warnings, verbose=args.verbose)
 
@@ -2075,7 +2101,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         return 1
 
     local_dirs = _ensure_local_dirs(ctn_dir)
-    cache_path = local_dirs["cache"] / "ast_cache.db"
+    cache_path = ctn_dir / "local" / "cache.db"
     indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
 
     files: list[Path] = []
@@ -2086,9 +2112,8 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
     existing_files = {Path(entity.file).resolve() for entity in graph.entities.values()}
 
     if args.scan:
-        hash_cache_path = local_dirs["state"] / "file_hashes.json"
         tracker = FileChangeTracker(root)
-        tracker.load(hash_cache_path)
+        tracker.load()
         changes = tracker.scan_for_changes(max_file_size_kb=args.max_file_size_kb)
         deleted_paths = tracker.get_deleted_files(changes)
         if deleted_paths:
@@ -2108,15 +2133,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
             print("No changes detected.")
             indexer.close()
             return 0
-        tracker.save(hash_cache_path)
-        if hash_cache_path.exists():
-            register_artifact(
-                ctn_dir,
-                hash_cache_path,
-                "file_hashes_json",
-                producer="cli.patch.index",
-                metadata={"index_id": current_id},
-            )
+        tracker.save()
         print(f"Scanned: {len(files)} changed files, {len(deleted_paths)} deleted")
     else:
         if args.diff:
@@ -2198,7 +2215,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
                 bsg_path,
                 bsg_map.render_json_streaming(
                     build_ms=patch_build_ms,
-                    default_snapshot_id=current_id,
+                    default_index_id=current_id,
                     default_service_tag=root.name,
                 ),
                 ctn_dir=ctn_dir,
@@ -2211,7 +2228,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         else:
             bsg_json = bsg_map.render_json(
                 build_ms=patch_build_ms,
-                default_snapshot_id=current_id,
+                default_index_id=current_id,
                 default_service_tag=root.name,
             )
             _write_json(
@@ -2437,41 +2454,38 @@ def _cmd_patch_snapshot_based(
 
     if args.scan:
         tracker = FileChangeTracker(root)
-        hash_cache_path = local_dirs["state"] / "file_hashes.json"
-        tracker.load(hash_cache_path)
+        tracker.load()
 
         base_snapshot = None
         if args.base_snapshot:
             base_snapshot = load_snapshot(ctn_dir, args.base_snapshot)
             if base_snapshot:
                 base_file_hashes: dict[str, str] = {}
-                for entity in base_snapshot.get("graph", {}).get("entities", []):
-                    file_path = entity.get("file", "")
-                    file_hash = entity.get("hash", "")
-                    if file_path and file_hash:
-                        base_file_hashes[file_path] = file_hash
+                top_level_hashes = base_snapshot.get("file_hashes", {})
+                if top_level_hashes:
+                    base_file_hashes = top_level_hashes
+                else:
+                    for entity in base_snapshot.get("graph", {}).get("entities", []):
+                        file_path = entity.get("file", "")
+                        file_hash = entity.get("hash", "")
+                        if file_path and file_hash:
+                            base_file_hashes[file_path] = file_hash
                 if not base_file_hashes:
                     LOGGER.warning(
                         "base_snapshot_missing_hashes",
                         base_snapshot_id=args.base_snapshot,
-                        note="snapshot entities lack hash field; falling back to full scan",
+                        note="snapshot lacks file_hashes; falling back to full scan",
                     )
                     base_snapshot = None
                 else:
                     base_snapshot = {"file_hashes": base_file_hashes}
 
         changes = tracker.scan_for_changes(
-            max_file_size_kb=args.max_file_size_kb, base_snapshot=base_snapshot
+            max_file_size_kb=args.max_file_size_kb,
+            base_snapshot=base_snapshot,
+            track_new_files=False,
         )
-        tracker.save(hash_cache_path)
-        if hash_cache_path.exists():
-            register_artifact(
-                ctn_dir,
-                hash_cache_path,
-                "file_hashes_json",
-                producer="cli.patch.snapshot",
-                metadata={"base_snapshot_id": args.base_snapshot},
-            )
+        tracker.save()
         print(f"Scanned: {len(changes)} changes detected")
     else:
         # Process explicit file changes or auto-detect from current index
@@ -2616,11 +2630,11 @@ def cmd_invalidate(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
     local_dirs = _ensure_local_dirs(ctn_dir)
-    cache_path = local_dirs["cache"] / "ast_cache.db"
+    cache_path = ctn_dir / "local" / "cache.db"
     if cache_path.exists():
         try:
             cache_path.unlink()
-            print("✅ Cleared AST cache")
+            print("✅ Cleared cache")
         except (PermissionError, OSError) as exc:
             LOGGER.warning(
                 "invalidate_cache_failed",
@@ -2635,59 +2649,89 @@ def cmd_invalidate(args: argparse.Namespace) -> int:
 
 
 def cmd_cache_stats(args: argparse.Namespace) -> int:
-    """Show AST cache statistics."""
-    from batho.context.cache import ASTCache
+    """Show unified cache statistics."""
+    from batho.context.unified_cache import BathoCache
 
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
     local_dirs = _ensure_local_dirs(ctn_dir)
-    cache_path = local_dirs["cache"] / "ast_cache.db"
+    cache_path = ctn_dir / "local" / "cache.db"
 
-    cache = ASTCache(cache_path=cache_path)
-    stats = cache.get_cache_stats()
+    cache = BathoCache(cache_path=str(cache_path))
+    stats = cache.get_stats()
 
-    print("📊 AST Cache Statistics")
+    print("📊 Cache Statistics")
     print(f"  Cache path: {stats['cache_path']}")
-    print(f"  Entry count: {stats['entry_count']}")
-    print(f"  Total size: {stats['total_size_mb']} MB")
-    print(f"  Oldest entry: {stats['oldest_entry']}")
-    print(f"  Newest entry: {stats['newest_entry']}")
+    print(f"  AST entries: {stats['ast_entry_count']}")
+    print(f"  AST size: {stats['ast_total_size_mb']} MB")
+    print(f"  AST oldest: {stats['ast_oldest_entry']}")
+    print(f"  AST newest: {stats['ast_newest_entry']}")
+    print(f"  File tracking entries: {stats['file_tracking_count']}")
+    print(f"  Indexed files: {stats['indexed_files']}")
+    print(f"  Unindexed files: {stats['unindexed_files']}")
     return 0
 
 
 def cmd_cache_invalidate(args: argparse.Namespace) -> int:
     """Invalidate cache entries by pattern."""
-    from batho.context.cache import ASTCache
+    from batho.context.unified_cache import BathoCache
 
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
     local_dirs = _ensure_local_dirs(ctn_dir)
-    cache_path = local_dirs["cache"] / "ast_cache.db"
+    cache_path = ctn_dir / "local" / "cache.db"
 
-    cache = ASTCache(cache_path=str(cache_path))
+    cache = BathoCache(cache_path=str(cache_path))
     pattern = args.pattern
 
     if pattern:
-        cache.invalidate_cache(pattern=pattern)
-        print(f"✅ Invalidated cache entries matching: {pattern}")
+        deleted = cache.delete_ast_by_pattern(pattern)
+        print(f"✅ Invalidated {deleted} AST entries matching: {pattern}")
     else:
-        cache.invalidate_cache(pattern=None)
-        print("✅ Invalidated all cache entries")
+        deleted = cache.clear_ast_cache()
+        print(f"✅ Invalidated {deleted} AST entries")
     return 0
 
 
 def cmd_cache_clear(args: argparse.Namespace) -> int:
     """Clear entire AST cache."""
-    from batho.context.cache import ASTCache
+    from batho.context.unified_cache import BathoCache
 
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
     local_dirs = _ensure_local_dirs(ctn_dir)
-    cache_path = local_dirs["cache"] / "ast_cache.db"
+    cache_path = ctn_dir / "local" / "cache.db"
 
-    cache = ASTCache(cache_path=str(cache_path))
-    cache.invalidate_cache(pattern=None)
-    print("✅ Cleared entire AST cache")
+    cache = BathoCache(cache_path=str(cache_path))
+    deleted = cache.clear_ast_cache()
+    print(f"✅ Cleared {deleted} AST cache entries")
+    return 0
+
+
+def cmd_cache_cleanup(args: argparse.Namespace) -> int:
+    """Remove old cache files after migration to unified cache.db."""
+    from batho.utils.cache_cleanup import cleanup_old_caches, get_cache_dir_status
+
+    root = Path(args.root).resolve()
+
+    if args.status:
+        status = get_cache_dir_status(root)
+        print("Cache Status:")
+        print(f"  Old cache dir exists: {status.get('old_cache_dir_exists')}")
+        print(f"  Old cache files: {status.get('old_cache_files', [])}")
+        print(f"  New cache exists: {status.get('new_cache_exists')}")
+        if status.get("new_cache_size_bytes"):
+            print(f"  New cache size: {status.get('new_cache_size_bytes')} bytes")
+        return 0
+
+    result = cleanup_old_caches(root, dry_run=bool(args.dry_run))
+
+    print("Cache Cleanup Result:")
+    print(f"  Deleted: {result.get('deleted', [])}")
+    print(f"  Skipped: {result.get('skipped', [])}")
+    if result.get("errors"):
+        print(f"  Errors: {result.get('errors')}")
+    print(f"  Dry run: {result.get('dry_run')}")
     return 0
 
 
@@ -3407,6 +3451,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Cache commands
     cache = sub.add_parser("cache", help="AST cache management")
+    cache.add_argument(
+        "--root", default=".", help="Path to repository root (default: current directory)"
+    )
     cache_sub = cache.add_subparsers(dest="cache_command", required=True)
 
     cache_stats = cache_sub.add_parser("stats", help="Show cache statistics")
@@ -3420,6 +3467,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     cache_clr = cache_sub.add_parser("clear", help="Clear entire cache")
     cache_clr.set_defaults(func=cmd_cache_clear)
+
+    cache_cleanup = cache_sub.add_parser(
+        "cleanup", help="Remove old cache files after migration"
+    )
+    cache_cleanup.add_argument(
+        "--dry-run", action="store_true", help="Show what would be deleted without deleting"
+    )
+    cache_cleanup.add_argument(
+        "--status", action="store_true", help="Show cache directory status"
+    )
+    cache_cleanup.set_defaults(func=cmd_cache_cleanup)
 
     storage = sub.add_parser("storage", help="Artifact registry management")
     storage_sub = storage.add_subparsers(dest="storage_command", required=True)

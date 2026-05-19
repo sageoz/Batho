@@ -1,9 +1,13 @@
 # Default ignore patterns for Batho indexing
 # These patterns are applied in addition to .gitignore
+# Only includes external modules, libraries, and build artifacts
 # Format: gitignore-style glob patterns
 version: ignore-patterns.v1
 
 patterns:
+  # Git directory
+  - ".git/"
+
   # Virtual environments
   - ".venv/"
   - "venv/"
@@ -24,11 +28,6 @@ patterns:
   - ".mypy_cache/"
   - ".tox/"
 
-  # Version control
-  - ".git/"
-  - ".svn/"
-  - ".hg/"
-
   # Build artifacts
   - "build/"
   - "dist/"
@@ -37,7 +36,7 @@ patterns:
   - "target/"
   - "out/"
 
-  # IDE and tool directories
+  # IDE directories
   - ".idea/"
   - ".vscode/"
   - ".vs/"
@@ -57,18 +56,6 @@ patterns:
   - "Cargo.lock"
   - "Gemfile.lock"
 
-  # Framework build directories
-  - ".next/"
-  - ".nuxt/"
-  - ".output/"
-
-  # Coverage and cache
-  - "coverage/"
-  - "htmlcov/"
-  - ".coverage"
-  - ".sass-cache/"
-  - ".parcel-cache/"
-
   # Batho's own directories
   - ".ctn/"
   - ".batho/"
@@ -77,16 +64,12 @@ patterns:
   - ".cline/"
   - ".kilo/"
 
-  # Kernel-specific patterns
-  - "*.mod.c"
-  - "*.mod.h"
-  - ".config"
-  - "vmlinux.symvers"
-  - "*.order"
-  - "*.a"
-  - "*.ko"
-  - "scripts/kconfig/*"
-  - "Documentation/**/*.rst"
-  - "tools/testing/**"
-  - "arch/*/boot/compressed/"
+  # Framework build directories
+  - ".next/"
+  - ".nuxt/"
+  - ".output/"
+
+  # Coverage cache
+  - "coverage/"
+  - "htmlcov/"
 

@@ -371,11 +371,11 @@ class BSGMap:
     def _build_render_components(
         self,
         build_ms: int | None = None,
-        default_snapshot_id: str | None = None,
+        default_index_id: str | None = None,
         default_service_tag: str | None = None,
     ) -> dict[str, Any]:
         """Build reusable render components for JSON outputs."""
-        resolved_default_snapshot = (default_snapshot_id or "").strip() or None
+        resolved_default_index = (default_index_id or "").strip() or None
         resolved_default_service = (
             (default_service_tag or "").strip()
             if default_service_tag is not None
@@ -389,8 +389,8 @@ class BSGMap:
         node_by_id: dict[str, dict[str, Any]] = {}
         rule_names: set[str] = set()
         quality_warnings: list[str] = []
-        autofilled_snapshot_ids = 0
-        missing_snapshot_ids = 0
+        autofilled_index_ids = 0
+        missing_index_ids = 0
         autofilled_service_tags = 0
         missing_service_tags = 0
         normalized_categories = 0
@@ -426,18 +426,16 @@ class BSGMap:
                     missing_service_tags += 1
 
                 language = self._derive_language(entity, file_path)
-                raw_snapshot_id = metadata.get("bsg.snapshot_id") or metadata.get(
-                    "snapshot_id"
+                raw_index_id = metadata.get("bsg.index_id")
+                index_id_text = (
+                    str(raw_index_id).strip() if raw_index_id is not None else ""
                 )
-                snapshot_id_text = (
-                    str(raw_snapshot_id).strip() if raw_snapshot_id is not None else ""
-                )
-                if not snapshot_id_text and resolved_default_snapshot:
-                    snapshot_id_text = resolved_default_snapshot
-                    autofilled_snapshot_ids += 1
-                if not snapshot_id_text:
-                    missing_snapshot_ids += 1
-                snapshot_id = snapshot_id_text or None
+                if not index_id_text and resolved_default_index:
+                    index_id_text = resolved_default_index
+                    autofilled_index_ids += 1
+                if not index_id_text:
+                    missing_index_ids += 1
+                index_id = index_id_text or None
 
                 rules = metadata.get("bsg.rules")
                 if isinstance(rules, list):
@@ -458,7 +456,7 @@ class BSGMap:
                     "category": category,
                     "service_tag": service_tag,
                     "dependency_weight": 0,
-                    "snapshot_id": snapshot_id,
+                    "index_id": index_id,
                     "metadata": metadata,
                 }
                 nodes.append(node)
@@ -633,14 +631,14 @@ class BSGMap:
             and len(node.get("metadata", {}).get("bsg.rules", [])) > 0
         )
 
-        if autofilled_snapshot_ids:
+        if autofilled_index_ids:
             quality_warnings.append(
-                "auto-filled snapshot_id for "
-                f"{autofilled_snapshot_ids} nodes from default_snapshot_id"
+                "auto-filled index_id for "
+                f"{autofilled_index_ids} nodes from default_index_id"
             )
-        if missing_snapshot_ids:
+        if missing_index_ids:
             quality_warnings.append(
-                f"{missing_snapshot_ids} nodes missing snapshot_id after fallback"
+                f"{missing_index_ids} nodes missing index_id after fallback"
             )
         if autofilled_service_tags:
             quality_warnings.append(
@@ -664,8 +662,8 @@ class BSGMap:
             "rules_loaded": len(rule_names),
             "rules_applied": rules_applied,
             "quality_warnings": len(quality_warnings),
-            "autofilled_snapshot_ids": autofilled_snapshot_ids,
-            "missing_snapshot_ids": missing_snapshot_ids,
+            "autofilled_index_ids": autofilled_index_ids,
+            "missing_index_ids": missing_index_ids,
             "autofilled_service_tags": autofilled_service_tags,
             "missing_service_tags": missing_service_tags,
             "category_normalizations": normalized_categories,
@@ -712,7 +710,7 @@ class BSGMap:
     def render_json(
         self,
         build_ms: int | None = None,
-        default_snapshot_id: str | None = None,
+        default_index_id: str | None = None,
         default_service_tag: str | None = None,
     ) -> dict[str, Any]:
         """
@@ -720,7 +718,7 @@ class BSGMap:
 
         Args:
             build_ms: Optional build latency in milliseconds for stats payload.
-            default_snapshot_id: Fallback snapshot identifier to stamp nodes when
+            default_index_id: Fallback index identifier to stamp nodes when
                 metadata does not already provide one.
             default_service_tag: Optional service tag fallback when derivation
                 from file path yields no service.
@@ -737,7 +735,7 @@ class BSGMap:
             chunks = []
             for chunk in self.render_json_streaming(
                 build_ms=build_ms,
-                default_snapshot_id=default_snapshot_id,
+                default_index_id=default_index_id,
                 default_service_tag=default_service_tag,
             ):
                 chunks.append(chunk)
@@ -747,14 +745,14 @@ class BSGMap:
         if (
             self._serialized_bsg is not None
             and build_ms is None
-            and default_snapshot_id is None
+            and default_index_id is None
             and default_service_tag is None
         ):
             return json.loads(json.dumps(self._serialized_bsg))
 
         components = self._build_render_components(
             build_ms=build_ms,
-            default_snapshot_id=default_snapshot_id,
+            default_index_id=default_index_id,
             default_service_tag=default_service_tag,
         )
 
@@ -773,7 +771,7 @@ class BSGMap:
     def render_json_streaming(
         self,
         build_ms: int | None = None,
-        default_snapshot_id: str | None = None,
+        default_index_id: str | None = None,
         default_service_tag: str | None = None,
         extra_fields: dict[str, Any] | None = None,
     ):
@@ -781,7 +779,7 @@ class BSGMap:
         if (
             self._serialized_bsg is not None
             and build_ms is None
-            and default_snapshot_id is None
+            and default_index_id is None
             and default_service_tag is None
             and not extra_fields
         ):
@@ -792,7 +790,7 @@ class BSGMap:
 
         components = self._build_render_components(
             build_ms=build_ms,
-            default_snapshot_id=default_snapshot_id,
+            default_index_id=default_index_id,
             default_service_tag=default_service_tag,
         )
 

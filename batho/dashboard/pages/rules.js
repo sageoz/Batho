@@ -769,15 +769,15 @@ function extractRules(bsgData, indexRulesStats = {}) {
     });
   }
 
-  if (stats.autofilled_snapshot_ids > 0) {
+  if (stats.autofilled_index_ids > 0) {
     syntheticRules.push({
-      ruleId: 'bsg.snapshot_ids.derived',
-      name: 'Snapshot ID Derivation',
-      description: `Auto-filled snapshot IDs for entities`,
+      ruleId: 'bsg.index_ids.derived',
+      name: 'Index ID Derivation',
+      description: `Auto-filled index IDs for entities`,
       plugin: 'bsg_foundation',
       severity: 'info',
       enabled: true,
-      matchCount: stats.autofilled_snapshot_ids,
+      matchCount: stats.autofilled_index_ids,
       matchedEntities: [],
       warnings: [],
     });

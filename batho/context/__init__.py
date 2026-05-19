@@ -10,9 +10,11 @@ from .codegraph import CodeGraphIndexer
 from .extractor import ASTExtractor
 from .query import QueryService
 from .storage import ArtifactRegistry, register_artifact
+from .unified_cache import BathoCache
 
 __all__ = [
     "ASTCache",
+    "BathoCache",
     "CodeGraphIndexer",
     "BSGMap",
     "ASTExtractor",

@@ -73,19 +73,35 @@ def test_get_cached_entities_removes_corrupt_entries(tmp_path: Path) -> None:
 def test_cache_roundtrip_with_relationships(tmp_path: Path) -> None:
     cache = ASTCache(cache_path=str(tmp_path / "cache.db"))
     entity = _entity("src/a.py", "a")
+    now = datetime.now(timezone.utc).isoformat()
+    unresolved = Entity(
+        type=EntityType.UNRESOLVED,
+        name="foo",
+        file="src/a.py",
+        start_line=5,
+        end_line=5,
+        metadata={
+            "reference_type": "imports",
+            "resolution_reason": "not_found",
+            "attempts": 1,
+            "created_at": now,
+            "last_attempt": now,
+            "is_visible": False,
+        },
+    )
     rel = Relationship(
         source_id=entity.id,
-        target_id="unresolved:foo",
+        target_id=unresolved.id,
         type=RelationshipType.IMPORTS,
     )
     cache.cache_entities(
-        "src/a.py", "hash-rel", [entity], 1.0, 10, relationships=[rel]
+        "src/a.py", "hash-rel", [entity, unresolved], 1.0, 10, relationships=[rel]
     )
 
     result = cache.get_cached_entities("src/a.py", "hash-rel", 1.0, 10)
     assert result is not None
     entities, relationships = result
-    assert len(entities) == 1
+    assert len(entities) == 2
     assert entities[0].name == "a"
     assert len(relationships) == 1
     assert relationships[0].source_id == entity.id

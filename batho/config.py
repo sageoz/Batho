@@ -179,7 +179,7 @@ class BsgIgnoreConfig(BaseModel):
 
 class BsgCacheConfig(BaseModel):
     enabled: bool = Field(default=True)
-    path: str = Field(default=".ctn/local/cache/ast_cache.db")
+    path: str = Field(default=".ctn/local/cache.db")
     max_size_mb: int = Field(default=1024, ge=1)
     ttl_days: int = Field(default=30, ge=1)
 
@@ -194,6 +194,10 @@ class BsgSymbolResolutionConfig(BaseModel):
     enabled: bool = Field(default=True)
     fuzzy_matching: bool = Field(default=False)
     cache_symbols: bool = Field(default=True)
+    # Unresolved node tracking and pruning
+    prune_unresolved: bool = Field(default=True)
+    max_unresolved_attempts: int = Field(default=10)
+    unresolved_tracking: bool = Field(default=True)
 
 
 class BsgSerializationConfig(BaseModel):
@@ -471,7 +475,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             },
             "cache": {
                 "enabled": True,
-                "path": ".ctn/local/cache/ast_cache.db",
+                "path": ".ctn/local/cache.db",
                 "max_size_mb": 1024,
                 "ttl_days": 30,
             },
@@ -971,7 +975,7 @@ bsg:
     file: ""  # Deprecated: .bathoignore support removed
   cache:
     enabled: true
-    path: .ctn/local/cache/ast_cache.db
+    path: .ctn/local/cache.db
     max_size_mb: 1024
     ttl_days: 30
   incremental:

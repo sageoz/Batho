@@ -25,7 +25,7 @@ indexer:
 
 patch:
   timeout_seconds: 300
-  max_changes: 10000
+  max_changes: 20000
   audit_log_path: .ctn/patch_audit.log
   history_days: 90
   max_count: 1000
@@ -91,7 +91,7 @@ bsg:
     file: ""  # Deprecated: .bathoignore support removed
   cache:
     enabled: true
-    path: .ctn/local/cache/ast_cache.db
+    path: .ctn/local/cache.db
     max_size_mb: 1024
     ttl_days: 30
   incremental:

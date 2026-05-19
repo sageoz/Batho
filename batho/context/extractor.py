@@ -19,6 +19,7 @@ import abc
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from tree_sitter import Language, Node, Query, QueryCursor
@@ -298,7 +299,7 @@ class ASTExtractor(abc.ABC):
         self,
         filepath: str,
         content: bytes,
-        snapshot_id: str | None = None,
+        index_id: str | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """
         Parse *content* and return extracted entities and relationships.
@@ -311,7 +312,7 @@ class ASTExtractor(abc.ABC):
             filepath: Repo-relative path stored as the ``file`` field on every
                       extracted Entity.
             content:  Raw source bytes.
-            snapshot_id: Optional snapshot ID to stamp on entities.
+            index_id: Optional index ID to stamp on entities.
 
         Returns:
             A 2-tuple ``(entities, relationships)``, both sorted by source position.
@@ -369,7 +370,7 @@ class ASTExtractor(abc.ABC):
                 raw_captures = self._filter_comment_captures(raw_captures)
 
             entities, relationships = self._process_captures(
-                raw_captures, content, filepath, snapshot_id=snapshot_id
+                raw_captures, content, filepath, index_id=index_id
             )
         except Exception as exc:
             if error_recovery:
@@ -438,7 +439,7 @@ class ASTExtractor(abc.ABC):
         captures: dict[str, list[Node]],
         source: bytes,
         filepath: str,
-        snapshot_id: str | None = None,
+        index_id: str | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """
         Group raw captures into entity definitions + auxiliary metadata,
@@ -462,9 +463,12 @@ class ASTExtractor(abc.ABC):
                 definition_nodes.setdefault(cap_name, []).extend(nodes)
 
         entities = self._build_entities(
-            definition_nodes, auxiliary_nodes, source, filepath, snapshot_id=snapshot_id
+            definition_nodes, auxiliary_nodes, source, filepath, index_id=index_id
         )
-        relationships = self._build_relationships(captures, entities, source, filepath)
+        unresolved_entities, relationships = self._build_relationships(
+            captures, entities, source, filepath
+        )
+        entities.extend(unresolved_entities)
         return entities, relationships
 
     def _build_entities(
@@ -473,7 +477,7 @@ class ASTExtractor(abc.ABC):
         auxiliary_nodes: dict[tuple[str, str], list[Node]],
         source: bytes,
         filepath: str,
-        snapshot_id: str | None = None,
+        index_id: str | None = None,
     ) -> list[Entity]:
         """Instantiate Entity models from grouped capture nodes."""
         entities: list[Entity] = []
@@ -499,8 +503,8 @@ class ASTExtractor(abc.ABC):
                     name, base_key, decl_node, auxiliary_nodes, source
                 )
 
-                if snapshot_id:
-                    metadata["bsg.snapshot_id"] = snapshot_id
+                if index_id:
+                    metadata["bsg.index_id"] = index_id
 
                 normalized_name = name
                 if entity_type == EntityType.ENTRY_POINT:
@@ -539,10 +543,37 @@ class ASTExtractor(abc.ABC):
         entities: list[Entity],
         source: bytes,
         filepath: str,
-    ) -> list[Relationship]:
-        """Build Relationship models from reference captures."""
+    ) -> tuple[list[Entity], list[Relationship]]:
+        """Build Relationship models from reference captures.
+
+        Returns unresolved entities alongside relationships so callers can merge
+        them into the main entity list.
+        """
         relationships: list[Relationship] = []
+        unresolved_entities: list[Entity] = []
         emitted: set[tuple[str, str, str]] = set()
+        unresolved_emitted: set[str] = set()
+
+        def _make_unresolved(
+            ref_text: str, line: int, rel_type: RelationshipType
+        ) -> Entity:
+            now = datetime.now(timezone.utc).isoformat()
+            meta: dict[str, Any] = {
+                "reference_type": rel_type.name.lower(),
+                "resolution_reason": "not_found",
+                "attempts": 1,
+                "created_at": now,
+                "last_attempt": now,
+                "is_visible": False,
+            }
+            return Entity(
+                type=EntityType.UNRESOLVED,
+                name=ref_text,
+                file=filepath,
+                start_line=line,
+                end_line=line,
+                metadata=meta,
+            )
 
         def _add(
             src_id: str,
@@ -617,22 +648,24 @@ class ASTExtractor(abc.ABC):
                     RelationshipType.REFERENCES,
                 ):
                     source_ent = _find_enclosing(node.start_byte)
-                    source_id = source_ent.id if source_ent is not None else filepath
+                    if source_ent is None:
+                        continue
+                    source_id = source_ent.id
                     target_ent = by_name.get(ref_text)
                     if target_ent is not None and source_id != target_ent.id:
                         _add(source_id, target_ent.id, rel_type, line_no, rel_meta)
                     elif target_ent is None:
-                        _add(
-                            source_id,
-                            f"unresolved:{ref_text}",
-                            rel_type,
-                            line_no,
-                            rel_meta,
-                        )
+                        unres = _make_unresolved(ref_text, line_no, rel_type)
+                        if unres.id not in unresolved_emitted:
+                            unresolved_emitted.add(unres.id)
+                            unresolved_entities.append(unres)
+                        _add(source_id, unres.id, rel_type, line_no, rel_meta)
 
                 elif rel_type == RelationshipType.IMPORTS:
                     source_ent = _find_enclosing(node.start_byte)
-                    source_id = source_ent.id if source_ent is not None else filepath
+                    if source_ent is None:
+                        continue
+                    source_id = source_ent.id
                     targets = _expand_import_targets(ref_text)
                     if not targets:
                         continue
@@ -642,15 +675,11 @@ class ASTExtractor(abc.ABC):
                         if target_ent is not None and source_id != target_ent.id:
                             _add(source_id, target_ent.id, rel_type, line_no, rel_meta)
                         elif target_ent is None:
-                            # External import — store as unresolved reference.
-                            # CodeGraphIndexer resolves these in a cross-file pass.
-                            _add(
-                                source_id,
-                                f"unresolved:{target_ref}",
-                                rel_type,
-                                line_no,
-                                rel_meta,
-                            )
+                            unres = _make_unresolved(target_ref, line_no, rel_type)
+                            if unres.id not in unresolved_emitted:
+                                unresolved_emitted.add(unres.id)
+                                unresolved_entities.append(unres)
+                            _add(source_id, unres.id, rel_type, line_no, rel_meta)
                             self.logger.debug(
                                 "unresolved_import",
                                 filepath=filepath,
@@ -671,15 +700,19 @@ class ASTExtractor(abc.ABC):
                     elif target_ent is None:
                         normalized_ref = _normalize_import_target(ref_text)
                         if normalized_ref:
+                            unres = _make_unresolved(normalized_ref, line_no, rel_type)
+                            if unres.id not in unresolved_emitted:
+                                unresolved_emitted.add(unres.id)
+                                unresolved_entities.append(unres)
                             _add(
                                 source_ent.id,
-                                f"unresolved:{normalized_ref}",
+                                unres.id,
                                 rel_type,
                                 line_no,
                                 rel_meta,
                             )
 
-        return relationships
+        return unresolved_entities, relationships
 
     # ------------------------------------------------------------------
     # Internal — metadata / signature helpers
@@ -908,18 +941,18 @@ class MarkupConfigExtractor(ASTExtractor):
         self,
         filepath: str,
         content: bytes,
-        snapshot_id: str | None = None,
+        index_id: str | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Parse a markup or configuration file."""
         t0 = time.perf_counter()
 
         try:
             entities = self._extract_elements(content, filepath)
-            if snapshot_id:
+            if index_id:
                 stamped_entities = []
                 for entity in entities:
                     metadata = dict(entity.metadata or {})
-                    metadata["bsg.snapshot_id"] = snapshot_id
+                    metadata["bsg.index_id"] = index_id
                     stamped_entity = Entity(
                         type=entity.type,
                         name=entity.name,

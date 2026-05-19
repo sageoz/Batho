@@ -209,7 +209,7 @@ class Class_{i}:
                 # Ensure the directory still exists
                 assert test_repo.exists(), f"Test repo directory should exist: {test_repo}"
                 assert test_repo.is_dir(), f"Test repo should be a directory: {test_repo}"
-                cache_path = test_repo / ".ctn" / "local" / "cache" / "ast_cache.db"
+                cache_path = test_repo / ".ctn" / "local" / "cache.db"
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
                 indexer = CodeGraphIndexer(str(cache_path), str(test_repo))
                 try:

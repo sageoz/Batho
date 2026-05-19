@@ -71,7 +71,7 @@ class TestFullWorkflows:
         nodes = bsg.get("nodes", [])
         assert nodes
         assert all(node.get("service_tag") for node in nodes)
-        assert all(node.get("snapshot_id") is not None for node in nodes)
+        assert all(node.get("index_id") is not None for node in nodes)
         assert isinstance(bsg.get("quality_warnings"), list)
 
     def test_incremental_patch_workflows(

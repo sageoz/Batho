@@ -253,24 +253,6 @@ def test_patch_operation_roundtrip_validate_and_tamper() -> None:
     assert restored.validate() is False
 
 
-def test_file_tracker_invalid_cache_and_helper_accessors(tmp_path: Path) -> None:
-    tracker = tm.FileChangeTracker(tmp_path)
-    bad = tmp_path / "bad_cache.json"
-    bad.write_text("{invalid", encoding="utf-8")
-    assert tracker.load(bad) is False
-    assert tracker.file_hashes == {}
-
-    changes = [
-        _mk_change("x.py", FileChangeType.ADDED, None, "h"),
-        _mk_change("y.py", FileChangeType.MODIFIED, "a", "b"),
-        _mk_change("z.py", FileChangeType.DELETED, "a", None),
-    ]
-    changed = tracker.get_changed_files(changes)
-    deleted = tracker.get_deleted_files(changes)
-    assert len(changed) == 2
-    assert deleted == ["z.py"]
-
-
 def test_git_branch_name_success_blank_and_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

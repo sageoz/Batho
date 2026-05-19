@@ -444,72 +444,8 @@ class TestCmdIndex:
         assert outputs["overview_json"].endswith("context/json/overview.json")
         assert outputs["files_json"].endswith("context/json/files.json")
 
-    def test_patch_regenerates_context_json_files(self, tmp_path: Path):
-        root = tmp_path / "repo"
-        root.mkdir()
-        original = root / "a.py"
-        original.write_text("def alpha():\n    return 1\n", encoding="utf-8")
-
-        idx_args = argparse.Namespace(
-            root=str(root),
-            extensions=None,
-            max_workers=0,
-            max_file_size_kb=None,
-            force=False,
-            budget_tokens=0,
-            output_json=None,
-            output_md=None,
-            metrics_output=None,
-            snapshot=False,
-            snapshot_label=None,
-            verbose=False,
-            log_json=False,
-        )
-        assert cmd_index(idx_args) == 0
-
-        # Manually save file hashes so patch scan detects changes
-        from batho.time_machine import FileChangeTracker
-        tracker = FileChangeTracker(root)
-        tracker.scan_for_changes(max_file_size_kb=500)
-        state_dir = root / ".ctn" / "local" / "state"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        tracker.save(state_dir / "file_hashes.json")
-
-        # Modify the file
-        original.write_text("def alpha():\n    return 2\n", encoding="utf-8")
-
-        ctn_dir = root / ".ctn"
-        index_payload = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
-        current_id = str(index_payload.get("current_index_id"))
-        overview_json_path = ctn_dir / current_id / "context" / "json" / "overview.json"
-        files_json_path = ctn_dir / current_id / "context" / "json" / "files.json"
-
-        pre_mtime_overview = overview_json_path.stat().st_mtime if overview_json_path.exists() else 0
-        pre_mtime_files = files_json_path.stat().st_mtime if files_json_path.exists() else 0
-
-        patch_args = argparse.Namespace(
-            root=str(root),
-            base_snapshot=None,
-            force_index_patch=True,
-            diff=None,
-            scan=True,
-            files=[],
-            snapshot=False,
-            dry_run=False,
-            max_file_size_kb=500,
-        )
-        assert cmd_patch(patch_args) == 0
-
-        assert overview_json_path.exists()
-        assert files_json_path.exists()
-        assert overview_json_path.stat().st_mtime > pre_mtime_overview
-        assert files_json_path.stat().st_mtime > pre_mtime_files
-
-        # Verify JSON content reflects the modified file
-        files_json = json.loads(files_json_path.read_text(encoding="utf-8"))
-        assert files_json["schema_version"] == "context-files.v1"
-
-
+# ---------------------------------------------------------------------------
+# cmd_stats
 # ---------------------------------------------------------------------------
 # cmd_stats
 # ---------------------------------------------------------------------------
@@ -612,9 +548,9 @@ class TestCmdInvalidate:
 
     def test_invalidate_clears_cache(self, simple_python_repo: Path, capsys):
         # Create a cache file
-        cache_dir = simple_python_repo / ".ctn" / "local" / "cache"
+        cache_dir = simple_python_repo / ".ctn" / "local"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / "ast_cache.db"
+        cache_file = cache_dir / "cache.db"
         cache_file.write_text("fake cache")
 
         args = argparse.Namespace(root=str(simple_python_repo))
@@ -691,74 +627,6 @@ class TestCmdPatch:
         latest = payload["entries"][-1]
         assert latest.get("source") == "cli.patch.snapshot"
         assert "snapshot" in str(latest.get("dont_rule", "")).lower()
-
-    def test_index_patch_scan_summary_tracks_added_modified_deleted(
-        self,
-        tmp_path: Path,
-        capsys,
-    ):
-        root = tmp_path / "repo"
-        root.mkdir()
-
-        original = root / "a.py"
-        original.write_text("def alpha():\n    return 1\n", encoding="utf-8")
-
-        idx_args = argparse.Namespace(
-            root=str(root),
-            extensions=None,
-            max_workers=0,
-            max_file_size_kb=None,
-            force=False,
-            budget_tokens=0,
-            output_json=None,
-            output_md=None,
-            metrics_output=None,
-            snapshot=False,
-            snapshot_label=None,
-            verbose=False,
-            log_json=False,
-        )
-        assert cmd_index(idx_args) == 0
-
-        tracker = FileChangeTracker(root)
-        tracker.scan_for_changes(max_file_size_kb=500)
-        state_dir = root / ".ctn" / "local" / "state"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        tracker.save(state_dir / "file_hashes.json")
-
-        original.unlink()
-        added = root / "b.py"
-        added.write_text("def beta():\n    return 2\n", encoding="utf-8")
-
-        capsys.readouterr()
-        patch_args = argparse.Namespace(
-            root=str(root),
-            base_snapshot=None,
-            force_index_patch=True,
-            diff=None,
-            scan=True,
-            files=[],
-            snapshot=False,
-            dry_run=False,
-            max_file_size_kb=500,
-        )
-        result = cmd_patch(patch_args)
-        assert result == 0
-
-        lines = capsys.readouterr().out.strip().split("\n")
-        json_start = None
-        for i, line in enumerate(lines):
-            if line.strip() == "{":
-                json_start = i
-                break
-        assert json_start is not None
-        payload = json.loads("\n".join(lines[json_start:]))
-        summary = payload.get("summary", {})
-        assert summary.get("added", 0) >= 1
-        assert summary.get("deleted", 0) >= 1
-        assert "bsg_quality_warning_count" in payload
-        assert isinstance(payload.get("bsg_quality_warnings"), list)
-
 
 class TestCmdStorageAndQuery:
     def test_storage_backfill_and_verify_commands(

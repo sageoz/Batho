@@ -489,20 +489,26 @@ def test_cmd_cache_commands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     cache_obj = SimpleNamespace(
-        get_cache_stats=lambda: {
+        get_stats=lambda: {
             "cache_path": "x.db",
-            "entry_count": 2,
-            "total_size_mb": 1.2,
-            "oldest_entry": "old",
-            "newest_entry": "new",
+            "ast_entry_count": 2,
+            "ast_total_size_mb": 1.2,
+            "ast_oldest_entry": "old",
+            "ast_newest_entry": "new",
+            "file_tracking_count": 3,
+            "indexed_files": 2,
+            "unindexed_files": 1,
         },
-        invalidate_cache=lambda pattern=None: None,
+        delete_ast_by_pattern=lambda _pattern: 0,
+        clear_ast_cache=lambda: 0,
     )
 
     root = tmp_path / "repo"
     root.mkdir()
     
-    monkeypatch.setattr("batho.context.cache.ASTCache", lambda cache_path: cache_obj)
+    monkeypatch.setattr(
+        "batho.context.unified_cache.BathoCache", lambda cache_path: cache_obj
+    )
     monkeypatch.setattr(
         batho,
         "get_config_cached",
@@ -510,7 +516,7 @@ def test_cmd_cache_commands(
     )
 
     assert cmd_cache_stats(argparse.Namespace(root=str(root))) == 0
-    assert "AST Cache Statistics" in capsys.readouterr().out
+    assert "Cache Statistics" in capsys.readouterr().out
 
     assert cmd_cache_invalidate(argparse.Namespace(root=str(root), pattern="src/*")) == 0
     assert cmd_cache_invalidate(argparse.Namespace(root=str(root), pattern=None)) == 0
@@ -875,9 +881,9 @@ def test_cmd_index_early_failure_paths(
     assert cmd_index(args) == 1
 
     # Invalid sqlite cache should be recreated and retried.
-    cache_dir = ctn / "local" / "cache"
+    cache_dir = ctn / "local"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    bad_cache = cache_dir / "ast_cache.db"
+    bad_cache = cache_dir / "cache.db"
     bad_cache.write_text("not sqlite", encoding="utf-8")
     init_calls = {"count": 0}
 

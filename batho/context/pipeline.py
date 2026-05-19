@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from batho.context.cache import ASTCache
+from batho.context.unified_cache import BathoCache
 from batho.context.extractor import ASTExtractor
 from batho.context.schema import Entity, Relationship
 from batho.utils.file_io import read_file_bytes
@@ -56,7 +56,7 @@ def process_file_worker(
     ttl_days: int,
     max_file_size_kb: int,
     bsg_cache_cfg: dict[str, Any],
-    snapshot_id: str | None = None,
+    index_id: str | None = None,
 ) -> tuple[str, list[Entity], list[Relationship], bool] | None:
     """
     Worker function for parallel file processing.
@@ -76,6 +76,7 @@ def process_file_worker(
         ttl_days: Cache TTL in days.
         max_file_size_kb: Maximum file size in KB.
         bsg_cache_cfg: BSG cache configuration dict.
+        index_id: Optional index ID to stamp on entities (maps to bsg.index_id metadata).
 
     Returns:
         Tuple of (filepath, entities, relationships, cached_hit) or None on error.
@@ -83,18 +84,16 @@ def process_file_worker(
     try:
         # Check AST cache for existing entities and relationships
         if cache_enabled:
-            cache = ASTCache(cache_path=cache_path)
-            cached_result = cache.get_cached_entities(
-                filepath, content_hash, current_mtime, size
-            )
+            cache = BathoCache(cache_path=cache_path)
+            cached_result = cache.get_ast(content_hash)
             if cached_result is not None:
                 cached_entities, cached_relationships = cached_result
-                # Cache hit - stamp snapshot_id on cached entities if provided
-                if snapshot_id:
+                # Cache hit - stamp index_id on cached entities if provided
+                if index_id:
                     stamped_entities = []
                     for entity in cached_entities:
                         metadata = dict(entity.metadata or {})
-                        metadata["bsg.snapshot_id"] = snapshot_id
+                        metadata["bsg.index_id"] = index_id
                         stamped_entity = Entity(
                             type=entity.type,
                             name=entity.name,
@@ -125,14 +124,14 @@ def process_file_worker(
         if not isinstance(file_extractor, ASTExtractor):
             return None
 
-        if snapshot_id is None:
+        if index_id is None:
             entities, relationships = file_extractor.parse_file(filepath, content)
         else:
             try:
                 entities, relationships = file_extractor.parse_file(
                     filepath,
                     content,
-                    snapshot_id=snapshot_id,
+                    index_id=index_id,
                 )
             except TypeError:
                 entities, relationships = file_extractor.parse_file(filepath, content)
@@ -140,10 +139,15 @@ def process_file_worker(
         # Cache the extracted entities and relationships if cache is enabled
         # Skip caching empty results to avoid re-parsing files that legitimately have no entities
         if cache_enabled and entities:
-            cache = ASTCache(cache_path=cache_path)
-            cache.cache_entities(
-                filepath, content_hash, entities, current_mtime, size, ttl_days,
-                relationships=relationships,
+            cache = BathoCache(cache_path=cache_path)
+            cache.set_ast(
+                content_hash,
+                filepath,
+                entities,
+                relationships or [],
+                current_mtime,
+                size,
+                ttl_days,
             )
 
         return (filepath, entities, relationships, False)
@@ -166,7 +170,7 @@ def build_graph_parallel(
     configured_max_file_size_kb: int,
     bsg_cfg: dict[str, Any],
     extractor: ASTExtractor | None = None,
-    snapshot_id: str | None = None,
+    index_id: str | None = None,
 ) -> tuple[list[tuple[str, list[Entity], list[Relationship], bool]], int]:
     """
     Process files in parallel using multiprocessing.Pool.
@@ -176,6 +180,7 @@ def build_graph_parallel(
         configured_max_file_size_kb: Maximum file size in KB.
         bsg_cfg: BSG configuration dict.
         extractor: Optional ASTExtractor instance (for single-extractor mode).
+        index_id: Optional index ID to stamp on entities.
 
     Returns:
         Tuple of (results list, error count).
@@ -189,7 +194,7 @@ def build_graph_parallel(
     # Get cache configuration
     bsg_cache_cfg = bsg_cfg.get("cache", {})
     cache_enabled = bsg_cache_cfg.get("enabled", True)
-    cache_path = bsg_cache_cfg.get("path", ".ctn/local/cache/ast_cache.db")
+    cache_path = bsg_cache_cfg.get("path", ".ctn/local/cache.db")
     ttl_days = bsg_cache_cfg.get("ttl_days", 30)
 
     if not parallel_enabled:
@@ -200,7 +205,7 @@ def build_graph_parallel(
             configured_max_file_size_kb,
             bsg_cfg,
             extractor,
-            snapshot_id=snapshot_id,
+            index_id=index_id,
         )
 
     # Calculate worker count
@@ -257,7 +262,7 @@ def build_graph_parallel(
                 ttl_days,
                 configured_max_file_size_kb,
                 bsg_cache_cfg,
-                snapshot_id,
+                index_id,
             )
         )
 
@@ -313,7 +318,7 @@ def build_graph_sequential(
     configured_max_file_size_kb: int,
     bsg_cfg: dict[str, Any],
     extractor: ASTExtractor | None = None,
-    snapshot_id: str | None = None,
+    index_id: str | None = None,
 ) -> tuple[list[tuple[str, list[Entity], list[Relationship], bool]], int]:
     """
     Process files sequentially (fallback when multiprocessing unavailable).
@@ -323,6 +328,7 @@ def build_graph_sequential(
         configured_max_file_size_kb: Maximum file size in KB.
         bsg_cfg: BSG configuration dict.
         extractor: Optional ASTExtractor instance.
+        index_id: Optional index ID to stamp on entities.
 
     Returns:
         Tuple of (results list, error count).
@@ -331,7 +337,7 @@ def build_graph_sequential(
 
     bsg_cache_cfg = bsg_cfg.get("cache", {})
     cache_enabled = bsg_cache_cfg.get("enabled", True)
-    cache_path = bsg_cache_cfg.get("path", ".ctn/local/cache/ast_cache.db")
+    cache_path = bsg_cache_cfg.get("path", ".ctn/local/cache.db")
     ttl_days = bsg_cache_cfg.get("ttl_days", 30)
 
     results = []
@@ -370,7 +376,7 @@ def build_graph_sequential(
             ttl_days,
             configured_max_file_size_kb,
             bsg_cache_cfg,
-            snapshot_id=snapshot_id,
+            index_id=index_id,
         )
 
         if result is None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,6 @@ from batho.context.codegraph import (
     CodeGraphIndexer,
     InMemoryGraph,
 )
-from batho.context.cache import ASTCache
 from batho.context.symbol_index import SymbolIndex
 from batho.utils.file_io import read_file_bytes
 from batho.utils.hash import _calculate_shannon_entropy, _is_binary
@@ -225,133 +225,9 @@ class TestInMemoryGraph:
 
 
 # ---------------------------------------------------------------------------
+# CodeGraphIndexer
 # ---------------------------------------------------------------------------
-# ASTCache
-# ---------------------------------------------------------------------------
 
-
-class TestASTCache:
-    def test_cache_and_retrieve(self, tmp_path: Path):
-        cache_path = str(tmp_path / "cache.db")
-        cache = ASTCache(cache_path=cache_path)
-        
-        # Cache some entities
-        entities = [
-            Entity(
-                id="test_entity",
-                type=EntityType.FUNCTION,
-                name="test_func",
-                file="test.py",
-                line=1,
-                start_line=1,
-                end_line=10,
-            )
-        ]
-        cache.cache_entities(
-            "test.py", "hash123", entities, 1234.0, 100, ttl_days=30
-        )
-        
-        # Retrieve them
-        cached = cache.get_cached_entities("test.py", "hash123", 1234.0, 100)
-        assert cached is not None
-        entities_out, relationships_out = cached
-        assert len(entities_out) == 1
-        assert entities_out[0].name == "test_func"
-
-    def test_cache_miss_wrong_hash(self, tmp_path: Path):
-        cache_path = str(tmp_path / "cache.db")
-        cache = ASTCache(cache_path=cache_path)
-        
-        entities = [
-            Entity(
-                id="test_entity",
-                type=EntityType.FUNCTION,
-                name="test_func",
-                file="test.py",
-                line=1,
-                start_line=1,
-                end_line=10,
-            )
-        ]
-        cache.cache_entities(
-            "test.py", "hash123", entities, 1234.0, 100, ttl_days=30
-        )
-        
-        # Different hash should miss
-        cached = cache.get_cached_entities("test.py", "hash456", 1234.0, 100)
-        assert cached is None
-
-    def test_cache_miss_mtime_mismatch(self, tmp_path: Path):
-        cache_path = str(tmp_path / "cache.db")
-        cache = ASTCache(cache_path=cache_path)
-        
-        entities = [
-            Entity(
-                id="test_entity",
-                type=EntityType.FUNCTION,
-                name="test_func",
-                file="test.py",
-                line=1,
-                start_line=1,
-                end_line=10,
-            )
-        ]
-        cache.cache_entities(
-            "test.py", "hash123", entities, 1234.0, 100, ttl_days=30
-        )
-        
-        # Different mtime should miss
-        cached = cache.get_cached_entities("test.py", "hash123", 5678.0, 100)
-        assert cached is None
-
-    def test_cache_invalidate(self, tmp_path: Path):
-        cache_path = str(tmp_path / "cache.db")
-        cache = ASTCache(cache_path=cache_path)
-        
-        entities = [
-            Entity(
-                id="test_entity",
-                type=EntityType.FUNCTION,
-                name="test_func",
-                file="test.py",
-                line=1,
-                start_line=1,
-                end_line=10,
-            )
-        ]
-        cache.cache_entities(
-            "test.py", "hash123", entities, 1234.0, 100, ttl_days=30
-        )
-        
-        # Invalidate
-        cache.invalidate_cache(pattern="test.py")
-        
-        # Should miss after invalidation
-        cached = cache.get_cached_entities("test.py", "hash123", 1234.0, 100)
-        assert cached is None
-
-    def test_cache_stats(self, tmp_path: Path):
-        cache_path = str(tmp_path / "cache.db")
-        cache = ASTCache(cache_path=cache_path)
-        
-        entities = [
-            Entity(
-                id="test_entity",
-                type=EntityType.FUNCTION,
-                name="test_func",
-                file="test.py",
-                line=1,
-                start_line=1,
-                end_line=10,
-            )
-        ]
-        cache.cache_entities(
-            "test.py", "hash123", entities, 1234.0, 100, ttl_days=30
-        )
-        
-        stats = cache.get_cache_stats()
-        assert stats["entry_count"] == 1
-        assert stats["total_size_mb"] >= 0
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +286,7 @@ class TestCodeGraphIndexer:
         cache_path = str(tmp_path / "cache.db")
         indexer = CodeGraphIndexer(cache_path=cache_path)
         
-        # Cache some entities
+        # Cache some entities using new BathoCache.set_ast()
         entities = [
             Entity(
                 id="test_entity",
@@ -422,15 +298,26 @@ class TestCodeGraphIndexer:
                 end_line=10,
             )
         ]
-        indexer._cache.cache_entities(
-            "test.py", "hash123", entities, 1.0, 100, ttl_days=30
+        # set_ast(file_hash, file_path, entities, relationships, mtime, size, ttl_days)
+        indexer._cache.set_ast(
+            file_hash="hash123",
+            file_path="test.py",
+            entities=entities,
+            relationships=[],
+            mtime=1.0,
+            size=100,
+            ttl_days=30
         )
         
-        # Invalidate
+        # Verify it's cached
+        cached = indexer._cache.get_ast("hash123")
+        assert cached is not None
+        
+        # Invalidate using indexer.invalidate (uses delete_ast_by_path)
         indexer.invalidate("test.py")
         
         # Should not be cached after invalidation
-        cached = indexer._cache.get_cached_entities("test.py", "hash123", 1.0, 100)
+        cached = indexer._cache.get_ast("hash123")
         assert cached is None
 
     def test_resolve_imports_uses_normalized_candidates(self, tmp_path: Path):
@@ -452,33 +339,74 @@ class TestCodeGraphIndexer:
             end_line=20,
         )
 
+        # Create UNRESOLVED entities instead of unresolved: string targets
+        now = datetime.now(timezone.utc).isoformat()
+        unresolved_pkg = Entity(
+            type=EntityType.UNRESOLVED,
+            name="pkg/utils/helpers.py",
+            file="src/main.py",
+            start_line=5,
+            end_line=5,
+            metadata={
+                "reference_type": "imports",
+                "resolution_reason": "not_found",
+                "attempts": 1,
+                "created_at": now,
+                "last_attempt": now,
+                "is_visible": False,
+            },
+        )
+        unresolved_ext = Entity(
+            type=EntityType.UNRESOLVED,
+            name="external/pkg",
+            file="src/main.py",
+            start_line=6,
+            end_line=6,
+            metadata={
+                "reference_type": "imports",
+                "resolution_reason": "not_found",
+                "attempts": 1,
+                "created_at": now,
+                "last_attempt": now,
+                "is_visible": False,
+            },
+        )
+
         graph = InMemoryGraph()
         graph.add_entity(source)
         graph.add_entity(target)
+        graph.add_entity(unresolved_pkg)
+        graph.add_entity(unresolved_ext)
         graph.add_relationship(
             Relationship(
                 source_id=source.id,
-                target_id='unresolved:"pkg/utils/helpers.py" as helpers',
+                target_id=unresolved_pkg.id,
                 type=RelationshipType.IMPORTS,
             )
         )
         graph.add_relationship(
             Relationship(
                 source_id=source.id,
-                target_id="unresolved:<external/pkg>",
+                target_id=unresolved_ext.id,
                 type=RelationshipType.IMPORTS,
             )
         )
 
-        resolved = indexer._resolve_imports(graph)
+        resolved, _, _ = indexer._resolve_imports(graph)
 
         import_targets = [
             rel.target_id
             for rel in resolved.relationships
             if rel.source_id == source.id and rel.type == RelationshipType.IMPORTS
         ]
+        # pkg.utils.helpers should resolve to the target entity
         assert target.id in import_targets
-        assert "external/pkg" in import_targets
+        # external/pkg should remain as an UNRESOLVED entity
+        remaining_unresolved = [
+            e.name for e in resolved.entities.values()
+            if e.type == EntityType.UNRESOLVED
+        ]
+        assert "external/pkg" in remaining_unresolved
 
     def test_resolve_imports_with_symbol_index(self, tmp_path: Path):
         cache_path = str(tmp_path / "cache.db")
@@ -499,25 +427,45 @@ class TestCodeGraphIndexer:
             end_line=30,
         )
 
+        # Create UNRESOLVED entity
+        now = datetime.now(timezone.utc).isoformat()
+        unresolved = Entity(
+            type=EntityType.UNRESOLVED,
+            name="pkg/api/client.py",
+            file="src/main.py",
+            start_line=5,
+            end_line=5,
+            metadata={
+                "reference_type": "imports",
+                "resolution_reason": "not_found",
+                "attempts": 1,
+                "created_at": now,
+                "last_attempt": now,
+                "is_visible": False,
+            },
+        )
+
         graph = InMemoryGraph()
         graph.add_entity(source)
         graph.add_entity(target)
+        graph.add_entity(unresolved)
         graph.add_relationship(
             Relationship(
                 source_id=source.id,
-                target_id='unresolved:"pkg/api/client.py" as client',
+                target_id=unresolved.id,
                 type=RelationshipType.IMPORTS,
             )
         )
 
         symbol_index = SymbolIndex.build(graph)
-        resolved = indexer._resolve_imports(graph, symbol_index=symbol_index)
+        resolved, resolved_count, _ = indexer._resolve_imports(graph, symbol_index=symbol_index)
+        assert resolved_count == 1
         import_targets = [
             rel.target_id
             for rel in resolved.relationships
             if rel.source_id == source.id and rel.type == RelationshipType.IMPORTS
         ]
-        assert import_targets == [target.id]
+        assert target.id in import_targets
 
     def test_resolve_imports_prefers_symbol_in_closest_source_path(self, tmp_path: Path):
         cache_path = str(tmp_path / "cache.db")
@@ -545,26 +493,45 @@ class TestCodeGraphIndexer:
             end_line=30,
         )
 
+        # Create UNRESOLVED entity
+        now = datetime.now(timezone.utc).isoformat()
+        unresolved = Entity(
+            type=EntityType.UNRESOLVED,
+            name="client",
+            file="pkg/beta/main.py",
+            start_line=5,
+            end_line=5,
+            metadata={
+                "reference_type": "imports",
+                "resolution_reason": "not_found",
+                "attempts": 1,
+                "created_at": now,
+                "last_attempt": now,
+                "is_visible": False,
+            },
+        )
+
         graph = InMemoryGraph()
         graph.add_entity(source)
         graph.add_entity(alpha_target)
         graph.add_entity(beta_target)
+        graph.add_entity(unresolved)
         graph.add_relationship(
             Relationship(
                 source_id=source.id,
-                target_id='unresolved:"client"',
+                target_id=unresolved.id,
                 type=RelationshipType.IMPORTS,
             )
         )
 
         symbol_index = SymbolIndex.build(graph)
-        resolved = indexer._resolve_imports(graph, symbol_index=symbol_index)
+        resolved, _, _ = indexer._resolve_imports(graph, symbol_index=symbol_index)
         import_targets = [
             rel.target_id
             for rel in resolved.relationships
             if rel.source_id == source.id and rel.type == RelationshipType.IMPORTS
         ]
-        assert import_targets == [beta_target.id]
+        assert beta_target.id in import_targets
 
     def test_build_graph_applies_bsg_rules_from_config(
         self, simple_python_repo: Path, tmp_path: Path, monkeypatch

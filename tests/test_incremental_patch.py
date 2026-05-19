@@ -262,36 +262,6 @@ class TestFileChangeTracker:
         assert isinstance(tracker.file_hashes, dict)
         assert tracker.file_hashes == {}
 
-    def test_load_nonexistent_cache(self, tracker, temp_dir):
-        """Test loading non-existent cache file."""
-        cache_path = temp_dir / "cache.json"
-        assert not tracker.load(cache_path)
-        assert tracker.file_hashes == {}
-
-    def test_load_valid_cache(self, tracker, temp_dir):
-        """Test loading valid cache file."""
-        cache_path = temp_dir / "cache.json"
-        cache_data = {
-            "version": 1,
-            "file_hashes": {"file1.txt": "hash1", "file2.txt": "hash2"},
-        }
-        cache_path.write_text(json.dumps(cache_data))
-
-        assert tracker.load(cache_path)
-        assert tracker.file_hashes == {"file1.txt": "hash1", "file2.txt": "hash2"}
-
-    def test_save_cache(self, tracker, temp_dir):
-        """Test saving cache file."""
-        cache_path = temp_dir / "cache.json"
-        tracker.file_hashes = {"file1.txt": "hash1", "file2.txt": "hash2"}
-
-        tracker.save(cache_path)
-        assert cache_path.exists()
-
-        loaded_data = json.loads(cache_path.read_text())
-        assert loaded_data["version"] == 1
-        assert loaded_data["file_hashes"] == tracker.file_hashes
-
     def test_scan_for_changes_no_changes(self, tracker, temp_dir_with_files):
         """Test scanning when no changes have occurred."""
         # First scan

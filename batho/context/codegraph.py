@@ -37,7 +37,7 @@ from batho.utils.ignore import is_ignored, load_ignore_spec
 from batho.utils.logging import get_logger
 from batho.utils.memory_monitor import force_garbage_collection, memory_monitor
 
-from .cache import ASTCache
+from .unified_cache import BathoCache
 from .extractor import ASTExtractor
 from .pipeline import build_graph_parallel
 from .schema import Entity, EntityType, Relationship, RelationshipType
@@ -218,6 +218,12 @@ class IncrementalGraphUpdater:
         entities_to_remove = [
             eid for eid, entity in graph.entities.items() if entity.file == file_path
         ]
+        # Also remove UNRESOLVED entities belonging to the deleted file
+        unresolved_to_remove = [
+            eid for eid, entity in graph.entities.items()
+            if entity.type == EntityType.UNRESOLVED and entity.file == file_path
+        ]
+        entities_to_remove.extend(unresolved_to_remove)
 
         relationships_to_keep = []
         relationships_to_remove = []
@@ -353,16 +359,13 @@ class IncrementalGraphUpdater:
             """Check if target is a valid entity reference or intentional external reference."""
             if target_id in entity_ids:
                 return True
+            # Allow UNRESOLVED entity IDs
+            target_entity = graph.entities.get(target_id)
+            if target_entity is not None and target_entity.type == EntityType.UNRESOLVED:
+                return True
             # Allow special external references (URLs, files, anchors, imports, resources, variables, images)
             valid_prefixes = ("external:", "file:", "anchor:", "import:", "resource:", "variable:", "image:")
             if any(target_id.startswith(prefix) for prefix in valid_prefixes):
-                return True
-            # Allow unresolved placeholders
-            if target_id.startswith("unresolved:"):
-                return True
-            # Allow module-style targets (e.g., "batho.context.codegraph")
-            # Permissive: allow any dotted identifier without path separators
-            if "." in target_id and not "/" in target_id and not "\\" in target_id:
                 return True
             return False
 
@@ -387,13 +390,12 @@ class IncrementalGraphUpdater:
             )
             return False
 
-        # Check for relationships with unresolved targets that are now resolvable
-        # This is a basic consistency check - full resolution would require more context
-        unresolved_count = sum(
-            1 for rel in graph.relationships if rel.target_id.startswith("unresolved:")
+        # Check for unresolved entities in the graph
+        unresolved_entity_count = sum(
+            1 for e in graph.entities.values() if e.type == EntityType.UNRESOLVED
         )
-        if unresolved_count > 0:
-            self.logger.debug("unresolved_relationships_found", count=unresolved_count)
+        if unresolved_entity_count > 0:
+            self.logger.debug("unresolved_entities_found", count=unresolved_entity_count)
 
         return True
 
@@ -417,7 +419,7 @@ class CodeGraphIndexer:
 
     Usage::
 
-        indexer = CodeGraphIndexer(cache_path=".ctn/local/cache/ast_cache.db")
+        indexer = CodeGraphIndexer(cache_path=".ctn/local/cache.db")
         graph = indexer.build_graph(
             root="/path/to/repo",
             max_workers=8,
@@ -426,11 +428,11 @@ class CodeGraphIndexer:
     """
 
     def __init__(
-        self, cache_path: str = ".ctn/local/cache/ast_cache.db", root: str | None = None
+        self, cache_path: str = ".ctn/local/cache.db", root: str | None = None
     ) -> None:
         self.logger = get_logger(__name__, operation="index")
         root_path = Path(root).resolve() if root else None
-        self._cache = ASTCache(cache_path=cache_path)
+        self._cache = BathoCache(cache_path=cache_path)
         self._root: Path | None = root_path
         self.stats: Dict[str, Any] = {}
 
@@ -460,7 +462,7 @@ class CodeGraphIndexer:
         max_file_size_kb: int | None = None,
         verbose: bool = False,
         metrics_callback: Callable[[str, Dict[str, Any]], None] | None = None,
-        snapshot_id: str | None = None,
+        index_id: str | None = None,
         ast_cache_enabled: bool | None = None,
     ) -> InMemoryGraph:
         """
@@ -480,6 +482,7 @@ class CodeGraphIndexer:
             max_file_size_kb: Skip files larger than this (KB). Default 500KB.
             verbose: Print progress to stdout.
             metrics_callback: Optional callback for metrics collection.
+            index_id: Optional index ID to stamp on entities.
             ast_cache_enabled: Optional override for AST cache usage in this run.
 
         Returns:
@@ -650,7 +653,7 @@ class CodeGraphIndexer:
                 configured_max_file_size_kb,
                 bsg_cfg,
                 extractor,
-                snapshot_id=snapshot_id,
+                index_id=index_id,
             )
             errors += parallel_errors
 
@@ -685,12 +688,35 @@ class CodeGraphIndexer:
         bsg_symbol_cfg = bsg_cfg.get("symbol_resolution", {})
         symbol_resolution_enabled = bsg_symbol_cfg.get("enabled", True)
         symbol_resolution_fuzzy = bool(bsg_symbol_cfg.get("fuzzy_matching", False))
+        max_unresolved_attempts = int(bsg_symbol_cfg.get("max_unresolved_attempts", 10))
+        prune_unresolved = bool(bsg_symbol_cfg.get("prune_unresolved", True))
+
+        # --- Stale cache detection (Phase 8 migration) ---
+        stale_cache_detected = self._detect_stale_cached_entities(graph)
+        if stale_cache_detected:
+            self.logger.warning(
+                "stale_cache_detected",
+                message=(
+                    "Cached entities contain old-style 'unresolved:' string targets "
+                    "or relationships to non-existent entities. Performing full "
+                    "re-parse to regenerate graph."
+                ),
+            )
+            # Force full rebuild: clear the cache and reprocess
+            if bsg_cache_cfg.get("enabled"):
+                try:
+                    self._cache.invalidate_cache()
+                except Exception as exc:
+                    self.logger.warning("stale_cache_invalidate_failed", error=str(exc))
+
         symbol_index = SymbolIndex.build(graph) if symbol_resolution_enabled else None
 
-        graph = self._resolve_imports(
+        graph, resolved_count, pruned_count = self._resolve_imports(
             graph,
             symbol_index=symbol_index,
             fuzzy_matching=symbol_resolution_fuzzy,
+            max_unresolved_attempts=max_unresolved_attempts,
+            prune_unresolved=prune_unresolved,
         )
         derived_hierarchy_edges = self._derive_hierarchy_relations(graph)
         derived_overrides_edges = self._derive_override_edges(graph)
@@ -757,6 +783,11 @@ class CodeGraphIndexer:
             "symbol_resolution_enabled": bool(symbol_resolution_enabled),
             "symbol_resolution_fuzzy": bool(symbol_resolution_fuzzy),
             "symbol_index_size": int(symbol_index.size) if symbol_index else 0,
+            "unresolved_entities_count": sum(
+                1 for e in graph.entities.values() if e.type == EntityType.UNRESOLVED
+            ),
+            "unresolved_pruned_count": pruned_count,
+            "unresolved_resolved_count": resolved_count,
             "derived_hierarchy_edges": derived_hierarchy_edges,
             "derived_overrides_edges": derived_overrides_edges,
             "semantic_tags_added": int(semantic_stats.get("semantic_tags_added", 0)),
@@ -845,11 +876,16 @@ class CodeGraphIndexer:
                 stat_info = Path(filepath).stat()
                 mtime = stat_info.st_mtime
                 size = stat_info.st_size
-                content_hash = self._cache.file_hash(filepath, content)
+                content_hash = compute_bytes_hash(content)
                 ttl_days = bsg_cache_cfg.get("ttl_days", 30)
-                self._cache.cache_entities(
-                    filepath, content_hash, entities, mtime, size, ttl_days,
-                    relationships=rels,
+                self._cache.set_ast(
+                    content_hash,
+                    filepath,
+                    entities,
+                    rels,
+                    mtime,
+                    size,
+                    ttl_days,
                 )
             except OSError:
                 pass
@@ -858,20 +894,49 @@ class CodeGraphIndexer:
 
     def invalidate(self, filepath: str) -> None:
         """Force re-parse of filepath on the next build_graph call."""
-        self._cache.invalidate_cache(pattern=filepath)
+        self._cache.delete_ast_by_path(filepath)
 
     def stats(self) -> dict[str, int]:
         """Return cache statistics."""
-        cache_stats = self._cache.get_cache_stats()
-        return {"cached_files": cache_stats["entry_count"]}
+        cache_stats = self._cache.get_stats()
+        return {"cached_files": cache_stats["ast_entry_count"]}
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get detailed cache statistics for monitoring."""
-        return self._cache.get_cache_stats()
+        return self._cache.get_stats()
 
     # ------------------------------------------------------------------
     # Internal — cross-file import resolution
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_stale_cached_entities(graph: InMemoryGraph) -> bool:
+        """
+        Detect stale cached entities containing old-style 'unresolved:' targets.
+
+        Returns True if stale data is detected (relationships with 'unresolved:'
+        string prefixes or relationships targeting non-existent entity IDs that
+        are not UNRESOLVED entities).
+
+        This handles the migration from the old 'unresolved:X' string pattern
+        to proper EntityType.UNRESOLVED nodes.
+        """
+        # Check for legacy 'unresolved:' string targets in relationships
+        for rel in graph.relationships:
+            if rel.target_id.startswith("unresolved:"):
+                return True
+
+        # Check for relationships pointing to non-existent entities
+        # (only flag if there are many; a few are normal during builds)
+        entity_ids = set(graph.entities.keys())
+        broken = 0
+        for rel in graph.relationships:
+            if rel.target_id not in entity_ids:
+                broken += 1
+                if broken > 10:  # threshold to avoid false positives on small graphs
+                    return True
+
+        return False
 
     @staticmethod
     def _normalize_ref_token(text: str) -> str:
@@ -1122,53 +1187,137 @@ class CodeGraphIndexer:
         graph: InMemoryGraph,
         symbol_index: SymbolIndex | None = None,
         fuzzy_matching: bool = False,
-    ) -> InMemoryGraph:
+        max_unresolved_attempts: int = 10,
+        prune_unresolved: bool = True,
+    ) -> tuple[InMemoryGraph, int, int]:
         """
-        Resolve "unresolved:X" relationship targets across the full graph.
+        Resolve relationships targeting EntityType.UNRESOLVED entities.
 
         Builds a name → entity_id index and replaces unresolved targets with
-        real entity IDs where possible. Stores unresolvable imports as plain
-        module name strings for visualization purposes.
+        real entity IDs where possible. Unresolvable references remain as
+        UNRESOLVED entities with incremented attempt counters.
+
+        Returns:
+            (graph, resolved_count, pruned_count)
         """
         lookup = symbol_index or SymbolIndex.build(graph)
 
-        unresolved = [
-            r for r in graph.relationships if r.target_id.startswith("unresolved:")
-        ]
-        resolved = []
+        unresolved_entities = {
+            eid: entity
+            for eid, entity in graph.entities.items()
+            if entity.type == EntityType.UNRESOLVED
+        }
 
-        for rel in unresolved:
-            ref_text = rel.target_id[11:]  # strip "unresolved:"
-            source_entity = graph.get_entity(rel.source_id)
-            source_file = source_entity.file if source_entity is not None else None
+        resolved_count = 0
+        pruned_count = 0
+        now_ts = datetime.now(timezone.utc).isoformat()
+
+        # Find all relationships that target UNRESOLVED entities
+        unresolved_entities_by_name_file: dict[tuple[str, str], list[str]] = defaultdict(list)
+        for eid, entity in unresolved_entities.items():
+            unresolved_entities_by_name_file[(entity.name, entity.file)].append(eid)
+
+        # Collect all entity IDs that need resolution, grouped by (name, file)
+        for (ref_name, _ref_file), eid_list in unresolved_entities_by_name_file.items():
+            # Attempt resolution via symbol index
             target_id = lookup.resolve_candidates(
-                self._lookup_candidates(ref_text),
-                source_file=source_file,
+                self._lookup_candidates(ref_name),
+                source_file=_ref_file,
                 fuzzy_matching=fuzzy_matching,
             )
 
-            resolved.append(
-                Relationship(
-                    source_id=rel.source_id,
-                    target_id=(
-                        target_id if target_id else self._normalize_ref_token(ref_text)
-                    ),
-                    type=rel.type,
-                    metadata=rel.metadata,
-                )
-            )
+            if target_id and target_id in graph.entities:
+                # Resolved — update all relationships and remove unresolved entities
+                for eid in eid_list:
+                    # Update all relationships targeting this unresolved entity
+                    for rel in graph.relationships:
+                        if rel.target_id == eid:
+                            graph.add_relationship(
+                                Relationship(
+                                    source_id=rel.source_id,
+                                    target_id=target_id,
+                                    type=rel.type,
+                                    metadata=rel.metadata,
+                                )
+                            )
+                    # Remove the unresolved entity
+                    if eid in graph.entities:
+                        del graph.entities[eid]
+                    resolved_count += 1
 
-        # Rebuild relationships: drop unresolved stubs, add resolved ones
-        clean_rels = [
-            r for r in graph.relationships if not r.target_id.startswith("unresolved:")
+                # Remove old relationships targeting the unresolved entity
+                graph.relationships = [
+                    r for r in graph.relationships
+                    if r.target_id not in eid_list
+                ]
+            else:
+                # Not resolved — increment attempt counter, check pruning threshold
+                for eid in eid_list:
+                    entity = graph.entities.get(eid)
+                    if entity is None:
+                        continue
+                    metadata = dict(entity.metadata or {})
+                    attempts = metadata.get("attempts", 1)
+                    new_attempts = attempts + 1
+                    metadata["attempts"] = new_attempts
+                    metadata["last_attempt"] = now_ts
+
+                    if prune_unresolved and new_attempts >= max_unresolved_attempts:
+                        # Prune this unresolved entity and its relationships
+                        del graph.entities[eid]
+                        graph.relationships = [
+                            r for r in graph.relationships if r.target_id != eid
+                        ]
+                        pruned_count += 1
+                    else:
+                        # Update entity with new metadata
+                        updated = Entity(
+                            type=entity.type,
+                            name=entity.name,
+                            file=entity.file,
+                            start_line=entity.start_line,
+                            end_line=entity.end_line,
+                            start_byte=entity.start_byte,
+                            end_byte=entity.end_byte,
+                            signature=entity.signature,
+                            metadata=metadata,
+                            parent_id=entity.parent_id,
+                        )
+                        graph.entities[eid] = updated
+
+        # Also check for any lingering relationships with old-style "unresolved:" targets
+        # (stale cache migration — see Phase 8)
+        stale_unresolved_rels = [
+            r for r in graph.relationships if r.target_id.startswith("unresolved:")
         ]
-        clean_rels.extend(resolved)
-        graph.relationships = clean_rels
+        if stale_unresolved_rels:
+            for rel in stale_unresolved_rels:
+                ref_text = rel.target_id[11:]  # strip "unresolved:"
+                ref_text = self._normalize_ref_token(ref_text)
+                target_id = lookup.resolve_candidates(
+                    self._lookup_candidates(ref_text),
+                    source_file=None,
+                    fuzzy_matching=fuzzy_matching,
+                )
+                if target_id and target_id in graph.entities:
+                    graph.add_relationship(
+                        Relationship(
+                            source_id=rel.source_id,
+                            target_id=target_id,
+                            type=rel.type,
+                            metadata=rel.metadata,
+                        )
+                    )
+            graph.relationships = [
+                r for r in graph.relationships
+                if not r.target_id.startswith("unresolved:")
+            ]
 
         self.logger.info(
             "import_resolution_complete",
-            unresolved_count=len(unresolved),
-            resolved_count=sum(1 for r in resolved if r.target_id in graph.entities),
+            unresolved_entity_count=len(unresolved_entities),
+            resolved_count=resolved_count,
+            pruned_count=pruned_count,
             symbol_index_size=lookup.size,
         )
-        return graph
+        return graph, resolved_count, pruned_count

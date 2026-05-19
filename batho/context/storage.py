@@ -139,7 +139,7 @@ def describe_artifact(artifact_path: Path, ctn_dir: Path) -> ArtifactDescriptor:
             "index_metadata", schema_version=_schema_for_artifact_type("index_metadata")
         )
 
-    if logical == "local/cache/ast_cache.db":
+    if logical == "local/cache.db":
         return ArtifactDescriptor(
             "file_cache_sqlite",
             schema_version=_schema_for_artifact_type("file_cache_sqlite"),

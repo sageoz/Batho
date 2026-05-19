@@ -26,6 +26,7 @@ from typing import Any, Iterable
 
 from batho.config import SNAPSHOT_SCHEMA_VERSION, get_config_cached
 from batho.context.bsg_map import BSGMap
+from batho.context.unified_cache import BathoCache
 from batho.context.codegraph import IncrementalGraphUpdater, InMemoryGraph
 from batho.context.incremental import get_head_commit, is_git_repo
 from batho.context.storage import register_artifact
@@ -232,37 +233,52 @@ class FileChangeTracker:
     def __init__(self, root: Path):
         self.root = root.resolve()
         self.file_hashes: dict[str, str] = {}
+        self._cache: BathoCache | None = None
 
-    def load(self, cache_path: Path) -> bool:
-        """Load file hashes from JSON cache. Returns True if loaded successfully."""
-        if not cache_path.exists():
-            return False
+    def _get_cache(self) -> BathoCache:
+        if self._cache is None:
+            self._cache = BathoCache(str(self.root / ".ctn/local/cache.db"))
+        return self._cache
+
+    def load(self, cache_path: Path | None = None) -> bool:
+        """Load file hashes from SQLite cache. Returns True if loaded successfully."""
         try:
-            data = json.loads(cache_path.read_text(encoding="utf-8"))
-            self.file_hashes = data.get("file_hashes", {})
-            logger.info("file_tracker_loaded", file_count=len(self.file_hashes))
+            cache = self._get_cache()
+            self.file_hashes = cache.load_all()
+            logger.info("file_tracker_loaded", file_count=len(self.file_hashes), source="sqlite")
             return True
-        except (json.JSONDecodeError, OSError) as e:
+        except Exception as e:
             logger.warning("file_tracker_load_failed", error=str(e))
             self.file_hashes = {}
             return False
 
-    def save(self, cache_path: Path) -> None:
-        """Save file hashes to JSON cache atomically."""
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"version": 1, "file_hashes": self.file_hashes}
-        tmp = cache_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(cache_path)
-        logger.debug("file_tracker_saved", file_count=len(self.file_hashes))
+    def save(self, cache_path: Path | None = None) -> None:
+        """Save file hashes to SQLite cache."""
+        try:
+            cache = self._get_cache()
+            cache.save_all(self.file_hashes, self.root)
+            logger.debug("file_tracker_saved", file_count=len(self.file_hashes), target="sqlite")
+        except Exception as e:
+            logger.warning("file_tracker_save_failed", error=str(e))
 
     def scan_for_changes(
         self,
         max_file_size_kb: int = 500,
         base_snapshot: dict | None = None,
         config: FileTrackingConfig | None = None,
+        track_new_files: bool = True,
     ) -> list[FileChange]:
-        """Scan repository and compute file changes vs stored hashes or provided snapshot."""
+        """
+        Scan repository and compute file changes vs stored hashes or provided snapshot.
+
+        Args:
+            max_file_size_kb: Skip files larger than this.
+            base_snapshot: Optional base snapshot to compare against.
+            config: Optional tracking configuration.
+            track_new_files: If False, don't report new files as changes. This is useful
+                for incremental patching where we only want to track changes to previously
+                indexed files, not discover new files.
+        """
         changes: list[FileChange] = []
 
         # Use provided config or create default with backward compatible max_file_size_kb
@@ -271,6 +287,11 @@ class FileChangeTracker:
         )
 
         ignore_spec = load_ignore_spec(self.root)
+        logger.debug(
+            "scan_ignore_spec_loaded",
+            root=str(self.root),
+            patterns_count=len(ignore_spec.patterns) if hasattr(ignore_spec, 'patterns') else 'unknown',
+        )
         stored_hashes = (
             base_snapshot.get("file_hashes", {}) if base_snapshot else self.file_hashes
         )
@@ -289,10 +310,16 @@ class FileChangeTracker:
                 and not is_symlink
             ):
                 continue
-            if is_ignored(file_path, self.root, ignore_spec):
+
+            # Get relative path early for logging
+            try:
+                rel_path = str(file_path.relative_to(self.root))
+            except ValueError:
                 continue
 
-            rel_path = str(file_path.relative_to(self.root))
+            if is_ignored(file_path, self.root, ignore_spec):
+                logger.debug("scan_file_ignored", path=rel_path)
+                continue
 
             try:
                 # Use lstat for symlinks to get symlink info, stat for regular files
@@ -358,6 +385,14 @@ class FileChangeTracker:
 
             if file_hash:
                 current_files[rel_path] = file_hash
+
+        # When using base_snapshot and not tracking new files, filter to only
+        # include previously indexed files. This prevents new files from being
+        # reported as "added" changes during incremental patching.
+        if base_snapshot is not None and not track_new_files:
+            current_files = {
+                p: h for p, h in current_files.items() if p in stored_paths
+            }
 
         current_paths = set(current_files.keys())
         deleted_paths = stored_paths - current_paths
@@ -535,6 +570,25 @@ def create_snapshot(
         "branch": _git_branch_name(repo_root) if git_repo else None,
     }
 
+    file_hashes: dict[str, str] = {}
+    for entity in graph.entities.values():
+        entity_file = entity.file
+        if entity_file:
+            # Convert absolute path to relative for consistency with FileChangeTracker
+            try:
+                rel_path = Path(entity_file).relative_to(repo_root)
+                file_path = str(rel_path)
+            except ValueError:
+                # Already relative or different root
+                file_path = entity_file
+            if file_path and file_path not in file_hashes:
+                full_path = repo_root / file_path
+                if full_path.exists():
+                    try:
+                        file_hashes[file_path] = compute_bytes_hash(full_path.read_bytes())
+                    except OSError:
+                        pass
+
     data = {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "snapshot_id": snapshot_id,
@@ -543,8 +597,9 @@ def create_snapshot(
         "label": label or "",
         "git_metadata": git_metadata,
         "graph": graph.to_dict(),
+        "file_hashes": file_hashes,
         "bsg": bsg_map.render_json(
-            default_snapshot_id=snapshot_id,
+            default_index_id=snapshot_id,
             default_service_tag=repo_root.name,
         ),
         "stats": {
@@ -940,7 +995,7 @@ def incremental_patch(
 
             symbol_index = SymbolIndex.build(base_graph)
             indexer = CodeGraphIndexer()
-            base_graph = indexer._resolve_imports(base_graph, symbol_index=symbol_index)
+            base_graph, _, _ = indexer._resolve_imports(base_graph, symbol_index=symbol_index)
             from batho.bsg import apply_semantic_overlay
 
             apply_semantic_overlay(graph=base_graph, root_path=root_path, logger=logger)

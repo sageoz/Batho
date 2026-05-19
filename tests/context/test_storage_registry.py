@@ -315,7 +315,7 @@ def test_describe_artifact_and_infer_helpers(tmp_path: Path) -> None:
     
     paths = [
         ctn_dir / "index.json",
-        cache_dir / "ast_cache.db",
+        local_dir / "cache.db",
         state_dir / "file_hashes.json",
         ctn_dir / "evolution_ledger.json",
         ctn_dir / "patch_audit.log",
