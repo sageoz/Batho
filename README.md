@@ -60,7 +60,7 @@ batho patch --root . --scan
 - **Query Engine** — Fast queries on persisted graph indexes
 - **Zero code execution** — Safe to run in CI, pre-commit, or on untrusted repos
 
-## 🆕 What's New in v1.1.0
+## 🆕 What's New in v1.1.0 (In Development)
 
 ### 🚀 Breaking Changes
 
