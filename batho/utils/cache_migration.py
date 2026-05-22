@@ -127,7 +127,7 @@ def migrate_cache(
         old_file_hash_path
         or (ctn_dir / "local" / "cache" / "file_hash_cache.db")
     )
-    new_cache = new_cache_path or (ctn_dir / "local" / "cache.db")
+    new_cache = new_cache_path or (ctn_dir / "local" / "cache" / "cache.db")
 
     ctn_dir.mkdir(parents=True, exist_ok=True)
     BathoCache(str(new_cache))

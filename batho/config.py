@@ -179,7 +179,7 @@ class BsgIgnoreConfig(BaseModel):
 
 class BsgCacheConfig(BaseModel):
     enabled: bool = Field(default=True)
-    path: str = Field(default=".ctn/local/cache.db")
+    path: str = Field(default=".ctn/local/cache/cache.db")
     max_size_mb: int = Field(default=1024, ge=1)
     ttl_days: int = Field(default=30, ge=1)
 
@@ -252,9 +252,7 @@ class BsgStorageConfig(BaseModel):
     track_content_ids: bool = Field(default=True)
     mmap_enabled: bool = Field(default=False)
     mmap_min_size_mb: int = Field(default=8, ge=1)
-    retention: BsgStorageRetentionConfig = Field(
-        default_factory=BsgStorageRetentionConfig
-    )
+    retention: BsgStorageRetentionConfig = Field(default_factory=BsgStorageRetentionConfig)
 
     @field_validator("backend")
     @classmethod
@@ -273,6 +271,29 @@ class BsgStorageConfig(BaseModel):
         return normalized
 
 
+class BsgBidirectionalConfig(BaseModel):
+    """Configuration for bidirectional BSG (lossless reconstruction support)."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable bidirectional BSG features",
+    )
+    include_gaps: bool = Field(
+        default=True,
+        description="Emit SYNTAX_GLUE entities for byte-level coverage",
+    )
+    verify_integrity: bool = Field(
+        default=False,
+        description="Enforce hash verification during reconstruction",
+    )
+    storage_view: bool = Field(
+        default=False,
+        description="Persist storage view payload (raw_content, etc.)",
+    )
+    # NOTE: dedup_raw_content was considered but not yet implemented.
+    # Future work: add content-level deduplication for storage view.
+
+
 class BsgConfig(BaseModel):
     parallel: BsgParallelConfig = Field(default_factory=BsgParallelConfig)
     ignore: BsgIgnoreConfig = Field(default_factory=BsgIgnoreConfig)
@@ -287,6 +308,9 @@ class BsgConfig(BaseModel):
     parsing: BsgParsingConfig = Field(default_factory=BsgParsingConfig)
     query: BsgQueryConfig = Field(default_factory=BsgQueryConfig)
     storage: BsgStorageConfig = Field(default_factory=BsgStorageConfig)
+    bidirectional: BsgBidirectionalConfig = Field(
+        default_factory=BsgBidirectionalConfig
+    )
 
 
 class Config(BaseModel):
@@ -475,7 +499,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             },
             "cache": {
                 "enabled": True,
-                "path": ".ctn/local/cache.db",
+                "path": ".ctn/local/cache/cache.db",
                 "max_size_mb": 1024,
                 "ttl_days": 30,
             },
@@ -527,6 +551,12 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
                     "max_snapshots": DEFAULT_STORAGE_RETENTION_MAX_SNAPSHOTS,
                     "max_patches": DEFAULT_STORAGE_RETENTION_MAX_PATCHES,
                 },
+            },
+            "bidirectional": {
+                "enabled": True,
+                "include_gaps": True,
+                "verify_integrity": False,
+                "storage_view": False,
             },
         },
     }
@@ -807,6 +837,22 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
         "BATHO_BSG_STORAGE_MMAP_ENABLED",
         base_cfg["bsg"]["storage"]["mmap_enabled"],
     )
+    base_cfg["bsg"]["bidirectional"]["enabled"] = _env_bool(
+        "BATHO_BSG_BIDIRECTIONAL_ENABLED",
+        base_cfg["bsg"]["bidirectional"]["enabled"],
+    )
+    base_cfg["bsg"]["bidirectional"]["include_gaps"] = _env_bool(
+        "BATHO_BSG_BIDIRECTIONAL_INCLUDE_GAPS",
+        base_cfg["bsg"]["bidirectional"]["include_gaps"],
+    )
+    base_cfg["bsg"]["bidirectional"]["verify_integrity"] = _env_bool(
+        "BATHO_BSG_BIDIRECTIONAL_VERIFY_INTEGRITY",
+        base_cfg["bsg"]["bidirectional"]["verify_integrity"],
+    )
+    base_cfg["bsg"]["bidirectional"]["storage_view"] = _env_bool(
+        "BATHO_BSG_BIDIRECTIONAL_STORAGE_VIEW",
+        base_cfg["bsg"]["bidirectional"]["storage_view"],
+    )
     base_cfg["bsg"]["storage"]["mmap_min_size_mb"] = _env_int(
         "BATHO_BSG_STORAGE_MMAP_MIN_SIZE_MB",
         base_cfg["bsg"]["storage"]["mmap_min_size_mb"],
@@ -861,18 +907,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
         "file_cache", FILE_CACHE_SCHEMA_VERSION
     )
     return cfg_dict
-
-
-@lru_cache(maxsize=None)
-def get_config_cached() -> Dict[str, Any]:
-    """Get config with batho.yaml resolved relative to current working directory."""
-    return get_config_with_root(Path.cwd())
-
-
-@lru_cache(maxsize=None)
-def get_config_cached_for_root(root_dir: Path) -> Dict[str, Any]:
-    """Get config with batho.yaml resolved relative to target root directory."""
-    return get_config_with_root(root_dir)
 
 
 def reload_config() -> Dict[str, Any]:
@@ -975,7 +1009,7 @@ bsg:
     file: ""  # Deprecated: .bathoignore support removed
   cache:
     enabled: true
-    path: .ctn/local/cache.db
+    path: .ctn/local/cache/cache.db
     max_size_mb: 1024
     ttl_days: 30
   incremental:
@@ -1020,4 +1054,10 @@ bsg:
       context_ttl_days: 90
       max_snapshots: 500
       max_patches: 5000
+
+  # Bidirectional BSG (lossless reconstruction support)
+  bidirectional:
+    enabled: true            # Enable bidirectional BSG features
+    include_gaps: true       # Emit SYNTAX_GLUE entities for 100% byte coverage
+    storage_view: true       # Persist raw_content in storage view (required for reconstruction)
 """

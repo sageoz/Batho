@@ -125,7 +125,10 @@ __all__ = [
     "cmd_plugins_list",
     "cmd_plugins_validate",
     "cmd_query",
+    "cmd_reconstruct",
     "cmd_sync",
+    "cmd_verify",
+    "cmd_export",
     "extract_patch_deltas",
 ]
 
@@ -1322,7 +1325,7 @@ def cmd_index(args: argparse.Namespace) -> int:
     ctn_dir = _ensure_ctn_dir(root)
     local_dirs = _ensure_local_dirs(ctn_dir)
 
-    cache_path = ctn_dir / "local" / "cache.db"
+    cache_path = ctn_dir / "local" / "cache" / "cache.db"
     build_start = time.perf_counter()
     no_ast_cache = bool(getattr(args, "no_ast_cache", False))
 
@@ -1330,6 +1333,31 @@ def cmd_index(args: argparse.Namespace) -> int:
     requested_base_snapshot = getattr(args, "base_snapshot", None)
 
     bsg_cfg = cfg.get("bsg", {}) if isinstance(cfg, dict) else {}
+
+    # Apply --with-gaps CLI flag override (mutates global config so CodeGraphIndexer sees it)
+    with_gaps = getattr(args, "with_gaps", None)
+    if with_gaps is not None:
+        if isinstance(cfg, dict):
+            bsg_cfg_mut = cfg.setdefault("bsg", {})
+            bidir_mut = bsg_cfg_mut.setdefault("bidirectional", {})
+            bidir_mut["include_gaps"] = with_gaps
+            bsg_cfg = bsg_cfg_mut  # keep local ref in sync
+
+    # Apply --storage-view CLI flag override
+    storage_view_flag = getattr(args, "storage_view", None)
+    if storage_view_flag is not None:
+        if isinstance(cfg, dict):
+            bsg_cfg_mut = cfg.setdefault("bsg", {})
+            bidir_mut = bsg_cfg_mut.setdefault("bidirectional", {})
+            bidir_mut["storage_view"] = storage_view_flag
+            bsg_cfg = bsg_cfg_mut  # keep local ref in sync
+
+    # Resolve final bidirectional config for reuse below
+    bsg_cfg = cfg.get("bsg", {}) if isinstance(cfg, dict) else {}
+    bidirectional_cfg_final = bsg_cfg.get("bidirectional", {}) if isinstance(bsg_cfg, dict) else {}
+    if not isinstance(bidirectional_cfg_final, dict):
+        bidirectional_cfg_final = {}
+
     incremental_cfg = (
         bsg_cfg.get("incremental", {}) if isinstance(bsg_cfg, dict) else {}
     )
@@ -1352,6 +1380,21 @@ def cmd_index(args: argparse.Namespace) -> int:
                 error=str(exc),
             )
             print(f"⚠️  Could not clear file cache (may be in use): {exc}")
+
+    # Also clear AST cache when --force is used
+    if args.force:
+        ast_cache_path = ctn_dir / "local" / "cache" / "ast_cache.db"
+        if ast_cache_path.exists():
+            try:
+                ast_cache_path.unlink()
+                print("⚡ --force: cleared AST cache")
+            except (PermissionError, OSError) as exc:
+                LOGGER.warning(
+                    "force_ast_cache_clear_failed",
+                    cache_path=str(ast_cache_path),
+                    error=str(exc),
+                )
+                print(f"⚠️  Could not clear AST cache (may be in use): {exc}")
 
     # Note: --force already cleared the per-project cache above
 
@@ -1533,9 +1576,10 @@ def cmd_index(args: argparse.Namespace) -> int:
         )
         bsg_path = versioned_dir / "bsg.json"
 
+        graph_view = "storage" if bidirectional_cfg_final.get("enabled", True) else "agent"
         _write_json(
             graph_path,
-            graph.to_dict(),
+            graph.to_dict(view=graph_view),
             ctn_dir=ctn_dir,
             artifact_type="graph_json",
             producer="cli.index",
@@ -1663,6 +1707,24 @@ def cmd_index(args: argparse.Namespace) -> int:
             schema_version="context-files.v1",
         )
 
+        # Storage view (optional, bidirectional feature)
+        if bidirectional_cfg_final.get("storage_view", False):
+            try:
+                storage_view = bsg_map.render_storage_view()
+                _write_json(
+                    versioned_dir / "bsg_storage_view.json",
+                    storage_view,
+                    ctn_dir=ctn_dir,
+                    artifact_type="bsg_storage_view",
+                    producer="cli.index",
+                    metadata={"index_id": index_id},
+                    schema_version="bsg-storage-view.v1",
+                )
+                print("📦 Storage view written to bsg_storage_view.json")
+            except Exception as exc:
+                LOGGER.warning("storage_view_failed", error=str(exc))
+                print(f"⚠️  Storage view generation failed: {exc}")
+
         # Metadata
         metadata = _load_index_metadata(ctn_dir)
         prev_index_id = metadata.get("current_index_id")
@@ -1670,7 +1732,7 @@ def cmd_index(args: argparse.Namespace) -> int:
             metadata.get("indexes", {}).get(prev_index_id) if prev_index_id else None
         )
         repo_hash = _compute_repo_hash(root)
-        stats = dict(indexer.stats) if indexer is not None else dict(incremental_stats)
+        stats = dict(indexer.build_stats) if indexer is not None else dict(incremental_stats)
         cache_hit_rate = 0.0
         parsed = int(stats.get("files_parsed", 0))
         cached = int(stats.get("files_cached", 0))
@@ -2101,7 +2163,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         return 1
 
     local_dirs = _ensure_local_dirs(ctn_dir)
-    cache_path = ctn_dir / "local" / "cache.db"
+    cache_path = ctn_dir / "local" / "cache" / "cache.db"
     indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
 
     files: list[Path] = []
@@ -2335,7 +2397,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
         metrics = entry.get("metrics", {}) if isinstance(entry, dict) else {}
         if isinstance(metrics, dict):
             metrics.update({"last_patch": patch_metrics})
-        merged_stats = dict(indexer.stats)
+        merged_stats = dict(indexer.build_stats)
         for key in (
             "loc_total",
             "repo_size_bytes",
@@ -2358,7 +2420,7 @@ def _cmd_patch_index_based(args: argparse.Namespace, root: Path, ctn_dir: Path) 
                 "entity_count": bsg_map.entity_count,
                 "relationship_count": len(graph.relationships),
                 "repo_hash": repo_hash,
-                "staleness_score": compute_staleness(entry, repo_hash, indexer.stats),
+                "staleness_score": compute_staleness(entry, repo_hash, indexer.build_stats),
                 "stats": merged_stats,
                 "metrics": metrics,
             }
@@ -2630,7 +2692,7 @@ def cmd_invalidate(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
     local_dirs = _ensure_local_dirs(ctn_dir)
-    cache_path = ctn_dir / "local" / "cache.db"
+    cache_path = ctn_dir / "local" / "cache" / "cache.db"
     if cache_path.exists():
         try:
             cache_path.unlink()
@@ -2655,7 +2717,7 @@ def cmd_cache_stats(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
     local_dirs = _ensure_local_dirs(ctn_dir)
-    cache_path = ctn_dir / "local" / "cache.db"
+    cache_path = ctn_dir / "local" / "cache" / "cache.db"
 
     cache = BathoCache(cache_path=str(cache_path))
     stats = cache.get_stats()
@@ -2679,7 +2741,7 @@ def cmd_cache_invalidate(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
     local_dirs = _ensure_local_dirs(ctn_dir)
-    cache_path = ctn_dir / "local" / "cache.db"
+    cache_path = ctn_dir / "local" / "cache" / "cache.db"
 
     cache = BathoCache(cache_path=str(cache_path))
     pattern = args.pattern
@@ -2700,7 +2762,7 @@ def cmd_cache_clear(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     ctn_dir = _ensure_ctn_dir(root)
     local_dirs = _ensure_local_dirs(ctn_dir)
-    cache_path = ctn_dir / "local" / "cache.db"
+    cache_path = ctn_dir / "local" / "cache" / "cache.db"
 
     cache = BathoCache(cache_path=str(cache_path))
     deleted = cache.clear_ast_cache()
@@ -3050,6 +3112,320 @@ def cmd_bsg(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reconstruct(args: argparse.Namespace) -> int:
+    """Reconstruct a file from BSG entities and verify integrity."""
+    from batho.context.reconstructor import ReconstructionError, IntegrityError
+
+    root = Path(args.root).resolve()
+    if not root.exists() or not root.is_dir():
+        print(f"❌ Root does not exist or is not a directory: {root}")
+        return 1
+
+    ctn_dir = _ensure_ctn_dir(root)
+    metadata = _load_index_metadata(ctn_dir)
+    current_id = metadata.get("current_index_id")
+
+    if not current_id:
+        print("❌ No index found. Run 'batho index' first.")
+        return 1
+
+    graph = _load_current_graph(ctn_dir, current_id)
+    if graph is None:
+        print("❌ Current graph.json missing or invalid")
+        return 1
+
+    # Load storage view if available to enrich entities with raw_content
+    versioned_dir = ctn_dir / current_id
+    storage_view_path = versioned_dir / "bsg_storage_view.json"
+    if storage_view_path.exists():
+        try:
+            storage_view_data = json.loads(storage_view_path.read_text(encoding="utf-8"))
+            for file_entry in storage_view_data.get("files", []):
+                for entity_data in file_entry.get("entities", []):
+                    entity_id = entity_data.get("id")
+                    if entity_id and entity_id in graph.entities:
+                        entity = graph.entities[entity_id]
+                        updates = {}
+                        if "raw_content" in entity_data:
+                            updates["raw_content"] = entity_data["raw_content"]
+                        if "raw_bytes" in entity_data:
+                            raw_bytes_val = entity_data["raw_bytes"]
+                            if isinstance(raw_bytes_val, str) and raw_bytes_val:
+                                updates["raw_bytes"] = bytes.fromhex(raw_bytes_val)
+                            elif raw_bytes_val:
+                                updates["raw_bytes"] = raw_bytes_val
+                        if updates:
+                            graph.entities[entity_id] = entity.model_copy(
+                                update=updates
+                            )
+        except Exception as exc:
+            LOGGER.warning("storage_view_load_failed", error=str(exc))
+            print(f"⚠️  Failed to load storage view: {exc}")
+
+    bsg_map = BSGMap.build(
+        graph, root=str(root), serialization_config=_get_serialization_config()
+    )
+
+    target_file = args.file
+    try:
+        original_hash = None
+        if getattr(args, "verify", False):
+            abs_path = root / target_file
+            if abs_path.exists():
+                from batho.utils.hash import compute_bytes_hash
+                original_content_bytes = abs_path.read_bytes()
+                original_hash = compute_bytes_hash(original_content_bytes)
+            else:
+                print(f"⚠️  Cannot verify: file not found at {abs_path}")
+
+        result = bsg_map.reconstruct_file(
+            file_path=target_file,
+            original_hash=original_hash,
+        )
+    except (ReconstructionError, IntegrityError) as exc:
+        print(f"❌ Reconstruction failed: {exc}")
+        return 1
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    print(f"✅ Reconstruction result for {target_file}")
+    print(f"   Success:         {result.success}")
+    print(f"   Entities:        {result.entity_count}")
+    print(f"   Gaps:            {result.gap_count}")
+    print(f"   Byte coverage:   {result.byte_coverage:.2%}")
+    print(f"   Hash match:      {result.hash_match}")
+    print(f"   Rebuilt hash:    {result.reconstructed_hash}")
+    if result.original_hash:
+        print(f"   Original hash:   {result.original_hash}")
+    print(f"   Time:            {result.reconstruction_time_ms} ms")
+    if result.warnings:
+        for w in result.warnings:
+            print(f"   ⚠️  {w}")
+
+    # --output: write reconstructed content to disk
+    output_path = getattr(args, "output", None)
+    if output_path and result.reconstructed_content:
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(result.reconstructed_content, encoding="utf-8")
+        print(f"   Output:          {output_path}")
+
+    return 0
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Verify BSG integrity for one or all indexed files."""
+    root = Path(args.root).resolve()
+    if not root.exists() or not root.is_dir():
+        print(f"❌ Root does not exist or is not a directory: {root}")
+        return 1
+
+    ctn_dir = _ensure_ctn_dir(root)
+    metadata = _load_index_metadata(ctn_dir)
+    current_id = metadata.get("current_index_id")
+
+    if not current_id:
+        print("❌ No index found. Run 'batho index' first.")
+        return 1
+
+    graph = _load_current_graph(ctn_dir, current_id)
+    if graph is None:
+        print("❌ Current graph.json missing or invalid")
+        return 1
+
+    # Load storage view if available to enrich entities with raw_content
+    versioned_dir = ctn_dir / current_id
+    storage_view_path = versioned_dir / "bsg_storage_view.json"
+    if storage_view_path.exists():
+        try:
+            storage_view_data = json.loads(storage_view_path.read_text(encoding="utf-8"))
+            for file_entry in storage_view_data.get("files", []):
+                for entity_data in file_entry.get("entities", []):
+                    entity_id = entity_data.get("id")
+                    if entity_id and entity_id in graph.entities:
+                        entity = graph.entities[entity_id]
+                        updates = {}
+                        if "raw_content" in entity_data:
+                            updates["raw_content"] = entity_data["raw_content"]
+                        if "raw_bytes" in entity_data:
+                            raw_bytes_val = entity_data["raw_bytes"]
+                            if isinstance(raw_bytes_val, str) and raw_bytes_val:
+                                updates["raw_bytes"] = bytes.fromhex(raw_bytes_val)
+                            elif raw_bytes_val:
+                                updates["raw_bytes"] = raw_bytes_val
+                        if updates:
+                            graph.entities[entity_id] = entity.model_copy(
+                                update=updates
+                            )
+        except Exception as exc:
+            LOGGER.warning("storage_view_load_failed", error=str(exc))
+            print(f"⚠️  Failed to load storage view: {exc}")
+
+    bsg_map = BSGMap.build(
+        graph, root=str(root), serialization_config=_get_serialization_config()
+    )
+
+    # Load file snapshots from cache database
+    cache_path = ctn_dir / "local" / "cache" / "cache.db"
+    if cache_path.exists():
+        try:
+            from batho.context.unified_cache import BathoCache
+            cache = BathoCache(cache_path=str(cache_path))
+            snapshots = cache.get_all_file_snapshots()
+            for fp, snap in snapshots.items():
+                bsg_map.add_file_snapshot(fp, snap)
+        except Exception as exc:
+            LOGGER.warning("verify_load_snapshots_failed", error=str(exc))
+
+    # Also check if we can load file snapshots from the snapshot JSON file
+    entry = metadata.get("indexes", {}).get(current_id, {})
+    snapshot_id = entry.get("snapshot_id")
+    if snapshot_id:
+        try:
+            from batho.time_machine import load_snapshot
+            snapshot_data = load_snapshot(ctn_dir, snapshot_id)
+            if snapshot_data and "file_hashes" in snapshot_data:
+                from batho.context.schema import FileSnapshot
+                for fp, f_hash in snapshot_data["file_hashes"].items():
+                    if not bsg_map.get_file_snapshot(fp):
+                        bsg_map.add_file_snapshot(
+                            fp, FileSnapshot(file_path=fp, file_hash=f_hash)
+                        )
+        except Exception as exc:
+            LOGGER.warning("verify_load_snapshot_json_failed", error=str(exc))
+
+    target_file = getattr(args, "file", None)
+    verify_all = getattr(args, "all", False)
+
+    if not target_file and not verify_all:
+        print("❌ Specify --file <path> or --all")
+        return 1
+
+    files_to_verify: list[str] = []
+    if target_file:
+        files_to_verify = [target_file]
+    elif verify_all:
+        files_to_verify = sorted(bsg_map._by_file.keys())
+
+    results: dict[str, Any] = {}
+    failures = 0
+
+    for fp in files_to_verify:
+        result = bsg_map.verify_file_integrity(fp)
+        results[fp] = result
+        errors = result.get("errors", [])
+        if not result.get("verified", False):
+            # "No snapshot available" is a warning, not a failure
+            if errors and errors[0] == "No snapshot available for integrity verification":
+                print(f"⚠️  {fp}: SKIPPED (no snapshot — index with --storage-view to enable verification)")
+                continue
+            failures += 1
+            print(f"❌ {fp}: FAILED — {errors[0] if errors else 'unknown'}")
+        else:
+            print(f"✅ {fp}: OK (hash_match={result.get('hash_match')})")
+
+    summary = {
+        "total": len(files_to_verify),
+        "passed": len(files_to_verify) - failures,
+        "failed": failures,
+        "results": results,
+    }
+
+    report_json = getattr(args, "report_json", None)
+    if report_json:
+        report_path = Path(report_json)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(summary, indent=2, default=str), encoding="utf-8"
+        )
+        print(f"📄 Report written to {report_json}")
+
+    if failures:
+        print(f"\n⚠️  {failures}/{len(files_to_verify)} files failed integrity check")
+        return 1
+
+    print(f"\n✅ All {len(files_to_verify)} files passed integrity check")
+    return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    """Export BSG data as reconstructed files."""
+    from batho.context.reconstructor import ReconstructionError, IntegrityError
+
+    root = Path(args.root).resolve()
+    if not root.exists() or not root.is_dir():
+        print(f"❌ Root does not exist or is not a directory: {root}")
+        return 1
+
+    if not getattr(args, "bsg", False):
+        print("❌ --bsg is required for BSG export")
+        return 1
+
+    ctn_dir = _ensure_ctn_dir(root)
+    metadata = _load_index_metadata(ctn_dir)
+    current_id = metadata.get("current_index_id")
+
+    if not current_id:
+        print("❌ No index found. Run 'batho index' first.")
+        return 1
+
+    graph = _load_current_graph(ctn_dir, current_id)
+    if graph is None:
+        print("❌ Current graph.json missing or invalid")
+        return 1
+
+    # Load storage view if available to enrich entities with raw_content
+    versioned_dir = ctn_dir / current_id
+    storage_view_path = versioned_dir / "bsg_storage_view.json"
+    if storage_view_path.exists():
+        try:
+            storage_view_data = json.loads(storage_view_path.read_text(encoding="utf-8"))
+            for file_entry in storage_view_data.get("files", []):
+                for entity_data in file_entry.get("entities", []):
+                    entity_id = entity_data.get("id")
+                    if entity_id and entity_id in graph.entities:
+                        entity = graph.entities[entity_id]
+                        if "raw_content" in entity_data:
+                            graph.entities[entity_id] = entity.model_copy(
+                                update={"raw_content": entity_data["raw_content"]}
+                            )
+        except Exception as exc:
+            LOGGER.warning("storage_view_load_failed", error=str(exc))
+            print(f"⚠️  Failed to load storage view: {exc}")
+
+    bsg_map = BSGMap.build(
+        graph, root=str(root), serialization_config=_get_serialization_config()
+    )
+
+    target_file = args.file
+    try:
+        result = bsg_map.reconstruct_file(target_file)
+    except (ReconstructionError, IntegrityError) as exc:
+        print(f"❌ Export failed for {target_file}: {exc}")
+        return 1
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    # Determine output path
+    output_path = getattr(args, "output", None)
+    if not output_path:
+        output_path = f"{target_file}.reconstructed"
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(result.reconstructed_content, encoding="utf-8")
+
+    print(f"✅ Exported {target_file} → {output_path}")
+    print(f"   Entities:   {result.entity_count}")
+    print(f"   Gaps:       {result.gap_count}")
+    print(f"   Coverage:   {result.byte_coverage:.2%}")
+    print(f"   Hash match: {result.hash_match}")
+
+    return 0
+
+
 def cmd_plugins_list(args: argparse.Namespace) -> int:
     """List available BSG plugins and their status."""
     from batho.bsg import list_builtin_plugins, load_effective_rules
@@ -3221,6 +3597,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     idx.add_argument("--snapshot-label", default=None, help="Optional snapshot label")
     idx.add_argument("--verbose", action="store_true", help="Verbose output")
+    idx.add_argument(
+        "--with-gaps",
+        action="store_true",
+        default=None,
+        help="Emit SYNTAX_GLUE entities for full byte coverage",
+    )
+    idx.add_argument(
+        "--storage-view",
+        action="store_true",
+        default=None,
+        help="Persist storage view payload (raw_content, file_snapshots)",
+    )
     idx.set_defaults(func=cmd_index)
 
     st = sub.add_parser("stats", help="Show current index stats")
@@ -3585,6 +3973,63 @@ def build_parser() -> argparse.ArgumentParser:
         help="Token budget for compressed mode (default: 12000)",
     )
     bsg.set_defaults(func=cmd_bsg)
+
+    # Reconstruct command
+    reconstruct = sub.add_parser(
+        "reconstruct",
+        help="Reconstruct a file from BSG entities and verify integrity",
+    )
+    reconstruct.add_argument("file", help="Path to the file to reconstruct")
+    reconstruct.add_argument("--root", required=True, help="Path to repo root")
+    reconstruct.add_argument(
+        "--verify",
+        action="store_true",
+        help="Read original file from disk and verify integrity",
+    )
+    reconstruct.add_argument(
+        "--output",
+        default=None,
+        help="Path to write reconstructed file",
+    )
+    reconstruct.set_defaults(func=cmd_reconstruct)
+
+    # Verify command
+    verify = sub.add_parser(
+        "verify",
+        help="Verify BSG integrity for one or all files",
+    )
+    verify.add_argument("--file", default=None, help="Specific file to verify (relative to repo root)")
+    verify.add_argument(
+        "--all",
+        action="store_true",
+        help="Verify all indexed files",
+    )
+    verify.add_argument("--root", required=True, help="Path to repo root")
+    verify.add_argument(
+        "--report-json",
+        default=None,
+        help="Path to write JSON report with structured results",
+    )
+    verify.set_defaults(func=cmd_verify)
+
+    # Export command
+    export = sub.add_parser(
+        "export",
+        help="Export BSG data as reconstructed files",
+    )
+    export.add_argument(
+        "--bsg",
+        action="store_true",
+        help="Export BSG reconstruction (requires --file)",
+    )
+    export.add_argument("--file", required=True, help="Source file path to export")
+    export.add_argument(
+        "--output",
+        default=None,
+        help="Output path (default: <file>.reconstructed)",
+    )
+    export.add_argument("--root", required=True, help="Path to repo root")
+    export.set_defaults(func=cmd_export)
 
     # Plugins command
     plugins = sub.add_parser("plugins", help="BSG plugin management")

@@ -86,7 +86,7 @@ def get_cache_dir_status(root: Path) -> dict[str, Any]:
     ctn_dir = root / cfg["paths"]["ctn_dir"]
 
     old_cache_dir = ctn_dir / "local" / "cache"
-    new_cache_file = ctn_dir / "local" / "cache.db"
+    new_cache_file = ctn_dir / "local" / "cache" / "cache.db"
 
     status: dict[str, Any] = {
         "old_cache_dir_exists": old_cache_dir.exists(),

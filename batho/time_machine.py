@@ -32,7 +32,7 @@ from batho.context.incremental import get_head_commit, is_git_repo
 from batho.context.storage import register_artifact
 from batho.utils.file_io import _is_binary
 from batho.utils.hash import compute_bytes_hash, compute_file_hash
-from batho.utils.ignore import is_ignored, load_ignore_spec
+from batho.utils.ignore import is_ignored, load_ignore_spec, walk_ignored_filtered
 from batho.utils.logging import get_logger
 from batho.utils.patch_errors import (
     PatchConsistencyError,
@@ -237,7 +237,7 @@ class FileChangeTracker:
 
     def _get_cache(self) -> BathoCache:
         if self._cache is None:
-            self._cache = BathoCache(str(self.root / ".ctn/local/cache.db"))
+            self._cache = BathoCache(str(self.root / ".ctn/local/cache/cache.db"))
         return self._cache
 
     def load(self, cache_path: Path | None = None) -> bool:
@@ -299,92 +299,84 @@ class FileChangeTracker:
         current_files: dict[str, str] = {}
         stored_paths = set(stored_hashes.keys())
 
-        for file_path in self.root.rglob("*"):
-            # Handle symlinks separately
-            is_symlink = file_path.is_symlink()
-            if (
-                not (
-                    os.path.isfile(str(file_path))
-                    and not os.path.islink(str(file_path))
-                )
-                and not is_symlink
-            ):
-                continue
-
-            # Get relative path early for logging
-            try:
-                rel_path = str(file_path.relative_to(self.root))
-            except ValueError:
-                continue
-
-            if is_ignored(file_path, self.root, ignore_spec):
-                logger.debug("scan_file_ignored", path=rel_path)
-                continue
-
-            try:
-                # Use lstat for symlinks to get symlink info, stat for regular files
-                stat_info = file_path.lstat() if is_symlink else file_path.stat()
-                if stat_info.st_size > tracking_config.max_file_size_kb * 1024:
-                    logger.debug(
-                        "file_too_large",
-                        path=rel_path,
-                        size_kb=stat_info.st_size / 1024,
+        for dirpath, dirnames, filenames in walk_ignored_filtered(self.root, spec=ignore_spec):
+            for filename in filenames:
+                file_path = dirpath / filename
+                # Handle symlinks separately
+                is_symlink = file_path.is_symlink()
+                if (
+                    not (
+                        os.path.isfile(str(file_path))
+                        and not os.path.islink(str(file_path))
                     )
+                    and not is_symlink
+                ):
                     continue
-            except OSError as e:
-                if tracking_config.log_permission_errors:
-                    logger.warning(
-                        "file_access_error",
-                        path=rel_path,
-                        error=str(e),
-                        error_type=type(e).__name__,
-                    )
-                continue
-            except OSError as e:
-                logger.warning(
-                    "file_access_error",
-                    path=rel_path,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-                continue
 
-            # For symlinks, use target path as hash
-            symlink_target_path = None
-            if is_symlink:
+                # Get relative path early for logging
                 try:
-                    symlink_target_path = file_path.resolve()
-                    relative_target = str(symlink_target_path.relative_to(self.root))
-                    file_hash = f"symlink:{relative_target}"
-                except (OSError, ValueError) as e:
+                    rel_path = str(file_path.relative_to(self.root))
+                except ValueError:
+                    continue
+
+                # Note: is_ignored check not needed since walk_ignored_filtered already filters
+
+                try:
+                    # Use lstat for symlinks to get symlink info, stat for regular files
+                    stat_info = file_path.lstat() if is_symlink else file_path.stat()
+                    if stat_info.st_size > tracking_config.max_file_size_kb * 1024:
+                        logger.debug(
+                            "file_too_large",
+                            path=rel_path,
+                            size_kb=stat_info.st_size / 1024,
+                        )
+                        continue
+                except OSError as e:
                     if tracking_config.log_permission_errors:
                         logger.warning(
-                            "symlink_resolve_error",
+                            "file_access_error",
                             path=rel_path,
                             error=str(e),
                             error_type=type(e).__name__,
                         )
-                    file_hash = f"symlink:broken"
-            else:
-                file_hash = compute_file_hash(file_path)
-                # Log warning for large binary files
-                if file_hash and tracking_config.warn_binary_files and "_" in file_hash:
-                    try:
-                        size_str = file_hash.split("_")[0]
-                        if size_str.isdigit():
-                            size_kb = int(size_str) / 1024
-                            if size_kb > tracking_config.binary_size_threshold_kb:
-                                logger.warning(
-                                    "large_binary_file_detected",
-                                    path=rel_path,
-                                    size_kb=round(size_kb, 1),
-                                    threshold_kb=tracking_config.binary_size_threshold_kb,
-                                )
-                    except (ValueError, IndexError):
-                        pass  # Not a size_mtime format, ignore
+                    continue
 
-            if file_hash:
-                current_files[rel_path] = file_hash
+                # For symlinks, use target path as hash
+                symlink_target_path = None
+                if is_symlink:
+                    try:
+                        symlink_target_path = file_path.resolve()
+                        relative_target = str(symlink_target_path.relative_to(self.root))
+                        file_hash = f"symlink:{relative_target}"
+                    except (OSError, ValueError) as e:
+                        if tracking_config.log_permission_errors:
+                            logger.warning(
+                                "symlink_resolve_error",
+                                path=rel_path,
+                                error=str(e),
+                                error_type=type(e).__name__,
+                            )
+                        file_hash = f"symlink:broken"
+                else:
+                    file_hash = compute_file_hash(file_path)
+                    # Log warning for large binary files
+                    if file_hash and tracking_config.warn_binary_files and "_" in file_hash:
+                        try:
+                            size_str = file_hash.split("_")[0]
+                            if size_str.isdigit():
+                                size_kb = int(size_str) / 1024
+                                if size_kb > tracking_config.binary_size_threshold_kb:
+                                    logger.warning(
+                                        "large_binary_file_detected",
+                                        path=rel_path,
+                                        size_kb=round(size_kb, 1),
+                                        threshold_kb=tracking_config.binary_size_threshold_kb,
+                                    )
+                        except (ValueError, IndexError):
+                            pass  # Not a size_mtime format, ignore
+
+                if file_hash:
+                    current_files[rel_path] = file_hash
 
         # When using base_snapshot and not tracking new files, filter to only
         # include previously indexed files. This prevents new files from being
