@@ -54,12 +54,11 @@ class ConnectionPool:
 
     def _create_connection(self) -> sqlite3.Connection:
         """Create a new read-only SQLite connection with optimized pragmas."""
+        from batho.bridge.connection_profile import apply_reader_pragmas
+
         uri = f"file:{self._db_path}?mode=ro"
         conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-        conn.execute("PRAGMA query_only=ON")
-        conn.execute("PRAGMA temp_store=MEMORY")
-        conn.execute("PRAGMA mmap_size=67108864")
-        conn.execute("PRAGMA cache_size=-8000")
+        apply_reader_pragmas(conn)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -92,6 +91,13 @@ class ConnectionPool:
         if self._closed:
             conn.close()
             return
+
+        # Ensure any open transaction is rolled back before returning to pool
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+
         try:
             self._pool.put_nowait(conn)
         except Full:
@@ -113,14 +119,17 @@ class ConnectionPool:
     def close(self) -> None:
         """Close all connections in the pool."""
         self._closed = True
+        # Empty the pool first
         while not self._pool.empty():
             try:
                 conn = self._pool.get_nowait()
                 conn.close()
             except Exception:
                 pass
+        # Force close any in-use connections and reset counters
         with self._lock:
             self._created = 0
+            self._in_use = 0
 
     @property
     def size(self) -> int:
@@ -129,6 +138,39 @@ class ConnectionPool:
     @property
     def available(self) -> int:
         return self._pool.qsize()
+
+    def health_check(self) -> dict[str, Any]:
+        """
+        Check the health of connections in the pool.
+        
+        Returns:
+            Dictionary with health status information
+        """
+        result = {
+            "healthy": True,
+            "pool_size": self._size,
+            "available": self.available,
+            "created": self._created,
+            "issues": [],
+        }
+        
+        # Check if we can acquire a connection
+        try:
+            conn = self.acquire(timeout=1.0)
+            try:
+                # Execute a simple health check query
+                cursor = conn.execute("SELECT 1")
+                cursor.fetchone()
+            except Exception as e:
+                result["healthy"] = False
+                result["issues"].append(f"Connection health check failed: {e}")
+            finally:
+                self.release(conn)
+        except Exception as e:
+            result["healthy"] = False
+            result["issues"].append(f"Could not acquire connection: {e}")
+        
+        return result
 
     @property
     def in_use(self) -> int:

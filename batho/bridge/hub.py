@@ -548,6 +548,56 @@ def create_hub(manager: WorkspaceManager) -> FastMCP:
         return to_json(ok(result, meta=meta))
 
     @mcp.tool()
+    async def reconstruct_file(
+        file_path: str,
+        workspace_id: str | None = None,
+    ) -> str:
+        """Reconstruct a source file from its BSG entities.
+
+        Loads the graph for the workspace, finds entities matching the file,
+        and reassembles the original content from raw_content fields.
+        """
+        from batho.context.reconstructor import FileReconstructor, ReconstructionError, IntegrityError
+        from batho.context.codegraph import InMemoryGraph
+
+        try:
+            handle = await _resolve(workspace_id)
+            graph_data = handle.loader.load_json("graph.json")
+            if not graph_data:
+                return to_json(
+                    err("artifact_not_found", "graph.json not found for workspace")
+                )
+
+            # Build InMemoryGraph from loaded graph
+            graph = InMemoryGraph.from_dict(graph_data)
+
+            # Enrich entities with raw_content from storage view if available
+            storage_view_data = handle.loader.load_json("bsg_storage_view.json")
+            if storage_view_data:
+                try:
+                    graph.enrich_from_storage_view(storage_view_data)
+                except Exception as exc:
+                    # Log but continue - reconstruction may still work with partial enrichment
+                    pass
+
+            entities = list(graph.entities_by_file(file_path))
+            if not entities:
+                return to_json(
+                    err(
+                        "no_entities",
+                        f"No entities found for file: {file_path}",
+                    )
+                )
+
+            reconstructor = FileReconstructor()
+            result = reconstructor.reconstruct_file(
+                file_path=file_path, entities=entities
+            )
+            return to_json(ok(result.model_dump(), workspace_id=handle.workspace_id))
+        except (RuntimeError, KeyError, ValueError, ImportError, ReconstructionError, IntegrityError) as exc:
+            return to_json(err("reconstruct_error", str(exc)))
+
+    @mcp.tool()
     async def cross_workspaces_with_artifact(artifact_type: str) -> str:
         """Find workspaces that have a specific artifact type."""
         from batho.bridge.cross import cross_workspaces_with_artifact_impl
@@ -578,7 +628,7 @@ def create_hub(manager: WorkspaceManager) -> FastMCP:
 
             for ws_config in manager.list():
                 # We try to get a handle to get live stats, but don't force mount
-                handle = manager.get(ws_config.id)
+                handle = manager.get_handle(ws_config.id)
                 last_time = None
                 if handle and handle.last_index_time:
                     last_time = datetime.fromtimestamp(handle.last_index_time).isoformat()

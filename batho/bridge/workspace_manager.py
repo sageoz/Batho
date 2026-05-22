@@ -51,7 +51,7 @@ class WorkspaceManager:
         self._handles_lock = threading.RLock()
         self._mount_futures: dict[str, asyncio.Future] = {}
         self._mount_futures_lock = threading.Lock()
-        self._global_semaphore = asyncio.Semaphore(concurrency.global_inflight_limit)
+        self._global_semaphore: asyncio.Semaphore | None = None
         self._reaper_task: asyncio.Task | None = None
         self._running = False
         self._ready = False
@@ -90,6 +90,14 @@ class WorkspaceManager:
             self._cross_index = CrossRepoIndex(self._cross_repo, max_index_bytes=budget)
         return self._cross_index
 
+    @property
+    def global_semaphore(self) -> asyncio.Semaphore:
+        """Lazy global semaphore property initialized only when accessed in running event loop."""
+        with self._handles_lock:
+            if self._global_semaphore is None:
+                self._global_semaphore = asyncio.Semaphore(self._concurrency.global_inflight_limit)
+            return self._global_semaphore
+
     def start(self) -> None:
         """Start the manager and register all workspaces (sync entrypoint)."""
         self._running = True
@@ -101,8 +109,8 @@ class WorkspaceManager:
                     handle = WorkspaceHandle(
                         config=ws_config,
                         state=WorkspaceState.REGISTERED,
+                        concurrency_limit=self._concurrency.per_workspace_inflight_limit,
                     )
-                    handle.semaphore = asyncio.Semaphore(self._concurrency.per_workspace_inflight_limit)
                     self._handles[ws_config.id] = handle
                     LOGGER.info("workspace_registered", workspace_id=ws_config.id)
 
@@ -117,9 +125,6 @@ class WorkspaceManager:
         self._loop = asyncio.get_running_loop()
         self.start()
         config = self._registry.load()
-
-        for ws_id, handle in self._handles.items():
-            handle.semaphore = asyncio.Semaphore(self._concurrency.per_workspace_inflight_limit)
 
         if self._residency.prefetch_default_workspace and config.server.default_workspace:
             default_ws = config.server.default_workspace
@@ -136,7 +141,6 @@ class WorkspaceManager:
             except Exception as exc:
                 LOGGER.warning("cross_index_warmup_failed", error=str(exc))
 
-        self._global_semaphore = asyncio.Semaphore(self._concurrency.global_inflight_limit)
         self._reaper_task = asyncio.create_task(self._reaper_loop())
         self._ready = True
 
@@ -161,7 +165,7 @@ class WorkspaceManager:
 
     async def mount(self, workspace_id: str) -> WorkspaceHandle:
         """Mount a workspace, opening SQLite and initializing resources."""
-        async with self._global_semaphore:
+        async with self.global_semaphore:
             with self._handles_lock:
                 if workspace_id not in self._handles:
                     raise KeyError(f"Workspace not found: {workspace_id}")
@@ -171,11 +175,12 @@ class WorkspaceManager:
                 handle.mark_used()
                 return handle
 
-            if handle.state == WorkspaceState.MOUNTING:
-                with self._mount_futures_lock:
-                    future = self._mount_futures.get(workspace_id)
-                if future:
-                    return await future
+            with self._handles_lock:
+                if handle.state == WorkspaceState.MOUNTING:
+                    with self._mount_futures_lock:
+                        future = self._mount_futures.get(workspace_id)
+                    if future:
+                        return await future
 
             async with handle.semaphore:
                 with self._handles_lock:
@@ -188,26 +193,35 @@ class WorkspaceManager:
                         if future:
                             return await future
 
-                    handle.state = WorkspaceState.MOUNTING
                     handle.mount_attempts += 1
+                    loop = asyncio.get_running_loop()
+                    future = loop.create_future()
+                    with self._mount_futures_lock:
+                        self._mount_futures[workspace_id] = future
+
+                    handle.state = WorkspaceState.MOUNTING
 
                 try:
                     await self._do_mount(handle)
-                    handle.state = WorkspaceState.READY
-                    handle.last_error = None
-                    handle.mark_used()
+                    with self._handles_lock:
+                        handle.state = WorkspaceState.READY
+                        handle.last_error = None
+                        handle.mark_used()
                     self._enforce_lru()
                     LOGGER.info("workspace_mounted", workspace_id=workspace_id)
+                    future.set_result(handle)
                 except Exception as exc:
-                    handle.state = WorkspaceState.FAILED
-                    handle.last_error = str(exc)
-                    backoff = self._get_backoff(handle.mount_attempts)
+                    with self._handles_lock:
+                        handle.state = WorkspaceState.FAILED
+                        handle.last_error = str(exc)
+                        backoff = self._get_backoff(handle.mount_attempts)
                     LOGGER.warning(
                         "workspace_mount_failed",
                         workspace_id=workspace_id,
                         error=str(exc),
                         backoff=backoff,
                     )
+                    future.set_exception(exc)
                     raise
                 finally:
                     with self._mount_futures_lock:
@@ -286,7 +300,7 @@ class WorkspaceManager:
             with self._handles_lock:
                 handle.state = WorkspaceState.FAILED
 
-    async def resolve(self, workspace_id: str | None) -> WorkspaceHandle:
+    async def resolve(self, workspace_id: str | None, _attempts: int = 0) -> WorkspaceHandle:
         """Resolve a workspace handle, mounting if necessary."""
         if workspace_id is None:
             config = self._registry.load()
@@ -300,25 +314,34 @@ class WorkspaceManager:
                 raise KeyError(f"Workspace not found: {workspace_id}")
             handle = self._handles[workspace_id]
 
-        if handle.is_ready:
-            handle.mark_used()
-            return handle
+            if handle.is_ready:
+                handle.mark_used()
+                return handle
 
-        if handle.state in (WorkspaceState.REGISTERED, WorkspaceState.EVICTED):
+            state = handle.state
+            attempts = handle.mount_attempts
+            last_error = handle.last_error
+
+        if state in (WorkspaceState.REGISTERED, WorkspaceState.EVICTED):
             return await self.mount(workspace_id)
 
-        if handle.state == WorkspaceState.FAILED:
-            if handle.mount_attempts >= len(MOUNT_BACKOFF_SECONDS):
-                raise RuntimeError(f"Workspace {workspace_id} in failed state: {handle.last_error}")
+        if state == WorkspaceState.FAILED:
+            if attempts >= len(MOUNT_BACKOFF_SECONDS):
+                raise RuntimeError(f"Workspace {workspace_id} in failed state: {last_error}")
             return await self.mount(workspace_id)
 
-        if handle.state in (WorkspaceState.MOUNTING, WorkspaceState.UNMOUNTING):
+        if state in (WorkspaceState.MOUNTING, WorkspaceState.UNMOUNTING):
             with self._mount_futures_lock:
                 future = self._mount_futures.get(workspace_id)
             if future:
                 return await future
+            
+            # Add recursion limit to prevent infinite loop
+            if _attempts >= 50:
+                raise RuntimeError(f"Workspace {workspace_id} stuck in transitioning state after {_attempts} attempts")
+            
             await asyncio.sleep(0.1)
-            return await self.resolve(workspace_id)
+            return await self.resolve(workspace_id, _attempts + 1)
 
         return handle
 
@@ -331,6 +354,10 @@ class WorkspaceManager:
         """Return a handle without forcing a mount."""
         with self._handles_lock:
             return self._handles.get(workspace_id)
+
+    def get(self, workspace_id: str) -> WorkspaceHandle | None:
+        """Backward-compatible alias to get_handle."""
+        return self.get_handle(workspace_id)
 
     def resident(self) -> list[WorkspaceHandle]:
         """List all currently mounted (ready) workspaces."""
@@ -364,6 +391,7 @@ class WorkspaceManager:
                 self._handles[ws_config.id] = WorkspaceHandle(
                     config=ws_config,
                     state=WorkspaceState.REGISTERED,
+                    concurrency_limit=self._concurrency.per_workspace_inflight_limit,
                 )
                 LOGGER.info("workspace_added", workspace_id=ws_config.id)
 

@@ -32,13 +32,50 @@ from batho.utils.logging import get_logger
 LOGGER = get_logger(__name__, component="bridge.http")
 
 
+class ServerOrClassProperty:
+    """Descriptor that resolves attributes from HTTPServer instance for thread isolation.
+    
+    Falls back to instance attribute if set directly (for testing compatibility).
+    Falls back to class attribute if server attribute is not available.
+    This ensures each HTTPServer instance has its own configuration for strict thread isolation.
+    """
+    
+    def __init__(self, name: str):
+        self.name = name
+    
+    def __get__(self, instance, owner):
+        if instance is None:
+            # Class access: fall back to class attribute for compatibility
+            return getattr(owner, f'_{self.name}', None)
+
+        # Instance access: try to get from server instance first
+        if hasattr(instance, 'server') and instance.server is not None:
+            return getattr(instance.server, self.name, None)
+
+        # Fallback to instance attribute (for testing compatibility)
+        if hasattr(instance, f'_{self.name}'):
+            return getattr(instance, f'_{self.name}')
+
+        # Fallback to class attribute
+        return getattr(owner, f'_{self.name}', None)
+    
+    def __set__(self, instance, value):
+        # Set on the instance's server if available
+        if hasattr(instance, 'server') and instance.server is not None:
+            setattr(instance.server, self.name, value)
+        else:
+            # Fallback: set as instance attribute (for testing compatibility)
+            setattr(instance, f'_{self.name}', value)
+
+
 class HubHTTPHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the hub REST API."""
 
-    manager: WorkspaceManager = None
-    registry: WorkspaceRegistry = None
-    default_workspace: str | None = None
-    dashboard_dir: Path | None = None
+    # Use descriptors for dynamic resolution from server instance
+    manager: WorkspaceManager = ServerOrClassProperty('manager')
+    registry: WorkspaceRegistry = ServerOrClassProperty('registry')
+    default_workspace: str | None = ServerOrClassProperty('default_workspace')
+    dashboard_dir: Path | None = ServerOrClassProperty('dashboard_dir')
 
     def log_message(self, format, *args):
         LOGGER.debug("http_request", method=self.command, path=self.path)
@@ -1060,12 +1097,12 @@ def create_hub_server(
     class ConfiguredHandler(HubHTTPHandler):
         pass
 
-    ConfiguredHandler.manager = manager
-    ConfiguredHandler.default_workspace = default_workspace
-    ConfiguredHandler.registry = registry
-    ConfiguredHandler.dashboard_dir = dashboard_dir
-
     server = HTTPServer((host, port), ConfiguredHandler)
+    # Set configuration attributes on HTTPServer instance for thread isolation
+    server.manager = manager
+    server.default_workspace = default_workspace
+    server.registry = registry
+    server.dashboard_dir = dashboard_dir
     LOGGER.info("hub_http_server_created", host=host, port=port)
     return server
 

@@ -30,9 +30,23 @@ class WorkspaceHandle:
     mount_attempts: int = 0
     last_error: str | None = None
     inflight: int = 0
-    semaphore: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(16))
+    _semaphore: asyncio.Semaphore | None = None
     lock: threading.RLock = field(default_factory=threading.RLock)
     cache_bytes: int = 0
+    concurrency_limit: int = 16
+
+    @property
+    def semaphore(self) -> asyncio.Semaphore:
+        """Lazy semaphore property initialized only when accessed in running event loop."""
+        with self.lock:
+            if self._semaphore is None:
+                self._semaphore = asyncio.Semaphore(self.concurrency_limit)
+            return self._semaphore
+
+    @semaphore.setter
+    def semaphore(self, value: asyncio.Semaphore) -> None:
+        """Allow explicit semaphore setting (e.g., from manager)."""
+        self._semaphore = value
 
     @property
     def ctn_dir(self) -> Path:
@@ -62,7 +76,7 @@ class WorkspaceHandle:
         """Load and return index.json content."""
         if not self.loader:
             raise RuntimeError(f"Workspace {self.workspace_id} loader not available")
-        return self.loader.load_json("index_json")
+        return self.loader.load_json("index_metadata")
 
     @property
     def artifact_count(self) -> int:

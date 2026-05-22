@@ -95,6 +95,8 @@ class BridgeAPIHandler:
                 return self._handle_create_workspace(body)
             elif path.startswith("workspaces/"):
                 return self._handle_workspace_action(path, body)
+            elif path == "reconstruct":
+                return self._handle_reconstruct(body)
             else:
                 return self._not_found(path)
         except Exception as e:
@@ -375,6 +377,66 @@ class BridgeAPIHandler:
             return self._ok({"id": ws_id, "action": action, "status": "ok"})
         
         return self._not_found(path)
+
+    def _handle_reconstruct(self, body: dict[str, Any]) -> tuple[bytes, int, dict[str, str]]:
+        """Handle POST /reconstruct — reconstruct a file from BSG entities."""
+        from batho.context.reconstructor import FileReconstructor, ReconstructionError, IntegrityError
+
+        file_path = body.get("file_path", "")
+        if not file_path:
+            body_resp = json.dumps(err("invalid_request", "file_path is required"))
+            return body_resp.encode(), 400, {"Content-Type": "application/json"}
+
+        index = self._load_index()
+        if not index:
+            body_resp = json.dumps(err("no_index", "No index found"))
+            return body_resp.encode(), 404, {"Content-Type": "application/json"}
+
+        current_id = index.get("current_index_id")
+        if not current_id:
+            body_resp = json.dumps(err("no_index", "No current index"))
+            return body_resp.encode(), 404, {"Content-Type": "application/json"}
+
+        # Load graph JSON
+        graph_path = self._ctn_dir / current_id / "graph.json"
+        if not graph_path.exists():
+            body_resp = json.dumps(err("graph_not_found", "graph.json not found"))
+            return body_resp.encode(), 404, {"Content-Type": "application/json"}
+
+        try:
+            import json as _json
+            graph_data = _json.loads(graph_path.read_text())
+            from batho.context.codegraph import InMemoryGraph
+
+            graph = InMemoryGraph.from_dict(graph_data)
+
+            # Enrich entities with raw_content and raw_bytes from storage view if available
+            storage_view_path = self._ctn_dir / current_id / "bsg_storage_view.json"
+            if storage_view_path.exists():
+                try:
+                    storage_view_data = _json.loads(storage_view_path.read_text(encoding="utf-8"))
+                    graph.enrich_from_storage_view(storage_view_data)
+                except Exception as exc:
+                    LOGGER.warning("storage_view_load_failed_http_api", error=str(exc))
+
+            entities = list(graph.entities_by_file(file_path))
+            if not entities:
+                body_resp = json.dumps(err("no_entities", f"No entities for: {file_path}"))
+                return body_resp.encode(), 404, {"Content-Type": "application/json"}
+
+            reconstructor = FileReconstructor()
+            result = reconstructor.reconstruct_file(
+                file_path=file_path,
+                entities=entities,
+            )
+            body_resp = json.dumps(ok(result.model_dump()))
+            return body_resp.encode(), 200, {"Content-Type": "application/json"}
+        except (ReconstructionError, IntegrityError) as exc:
+            body_resp = json.dumps(err("reconstruct_error", str(exc)))
+            return body_resp.encode(), 422, {"Content-Type": "application/json"}
+        except Exception as exc:
+            body_resp = json.dumps(err("internal_error", str(exc)))
+            return body_resp.encode(), 500, {"Content-Type": "application/json"}
 
     def _handle_agents(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
         """Handle /agents/* endpoints."""
