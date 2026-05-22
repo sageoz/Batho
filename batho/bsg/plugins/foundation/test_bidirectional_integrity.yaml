@@ -1,0 +1,24 @@
+schema_version: bsg-plugin.v2
+plugin_id: test_bidirectional_integrity
+name: Test Bidirectional Integrity
+version: 1.0.0
+enabled: true
+description: Test fixture for file integrity verification.
+
+given:
+  entities:
+    - type: FUNCTION
+      name: foo
+      file: test.py
+      start_line: 1
+      end_line: 3
+      byte_start: 0
+      byte_end: 30
+      raw_content: "def foo():\n    pass\n"
+      content_hash: "abc123"
+expect:
+  matches:
+    - rule_id: verify-file-integrity
+      entity_count: 1
+  metadata:
+    bsg.bidirectional.integrity_verified: true

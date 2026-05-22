@@ -1,0 +1,83 @@
+schema_version: bsg-plugin.v2
+plugin_id: bsg_bidirectional_foundation
+name: Bidirectional Foundation
+version: 1.0.0
+enabled: true
+bidirectional: true
+description: Foundation rules for bidirectional flow validation, gap entity management, and reconstruction verification.
+depends_on:
+  - bsg_graph_foundation
+
+rules:
+  - rule_id: validate-gap-coverage
+    name: validate-gap-coverage
+    description: Validate that gap entities provide complete coverage between code entities.
+    severity: warning
+    priority: 200
+    enabled: true
+    matchers:
+      gap_entity_types:
+        - SYNTAX_GLUE
+        - COMMENT_BLOCK
+        - IMPORT_BLOCK
+      has_raw_content: true
+    actions:
+      metadata:
+        bsg.bidirectional.coverage_validated: true
+      add_usn_tags:
+        - GapCoverageValidated
+      verify_coverage: true
+
+  - rule_id: verify-file-integrity
+    name: verify-file-integrity
+    description: Verify file integrity by checking content hash consistency.
+    severity: block
+    priority: 250
+    enabled: true
+    matchers:
+      entity_types:
+        - FUNCTION
+        - CLASS
+        - MODULE
+      content_hash_pattern: "^[a-f0-9]{6,}$"
+    actions:
+      metadata:
+        bsg.bidirectional.integrity_verified: true
+      verify_integrity: true
+      add_usn_tags:
+        - IntegrityVerified
+
+  - rule_id: flag-reconstruction-needed
+    name: flag-reconstruction-needed
+    description: Flag entities that need reconstruction due to coverage gaps.
+    severity: warning
+    priority: 220
+    enabled: true
+    matchers:
+      has_coverage_gap: true
+      byte_range_start: 0
+    actions:
+      metadata:
+        bsg.bidirectional.reconstruction_flagged: true
+      flag_for_reconstruction: true
+      add_usn_tags:
+        - ReconstructionNeeded
+      apply_token_budget: 500
+
+  - rule_id: add-reconstruction-metadata
+    name: add-reconstruction-metadata
+    description: Add reconstruction-specific metadata to entities.
+    severity: info
+    priority: 150
+    enabled: true
+    matchers:
+      entity_types:
+        - FUNCTION
+        - CLASS
+        - METHOD
+    actions:
+      add_reconstruction_metadata:
+        reconstruction_version: "1.0"
+        validation_status: pending
+      add_usn_tags:
+        - ReconstructionMetadata

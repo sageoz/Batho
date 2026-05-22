@@ -1,4 +1,4 @@
-schema_version: bsg-plugin.v1
+schema_version: bsg-plugin.v2
 plugin_id: bsg_schema_migration_enforcer
 name: Schema Migration Enforcer
 version: 1.0.0

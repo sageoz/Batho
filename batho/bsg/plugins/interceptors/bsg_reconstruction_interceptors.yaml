@@ -1,0 +1,65 @@
+schema_version: bsg-plugin.v2
+plugin_id: bsg_reconstruction_interceptors
+name: Reconstruction Interceptors
+version: 1.0.0
+enabled: true
+bidirectional: true
+description: Interceptor rules for reconstruction verification and gap handling.
+depends_on:
+  - bsg_bidirectional_foundation
+
+rules:
+  - rule_id: intercept-coverage-gap
+    name: intercept-coverage-gap
+    description: Intercept entities with coverage gaps and apply remediation.
+    severity: warning
+    priority: 280
+    enabled: true
+    matchers:
+      has_coverage_gap: true
+      gap_entity_types:
+        - SYNTAX_GLUE
+    actions:
+      metadata:
+        bsg.intercept.category: RECONSTRUCTION
+        bsg.intercept.message: Coverage gap detected; reconstruction may be needed.
+      verify_coverage: true
+      flag_for_reconstruction: true
+      add_usn_tags:
+        - CoverageGapInterceptor
+
+  - rule_id: verify-reconstruction-integrity
+    name: verify-reconstruction-integrity
+    description: Verify integrity of reconstructed entities.
+    severity: block
+    priority: 300
+    enabled: true
+    matchers:
+      entity_types:
+        - FUNCTION
+        - CLASS
+      verify_integrity: true
+    actions:
+      metadata:
+        bsg.intercept.category: RECONSTRUCTION
+        bsg.intercept.message: Reconstructed entity integrity verified.
+      add_usn_tags:
+        - ReconstructionVerified
+      apply_token_budget: 1000
+
+  - rule_id: detect-reconstruction-drift
+    name: detect-reconstruction-drift
+    description: Detect drift between original and reconstructed entities.
+    severity: warning
+    priority: 290
+    enabled: true
+    matchers:
+      content_hash_pattern: "^[a-f0-9]{6,}$"
+      has_raw_content: true
+    actions:
+      metadata:
+        bsg.intercept.category: RECONSTRUCTION
+        bsg.intercept.message: Potential reconstruction drift detected.
+      verify_coverage: true
+      add_usn_tags:
+        - DriftDetected

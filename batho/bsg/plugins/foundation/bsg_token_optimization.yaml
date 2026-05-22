@@ -1,4 +1,4 @@
-schema_version: bsg-plugin.v1
+schema_version: bsg-plugin.v2
 plugin_id: bsg_token_optimization
 name: BSG Token Optimization
 version: 1.0.0
