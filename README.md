@@ -66,6 +66,8 @@ batho patch --root . --scan
 
 **Unified Configuration (No Backward Compatibility)**
 
+- **Cache path migration**: Cache moved from `.ctn/local/cache.db` to `.ctn/local/cache/cache.db` for better organization
+
 - Single `batho.yaml` file replaces all config — core, hooks, BSG, storage, cloud sync
 - `.batho/hooks.yaml` is the source of truth for hook definitions
 - `batho.yaml.example` provides complete configuration template
@@ -109,6 +111,9 @@ batho export --bsg --file src/main.py --root . --output /tmp/main.py
 - **Stress-tested**: 1000 concurrent requests, failure injection
 - **Workspace discovery**: Auto-detect `.ctn/` directories across projects
 - **Pin/unpin workspaces**: Keep frequently-used workspaces resident
+- **Connection pooling**: Efficient resource management with `ConnectionPool`
+- **Writer pool**: Dedicated write operations pool for batch processing
+- **Connection profiles**: Configurable workspace connection profiles
 
 ```bash
 batho mcp serve --config ~/.batho/mcp.yaml
@@ -171,6 +176,16 @@ batho storage cleanup --root . --apply
 batho storage stats --root .
 batho storage rebuild-indexes --root .
 batho storage compact --root . --apply
+```
+
+**Dashboard CLI**
+
+- **serve**: Start the web-based dashboard server
+- **Configurable port**: Default port 8080 with `--port` option
+- **Live reload**: Frontend assets with CTN loader improvements
+
+```bash
+batho dashboard --root . --port 8080
 ```
 
 **Cache Management**
