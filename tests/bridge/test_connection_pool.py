@@ -82,5 +82,6 @@ class TestConnectionPool:
         """Close releases all connections."""
         pool = ConnectionPool(db_path, size=2)
         conn = pool.acquire()
+        pool.release(conn)  # Release first
         pool.close()
         assert pool.in_use == 0

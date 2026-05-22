@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import pytest
 
+from batho.utils.hash import compute_bytes_hash
+
 from batho.context.schema import (
     Entity,
     EntityType,
+    FileSnapshot,
+    ReconstructionResult,
     Relationship,
     RelationshipType,
 )
@@ -23,6 +27,7 @@ class TestEntityType:
             "FIELD", "ENUM", "TRAIT", "TYPE_ALIAS", "CONSTANT", "NAMESPACE",
             "VARIABLE", "PROPERTY", "ENTRY_POINT",
             "SETTING", "SECTION", "ELEMENT", "ATTRIBUTE", "DOCUMENT",
+            "SYNTAX_GLUE", "GLOBAL_STATEMENT", "IMPORT_BLOCK", "COMMENT_BLOCK",
         }
         actual = {e.name for e in EntityType}
         assert expected.issubset(actual)
@@ -97,6 +102,28 @@ class TestEntity:
         assert d["name"] == "my_func"
         assert d["file"] == "src/main.py"
         assert d["start_line"] == 10
+        assert "raw_content" not in d
+
+    def test_to_dict_storage_view(self):
+        entity = Entity(
+            type=EntityType.FUNCTION,
+            name="with_content",
+            file="src/main.py",
+            start_line=1,
+            end_line=1,
+            start_byte=0,
+            end_byte=3,
+            raw_content="abc",
+            content_hash="",
+            leading_whitespace="",
+            trailing_whitespace="\n",
+            ast_node_type="FunctionDef",
+            children_order=["a", "b"],
+        )
+        d = entity.to_dict(view="storage")
+        assert d["raw_content"] == "abc"
+        assert d["ast_node_type"] == "FunctionDef"
+        assert d["children_order"] == ["a", "b"]
 
     def test_from_dict_roundtrip(self, sample_entity):
         d = sample_entity.to_dict()
@@ -105,10 +132,90 @@ class TestEntity:
         assert restored.name == sample_entity.name
         assert restored.type == sample_entity.type
 
+    def test_from_dict_roundtrip_storage_view(self):
+        entity = Entity(
+            type=EntityType.FUNCTION,
+            name="with_content",
+            file="src/main.py",
+            start_line=1,
+            end_line=1,
+            start_byte=0,
+            end_byte=3,
+            raw_content="abc",
+            content_hash=compute_bytes_hash(b"abc"),
+            children_order=["a"],
+        )
+        d = entity.to_dict(view="storage")
+        restored = Entity.from_dict(d)
+        assert restored.raw_content == "abc"
+        assert restored.children_order == ["a"]
+
     def test_str(self, sample_entity):
         s = str(sample_entity)
         assert "my_func" in s
         assert "function" in s.lower()
+
+    def test_compute_content_hash(self):
+        entity = Entity(
+            type=EntityType.FUNCTION,
+            name="hash_me",
+            file="src/main.py",
+            start_line=1,
+            end_line=1,
+            raw_content="abc",
+        )
+        assert entity.compute_content_hash() == compute_bytes_hash(b"abc")
+
+    def test_validate_coverage(self):
+        entity = Entity(
+            type=EntityType.FUNCTION,
+            name="coverage",
+            file="src/main.py",
+            start_line=1,
+            end_line=1,
+            start_byte=0,
+            end_byte=3,
+            raw_content="abc",
+        )
+        assert entity.validate_coverage() is True
+
+    def test_validate_coverage_missing_raw_content(self):
+        entity = Entity(
+            type=EntityType.FUNCTION,
+            name="coverage",
+            file="src/main.py",
+            start_line=1,
+            end_line=1,
+        )
+        # validate_coverage now returns False for missing raw_content instead of raising
+        assert entity.validate_coverage() is False
+
+    def test_validate_coverage_with_raw_bytes(self):
+        """validate_coverage prefers raw_bytes for accurate byte length.
+
+        This tests the fix for files with invalid UTF-8 characters where
+        encoding raw_content would introduce replacement characters and
+        inflate the byte length.
+        """
+        # Create content with invalid UTF-8 bytes
+        raw_bytes = b"hello \xff\xfe world"  # invalid UTF-8
+        # When decoded with errors='replace', replacement characters are added
+        raw_content = raw_bytes.decode("utf-8", errors="replace")
+        
+        entity = Entity(
+            type=EntityType.FUNCTION,
+            name="coverage",
+            file="src/main.py",
+            start_line=1,
+            end_line=1,
+            start_byte=0,
+            end_byte=len(raw_bytes),
+            raw_content=raw_content,
+            raw_bytes=raw_bytes,
+        )
+        
+        # validate_coverage should use raw_bytes for accurate byte length
+        assert entity.validate_coverage() is True
 
     def test_hash_and_eq(self):
         e1 = Entity(type=EntityType.FUNCTION, name="f", file="a.py", start_line=1, end_line=2)
@@ -170,3 +277,21 @@ class TestRelationship:
         r2 = Relationship(source_id="a", target_id="b", type=RelationshipType.IMPORTS)
         assert r1 == r2
         assert hash(r1) == hash(r2)
+
+
+# ---------------------------------------------------------------------------
+# Reconstruction models
+# ---------------------------------------------------------------------------
+
+
+class TestReconstructionModels:
+
+    def test_file_snapshot_defaults(self):
+        snap = FileSnapshot()
+        assert snap.entity_ids == []
+        assert snap.gap_sections == []
+
+    def test_reconstruction_result_defaults(self):
+        result = ReconstructionResult()
+        assert result.success is False
+        assert result.errors == []

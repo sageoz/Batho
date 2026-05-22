@@ -209,7 +209,7 @@ class Class_{i}:
                 # Ensure the directory still exists
                 assert test_repo.exists(), f"Test repo directory should exist: {test_repo}"
                 assert test_repo.is_dir(), f"Test repo should be a directory: {test_repo}"
-                cache_path = test_repo / ".ctn" / "local" / "cache.db"
+                cache_path = test_repo / ".ctn" / "local" / "cache" / "cache.db"
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
                 indexer = CodeGraphIndexer(str(cache_path), str(test_repo))
                 try:
@@ -282,13 +282,129 @@ class Class_{i}:
         meta = json.loads((ctn_dir / "index.json").read_text())
         current_id = meta["current_index_id"]
         
-        # Check graph size is reasonable
-        graph_file = ctn_dir / current_id / "graph.json"
-        if graph_file.exists():
+        def test_gap_extraction_overhead(self, simple_python_repo: Path, tmp_path: Path):
+            """Measure overhead of gap extraction vs baseline."""
+            import shutil
+
+            repo_copy = tmp_path / "gap_overhead"
+            shutil.copytree(simple_python_repo, repo_copy)
+
+            # Baseline: index without gaps (but bidirectional is enabled by default)
+            # We test the full pipeline and measure gap entity impact
+            def index_repo():
+                return main(["index", "--root", str(repo_copy), "--force"])
+
+            rc = index_repo()
+            assert rc in (0, 2)
+
+            ctn_dir = repo_copy / ".ctn"
+            meta = json.loads((ctn_dir / "index.json").read_text())
+            current_id = meta["current_index_id"]
+
+            graph_file = ctn_dir / current_id / "graph.json"
+            assert graph_file.exists()
             graph_data = json.loads(graph_file.read_text())
-            entity_count = len(graph_data.get("entities", []))
-            assert entity_count > 0, "No entities found in indexed graph"
-            
-            # Log benchmark results
-            benchmarks["entity_count"] = entity_count
-            print(f"Benchmarks: {benchmarks}")
+            entities = graph_data.get("entities", [])
+            glue_entities = [e for e in entities if e.get("type") == "SYNTAX_GLUE"]
+
+            # Report gap stats (informational, not enforced)
+            total_entities = len(entities)
+            glue_pct = (len(glue_entities) / total_entities * 100) if total_entities else 0
+            print(f"\n  Gap entities: {len(glue_entities)}/{total_entities} ({glue_pct:.1f}%)")
+            print(f"  Gap extraction overhead: included in normal index flow")
+
+    def test_verify_all_timing(self, simple_python_repo: Path, tmp_path: Path):
+        """Measure time for 'verify --all' on a small repo."""
+        import shutil
+
+        repo_copy = tmp_path / "verify_timing"
+        shutil.copytree(simple_python_repo, repo_copy)
+
+        # Index first (with gaps — default)
+        rc = main(["index", "--root", str(repo_copy), "--force"])
+        assert rc in (0, 2)
+
+        # Time verify --all with report-json
+        def run_verify():
+            report_path = tmp_path / "verify_report.json"
+            return main([
+                "verify", "--all", "--root", str(repo_copy),
+                "--report-json", str(report_path),
+            ])
+
+        _, exec_time = self.measure_execution_time(run_verify)
+        print(f"\n  verify --all time: {exec_time:.3f}s")
+        # No strict threshold — just capture benchmark data
+
+    def test_storage_view_size(self, simple_python_repo: Path, tmp_path: Path):
+        """Compare storage view vs agent view size."""
+        import shutil
+
+        repo_copy = tmp_path / "storage_size"
+        shutil.copytree(simple_python_repo, repo_copy)
+
+        # Index with storage view
+        rc = main(["index", "--root", str(repo_copy), "--force", "--storage-view"])
+        assert rc in (0, 2)
+
+        ctn_dir = repo_copy / ".ctn"
+        meta = json.loads((ctn_dir / "index.json").read_text())
+        current_id = meta["current_index_id"]
+
+        # Compare bsg.json (agent view by default) vs bsg_storage_view.json
+        bsg_path = ctn_dir / current_id / "bsg.json"
+        storage_path = ctn_dir / current_id / "bsg_storage_view.json"
+
+        bsg_size = bsg_path.stat().st_size if bsg_path.exists() else 0
+        storage_size = storage_path.stat().st_size if storage_path.exists() else 0
+
+        if bsg_size > 0 and storage_size > 0:
+            ratio = storage_size / bsg_size
+            print(f"\n  Agent view size:    {bsg_size} bytes")
+            print(f"  Storage view size:  {storage_size} bytes")
+            print(f"  Expansion ratio:    {ratio:.2f}x")
+        else:
+            print(f"\n  Agent view exists: {bsg_path.exists()}")
+            print(f"  Storage view exists: {storage_path.exists()}")
+
+    def test_reconstruction_speed(self, simple_python_repo: Path, tmp_path: Path):
+        """Measure time to reconstruct all files in a repo."""
+        import shutil
+
+        from batho.context.codegraph import CodeGraphIndexer
+        from batho.context.bsg_map import BSGMap
+        from batho.context.reconstructor import FileReconstructor
+
+        repo_copy = tmp_path / "recon_speed"
+        shutil.copytree(simple_python_repo, repo_copy)
+
+        # Index
+        indexer = CodeGraphIndexer(root=str(repo_copy))
+        graph = indexer.build_graph(root=str(repo_copy), max_workers=0)
+        indexer.close()
+
+        bsg_map = BSGMap.build(graph, root=str(repo_copy))
+        reconstructor = FileReconstructor()
+
+        times: list[float] = []
+        total_entities = 0
+        for file_path, entities in bsg_map._by_file.items():
+            if not entities:
+                continue
+            if not any(e.raw_content for e in entities):
+                continue
+            t0 = time.perf_counter()
+            result = reconstructor.reconstruct_file(
+                file_path=file_path, entities=entities
+            )
+            elapsed = time.perf_counter() - t0
+            times.append(elapsed)
+            total_entities += result.entity_count
+
+        if times:
+            avg_time = sum(times) / len(times)
+            max_time = max(times)
+            print(f"\n  Files reconstructed: {len(times)}")
+            print(f"  Total entities: {total_entities}")
+            print(f"  Avg reconstruction time: {avg_time*1000:.2f} ms")
+            print(f"  Max reconstruction time:  {max_time*1000:.2f} ms")

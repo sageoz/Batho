@@ -197,6 +197,46 @@ class TestPluginsValidate:
         assert len(output["warnings"]) > 0
         assert any("disabled" in warn.lower() for warn in output["warnings"])
 
+    def test_validate_plugin_only_bidirectional_matchers(self, tmp_path: Path, capsys):
+        """Test validation of a rule using only bidirectional matchers.
+        It should be valid and not trigger empty-matcher warnings.
+        """
+        import argparse
+
+        plugin_file = tmp_path / "bidirectional_only_plugin.yaml"
+        plugin_file.write_text(
+            dedent(
+                """
+                enabled: true
+                rules:
+                  - rule_id: test_bidirectional_only
+                    name: Test Bidirectional Only
+                    description: Rule with only bidirectional matchers
+                    severity: info
+                    priority: 100
+                    enabled: true
+                    matchers:
+                      has_coverage_gap: true
+                    actions:
+                      metadata:
+                        test: true
+                """
+            )
+        )
+
+        args = argparse.Namespace(plugin_file=str(plugin_file))
+        result = cmd_plugins_validate(args)
+
+        assert result == 0
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+
+        assert output["valid"] is True
+        # Should not have any warning about empty matchers
+        assert not any("no matchers" in warn for warn in output["warnings"])
+
+
 
 class TestPluginsList:
     """Tests for batho plugins list command."""

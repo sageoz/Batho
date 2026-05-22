@@ -101,7 +101,7 @@ class TestWorkspaceManagerSemaphore:
             assert manager._running is True
             assert manager._handles == {}
 
-            manager.stop()
+            asyncio.run(manager.stop())
 
     def test_start_with_workspace_initializes_semaphore(self, tmp_path):
         """Verify start() initializes semaphore when workspaces exist."""
@@ -136,7 +136,7 @@ class TestWorkspaceManagerSemaphore:
             assert "test-ws" in manager._handles
             assert manager._handles["test-ws"].semaphore is not None
 
-            manager.stop()
+            asyncio.run(manager.stop())
 
 
 class TestConfigMergeFix:

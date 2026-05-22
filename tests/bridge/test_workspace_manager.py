@@ -90,6 +90,9 @@ class TestWorkspaceManager:
         assert handle.bridge is not None
         assert handle.loader is not None
 
+        idx_data = await handle.get_index()
+        assert idx_data["current_index_id"] == "idx1"
+
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -231,5 +234,36 @@ class TestWorkspaceManager:
         manager.start()
 
         await manager.refresh("test-ws")
+
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_lazy_semaphore_concurrency_limit(self, registry, cache, temp_ctn):
+        """Test that the handle semaphore is lazily initialized and respects configured concurrency."""
+        ws_config = WorkspaceConfig(
+            id="test-ws",
+            ctn_dir=str(temp_ctn),
+        )
+        registry.add(ws_config)
+
+        concurrency = ConcurrencyConfig(per_workspace_inflight_limit=42)
+        manager = WorkspaceManager(
+            registry=registry,
+            residency=ResidencyConfig(),
+            concurrency=concurrency,
+            cache=cache,
+        )
+        # start() should NOT create a semaphore
+        manager.start()
+
+        handle = manager._handles["test-ws"]
+        assert handle._semaphore is None
+        assert handle.concurrency_limit == 42
+
+        # Accessing the property inside the running event loop should initialize it
+        sem = handle.semaphore
+        assert isinstance(sem, asyncio.Semaphore)
+        assert handle._semaphore is sem
+        assert sem._value == 42
 
         await manager.stop()

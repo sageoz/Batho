@@ -7,6 +7,7 @@ from pathlib import Path
 
 from batho.context.storage import (
     _safe_parse_iso,
+    ArtifactRegistry,
     backfill_registry,
     cleanup_registry,
     compact_registry,
@@ -675,3 +676,16 @@ def test_compact_registry_dry_run_then_apply(tmp_path: Path) -> None:
     # Only 1 active row now, and the stale row is physically removed
     assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts WHERE deleted = 0") == 1
     assert _rows(registry_db, "SELECT COUNT(*) FROM artifacts") == 1
+
+
+def test_sqlite_busy_timeout(tmp_path: Path) -> None:
+    """Test that busy_timeout pragma is set on connections."""
+    ctn_dir = tmp_path / ".ctn"
+    ctn_dir.mkdir()
+
+    registry = ArtifactRegistry(ctn_dir)
+    conn = registry._connect()
+
+    result = conn.execute("PRAGMA busy_timeout").fetchone()
+    assert result[0] == 5000
+    conn.close()

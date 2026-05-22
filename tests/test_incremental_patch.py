@@ -325,13 +325,40 @@ class TestIncrementalGraphUpdater:
 
     @pytest.fixture
     def mock_graph(self):
-        """Create a mock InMemoryGraph."""
-        graph = MagicMock(spec=InMemoryGraph)
-        graph.entities = {
-            "e1": MagicMock(file="/path/to/file1.py"),
-            "e2": MagicMock(file="/path/to/file2.py"),
-        }
-        graph.relationships = [MagicMock(source_id="e1", target_id="e2")]
+        """Create a real InMemoryGraph populated with two test entities."""
+        from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
+
+        graph = InMemoryGraph()
+        e1 = Entity(
+            id="e1",
+            name="func1",
+            type=EntityType.FUNCTION,
+            file="/path/to/file1.py",
+            start_line=1,
+            end_line=2,
+            start_byte=0,
+            end_byte=10,
+        )
+        e2 = Entity(
+            id="e2",
+            name="func2",
+            type=EntityType.FUNCTION,
+            file="/path/to/file2.py",
+            start_line=1,
+            end_line=2,
+            start_byte=0,
+            end_byte=10,
+        )
+        graph.add_entity(e1)
+        graph.add_entity(e2)
+        rel = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            type=RelationshipType.CALLS,
+            line=1,
+        )
+        graph.add_relationship(rel)
         return graph
 
     @pytest.fixture

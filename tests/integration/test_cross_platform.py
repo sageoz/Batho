@@ -264,28 +264,48 @@ class TestCrossPlatform:
             pytest.skip("Symlinks not supported or insufficient permissions")
 
     def test_hidden_file_handling(self, tmp_path: Path):
-        """Test handling of hidden files and directories."""
+        """Test handling of hidden files and directories.
+
+        Hidden files are ignored by the indexer (matching default ignore
+        patterns).  We include a visible file so the index succeeds and
+        can verify hidden files were skipped.
+        """
         # Create hidden files and directories
-        if platform.system() == "Windows":
-            hidden_prefix = "."
-        else:
-            hidden_prefix = "."
-        
+        hidden_prefix = "."
+
         # Hidden directory with file
         hidden_dir = tmp_path / f"{hidden_prefix}hidden"
         hidden_dir.mkdir()
-        
+
         hidden_file = hidden_dir / "hidden_test.py"
         hidden_file.write_text("def hidden_test(): pass")
-        
+
         # Hidden file in root
         root_hidden = tmp_path / f"{hidden_prefix}root_hidden.py"
         root_hidden.write_text("def root_hidden(): pass")
-        
-        # Index should handle hidden files appropriately
+
+        # Add a visible file so the indexer has something to process
+        visible_file = tmp_path / "visible.py"
+        visible_file.write_text("def visible(): pass")
+
+        # Index should succeed while silently ignoring hidden files
         rc = main(["index", "--root", str(tmp_path), "--force"])
         assert rc == 0
-        
+
         # Verify results
         ctn_dir = tmp_path / ".ctn"
         assert ctn_dir.exists()
+
+        # Verify only the visible file was indexed (no hidden entities)
+        from batho.context.codegraph import InMemoryGraph
+        import json
+
+        graph_files = list(ctn_dir.glob("*/graph.json"))
+        assert graph_files, "graph.json should exist"
+        graph_data = json.loads(graph_files[0].read_text(encoding="utf-8"))
+        graph = InMemoryGraph.from_dict(graph_data)
+
+        indexed_files = {e.file for e in graph.entities.values()}
+        indexed_basenames = {Path(f).name for f in indexed_files}
+        assert "visible.py" in indexed_basenames
+        assert not any("hidden" in name for name in indexed_basenames)

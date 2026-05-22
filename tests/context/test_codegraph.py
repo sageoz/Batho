@@ -12,6 +12,7 @@ import pytest
 from batho.context.codegraph import (
     CodeGraphIndexer,
     InMemoryGraph,
+    IncrementalGraphUpdater,
 )
 from batho.context.symbol_index import SymbolIndex
 from batho.utils.file_io import read_file_bytes
@@ -223,6 +224,24 @@ class TestInMemoryGraph:
         assert len(restored.entities) == len(mock_graph.entities)
         assert len(restored.relationships) == len(mock_graph.relationships)
 
+    def test_adjacency_incremental_update(self):
+        """Test that adjacency index updates incrementally when cache exists."""
+        graph = InMemoryGraph()
+        graph._build_index()
+        assert graph._adj_out is not None
+        assert graph._adj_in is not None
+
+        for i in range(10):
+            rel = Relationship(
+                source_id=f"src_{i}",
+                target_id=f"tgt_{i}",
+                type=RelationshipType.CALLS,
+            )
+            graph.add_relationship(rel)
+
+        assert graph._adj_out is not None
+        assert graph._adj_in is not None
+
 
 # ---------------------------------------------------------------------------
 # CodeGraphIndexer
@@ -252,13 +271,13 @@ class TestCodeGraphIndexer:
             cache_path=cache_path, root=str(simple_python_repo)
         )
         graph1 = indexer.build_graph(root=str(simple_python_repo))
-        stats1 = indexer.stats
+        stats1 = indexer.build_stats
 
         indexer2 = CodeGraphIndexer(
             cache_path=cache_path, root=str(simple_python_repo)
         )
         graph2 = indexer2.build_graph(root=str(simple_python_repo))
-        stats2 = indexer2.stats
+        stats2 = indexer2.build_stats
 
         assert stats2["files_cached"] >= stats1.get("files_cached", 0)
 
@@ -564,8 +583,8 @@ rules:
             entity.metadata.get("bsg.test_marker") == "enabled"
             for entity in graph.entities.values()
         )
-        assert indexer.stats.get("rules_enabled") is True
-        assert indexer.stats.get("entities_rule_tagged", 0) >= 1
+        assert indexer.build_stats.get("rules_enabled") is True
+        assert indexer.build_stats.get("entities_rule_tagged", 0) >= 1
 
     def test_build_graph_applies_semantic_overlay_before_rules(self, tmp_path: Path):
         root = tmp_path / "repo"
@@ -585,7 +604,7 @@ def get_user_endpoint(user_id: str):
         graph = indexer.build_graph(root=str(root), extensions=[".py"])
 
         assert len(graph.entities) >= 1
-        assert indexer.stats.get("semantic_tags_added", 0) >= 1
+        assert indexer.build_stats.get("semantic_tags_added", 0) >= 1
         assert any(
             "ApiBoundary" in (entity.metadata or {}).get("bsg.usn", [])
             for entity in graph.entities.values()
@@ -629,3 +648,37 @@ class Child(Base):
             and _entity_name(rel.target_id) == "run"
             for rel in graph.relationships
         )
+
+    def test_remove_entities_for_file_with_keyerror(self, tmp_path: Path):
+        """Test that KeyError raises GraphConsistencyError."""
+        from batho.context.schema import GraphConsistencyError
+
+        root = tmp_path / "repo"
+        root.mkdir(parents=True)
+        test_file = root / "test.py"
+        test_file.write_text("x = 1\n", encoding="utf-8")
+
+        cache_path = tmp_path / "cache.db"
+        indexer = CodeGraphIndexer(cache_path=str(cache_path), root=str(root))
+        graph = indexer.build_graph(root=str(root))
+
+        updater = IncrementalGraphUpdater()
+        entity_keys = list(graph.entities.keys())
+        if entity_keys:
+            first_key = entity_keys[0]
+            first_entity = graph.entities[first_key]
+            entity_file_path = first_entity.file
+
+            original = graph.entities.pop(first_key)
+
+            class FailingDict(dict):
+                def __delitem__(self, key):
+                    if key == first_key:
+                        raise KeyError("simulated error")
+                    super().__delitem__(key)
+
+            graph.entities = FailingDict(graph.entities)
+            graph.entities[first_key] = original
+
+            with pytest.raises(GraphConsistencyError):
+                updater.remove_entities_for_file(graph, entity_file_path)

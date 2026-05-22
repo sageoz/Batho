@@ -20,6 +20,7 @@ def mock_manager():
     
     manager.resolve = AsyncMock(return_value=handle)
     manager.get.return_value = handle
+    manager.get_handle.return_value = handle
     
     return manager
 

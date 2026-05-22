@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
+from batho.context.schema import Entity, EntityType, FileSnapshot, Relationship, RelationshipType
 from batho.context.unified_cache import BathoCache
 
 
@@ -329,3 +329,238 @@ class TestEdgeCases:
 
         result = cache.get_ast("hash123")
         assert result is not None
+
+
+@pytest.fixture
+def filled_snapshot() -> FileSnapshot:
+    """Create a FileSnapshot with all fields populated."""
+    return FileSnapshot(
+        file_path="src/app.py",
+        file_hash="abc123def456",
+        file_size=1024,
+        encoding="utf-8",
+        entity_ids=["func_main", "class_App", "method_run"],
+        gap_sections=[
+            {
+                "byte_start": 0,
+                "byte_end": 10,
+                "raw_content": "\n\n\n\n",
+                "hash": "hash1",
+            },
+            {
+                "byte_start": 100,
+                "byte_end": 120,
+                "raw_content": "    \n",
+                "hash": "hash2",
+            },
+        ],
+        shebang="#!/usr/bin/env python3",
+        encoding_declaration="# -*- coding: utf-8 -*-",
+        file_level_comments=["# Copyright 2024", "# License MIT"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests: FileSnapshot CRUD operations (Phase 5 - Storage Layer)
+# ---------------------------------------------------------------------------
+
+
+class TestFileSnapshotOperations:
+    """Tests for BathoCache file snapshot operations."""
+
+    def test_set_and_get_file_snapshot(self, cache, filled_snapshot):
+        """Test storing and retrieving a file snapshot."""
+        cache.set_file_snapshot(filled_snapshot)
+
+        retrieved = cache.get_file_snapshot("src/app.py")
+        assert retrieved is not None
+        assert retrieved.file_path == "src/app.py"
+        assert retrieved.file_hash == "abc123def456"
+        assert retrieved.file_size == 1024
+        assert retrieved.entity_ids == ["func_main", "class_App", "method_run"]
+        assert len(retrieved.gap_sections) == 2
+        assert retrieved.shebang == "#!/usr/bin/env python3"
+        assert retrieved.encoding_declaration == "# -*- coding: utf-8 -*-"
+        assert retrieved.file_level_comments == ["# Copyright 2024", "# License MIT"]
+
+    def test_get_file_snapshot_missing(self, cache):
+        """Test that get returns None for a non-existent snapshot."""
+        result = cache.get_file_snapshot("nonexistent.py")
+        assert result is None
+
+    def test_set_file_snapshot_overwrite(self, cache):
+        """Test overwriting an existing file snapshot."""
+        snap1 = FileSnapshot(
+            file_path="src/app.py", file_hash="aaa", file_size=100
+        )
+        snap2 = FileSnapshot(
+            file_path="src/app.py", file_hash="bbb", file_size=200
+        )
+
+        cache.set_file_snapshot(snap1)
+        cache.set_file_snapshot(snap2)
+
+        retrieved = cache.get_file_snapshot("src/app.py")
+        assert retrieved is not None
+        assert retrieved.file_hash == "bbb"
+        assert retrieved.file_size == 200
+
+    def test_delete_file_snapshot(self, cache, filled_snapshot):
+        """Test deleting a file snapshot."""
+        cache.set_file_snapshot(filled_snapshot)
+        cache.delete_file_snapshot("src/app.py")
+
+        result = cache.get_file_snapshot("src/app.py")
+        assert result is None
+
+    def test_delete_file_snapshot_nonexistent(self, cache):
+        """Test deleting a non-existent file snapshot (should not raise)."""
+        cache.delete_file_snapshot("nonexistent.py")
+        # No exception means success
+
+    def test_file_snapshot_json_roundtrip(self, cache, filled_snapshot):
+        """Verify JSON serialization/deserialization of list fields."""
+        cache.set_file_snapshot(filled_snapshot)
+        retrieved = cache.get_file_snapshot("src/app.py")
+
+        assert retrieved is not None
+        assert retrieved.entity_ids == filled_snapshot.entity_ids
+        assert len(retrieved.gap_sections) == 2
+        assert retrieved.gap_sections[0]["byte_start"] == 0
+        assert retrieved.gap_sections[0]["raw_content"] == "\n\n\n\n"
+        assert len(retrieved.file_level_comments) == 2
+        assert retrieved.file_level_comments[0] == "# Copyright 2024"
+
+    def test_get_all_file_snapshots(self, cache):
+        """Test retrieving all snapshots."""
+        snap1 = FileSnapshot(file_path="a.py", file_hash="h1", file_size=10)
+        snap2 = FileSnapshot(file_path="b.py", file_hash="h2", file_size=20)
+
+        cache.set_file_snapshot(snap1)
+        cache.set_file_snapshot(snap2)
+
+        all_snaps = cache.get_all_file_snapshots()
+        assert len(all_snaps) == 2
+        assert all_snaps["a.py"].file_hash == "h1"
+        assert all_snaps["b.py"].file_hash == "h2"
+
+    def test_file_snapshot_empty_lists(self, cache):
+        """Test storing a snapshot with empty list fields."""
+        snap = FileSnapshot(
+            file_path="empty.py",
+            file_hash="hash",
+            file_size=0,
+            entity_ids=[],
+            gap_sections=[],
+            file_level_comments=[],
+        )
+        cache.set_file_snapshot(snap)
+        retrieved = cache.get_file_snapshot("empty.py")
+
+        assert retrieved is not None
+        assert retrieved.entity_ids == []
+        assert retrieved.gap_sections == []
+        assert retrieved.file_level_comments == []
+
+
+class TestSchemaMigration:
+    """Tests for schema migration (v1 -> v2)."""
+
+    def test_file_snapshots_table_exists(self, cache):
+        """Verify the file_snapshots table was created on init."""
+        conn = cache._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='file_snapshots'"
+        )
+        assert cursor.fetchone() is not None
+
+    def test_file_snapshots_has_hash_index(self, cache):
+        """Verify the fs_idx_file_hash index exists."""
+        conn = cache._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='fs_idx_file_hash'"
+        )
+        assert cursor.fetchone() is not None
+
+    def test_ast_entries_has_raw_content_column(self, cache):
+        """Verify the raw_content column was added to ast_entries."""
+        conn = cache._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(ast_entries)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "raw_content" in columns
+
+    def test_ast_entries_has_content_hash_column(self, cache):
+        """Verify the content_hash column was added to ast_entries."""
+        conn = cache._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(ast_entries)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "content_hash" in columns
+
+    def test_schema_version_is_2(self, cache):
+        """Verify schema_version is set to 2."""
+        conn = cache._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT value FROM cache_metadata WHERE key='schema_version'"
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        assert row["value"] == "2"
+
+    def test_old_cache_migration_adds_columns(self, tmp_path):
+        """Simulate a v1 cache and verify v2 migration adds columns."""
+        db_path = str(tmp_path / "old_cache.db")
+
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cache_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ast_entries (
+                file_hash TEXT PRIMARY KEY,
+                file_path TEXT NOT NULL,
+                entities TEXT NOT NULL,
+                relationships TEXT,
+                mtime REAL NOT NULL,
+                size INTEGER NOT NULL,
+                cached_at TEXT NOT NULL,
+                ttl_days INTEGER DEFAULT 30
+            )
+        """)
+        conn.execute(
+            "INSERT OR IGNORE INTO cache_metadata (key, value, updated_at) "
+            "VALUES ('schema_version', '1', '2024-01-01T00:00:00')"
+        )
+        conn.commit()
+        conn.close()
+
+        from batho.context.unified_cache import BathoCache
+        migrated = BathoCache(cache_path=db_path)
+
+        conn = migrated._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(ast_entries)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "raw_content" in columns
+        assert "content_hash" in columns
+
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='file_snapshots'"
+        )
+        assert cursor.fetchone() is not None
+
+        cursor.execute("SELECT value FROM cache_metadata WHERE key='schema_version'")
+        row = cursor.fetchone()
+        assert row is not None
+        assert row["value"] == "1"
+
+        migrated.close()

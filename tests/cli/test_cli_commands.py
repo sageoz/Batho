@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -31,6 +32,9 @@ from batho_cli import (
     cmd_storage_rebuild_indexes,
     cmd_storage_stats,
     cmd_storage_verify,
+    cmd_verify,
+    cmd_export,
+    cmd_reconstruct,
 )
 
 # ---------------------------------------------------------------------------
@@ -548,7 +552,7 @@ class TestCmdInvalidate:
 
     def test_invalidate_clears_cache(self, simple_python_repo: Path, capsys):
         # Create a cache file
-        cache_dir = simple_python_repo / ".ctn" / "local"
+        cache_dir = simple_python_repo / ".ctn" / "local" / "cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_file = cache_dir / "cache.db"
         cache_file.write_text("fake cache")
@@ -923,3 +927,249 @@ class TestCmdHooks:
         remove_payload = json.loads(capsys.readouterr().out)
         assert "pre-commit" in remove_payload.get("removed", [])
         assert not unmanaged.exists()
+
+
+# ---------------------------------------------------------------------------
+# cmd_reconstruct
+# ---------------------------------------------------------------------------
+
+
+class TestCmdReconstruct:
+
+    def test_reconstruct_with_output(self, simple_python_repo: Path, capsys, tmp_path: Path):
+        """Reconstruct with --output writes file."""
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+            base_snapshot=None,
+            full=False,
+            no_ast_cache=True,
+            with_gaps=None,
+            storage_view=None,
+        )
+        assert cmd_index(idx_args) == 0
+        capsys.readouterr()
+
+        # Find an indexed file
+        target = "src/calculator.py"
+        out_file = tmp_path / "reconstructed_calculator.py"
+
+        rec_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            file=target,
+            verify=False,
+            output=str(out_file),
+        )
+        result = cmd_reconstruct(rec_args)
+        assert result == 0
+        assert out_file.exists()
+        assert out_file.read_text(encoding="utf-8").strip()
+
+
+# ---------------------------------------------------------------------------
+# cmd_verify
+# ---------------------------------------------------------------------------
+
+
+class TestCmdVerify:
+
+    def test_verify_no_file_flag(self, simple_python_repo: Path, capsys):
+        """verify without --file or --all returns 1."""
+        args = argparse.Namespace(
+            root=str(simple_python_repo),
+            file=None,
+            all=False,
+            report_json=None,
+        )
+        result = cmd_verify(args)
+        # No index yet, errors out before --file/--all check
+        assert result == 1
+
+    def test_verify_file_success(self, simple_python_repo: Path, capsys):
+        """verify --file on indexed repo returns 0 when snapshot exists."""
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+            base_snapshot=None,
+            full=False,
+            no_ast_cache=True,
+            with_gaps=True,
+            storage_view=None,
+        )
+        assert cmd_index(idx_args) == 0
+        capsys.readouterr()
+
+        # Note: full integrity verification requires FileSnapshots populated
+        # via the storage view pipeline. This test validates the CLI path
+        # succeeds for an indexed repo with raw_content available.
+        verify_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            file="src/calculator.py",
+            all=False,
+            report_json=None,
+        )
+        result = cmd_verify(verify_args)
+        assert result == 0
+
+    def test_verify_report_json(self, simple_python_repo: Path, capsys, tmp_path: Path):
+        """verify --report-json writes structured report."""
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+            base_snapshot=None,
+            full=False,
+            no_ast_cache=True,
+            with_gaps=True,
+            storage_view=None,
+        )
+        assert cmd_index(idx_args) == 0
+        capsys.readouterr()
+
+        report_file = tmp_path / "verify_report.json"
+        verify_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            file="src/calculator.py",
+            all=False,
+            report_json=str(report_file),
+        )
+        result = cmd_verify(verify_args)
+        assert result == 0
+        assert report_file.exists()
+        report = json.loads(report_file.read_text(encoding="utf-8"))
+        assert "total" in report
+        assert "passed" in report
+        assert "results" in report
+
+
+# ---------------------------------------------------------------------------
+# cmd_export
+# ---------------------------------------------------------------------------
+
+
+class TestCmdExport:
+
+    def test_export_without_bsg_flag(self, simple_python_repo: Path, capsys):
+        """export without --bsg flag returns 1."""
+        args = argparse.Namespace(
+            root=str(simple_python_repo),
+            bsg=False,
+            file="src/calculator.py",
+            output=None,
+        )
+        result = cmd_export(args)
+        assert result == 1
+
+    def test_export_bsg_file(self, simple_python_repo: Path, capsys, tmp_path: Path):
+        """export --bsg --file reconstructs and writes output."""
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+            base_snapshot=None,
+            full=False,
+            no_ast_cache=True,
+            with_gaps=None,
+            storage_view=None,
+        )
+        assert cmd_index(idx_args) == 0
+        capsys.readouterr()
+
+        out_file = tmp_path / "exported_calculator.py"
+        export_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            bsg=True,
+            file="src/calculator.py",
+            output=str(out_file),
+        )
+        result = cmd_export(export_args)
+        assert result == 0
+        assert out_file.exists()
+        assert out_file.read_text(encoding="utf-8").strip()
+
+
+# ---------------------------------------------------------------------------
+# cmd_index — bidirectional flags
+# ---------------------------------------------------------------------------
+
+
+class TestCmdIndexBidirectional:
+
+    def test_index_with_storage_view(self, simple_python_repo: Path, capsys):
+        """index --storage-view produces bsg_storage_view.json."""
+        idx_args = argparse.Namespace(
+            root=str(simple_python_repo),
+            extensions=None,
+            max_workers=0,
+            max_file_size_kb=None,
+            force=True,
+            budget_tokens=0,
+            output_json=None,
+            output_md=None,
+            metrics_output=None,
+            snapshot=False,
+            snapshot_label=None,
+            verbose=False,
+            log_json=False,
+            base_snapshot=None,
+            full=False,
+            no_ast_cache=True,
+            with_gaps=True,
+            storage_view=True,
+        )
+        result = cmd_index(idx_args)
+        assert result == 0
+        capsys.readouterr()
+
+        ctn_dir = simple_python_repo / ".ctn"
+        metadata = json.loads((ctn_dir / "index.json").read_text(encoding="utf-8"))
+        current_id = metadata.get("current_index_id")
+        assert current_id
+
+        sv_path = ctn_dir / current_id / "bsg_storage_view.json"
+        assert sv_path.exists()
+        sv_data = json.loads(sv_path.read_text(encoding="utf-8"))
+        assert "view_type" in sv_data
+        assert sv_data.get("view_type") == "storage"

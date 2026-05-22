@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -16,27 +17,66 @@ from batho_cli import main
 
 class TestCLIIntegration:
 
-    def test_index_and_stats(self, simple_python_repo: Path):
+    def test_index_and_stats(self, simple_python_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         """Index → Stats workflow."""
-        rc = main(["index", "--root", str(simple_python_repo), "--verbose"])
+        # Copy repo to tmp_path to avoid polluting the permanent test repository
+        repo_copy = tmp_path / "simple_python"
+        shutil.copytree(simple_python_repo, repo_copy)
+        
+        # Override ctn_dir to use temporary directory
+        monkeypatch.setattr(
+            "batho_cli.get_config_cached",
+            lambda: {
+                "paths": {"ctn_dir": str(repo_copy / ".ctn")},
+                "logging": {"level": "INFO", "json_format": None, "quiet": False},
+            }
+        )
+        
+        rc = main(["index", "--root", str(repo_copy), "--verbose"])
         assert rc == 0
 
-        rc = main(["stats", "--root", str(simple_python_repo)])
+        rc = main(["stats", "--root", str(repo_copy)])
         assert rc == 0
 
-    def test_index_and_invalidate(self, simple_python_repo: Path):
+    def test_index_and_invalidate(self, simple_python_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         """Index → Invalidate workflow."""
-        rc = main(["index", "--root", str(simple_python_repo)])
+        # Copy repo to tmp_path to avoid polluting the permanent test repository
+        repo_copy = tmp_path / "simple_python"
+        shutil.copytree(simple_python_repo, repo_copy)
+        
+        # Override ctn_dir to use temporary directory
+        monkeypatch.setattr(
+            "batho_cli.get_config_cached",
+            lambda: {
+                "paths": {"ctn_dir": str(repo_copy / ".ctn")},
+                "logging": {"level": "INFO", "json_format": None, "quiet": False},
+            }
+        )
+        
+        rc = main(["index", "--root", str(repo_copy)])
         assert rc == 0
 
-        rc = main(["invalidate", "--root", str(simple_python_repo)])
+        rc = main(["invalidate", "--root", str(repo_copy)])
         assert rc == 0
 
-    def test_index_creates_output_files(self, simple_python_repo: Path):
+    def test_index_creates_output_files(self, simple_python_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         """Verify that index creates the expected output files."""
-        main(["index", "--root", str(simple_python_repo), "--force"])
+        # Copy repo to tmp_path to avoid polluting the permanent test repository
+        repo_copy = tmp_path / "simple_python"
+        shutil.copytree(simple_python_repo, repo_copy)
+        
+        # Override ctn_dir to use temporary directory
+        monkeypatch.setattr(
+            "batho_cli.get_config_cached",
+            lambda: {
+                "paths": {"ctn_dir": str(repo_copy / ".ctn")},
+                "logging": {"level": "INFO", "json_format": None, "quiet": False},
+            }
+        )
+        
+        main(["index", "--root", str(repo_copy), "--force"])
 
-        ctn_dir = simple_python_repo / ".ctn"
+        ctn_dir = repo_copy / ".ctn"
         assert ctn_dir.exists()
 
         index_meta = ctn_dir / "index.json"

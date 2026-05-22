@@ -881,7 +881,7 @@ def test_cmd_index_early_failure_paths(
     assert cmd_index(args) == 1
 
     # Invalid sqlite cache should be recreated and retried.
-    cache_dir = ctn / "local"
+    cache_dir = ctn / "local" / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     bad_cache = cache_dir / "cache.db"
     bad_cache.write_text("not sqlite", encoding="utf-8")
