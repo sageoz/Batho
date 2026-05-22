@@ -197,19 +197,6 @@ class InMemoryGraph:
     def root_entities(self) -> list[Entity]:
         return [e for e in self.entities.values() if e.parent_id is None]
 
-    def stats(self) -> dict[str, Any]:
-        files: set[str] = set()
-        entity_types: Counter[str] = Counter()
-        for entity in self.entities.values():
-            files.add(entity.file)
-            entity_types[str(entity.type)] += 1
-        return {
-            "entity_count": len(self.entities),
-            "relationship_count": len(self.relationships),
-            "file_count": len(files),
-            "entity_types": dict(entity_types),
-        }
-
     def to_dict(self, *, view: str = "storage") -> dict[str, Any]:
         return {
             "entities": [e.to_dict(view=view) for e in self.entities.values()],
@@ -230,18 +217,23 @@ class InMemoryGraph:
 
     def stats(self) -> dict[str, Any]:
         """Get statistics about the graph for profiling and monitoring."""
+        files: set[str] = set()
         entity_types: dict[str, int] = {}
         for entity in self.entities.values():
+            files.add(entity.file)
             entity_types[entity.type.value] = entity_types.get(entity.type.value, 0) + 1
-        
+
         relationship_types: dict[str, int] = {}
         for rel in self.relationships:
             relationship_types[rel.type.value] = relationship_types.get(rel.type.value, 0) + 1
-        
+
         return {
+            "entity_count": len(self.entities),
+            "relationship_count": len(self.relationships),
+            "file_count": len(files),
+            "entity_types": entity_types,
             "total_entities": len(self.entities),
             "total_relationships": len(self.relationships),
-            "entity_types": entity_types,
             "relationship_types": relationship_types,
             "files_indexed": len(self._by_file),
             "indexes_valid": self._adj_out is not None,
