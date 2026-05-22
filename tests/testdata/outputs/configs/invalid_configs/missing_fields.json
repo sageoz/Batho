@@ -1,9 +1,0 @@
-{
-  "logging": {
-    "level": "INFO"
-  },
-  "paths": {},
-  "indexer": {
-    "max_file_size_kb": 500
-  }
-}

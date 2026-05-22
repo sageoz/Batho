@@ -991,7 +991,7 @@ class ASTExtractor(abc.ABC):
             decoded = raw_bytes.decode("utf-8", errors="strict")
             return decoded, None
         except UnicodeDecodeError as exc:
-            self.logger.warning(
+            self.logger.debug(
                 "utf8_decode_fallback",
                 filepath=filepath,
                 context=context,

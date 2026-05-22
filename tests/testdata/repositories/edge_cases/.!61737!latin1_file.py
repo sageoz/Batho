@@ -1,1 +1,0 @@
-# -*- coding: latin-1 -*-

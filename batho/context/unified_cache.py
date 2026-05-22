@@ -330,6 +330,41 @@ class BathoCache:
             conn.commit()
             return deleted
 
+    def invalidate_cache(self, pattern: str | None = None) -> None:
+        """
+        Invalidate cache entries.
+
+        If pattern is provided, only invalidate entries matching the pattern.
+        If pattern is None, clear all entries.
+
+        Args:
+            pattern: Optional glob pattern to match file paths.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            if pattern is None:
+                cursor.execute("DELETE FROM ast_entries")
+                deleted_count = cursor.rowcount
+                self.logger.info(
+                    "cache_cleared_all",
+                    deleted_count=deleted_count,
+                )
+            else:
+                cursor.execute(
+                    "DELETE FROM ast_entries WHERE file_path GLOB ?",
+                    (pattern,),
+                )
+                deleted_count = cursor.rowcount
+                self.logger.info(
+                    "cache_cleared_pattern",
+                    pattern=pattern,
+                    deleted_count=deleted_count,
+                )
+
+            conn.commit()
+
     def cleanup_expired_cache(self) -> int:
         with self._lock:
             conn = self._get_connection()

@@ -1,1 +1,0 @@
-# Batho test suite
