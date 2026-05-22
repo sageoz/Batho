@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional
 
+from batho.utils.ignore import walk_ignored_filtered
+
 import batho.utils.memory_monitor
 from batho.config import get_config_cached
 from batho.utils.file_io import read_file_bytes
@@ -40,7 +42,7 @@ from batho.utils.memory_monitor import force_garbage_collection, memory_monitor
 from .unified_cache import BathoCache
 from .extractor import ASTExtractor
 from .pipeline import build_graph_parallel
-from .schema import Entity, EntityType, Relationship, RelationshipType
+from .schema import Entity, EntityType, GraphConsistencyError, Relationship, RelationshipType
 from .symbol_index import SymbolIndex
 
 # Binary detection is now handled in batho.utils.file_io
@@ -67,6 +69,9 @@ class InMemoryGraph:
     Stores all entities and relationships extracted from the codebase AST.
     Uses lazy adjacency index building: the index is built on the first
     call to neighbors() and invalidated whenever a relationship is added.
+
+    Secondary indexes (_by_file, _by_type, _rels_by_endpoint) provide O(k)
+    lookups where k is the result size, instead of O(N) linear scans.
     """
 
     def __init__(
@@ -82,16 +87,68 @@ class InMemoryGraph:
         self._adj_out: dict[str, list[str]] | None = None
         self._adj_in: dict[str, list[str]] | None = None
 
+        # Secondary indexes for O(k) lookups
+        self._by_file: dict[str, set[str]] = defaultdict(set)
+        self._by_type: dict[EntityType, set[str]] = defaultdict(set)
+        self._rels_by_endpoint: dict[str, list[int]] = defaultdict(list)
+
+        # Build indexes from initial data
+        if entities:
+            for eid, entity in entities.items():
+                self._by_file[entity.file].add(eid)
+                self._by_type[entity.type].add(eid)
+        if relationships:
+            for idx, rel in enumerate(relationships):
+                self._rels_by_endpoint[rel.source_id].append(idx)
+                self._rels_by_endpoint[rel.target_id].append(idx)
+
     def add_entity(self, entity: Entity) -> None:
         self.entities[entity.id] = entity
+        self._by_file[entity.file].add(entity.id)
+        self._by_type[entity.type].add(entity.id)
 
     def add_relationship(self, relationship: Relationship) -> None:
         if relationship.id in self._rel_ids:
             return
         self._rel_ids.add(relationship.id)
+        idx = len(self.relationships)
         self.relationships.append(relationship)
-        self._adj_out = None
-        self._adj_in = None
+
+        # Update secondary index
+        self._rels_by_endpoint[relationship.source_id].append(idx)
+        self._rels_by_endpoint[relationship.target_id].append(idx)
+
+        # Incremental update instead of full invalidation
+        if self._adj_out is not None:
+            self._adj_out.setdefault(relationship.source_id, []).append(relationship.target_id)
+        if self._adj_in is not None:
+            self._adj_in.setdefault(relationship.target_id, []).append(relationship.source_id)
+
+    def add_entities_batch(self, entities: list[Entity]) -> None:
+        """Add multiple entities efficiently in a single operation."""
+        for entity in entities:
+            self.entities[entity.id] = entity
+            self._by_file[entity.file].add(entity.id)
+            self._by_type[entity.type].add(entity.id)
+
+    def add_relationships_batch(self, relationships: list[Relationship]) -> None:
+        """Add multiple relationships efficiently in a single operation."""
+        for relationship in relationships:
+            if relationship.id in self._rel_ids:
+                continue
+            self._rel_ids.add(relationship.id)
+            idx = len(self.relationships)
+            self.relationships.append(relationship)
+
+            # Update secondary index
+            self._rels_by_endpoint[relationship.source_id].append(idx)
+            self._rels_by_endpoint[relationship.target_id].append(idx)
+
+            # Incremental update instead of full invalidation
+            if self._adj_out is not None:
+                self._adj_out.setdefault(relationship.source_id, []).append(relationship.target_id)
+            if self._adj_in is not None:
+                self._adj_in.setdefault(relationship.target_id, []).append(relationship.source_id)
 
     def get_entity(self, entity_id: str) -> Entity | None:
         return self.entities.get(entity_id)
@@ -117,10 +174,25 @@ class InMemoryGraph:
         return list(dict.fromkeys(out + in_))
 
     def entities_by_file(self, file_path: str) -> list[Entity]:
-        return [e for e in self.entities.values() if e.file == file_path]
+        """Return entities for a file path using secondary index (O(k))."""
+        return [self.entities[eid] for eid in self._by_file.get(file_path, []) if eid in self.entities]
 
     def entities_by_type(self, entity_type: EntityType) -> list[Entity]:
-        return [e for e in self.entities.values() if e.type == entity_type]
+        """Return entities of a specific type using secondary index (O(k))."""
+        return [self.entities[eid] for eid in self._by_type.get(entity_type, []) if eid in self.entities]
+
+    def _remove_entity_indexes(self, entity_id: str) -> None:
+        """Remove an entity from secondary indexes."""
+        entity = self.entities.get(entity_id)
+        if entity:
+            self._by_file[entity.file].discard(entity_id)
+            self._by_type[entity.type].discard(entity_id)
+
+    def _remove_relationship_indexes(self, rel_idx: int) -> None:
+        """Mark relationship index as removed (index will be rebuilt on demand)."""
+        # We keep the index entries but mark for rebuild on next access
+        # This is a trade-off: deletion is fast, but index may have stale entries
+        pass  # Full index rebuild happens when _rels_by_endpoint is used
 
     def root_entities(self) -> list[Entity]:
         return [e for e in self.entities.values() if e.parent_id is None]
@@ -138,10 +210,12 @@ class InMemoryGraph:
             "entity_types": dict(entity_types),
         }
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, view: str = "storage") -> dict[str, Any]:
         return {
-            "entities": [e.to_dict() for e in self.entities.values()],
-            "entities_by_id": {eid: e.to_dict() for eid, e in self.entities.items()},
+            "entities": [e.to_dict(view=view) for e in self.entities.values()],
+            "entities_by_id": {
+                eid: e.to_dict(view=view) for eid, e in self.entities.items()
+            },
             "relationships": [r.to_dict() for r in self.relationships],
         }
 
@@ -153,6 +227,49 @@ class InMemoryGraph:
         for r_data in data.get("relationships", []):
             graph.add_relationship(Relationship.from_dict(r_data))
         return graph
+
+    def stats(self) -> dict[str, Any]:
+        """Get statistics about the graph for profiling and monitoring."""
+        entity_types: dict[str, int] = {}
+        for entity in self.entities.values():
+            entity_types[entity.type.value] = entity_types.get(entity.type.value, 0) + 1
+        
+        relationship_types: dict[str, int] = {}
+        for rel in self.relationships:
+            relationship_types[rel.type.value] = relationship_types.get(rel.type.value, 0) + 1
+        
+        return {
+            "total_entities": len(self.entities),
+            "total_relationships": len(self.relationships),
+            "entity_types": entity_types,
+            "relationship_types": relationship_types,
+            "files_indexed": len(self._by_file),
+            "indexes_valid": self._adj_out is not None,
+        }
+
+    def enrich_from_storage_view(self, storage_view_data: dict[str, Any]) -> None:
+        """Enrich graph entities with raw_content and raw_bytes from storage view."""
+        if not storage_view_data:
+            return
+        for file_entry in storage_view_data.get("files", []):
+            for entity_data in file_entry.get("entities", []):
+                entity_id = entity_data.get("id")
+                if entity_id and entity_id in self.entities:
+                    entity = self.entities[entity_id]
+                    updates: dict[str, Any] = {}
+                    if "raw_content" in entity_data:
+                        updates["raw_content"] = entity_data["raw_content"]
+                    if "raw_bytes" in entity_data:
+                        raw_bytes_val = entity_data["raw_bytes"]
+                        if isinstance(raw_bytes_val, str) and raw_bytes_val:
+                            updates["raw_bytes"] = bytes.fromhex(raw_bytes_val)
+                        elif raw_bytes_val:
+                            updates["raw_bytes"] = raw_bytes_val
+                    if updates:
+                        self.entities[entity_id] = entity.model_copy(
+                            update=updates
+                        )
+
 
     def __len__(self) -> int:
         return len(self.entities)
@@ -207,69 +324,84 @@ class IncrementalGraphUpdater:
         """
         Remove all entities from a deleted file using transactional approach.
 
-        Also removes any relationships involving entities from this file.
-        Uses transactional approach to prevent partial state on errors.
+        Uses secondary indexes for O(removed × degree) complexity instead of O(F×R).
+        Updates adjacency cache incrementally instead of full invalidation.
 
         Args:
             graph: The InMemoryGraph to update
             file_path: Absolute path to the deleted file
         """
-        # Collect all changes first (transactional approach)
-        entities_to_remove = [
-            eid for eid, entity in graph.entities.items() if entity.file == file_path
-        ]
-        # Also remove UNRESOLVED entities belonging to the deleted file
-        unresolved_to_remove = [
-            eid for eid, entity in graph.entities.items()
-            if entity.type == EntityType.UNRESOLVED and entity.file == file_path
-        ]
-        entities_to_remove.extend(unresolved_to_remove)
+        # Use _by_file index for O(k) lookup instead of O(N) scan
+        entities_to_remove = list(graph._by_file.get(file_path, set()))
 
+        # Collect all relationship indices to remove using _rels_by_endpoint index
+        rel_indices_to_remove: set[int] = set()
+        for eid in entities_to_remove:
+            rel_indices_to_remove.update(graph._rels_by_endpoint.get(eid, []))
+
+        # Build new relationships list (filtering out removed ones)
         relationships_to_keep = []
-        relationships_to_remove = []
-
-        # Identify relationships to remove
-        for rel in graph.relationships:
-            if (
-                rel.source_id in entities_to_remove
-                or rel.target_id in entities_to_remove
-            ):
-                relationships_to_remove.append(rel)
-            else:
+        for idx, rel in enumerate(graph.relationships):
+            if idx not in rel_indices_to_remove:
                 relationships_to_keep.append(rel)
 
         # Apply all changes atomically
         try:
-            # Remove entities
+            # Remove entities and update secondary indexes
             for eid in entities_to_remove:
-                if eid in graph.entities:  # Double-check existence
+                if eid in graph.entities:
+                    entity = graph.entities[eid]
                     del graph.entities[eid]
+                    # Update secondary indexes
+                    graph._by_file[entity.file].discard(eid)
+                    graph._by_type[entity.type].discard(eid)
 
             # Update relationships
             graph.relationships = relationships_to_keep
             graph._rel_ids = {r.id for r in relationships_to_keep}
 
-            # Invalidate adjacency cache
-            graph._adj_out = None
-            graph._adj_in = None
+            # Rebuild relationship index (simpler than incremental update for batch removal)
+            graph._rels_by_endpoint.clear()
+            for idx, rel in enumerate(graph.relationships):
+                graph._rels_by_endpoint[rel.source_id].append(idx)
+                graph._rels_by_endpoint[rel.target_id].append(idx)
+
+            # Incremental adjacency cache update (if cache exists)
+            if graph._adj_out is not None:
+                for eid in entities_to_remove:
+                    if eid in graph._adj_out:
+                        del graph._adj_out[eid]
+                    # Remove entries where eid is a target
+                    for src, targets in list(graph._adj_out.items()):
+                        if eid in targets:
+                            targets.remove(eid)
+            if graph._adj_in is not None:
+                for eid in entities_to_remove:
+                    if eid in graph._adj_in:
+                        del graph._adj_in[eid]
+                    # Remove entries where eid is a source
+                    for tgt, sources in list(graph._adj_in.items()):
+                        if eid in sources:
+                            sources.remove(eid)
 
             self.logger.debug(
                 "removed_entities_for_file",
                 file_path=file_path,
                 entity_count=len(entities_to_remove),
-                relationship_count=len(relationships_to_remove),
+                relationship_count=len(rel_indices_to_remove),
             )
 
-        except Exception as e:
-            # Log the error but don't leave graph in partial state
-            # The graph should remain consistent since we collected changes first
+        except (KeyError, ValueError, RuntimeError) as e:
             self.logger.error(
-                "remove_entities_failed",
+                "remove_entities_recoverable_error",
                 file_path=file_path,
                 error=str(e),
                 entities_targeted=len(entities_to_remove),
-                relationships_targeted=len(relationships_to_remove),
+                relationships_targeted=len(rel_indices_to_remove),
             )
+            raise GraphConsistencyError(f"Failed to remove entities for {file_path}: {e}") from e
+        except Exception as e:
+            self.logger.exception("Unexpected error in remove_entities_for_file")
             raise
 
     def add_entities_for_file(
@@ -419,7 +551,7 @@ class CodeGraphIndexer:
 
     Usage::
 
-        indexer = CodeGraphIndexer(cache_path=".ctn/local/cache.db")
+        indexer = CodeGraphIndexer(cache_path=".ctn/local/cache/cache.db")
         graph = indexer.build_graph(
             root="/path/to/repo",
             max_workers=8,
@@ -428,13 +560,14 @@ class CodeGraphIndexer:
     """
 
     def __init__(
-        self, cache_path: str = ".ctn/local/cache.db", root: str | None = None
+        self, cache_path: str = ".ctn/local/cache/cache.db", root: str | None = None
     ) -> None:
         self.logger = get_logger(__name__, operation="index")
         root_path = Path(root).resolve() if root else None
         self._cache = BathoCache(cache_path=cache_path)
         self._root: Path | None = root_path
-        self.stats: Dict[str, Any] = {}
+        self.build_stats: dict[str, Any] = {}  # populated after build_graph(); distinct from stats() method
+        self._last_reconstruction: Any = None  # set after reconstruct_file
 
     def close(self) -> None:
         """Close the cache database connection to release file locks."""
@@ -515,7 +648,9 @@ class CodeGraphIndexer:
                 isinstance(ext, str) for ext in extensions
             ):
                 raise ValueError("extensions must be a list of strings or None")
-        # Use memory monitoring for large operations
+
+        # Use memory monitoring for the entire indexing pipeline
+        actual_workers: int = 1
         with memory_monitor(
             "build_graph", warning_threshold_mb=300.0, critical_threshold_mb=800.0
         ) as monitor:
@@ -547,6 +682,9 @@ class CodeGraphIndexer:
                 cache_cfg = dict(bsg_cfg.get("cache", {}))
                 cache_cfg["enabled"] = bool(ast_cache_enabled)
                 bsg_cfg["cache"] = cache_cfg
+            # Extract bidirectional gap configuration
+            bidirectional_cfg = bsg_cfg.get("bidirectional", {})
+            include_gaps = bool(bidirectional_cfg.get("include_gaps", False))
             # Set parsing config for all extractors
             from .languages.registry import set_parsing_config
 
@@ -562,26 +700,28 @@ class CodeGraphIndexer:
 
             # --- Collect files to process ---
             candidates: list[tuple[Path, str]] = []  # (path, rel_str)
-            for file_path in sorted(root_path.rglob("*")):
-                if not file_path.is_file():
-                    continue
-                if _is_ignored(file_path, root_path, ignore_spec):
-                    continue
-
-                suffix = file_path.suffix.lower()
-
-                if extractor is not None:
-                    if ext_set is not None and suffix not in ext_set:
+            for dirpath, dirnames, filenames in walk_ignored_filtered(root_path, spec=ignore_spec):
+                for filename in filenames:
+                    file_path = dirpath / filename
+                    if not file_path.is_file():
                         continue
-                    candidates.append((file_path, str(file_path)))
-                else:
-                    file_extractor = _registry_get_extractor(suffix)
-                    if file_extractor is None:
-                        continue
-                    if ext_set is not None and suffix not in ext_set:
-                        continue
-                    candidates.append((file_path, str(file_path)))
 
+                    suffix = file_path.suffix.lower()
+
+                    if extractor is not None:
+                        if ext_set is not None and suffix not in ext_set:
+                            continue
+                        candidates.append((file_path, str(file_path)))
+                    else:
+                        file_extractor = _registry_get_extractor(suffix)
+                        if file_extractor is None:
+                            continue
+                        if ext_set is not None and suffix not in ext_set:
+                            continue
+                        candidates.append((file_path, str(file_path)))
+
+                    if max_files_cap and len(candidates) >= max_files_cap:
+                        break
                 if max_files_cap and len(candidates) >= max_files_cap:
                     break
 
@@ -610,235 +750,239 @@ class CodeGraphIndexer:
 
             errors = 0
 
-        # Check memory usage after operation and cleanup if needed
-        if monitor and hasattr(monitor, "get_memory_stats"):
-            final_stats = monitor.get_memory_stats()
-            if final_stats.rss_mb > 500:  # If memory usage is high
-                gc_result = batho.utils.memory_monitor.force_garbage_collection()
-                self.logger.info(
-                    "memory_cleanup_performed",
-                    memory_before_mb=f"{final_stats.rss_mb:.1f}",
-                    objects_freed=gc_result.get("objects_freed", 0),
-                )
+            # Check memory usage after operation and cleanup if needed
+            if monitor and hasattr(monitor, "get_memory_stats"):
+                final_stats = monitor.get_memory_stats()
+                if final_stats.rss_mb > 500:  # If memory usage is high
+                    gc_result = batho.utils.memory_monitor.force_garbage_collection()
+                    self.logger.info(
+                        "memory_cleanup_performed",
+                        memory_before_mb=f"{final_stats.rss_mb:.1f}",
+                        objects_freed=gc_result.get("objects_freed", 0),
+                    )
 
-        def _handle_file_error(
-            filepath: str, error: Exception, error_type: str = "parse"
-        ) -> None:
-            """Centralized error handling for file processing failures."""
-            error_context = {
-                "filepath": filepath,
-                "error": str(error),
-                "error_type": error_type,
-            }
+            def _handle_file_error(
+                filepath: str, error: Exception, error_type: str = "parse"
+            ) -> None:
+                """Centralized error handling for file processing failures."""
+                error_context = {
+                    "filepath": filepath,
+                    "error": str(error),
+                    "error_type": error_type,
+                }
 
-            if error_type == "parse":
-                self.logger.warning("file_parse_failed", **error_context)
-            elif error_type == "graph_update":
-                self.logger.error("graph_update_failed", **error_context)
-            elif error_type == "future_processing":
-                self.logger.error("future_processing_failed", **error_context)
-            else:
-                self.logger.error("file_processing_failed", **error_context)
+                if error_type == "parse":
+                    self.logger.warning("file_parse_failed", **error_context)
+                elif error_type == "graph_update":
+                    self.logger.error("graph_update_failed", **error_context)
+                elif error_type == "future_processing":
+                    self.logger.error("future_processing_failed", **error_context)
+                else:
+                    self.logger.error("file_processing_failed", **error_context)
 
-        graph = InMemoryGraph()
-        files_parsed = 0
-        files_skipped = 0
-        files_cached = 0
-        start_ts = os.times().elapsed if hasattr(os, "times") else 0.0
+            graph = InMemoryGraph()
+            files_parsed = 0
+            files_skipped = 0
+            files_cached = 0
+            start_ts = os.times().elapsed if hasattr(os, "times") else 0.0
 
-        # Process files using multiprocessing pipeline
-        try:
-            results, parallel_errors = build_graph_parallel(
-                candidates,
-                configured_max_file_size_kb,
-                bsg_cfg,
-                extractor,
-                index_id=index_id,
-            )
-            errors += parallel_errors
-
-            # Add results to graph
-            for filepath, entities, relationships, cached_hit in results:
-                try:
-                    for entity in entities:
-                        graph.add_entity(entity)
-                    for rel in relationships:
-                        graph.add_relationship(rel)
-                    files_parsed += 1
-                    if cached_hit:
-                        files_cached += 1
-                except Exception as graph_error:
-                    _handle_file_error(filepath, graph_error, "graph_update")
-                    errors += 1
-                    files_skipped += 1
-        except Exception as pool_error:
-            self.logger.error("parallel_processing_failed", error=str(pool_error))
-            raise
-
-        # Cache cleanup: remove expired entries if cache is enabled
-        bsg_cache_cfg = bsg_cfg.get("cache", {})
-        if bsg_cache_cfg.get("enabled"):
+            # Process files using multiprocessing pipeline
             try:
-                self._cache.cleanup_expired_cache()
-                max_size_mb = bsg_cache_cfg.get("max_size_mb", 1024)
-                self._cache.enforce_max_size(max_size_mb)
-            except Exception as exc:
-                self.logger.warning("cache_cleanup_failed", error=str(exc))
+                results, parallel_errors = build_graph_parallel(
+                    candidates,
+                    configured_max_file_size_kb,
+                    bsg_cfg,
+                    extractor,
+                    index_id=index_id,
+                    include_gaps=include_gaps,
+                )
+                errors += parallel_errors
 
-        bsg_symbol_cfg = bsg_cfg.get("symbol_resolution", {})
-        symbol_resolution_enabled = bsg_symbol_cfg.get("enabled", True)
-        symbol_resolution_fuzzy = bool(bsg_symbol_cfg.get("fuzzy_matching", False))
-        max_unresolved_attempts = int(bsg_symbol_cfg.get("max_unresolved_attempts", 10))
-        prune_unresolved = bool(bsg_symbol_cfg.get("prune_unresolved", True))
+                # Add results to graph
+                for filepath, entities, relationships, cached_hit in results:
+                    try:
+                        for entity in entities:
+                            graph.add_entity(entity)
+                        for rel in relationships:
+                            graph.add_relationship(rel)
+                        files_parsed += 1
+                        if cached_hit:
+                            files_cached += 1
+                    except Exception as graph_error:
+                        _handle_file_error(filepath, graph_error, "graph_update")
+                        errors += 1
+                        files_skipped += 1
+            except Exception as pool_error:
+                self.logger.error("parallel_processing_failed", error=str(pool_error))
+                raise
 
-        # --- Stale cache detection (Phase 8 migration) ---
-        stale_cache_detected = self._detect_stale_cached_entities(graph)
-        if stale_cache_detected:
-            self.logger.warning(
-                "stale_cache_detected",
-                message=(
-                    "Cached entities contain old-style 'unresolved:' string targets "
-                    "or relationships to non-existent entities. Performing full "
-                    "re-parse to regenerate graph."
-                ),
-            )
-            # Force full rebuild: clear the cache and reprocess
+            # Cache cleanup: remove expired entries if cache is enabled
+            bsg_cache_cfg = bsg_cfg.get("cache", {})
             if bsg_cache_cfg.get("enabled"):
                 try:
-                    self._cache.invalidate_cache()
+                    self._cache.cleanup_expired_cache()
+                    max_size_mb = bsg_cache_cfg.get("max_size_mb", 1024)
+                    self._cache.enforce_max_size(max_size_mb)
                 except Exception as exc:
-                    self.logger.warning("stale_cache_invalidate_failed", error=str(exc))
+                    self.logger.warning("cache_cleanup_failed", error=str(exc))
 
-        symbol_index = SymbolIndex.build(graph) if symbol_resolution_enabled else None
+            bsg_symbol_cfg = bsg_cfg.get("symbol_resolution", {})
+            symbol_resolution_enabled = bsg_symbol_cfg.get("enabled", True)
+            symbol_resolution_fuzzy = bool(bsg_symbol_cfg.get("fuzzy_matching", False))
+            max_unresolved_attempts = int(bsg_symbol_cfg.get("max_unresolved_attempts", 10))
+            prune_unresolved = bool(bsg_symbol_cfg.get("prune_unresolved", True))
 
-        graph, resolved_count, pruned_count = self._resolve_imports(
-            graph,
-            symbol_index=symbol_index,
-            fuzzy_matching=symbol_resolution_fuzzy,
-            max_unresolved_attempts=max_unresolved_attempts,
-            prune_unresolved=prune_unresolved,
-        )
-        derived_hierarchy_edges = self._derive_hierarchy_relations(graph)
-        derived_overrides_edges = self._derive_override_edges(graph)
+            # --- Stale cache detection (Phase 8 migration) ---
+            stale_cache_detected = self._detect_stale_cached_entities(graph)
+            if stale_cache_detected:
+                self.logger.warning(
+                    "stale_cache_detected",
+                    message=(
+                        "Cached entities contain old-style 'unresolved:' string targets "
+                        "or relationships to non-existent entities. Performing full "
+                        "re-parse to regenerate graph."
+                    ),
+                )
+                # Force full rebuild: clear the cache and reprocess
+                if bsg_cache_cfg.get("enabled"):
+                    try:
+                        self._cache.invalidate_cache()
+                    except Exception as exc:
+                        self.logger.warning("stale_cache_invalidate_failed", error=str(exc))
 
-        semantic_stats: dict[str, int] = {
-            "semantic_tags_added": 0,
-            "semantic_edges_added": 0,
-        }
-        try:
-            from batho.bsg import apply_semantic_overlay
+            symbol_index = SymbolIndex.build(graph) if symbol_resolution_enabled else None
 
-            semantic_stats = apply_semantic_overlay(
-                graph=graph,
-                root_path=root_path,
-                logger=self.logger,
+            graph, resolved_count, pruned_count = self._resolve_imports(
+                graph,
+                symbol_index=symbol_index,
+                fuzzy_matching=symbol_resolution_fuzzy,
+                max_unresolved_attempts=max_unresolved_attempts,
+                prune_unresolved=prune_unresolved,
             )
-        except Exception as exc:
-            self.logger.warning("bsg_semantic_stage_failed", error=str(exc))
+            derived_hierarchy_edges = self._derive_hierarchy_relations(graph)
+            derived_overrides_edges = self._derive_override_edges(graph)
 
-        rule_stats: dict[str, Any] = {
-            "enabled": False,
-            "rules_loaded": 0,
-            "rules_applied": 0,
-            "entities_updated": 0,
-            "errors": [],
-        }
-        rules_cfg = cfg.get("rules", {}) if isinstance(cfg, dict) else {}
-        plugins_cfg = cfg.get("plugins", {}) if isinstance(cfg, dict) else {}
-        if isinstance(rules_cfg, dict) and isinstance(plugins_cfg, dict):
-            overrides = plugins_cfg.get("overrides")
-            if overrides:
-                rules_cfg = {**rules_cfg, "plugins_overrides": overrides}
-        try:
-            from batho.bsg import apply_rule_plugins
-
-            rule_stats = apply_rule_plugins(
-                graph=graph,
-                root_path=root_path,
-                rules_config=rules_cfg,
-                logger=self.logger,
-            )
-        except Exception as exc:
-            if rules_cfg.get("fail_on_rule_error", False):
-                raise
-            self.logger.warning("bsg_rules_stage_failed", error=str(exc))
-            rule_stats["errors"] = [str(exc)]
-
-        elapsed = (
-            (os.times().elapsed if hasattr(os, "times") else 0.0) - start_ts
-            if start_ts
-            else None
-        )
-
-        self.stats = {
-            "files_candidates": len(candidates),
-            "files_parsed": files_parsed,
-            "files_skipped": files_skipped,
-            "files_cached": files_cached,
-            "errors": errors,
-            "entity_count": len(graph.entities),
-            "relationship_count": len(graph.relationships),
-            "elapsed_seconds": elapsed,
-            "workers_used": actual_workers,
-            "symbol_resolution_enabled": bool(symbol_resolution_enabled),
-            "symbol_resolution_fuzzy": bool(symbol_resolution_fuzzy),
-            "symbol_index_size": int(symbol_index.size) if symbol_index else 0,
-            "unresolved_entities_count": sum(
-                1 for e in graph.entities.values() if e.type == EntityType.UNRESOLVED
-            ),
-            "unresolved_pruned_count": pruned_count,
-            "unresolved_resolved_count": resolved_count,
-            "derived_hierarchy_edges": derived_hierarchy_edges,
-            "derived_overrides_edges": derived_overrides_edges,
-            "semantic_tags_added": int(semantic_stats.get("semantic_tags_added", 0)),
-            "semantic_edges_added": int(semantic_stats.get("semantic_edges_added", 0)),
-            "rules_enabled": bool(rule_stats.get("enabled", False)),
-            "rules_loaded": int(rule_stats.get("rules_loaded", 0)),
-            "rules_applied": int(rule_stats.get("rules_applied", 0)),
-            "entities_rule_tagged": int(rule_stats.get("entities_updated", 0)),
-            "rules": rule_stats,
-        }
-
-        self.logger.info(
-            "build_graph_complete",
-            root=root,
-            **self.stats,
-        )
-
-        if metrics_callback:
+            semantic_stats: dict[str, int] = {
+                "semantic_tags_added": 0,
+                "semantic_edges_added": 0,
+            }
             try:
-                metrics_callback("batho.index", self.stats)
-            except Exception:
-                pass
+                from batho.bsg import apply_semantic_overlay
 
-        if verbose:
-            self.logger.info(
-                "index_verbose_summary",
-                files_parsed=files_parsed,
-                entity_count=len(graph.entities),
-                files_skipped=files_skipped,
-                files_cached=files_cached,
+                semantic_stats = apply_semantic_overlay(
+                    graph=graph,
+                    root_path=root_path,
+                    logger=self.logger,
+                )
+            except Exception as exc:
+                self.logger.warning("bsg_semantic_stage_failed", error=str(exc))
+
+            rule_stats: dict[str, Any] = {
+                "enabled": False,
+                "rules_loaded": 0,
+                "rules_applied": 0,
+                "entities_updated": 0,
+                "errors": [],
+            }
+            rules_cfg = cfg.get("rules", {}) if isinstance(cfg, dict) else {}
+            plugins_cfg = cfg.get("plugins", {}) if isinstance(cfg, dict) else {}
+            if isinstance(rules_cfg, dict) and isinstance(plugins_cfg, dict):
+                overrides = plugins_cfg.get("overrides")
+                if overrides:
+                    rules_cfg = {**rules_cfg, "plugins_overrides": overrides}
+            try:
+                from batho.bsg import apply_rule_plugins
+
+                rule_stats = apply_rule_plugins(
+                    graph=graph,
+                    root_path=root_path,
+                    rules_config=rules_cfg,
+                    logger=self.logger,
+                )
+            except Exception as exc:
+                if rules_cfg.get("fail_on_rule_error", False):
+                    raise
+                self.logger.warning("bsg_rules_stage_failed", error=str(exc))
+                rule_stats["errors"] = [str(exc)]
+
+            elapsed = (
+                (os.times().elapsed if hasattr(os, "times") else 0.0) - start_ts
+                if start_ts
+                else None
             )
 
-        # Validate graph consistency before returning
-        updater = IncrementalGraphUpdater()
-        if not updater.validate_graph_consistency(graph):
-            self.logger.warning("initial_graph_inconsistency_detected")
-            if strict_mode or fail_on_warning:
-                raise RuntimeError("Initial graph build produced inconsistent relationships")
+            self.build_stats = {
+                "files_candidates": len(candidates),
+                "files_parsed": files_parsed,
+                "files_skipped": files_skipped,
+                "files_cached": files_cached,
+                "errors": errors,
+                "entity_count": len(graph.entities),
+                "relationship_count": len(graph.relationships),
+                "elapsed_seconds": elapsed,
+                "workers_used": actual_workers,
+                "symbol_resolution_enabled": bool(symbol_resolution_enabled),
+                "symbol_resolution_fuzzy": bool(symbol_resolution_fuzzy),
+                "symbol_index_size": int(symbol_index.size) if symbol_index else 0,
+                "unresolved_entities_count": sum(
+                    1 for e in graph.entities.values() if e.type == EntityType.UNRESOLVED
+                ),
+                "unresolved_pruned_count": pruned_count,
+                "unresolved_resolved_count": resolved_count,
+                "derived_hierarchy_edges": derived_hierarchy_edges,
+                "derived_overrides_edges": derived_overrides_edges,
+                "semantic_tags_added": int(semantic_stats.get("semantic_tags_added", 0)),
+                "semantic_edges_added": int(semantic_stats.get("semantic_edges_added", 0)),
+                "rules_enabled": bool(rule_stats.get("enabled", False)),
+                "rules_loaded": int(rule_stats.get("rules_loaded", 0)),
+                "rules_applied": int(rule_stats.get("rules_applied", 0)),
+                "entities_rule_tagged": int(rule_stats.get("entities_updated", 0)),
+                "rules": rule_stats,
+                "include_gaps": include_gaps,
+            }
 
-        # Force garbage collection for large operations
-        if len(candidates) > 1000:
-            gc_stats = batho.utils.memory_monitor.force_garbage_collection()
-            self.logger.info("gc_completed", **gc_stats)
+            self.logger.info(
+                "build_graph_complete",
+                root=root,
+                **self.build_stats,
+            )
 
-        return graph
+            if metrics_callback:
+                try:
+                    metrics_callback("batho.index", self.build_stats)
+                except Exception as exc:
+                    self.logger.warning("metrics_callback_failed", error=str(exc))
+
+            if verbose:
+                self.logger.info(
+                    "index_verbose_summary",
+                    files_parsed=files_parsed,
+                    entity_count=len(graph.entities),
+                    files_skipped=files_skipped,
+                    files_cached=files_cached,
+                )
+
+            # Validate graph consistency before returning
+            updater = IncrementalGraphUpdater()
+            if not updater.validate_graph_consistency(graph):
+                self.logger.warning("initial_graph_inconsistency_detected")
+                if strict_mode or fail_on_warning:
+                    raise RuntimeError("Initial graph build produced inconsistent relationships")
+
+            # Force garbage collection for large operations
+            if len(candidates) > 1000:
+                gc_stats = batho.utils.memory_monitor.force_garbage_collection()
+                self.logger.info("gc_completed", **gc_stats)
+
+            self._graph = graph
+            return graph
 
     def index_file(
         self,
         filepath: str,
         extractor: ASTExtractor,
         max_file_size_kb: int | None = None,
+        include_gaps: bool = False,
     ) -> tuple[list[Entity], list[Relationship]]:
         """
         Index a single file on-demand (used by the MCP `index_file` tool).
@@ -849,6 +993,7 @@ class CodeGraphIndexer:
             filepath: Absolute path to the file.
             extractor: Language-specific ASTExtractor instance.
             max_file_size_kb: Skip if file exceeds this size.
+            include_gaps: When True, emit SYNTAX_GLUE entities for full byte coverage.
 
         Returns:
             (entities, relationships)
@@ -864,7 +1009,9 @@ class CodeGraphIndexer:
             return [], []
 
         try:
-            entities, rels = extractor.parse_file(filepath, content)
+            entities, rels = extractor.parse_file(
+                filepath, content, include_gaps=include_gaps
+            )
         except Exception as exc:
             self.logger.warning("index_file_failed", filepath=filepath, error=str(exc))
             return [], []
@@ -891,6 +1038,50 @@ class CodeGraphIndexer:
                 pass
 
         return entities, rels
+
+    def reconstruct_file(
+        self,
+        file_path: str,
+        entities: list[Entity] | None = None,
+        original_hash: str | None = None,
+        original_content: str | None = None,
+    ) -> Any:
+        """
+        Reconstruct a file from its BSG entities.
+
+        If *entities* is None, entities are looked up from the last built
+        graph via :meth:`entities_by_file`.
+
+        Args:
+            file_path: Path to the file to reconstruct.
+            entities: Optional explicit entity list.  If omitted, resolved
+                      from the internal graph.
+            original_hash: Optional expected SHA256 hash.
+            original_content: Optional original content string.
+
+        Returns:
+            A ``ReconstructionResult``.
+
+        Raises:
+            ReconstructionError: If entities are missing or invalid.
+            IntegrityError: If hash verification fails.
+        """
+        from batho.context.reconstructor import FileReconstructor
+
+        reconstructor = FileReconstructor()
+
+        # Resolve entities from the in-memory graph if not provided
+        if entities is None and hasattr(self, "_graph"):
+            entities = list(self._graph.entities_by_file(file_path))
+
+        result = reconstructor.reconstruct_file(
+            file_path=file_path,
+            entities=entities or [],
+            original_hash=original_hash,
+            original_content=original_content,
+        )
+        self._last_reconstruction = result
+        return result
 
     def invalidate(self, filepath: str) -> None:
         """Force re-parse of filepath on the next build_graph call."""
@@ -1212,12 +1403,24 @@ class CodeGraphIndexer:
         pruned_count = 0
         now_ts = datetime.now(timezone.utc).isoformat()
 
-        # Find all relationships that target UNRESOLVED entities
+        # Group unresolved entities by (name, file) for batch resolution.
         unresolved_entities_by_name_file: dict[tuple[str, str], list[str]] = defaultdict(list)
         for eid, entity in unresolved_entities.items():
             unresolved_entities_by_name_file[(entity.name, entity.file)].append(eid)
 
-        # Collect all entity IDs that need resolution, grouped by (name, file)
+        # ------------------------------------------------------------------
+        # Pre-build a reverse index: target_id -> list[Relationship]
+        # Previously this was rebuilt (O(R)) inside the resolution loop, making
+        # the total cost O(groups × R).  With the pre-built index, each lookup
+        # is O(1) amortized.
+        # ------------------------------------------------------------------
+        rels_by_target: dict[str, list[Relationship]] = defaultdict(list)
+        for rel in graph.relationships:
+            rels_by_target[rel.target_id].append(rel)
+
+        # Accumulate eids to remove from entities and relationships in one pass.
+        eids_to_remove: set[str] = set()
+
         for (ref_name, _ref_file), eid_list in unresolved_entities_by_name_file.items():
             # Attempt resolution via symbol index
             target_id = lookup.resolve_candidates(
@@ -1227,31 +1430,23 @@ class CodeGraphIndexer:
             )
 
             if target_id and target_id in graph.entities:
-                # Resolved — update all relationships and remove unresolved entities
+                # Resolved — repoint all relationships and remove unresolved entities.
                 for eid in eid_list:
-                    # Update all relationships targeting this unresolved entity
-                    for rel in graph.relationships:
-                        if rel.target_id == eid:
-                            graph.add_relationship(
-                                Relationship(
-                                    source_id=rel.source_id,
-                                    target_id=target_id,
-                                    type=rel.type,
-                                    metadata=rel.metadata,
-                                )
+                    for rel in rels_by_target.get(eid, []):
+                        graph.add_relationship(
+                            Relationship(
+                                source_id=rel.source_id,
+                                target_id=target_id,
+                                type=rel.type,
+                                metadata=rel.metadata,
                             )
-                    # Remove the unresolved entity
+                        )
                     if eid in graph.entities:
                         del graph.entities[eid]
+                    eids_to_remove.add(eid)
                     resolved_count += 1
-
-                # Remove old relationships targeting the unresolved entity
-                graph.relationships = [
-                    r for r in graph.relationships
-                    if r.target_id not in eid_list
-                ]
             else:
-                # Not resolved — increment attempt counter, check pruning threshold
+                # Not resolved — increment attempt counter, check pruning threshold.
                 for eid in eid_list:
                     entity = graph.entities.get(eid)
                     if entity is None:
@@ -1263,27 +1458,18 @@ class CodeGraphIndexer:
                     metadata["last_attempt"] = now_ts
 
                     if prune_unresolved and new_attempts >= max_unresolved_attempts:
-                        # Prune this unresolved entity and its relationships
                         del graph.entities[eid]
-                        graph.relationships = [
-                            r for r in graph.relationships if r.target_id != eid
-                        ]
+                        eids_to_remove.add(eid)
                         pruned_count += 1
                     else:
-                        # Update entity with new metadata
-                        updated = Entity(
-                            type=entity.type,
-                            name=entity.name,
-                            file=entity.file,
-                            start_line=entity.start_line,
-                            end_line=entity.end_line,
-                            start_byte=entity.start_byte,
-                            end_byte=entity.end_byte,
-                            signature=entity.signature,
-                            metadata=metadata,
-                            parent_id=entity.parent_id,
-                        )
-                        graph.entities[eid] = updated
+                        # Use _evolve() instead of full Entity construction.
+                        graph.entities[eid] = entity._evolve(metadata=metadata)
+
+        # Single-pass relationship filter — O(R) total rather than O(groups × R).
+        if eids_to_remove:
+            graph.relationships = [
+                r for r in graph.relationships if r.target_id not in eids_to_remove
+            ]
 
         # Also check for any lingering relationships with old-style "unresolved:" targets
         # (stale cache migration — see Phase 8)

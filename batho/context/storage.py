@@ -16,11 +16,12 @@ import hashlib
 import json
 import sqlite3
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, Iterator
 
 from batho.config import get_config_cached
 from batho.utils.file_io import write_atomically
@@ -264,6 +265,9 @@ class ArtifactRegistry:
         )
 
         self._ready = False
+        self._reader_pool = None
+        self._writer_pool_normal = None
+        self._writer_pool_full = None
 
         if not self.enabled:
             return
@@ -275,6 +279,16 @@ class ArtifactRegistry:
             self.enabled = False
             return
 
+        # Initialize connection pools for enterprise performance and concurrency
+        from batho.bridge.connection_pool import ConnectionPool
+        from batho.bridge.writer_pool import WriterPool
+
+        pool_enabled = bool(cfg.get("writer_pool_enabled", True))
+        if pool_enabled:
+            self._reader_pool = ConnectionPool(self.registry_path, size=8)
+            self._writer_pool_normal = WriterPool(self.registry_path, size=4, durability="normal")
+            self._writer_pool_full = WriterPool(self.registry_path, size=4, durability="full")
+
         self._initialize()
 
     @property
@@ -282,11 +296,13 @@ class ArtifactRegistry:
         return self.ctn_dir.parent
 
     def close(self) -> None:
-        """Close the registry database connection to release file locks."""
-        # SQLite connections are created per-call in _connect, so we just
-        # need to ensure no lingering connections. This is a no-op for the
-        # current implementation but provides a cleanup hook for future changes.
-        pass
+        """Close the registry database connection pools to release file locks."""
+        if self._reader_pool:
+            self._reader_pool.close()
+        if self._writer_pool_normal:
+            self._writer_pool_normal.close()
+        if self._writer_pool_full:
+            self._writer_pool_full.close()
 
     def _resolve_registry_path(self, configured_path: str) -> Path:
         candidate = Path(configured_path).expanduser()
@@ -294,14 +310,83 @@ class ArtifactRegistry:
             return candidate
         return (self.repo_root / candidate).resolve()
 
-    def _connect(self, *, row_factory: bool = False) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.registry_path), timeout=5)
-        # Disable WAL mode on Windows to prevent file locking issues
-        if sys.platform == "win32":
-            conn.execute("PRAGMA journal_mode=DELETE")
+    @contextmanager
+    def connection(
+        self,
+        *,
+        row_factory: bool = False,
+        durability: str = "normal",
+        read_only: bool = False,
+    ) -> Iterator[sqlite3.Connection]:
+        """
+        Acquire a database connection from the pool or create a new one.
+
+        This is the preferred way to interact with the registry in enterprise
+        production code. It automatically handles pool acquisition, pragma
+        application, and release.
+
+        Args:
+            row_factory: When True, use sqlite3.Row for dict-like access.
+            durability: "full" for crash-safe artifacts, "normal" for indexes.
+            read_only: When True, use the reader pool (optimised for SELECT).
+        """
+        if not self.enabled:
+            raise RuntimeError("ArtifactRegistry is disabled")
+
+        # 1. Use reader pool if requested and available
+        if read_only and self._reader_pool:
+            with self._reader_pool.connection() as conn:
+                if row_factory:
+                    conn.row_factory = sqlite3.Row
+                else:
+                    conn.row_factory = None
+                yield conn
+                return
+
+        # 2. Use writer pool if available
+        pool = None
+        if durability == "full":
+            pool = self._writer_pool_full
         else:
-            conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+            pool = self._writer_pool_normal
+
+        if pool:
+            with pool.connection() as conn:
+                if row_factory:
+                    conn.row_factory = sqlite3.Row
+                else:
+                    conn.row_factory = None
+                yield conn
+                return
+
+        # 3. Fallback to per-call connection (legacy/disabled pool behavior)
+        conn = self._connect(row_factory=row_factory, durability=durability)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def _connect(
+        self,
+        *,
+        row_factory: bool = False,
+        durability: str = "normal",
+    ) -> sqlite3.Connection:
+        """
+        Open a connection to the artifact registry.
+
+        Uses centralized connection_profile pragmas for consistency across
+        all subsystems.
+
+        Args:
+            row_factory: When True, use sqlite3.Row for dict-like access.
+            durability: "full" for canonical artifacts (crash-safe),
+                        "normal" for query indexes / ephemeral data.
+        """
+        from batho.bridge.connection_profile import apply_writer_pragmas
+
+        conn = sqlite3.connect(str(self.registry_path), timeout=5)
+        apply_writer_pragmas(conn, durability=durability)  # type: ignore[arg-type]
         if row_factory:
             conn.row_factory = sqlite3.Row
         return conn
@@ -370,7 +455,14 @@ class ArtifactRegistry:
     def _initialize(self) -> None:
         try:
             self.registry_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._connect() as conn:
+            
+            # Bootstrap WAL mode once during initialization
+            from batho.bridge.connection_profile import bootstrap_wal
+            with sqlite3.connect(str(self.registry_path), timeout=5) as conn:
+                bootstrap_wal(conn)
+                conn.commit()
+
+            with self.connection(durability="full") as conn:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS artifacts (
                         artifact_id TEXT PRIMARY KEY,
@@ -555,7 +647,7 @@ class ArtifactRegistry:
         now = _utc_now_iso()
 
         try:
-            with self._connect() as conn:
+            with self.connection(durability="full") as conn:
                 # Mark any existing active rows with the same logical_path as deleted.
                 # This ensures only the most recent version is active per (type, path).
                 conn.execute(
@@ -736,7 +828,7 @@ class ArtifactRegistry:
         except OSError:
             summary["db_size_bytes"] = 0
 
-        with self._connect(row_factory=True) as conn:
+        with self.connection(row_factory=True, read_only=True) as conn:
             artifact_count = conn.execute(
                 "SELECT COUNT(*) AS count FROM artifacts WHERE deleted = 0"
             ).fetchone()
@@ -806,7 +898,7 @@ class ArtifactRegistry:
             return False
 
         timestamp = synced_at or _utc_now_iso()
-        with self._connect() as conn:
+        with self._connect(durability="full") as conn:
             cur = conn.execute(
                 """
                 UPDATE artifacts
@@ -851,7 +943,7 @@ class ArtifactRegistry:
             query = f"{query} LIMIT ?"
             params.append(max(1, int(limit)))
 
-        with self._connect(row_factory=True) as conn:
+        with self.connection(row_factory=True, read_only=True) as conn:
             rows = conn.execute(query, tuple(params)).fetchall()
 
         payload: list[dict[str, Any]] = []
@@ -871,7 +963,7 @@ class ArtifactRegistry:
             return []
 
         retries = max(0, int(max_retries))
-        with self._connect(row_factory=True) as conn:
+        with self.connection(row_factory=True, read_only=True) as conn:
             rows = conn.execute(
                 """
                 SELECT artifact_id, content_id, artifact_type, logical_path, physical_path, checksum,
@@ -910,7 +1002,7 @@ class ArtifactRegistry:
         if len(error_text) > 1024:
             error_text = error_text[:1024]
 
-        with self._connect() as conn:
+        with self._connect(durability="full") as conn:
             cur = conn.execute(
                 """
                 UPDATE artifacts
@@ -935,7 +1027,7 @@ class ArtifactRegistry:
         if not self.enabled or not self._ready:
             return summary
 
-        with self._connect(row_factory=True) as conn:
+        with self.connection(row_factory=True, read_only=True) as conn:
             total_row = conn.execute(
                 "SELECT COUNT(*) AS count FROM artifacts WHERE deleted = 0"
             ).fetchone()
@@ -958,7 +1050,7 @@ class ArtifactRegistry:
         if not self.enabled or not self._ready:
             return []
 
-        with self._connect(row_factory=True) as conn:
+        with self.connection(row_factory=True, read_only=True) as conn:
             rows = conn.execute("""
                 SELECT
                     artifact_id,
@@ -980,7 +1072,7 @@ class ArtifactRegistry:
             return False
 
         now = _utc_now_iso()
-        with self._connect() as conn:
+        with self._connect(durability="full") as conn:
             cur = conn.execute(
                 """
                 UPDATE artifacts
@@ -1169,7 +1261,7 @@ class ArtifactRegistry:
         if not self.enabled or not self._ready:
             return summary
 
-        with self._connect(row_factory=True) as conn:
+        with self.connection(row_factory=True, read_only=True) as conn:
             rows = conn.execute(
                 """
                 SELECT artifact_id, artifact_type, logical_path, updated_at
@@ -1196,7 +1288,7 @@ class ArtifactRegistry:
             return summary
 
         removed = 0
-        with self._connect() as conn:
+        with self._connect(durability="full") as conn:
             for artifact_id in duplicates:
                 cur = conn.execute(
                     "DELETE FROM artifacts WHERE artifact_id = ? AND deleted = 0",
@@ -1307,44 +1399,101 @@ class ArtifactRegistry:
                 )
             )
 
+        # Compute incremental diff: only delete rows whose IDs aren't in the
+        # new payload, and use INSERT OR REPLACE to upsert changed rows.
+        # This is dramatically cheaper than DELETE-ALL + INSERT-ALL when only
+        # a few files changed.
+        new_entity_ids = {row[1] for row in entity_rows}
+        new_rel_ids = {row[1] for row in relationship_rows}
+
         try:
-            with self._connect() as conn:
-                conn.execute(
-                    "DELETE FROM query_entities WHERE index_id = ?", (index_id,)
-                )
-                conn.execute(
-                    "DELETE FROM query_relationships WHERE index_id = ?", (index_id,)
-                )
+            # Use durability="normal" — query indexes are rebuildable from
+            # graph artifacts, so fsync-on-commit (FULL) is unnecessary cost.
+            with self.connection(durability="normal") as conn:
+                # Fetch existing IDs to compute the deletion set
+                existing_entity_ids = {
+                    str(row[0])
+                    for row in conn.execute(
+                        "SELECT entity_id FROM query_entities WHERE index_id = ?",
+                        (index_id,),
+                    ).fetchall()
+                }
+                existing_rel_ids = {
+                    str(row[0])
+                    for row in conn.execute(
+                        "SELECT relationship_id FROM query_relationships WHERE index_id = ?",
+                        (index_id,),
+                    ).fetchall()
+                }
+
+                # Compute orphans: rows that exist but aren't in new payload
+                orphan_entities = existing_entity_ids - new_entity_ids
+                orphan_rels = existing_rel_ids - new_rel_ids
+
+                # Delete orphans in a single transaction batch
+                if orphan_entities:
+                    conn.executemany(
+                        "DELETE FROM query_entities WHERE index_id = ? AND entity_id = ?",
+                        [(index_id, eid) for eid in orphan_entities],
+                    )
+                if orphan_rels:
+                    conn.executemany(
+                        "DELETE FROM query_relationships WHERE index_id = ? AND relationship_id = ?",
+                        [(index_id, rid) for rid in orphan_rels],
+                    )
+
+                # Upsert all rows from the new payload (INSERT OR REPLACE
+                # uses the (index_id, entity_id) primary key)
+                # Process in batches to avoid memory issues with large payloads
+                _BATCH_SIZE = 5000
+                
                 if entity_rows:
-                    conn.executemany(
-                        """
-                        INSERT INTO query_entities(
-                            index_id,
-                            entity_id,
-                            entity_type,
-                            file_path,
-                            name,
-                            signature,
-                            metadata_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        entity_rows,
-                    )
+                    for i in range(0, len(entity_rows), _BATCH_SIZE):
+                        batch = entity_rows[i:i + _BATCH_SIZE]
+                        conn.executemany(
+                            """
+                            INSERT OR REPLACE INTO query_entities(
+                                index_id,
+                                entity_id,
+                                entity_type,
+                                file_path,
+                                name,
+                                signature,
+                                metadata_json
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            batch,
+                        )
+                    # Optimize index after bulk insert
+                    conn.execute("ANALYZE query_entities")
                 if relationship_rows:
-                    conn.executemany(
-                        """
-                        INSERT INTO query_relationships(
-                            index_id,
-                            relationship_id,
-                            relationship_type,
-                            source_id,
-                            target_id,
-                            metadata_json
-                        ) VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        relationship_rows,
-                    )
+                    for i in range(0, len(relationship_rows), _BATCH_SIZE):
+                        batch = relationship_rows[i:i + _BATCH_SIZE]
+                        conn.executemany(
+                            """
+                            INSERT OR REPLACE INTO query_relationships(
+                                index_id,
+                                relationship_id,
+                                relationship_type,
+                                source_id,
+                                target_id,
+                                metadata_json
+                            ) VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            batch,
+                        )
+                    # Optimize index after bulk insert
+                    conn.execute("ANALYZE query_relationships")
                 conn.commit()
+
+                LOGGER.debug(
+                    "query_index_rebuilt_incremental",
+                    index_id=index_id,
+                    entities_upserted=len(entity_rows),
+                    relationships_upserted=len(relationship_rows),
+                    entities_orphaned=len(orphan_entities),
+                    relationships_orphaned=len(orphan_rels),
+                )
         except sqlite3.Error as exc:
             LOGGER.warning(
                 "query_index_rebuild_failed",
@@ -1389,7 +1538,7 @@ class ArtifactRegistry:
         )
         params.append(max(1, int(limit)))
 
-        with self._connect(row_factory=True) as conn:
+        with self.connection(row_factory=True, read_only=True) as conn:
             rows = conn.execute(query, tuple(params)).fetchall()
 
         result: list[dict[str, Any]] = []
@@ -1437,7 +1586,7 @@ class ArtifactRegistry:
         )
         params.append(max(1, int(limit)))
 
-        with self._connect(row_factory=True) as conn:
+        with self.connection(row_factory=True, read_only=True) as conn:
             rows = conn.execute(query, tuple(params)).fetchall()
 
         result: list[dict[str, Any]] = []

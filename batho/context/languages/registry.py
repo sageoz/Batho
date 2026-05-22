@@ -283,76 +283,29 @@ _LANG_TO_CLASS: dict[str, Callable[[], ASTExtractor]] = {}
 
 def _build_class_map() -> None:
     """Lazily import and register all extractor classes."""
-    # NEW: Additional programming languages
-    from .bash import BashExtractor
-    from .c import CExtractor
-    from .cpp import CppExtractor
-    from .csharp import CSharpExtractor
+    from .factory import ConfigurableExtractor
+    from ._queries import TREE_SITTER_QUERIES
+
+    # Import markup/config extractors with custom logic (not tree-sitter based)
     from .css import CSSExtractor
-    from .dart import DartExtractor
-    from .erlang import ErlangExtractor
-    from .go import GoExtractor
-    from .hack import HackExtractor
-    from .haskell import HaskellExtractor
     from .hcl import HCLExtractor
     from .html import HTMLExtractor
-    from .java import JavaExtractor
-    from .javascript import JavaScriptExtractor
-
-    # NEW: Markup/Config Languages
     from .json import JSONExtractor
-    from .julia import JuliaExtractor
-    from .kotlin import KotlinExtractor
-    from .lua import LuaExtractor
     from .markdown import MarkdownExtractor
-    from .ocaml import OCamlExtractor
-    from .perl import PerlExtractor
-
-    # NEW: High-priority programming languages
-    from .php import PHPExtractor
-    from .python import PythonExtractor
-    from .r import RExtractor
-    from .ruby import RubyExtractor
-    from .rust import RustExtractor
-    from .scala import ScalaExtractor
-    from .swift import SwiftExtractor
     from .toml import TOMLExtractor
-    from .typescript import TypeScriptExtractor
-    from .verilog import VerilogExtractor
     from .yaml import YAMLExtractor
-    from .zig import ZigExtractor
 
+    # Register ConfigurableExtractor for all tree-sitter languages.
+    # IMPORTANT: pass the tree-sitter identifier (from _TREE_SITTER_LANGUAGES),
+    # not the language name, so e.g. "objectivec" maps to tree-sitter's "objc".
+    for lang in TREE_SITTER_QUERIES:
+        ts_id = _TREE_SITTER_LANGUAGES.get(lang, lang)
+        query = TREE_SITTER_QUERIES[lang]
+        _LANG_TO_CLASS[lang] = lambda ts=ts_id, q=query: ConfigurableExtractor(ts, q)
+
+    # Register markup/config extractors with custom logic
     _LANG_TO_CLASS.update(
         {
-            "python": PythonExtractor,
-            "typescript": TypeScriptExtractor,
-            "javascript": JavaScriptExtractor,
-            "rust": RustExtractor,
-            "go": GoExtractor,
-            "java": JavaExtractor,
-            "ruby": RubyExtractor,
-            "c": CExtractor,
-            "cpp": CppExtractor,
-            # NEW: High-priority programming languages
-            "php": PHPExtractor,
-            "csharp": CSharpExtractor,
-            "kotlin": KotlinExtractor,
-            "swift": SwiftExtractor,
-            "scala": ScalaExtractor,
-            "dart": DartExtractor,
-            # NEW: Additional programming languages
-            "bash": BashExtractor,
-            "lua": LuaExtractor,
-            "r": RExtractor,
-            "perl": PerlExtractor,
-            "julia": JuliaExtractor,
-            "haskell": HaskellExtractor,
-            "erlang": ErlangExtractor,
-            "ocaml": OCamlExtractor,
-            "hack": HackExtractor,
-            "zig": ZigExtractor,
-            "verilog": VerilogExtractor,
-            # NEW: Markup/Config Languages
             "json": JSONExtractor,
             "yaml": YAMLExtractor,
             "toml": TOMLExtractor,
@@ -422,111 +375,37 @@ def _get_extractor_instance(language: str) -> ASTExtractor | None:
         if not _LANG_TO_CLASS:
             discover_and_register_all()
 
-        cls = _LANG_TO_CLASS.get(language)
-        if cls is None:
+        extractor_factory = _LANG_TO_CLASS.get(language)
+        if extractor_factory is None:
             _logger.debug(
                 "get_extractor_no_class",
                 lang=language,
             )
             return None
-        # Pass parsing_config when instantiating
-        _instances[language] = cls(parsing_config=_parsing_config)
+        # Extractor factory is either a class or a callable that returns an instance
+        extractor = extractor_factory()
+        # Pass parsing_config if the extractor supports it
+        if hasattr(extractor, 'set_parsing_config'):
+            extractor.set_parsing_config(_parsing_config)
+        _instances[language] = extractor
 
     return _instances[language]
 
 
 def _discover_language_modules() -> None:
     """
-    Auto-discover language modules using importlib.
+    Auto-discover custom language modules with custom extractors.
 
-    This function scans the languages directory for modules that contain
-    extractor classes and registers them automatically. New languages can
-    be added by simply dropping a new module file in the languages directory.
-
-    The module should export an extractor class named after the language
-    (e.g., PythonExtractor for Python, PHPExtractor for PHP).
+    Tree-sitter based languages are automatically registered via _build_class_map().
+    This function only scans for custom markup/config extractors that may have
+    been added to the languages directory.
     """
     global _auto_discovery_done
     if _auto_discovery_done:
         return
 
-    # Get the languages directory path
-    languages_dir = Path(__file__).parent
-
-    # Known module-to-class mappings for auto-discovery
-    # Format: module_name -> (class_name, language_name)
-    _MODULE_CLASS_MAP: dict[str, tuple[str, str]] = {
-        "c": ("CExtractor", "c"),
-        "cpp": ("CppExtractor", "cpp"),
-        "go": ("GoExtractor", "go"),
-        "java": ("JavaExtractor", "java"),
-        "javascript": ("JavaScriptExtractor", "javascript"),
-        "python": ("PythonExtractor", "python"),
-        "ruby": ("RubyExtractor", "ruby"),
-        "rust": ("RustExtractor", "rust"),
-        "typescript": ("TypeScriptExtractor", "typescript"),
-        # High-priority languages
-        "php": ("PHPExtractor", "php"),
-        "csharp": ("CSharpExtractor", "csharp"),
-        "kotlin": ("KotlinExtractor", "kotlin"),
-        "swift": ("SwiftExtractor", "swift"),
-        "scala": ("ScalaExtractor", "scala"),
-        "dart": ("DartExtractor", "dart"),
-        # Additional programming languages
-        "bash": ("BashExtractor", "bash"),
-        "lua": ("LuaExtractor", "lua"),
-        "r": ("RExtractor", "r"),
-        "perl": ("PerlExtractor", "perl"),
-        "julia": ("JuliaExtractor", "julia"),
-        "haskell": ("HaskellExtractor", "haskell"),
-        "erlang": ("ErlangExtractor", "erlang"),
-        "ocaml": ("OCamlExtractor", "ocaml"),
-        "hack": ("HackExtractor", "hack"),
-        "zig": ("ZigExtractor", "zig"),
-        "verilog": ("VerilogExtractor", "verilog"),
-        "objectivec": ("ObjectiveCExtractor", "objectivec"),
-        # Markup/Config languages
-        "json": ("JSONExtractor", "json"),
-        "yaml": ("YAMLExtractor", "yaml"),
-        "toml": ("TOMLExtractor", "toml"),
-        "html": ("HTMLExtractor", "html"),
-        "css": ("CSSExtractor", "css"),
-        "markdown": ("MarkdownExtractor", "markdown"),
-        "hcl": ("HCLExtractor", "hcl"),
-    }
-
-    for module_name, (class_name, lang_name) in _MODULE_CLASS_MAP.items():
-        try:
-            # Try to import the module dynamically
-            module = importlib.import_module(f"batho.context.languages.{module_name}")
-
-            # Get the extractor class from the module
-            extractor_class = getattr(module, class_name, None)
-            if extractor_class is not None:
-                # Register the class if not already registered
-                if lang_name not in _LANG_TO_CLASS:
-                    _LANG_TO_CLASS[lang_name] = extractor_class
-                    _logger.debug(
-                        "auto_discovered_language",
-                        module=module_name,
-                        class_name=class_name,
-                        language=lang_name,
-                    )
-        except ImportError as e:
-            # Module not found - this is fine, not all languages may be installed
-            _logger.debug(
-                "auto_discover_import_error",
-                module=module_name,
-                error=str(e),
-            )
-        except Exception as e:
-            # Other errors - log but continue
-            _logger.warning(
-                "auto_discover_error",
-                module=module_name,
-                error=str(e),
-            )
-
+    # Markup/config languages with custom logic (already registered in _build_class_map)
+    # This function can be extended to discover custom extractors added by users
     _auto_discovery_done = True
 
 

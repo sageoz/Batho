@@ -20,6 +20,18 @@ from typing import Any
 from ..extractor import MarkupConfigExtractor
 from ..schema import Entity, EntityType, Relationship, RelationshipType
 
+# Precompiled regex patterns for performance
+_BLOCK_PATTERN = re.compile(
+    r'([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:"([^"]*)"\s*)*(?:"([^"]*)"\s*)?\{',
+)
+_ATTR_PATTERN = re.compile(
+    r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)$",
+    re.MULTILINE,
+)
+_REF_PATTERN = re.compile(r'resource\s+"([^"]+)"\s+"([^"]+)"')
+_VAR_REF_PATTERN = re.compile(r"var\.([a-zA-Z_][a-zA-Z0-9_]*)")
+_MODULE_REF_PATTERN = re.compile(r"module\.\w+")
+
 
 class HCLExtractor(MarkupConfigExtractor):
     """Extractor for HCL and Terraform files."""
@@ -54,12 +66,6 @@ class HCLExtractor(MarkupConfigExtractor):
             # Track entities for relationship building
             self._block_entities: dict[str, Entity] = {}
 
-            # Parse HCL blocks
-            # Pattern: block_type "label1" "label2" { ... }
-            block_pattern = re.compile(
-                r'([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:"([^"]*)"\s*)*(?:"([^"]*)"\s*)?\{',
-            )
-
             # Track brace positions for proper parsing
             brace_positions = []
             in_string = False
@@ -80,8 +86,9 @@ class HCLExtractor(MarkupConfigExtractor):
                     elif char == "}":
                         brace_positions.append(("close", i))
 
-            # Find all blocks and their content
-            for match in block_pattern.finditer(content):
+            # Parse HCL blocks
+            # Pattern: block_type "label1" "label2" { ... }
+            for match in _BLOCK_PATTERN.finditer(content):
                 block_type = match.group(1)
                 label1 = match.group(2) or ""
                 label2 = match.group(3) or ""
@@ -198,13 +205,7 @@ class HCLExtractor(MarkupConfigExtractor):
         exclude_blocks: bool = False,
     ) -> None:
         """Extract key-value attributes from HCL content."""
-        # Attribute pattern: key = value
-        attr_pattern = re.compile(
-            r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)$",
-            re.MULTILINE,
-        )
-
-        for match in attr_pattern.finditer(content):
+        for match in _ATTR_PATTERN.finditer(content):
             key = match.group(1)
             value = match.group(2).strip()
 
@@ -298,11 +299,7 @@ class HCLExtractor(MarkupConfigExtractor):
 
             # Extract references to other resources
             # resource "type" "name"
-            ref_pattern = re.compile(
-                r'resource\s+"([^"]+)"\s+"([^"]+)"',
-            )
-
-            for match in ref_pattern.finditer(content):
+            for match in _REF_PATTERN.finditer(content):
                 ref_type = match.group(1)
                 ref_name = match.group(2)
                 line_no = content[: match.start()].count("\n") + 1
@@ -318,9 +315,7 @@ class HCLExtractor(MarkupConfigExtractor):
                     )
 
             # Extract variable references: var.name
-            var_ref_pattern = re.compile(r"var\.([a-zA-Z_][a-zA-Z0-9_]*)")
-
-            for match in var_ref_pattern.finditer(content):
+            for match in _VAR_REF_PATTERN.finditer(content):
                 var_name = match.group(1)
                 line_no = content[: match.start()].count("\n") + 1
 
@@ -335,9 +330,7 @@ class HCLExtractor(MarkupConfigExtractor):
                     )
 
             # Extract module references
-            module_ref_pattern = re.compile(r"module\.\w+")
-
-            for match in module_ref_pattern.finditer(content):
+            for match in _MODULE_REF_PATTERN.finditer(content):
                 module_ref = match.group(0)
                 line_no = content[: match.start()].count("\n") + 1
 

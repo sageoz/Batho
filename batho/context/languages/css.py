@@ -22,6 +22,15 @@ from typing import Any
 from ..extractor import MarkupConfigExtractor
 from ..schema import Entity, EntityType, Relationship, RelationshipType
 
+# Precompiled regex patterns for performance
+_RULE_PATTERN = re.compile(r"([^{}]+)\s*\{([^{}]*)\}", re.DOTALL)
+_PROPERTY_PATTERN = re.compile(r"([a-zA-Z\-]+)\s*:\s*([^;]+);")
+_PROPERTY_COUNT_PATTERN = re.compile(r"([a-zA-Z\-]+)\s*:")
+_IMPORT_PATTERN = re.compile(
+    r'@import\s+(?:url\()?["\']?([^"\')]+)["\']?\)?',
+    re.IGNORECASE,
+)
+
 
 class CSSExtractor(MarkupConfigExtractor):
     """Extractor for CSS, SCSS, SASS, and LESS files."""
@@ -58,12 +67,7 @@ class CSSExtractor(MarkupConfigExtractor):
 
             # Parse CSS rules
             # Main pattern: selector { properties }
-            rule_pattern = re.compile(
-                r"([^{}]+)\s*\{([^{}]*)\}",
-                re.DOTALL,
-            )
-
-            for match in rule_pattern.finditer(content):
+            for match in _RULE_PATTERN.finditer(content):
                 selector = match.group(1).strip()
                 properties = match.group(2).strip()
 
@@ -106,11 +110,7 @@ class CSSExtractor(MarkupConfigExtractor):
 
                 # Extract properties within the rule
                 if properties:
-                    property_pattern = re.compile(
-                        r"([a-zA-Z\-]+)\s*:\s*([^;]+);",
-                    )
-
-                    for prop_match in property_pattern.finditer(properties):
+                    for prop_match in _PROPERTY_PATTERN.finditer(properties):
                         prop_name = prop_match.group(1).strip()
                         prop_value = prop_match.group(2).strip()
 
@@ -167,7 +167,7 @@ class CSSExtractor(MarkupConfigExtractor):
         if not properties_block:
             return 0
         # Count colons that are property declarations
-        return len(re.findall(r"([a-zA-Z\-]+)\s*:", properties_block))
+        return len(_PROPERTY_COUNT_PATTERN.findall(properties_block))
 
     def _extract_references(
         self,
@@ -218,12 +218,7 @@ class CSSExtractor(MarkupConfigExtractor):
                         )
 
             # Extract @import references
-            import_pattern = re.compile(
-                r'@import\s+(?:url\()?["\']?([^"\')]+)["\']?\)?',
-                re.IGNORECASE,
-            )
-
-            for match in import_pattern.finditer(content):
+            for match in _IMPORT_PATTERN.finditer(content):
                 imported = match.group(1)
                 line_no = content[: match.start()].count("\n") + 1
                 if doc:

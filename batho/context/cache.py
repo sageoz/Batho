@@ -267,7 +267,7 @@ class ASTCache:
             cursor = conn.cursor()
 
             # Serialize entities and relationships to JSON
-            entities_json = json.dumps([e.to_dict() for e in entities])
+            entities_json = json.dumps([e.to_dict(view="storage") for e in entities])
             relationships_json = json.dumps([r.to_dict() for r in (relationships or [])])
             cached_at = datetime.now(timezone.utc).isoformat()
 

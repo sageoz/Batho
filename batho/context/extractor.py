@@ -16,6 +16,7 @@ Design principles:
 from __future__ import annotations
 
 import abc
+import bisect
 import re
 import threading
 import time
@@ -26,9 +27,17 @@ from tree_sitter import Language, Node, Query, QueryCursor
 from tree_sitter_language_pack import get_language, get_parser
 
 from batho.utils.encoding import normalize_to_utf8
+from batho.utils.hash import compute_bytes_hash
 from batho.utils.logging import get_logger
 
-from .schema import Entity, EntityMetadata, EntityType, Relationship, RelationshipType
+from .schema import (
+    CoverageError,
+    Entity,
+    EntityMetadata,
+    EntityType,
+    Relationship,
+    RelationshipType,
+)
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -256,6 +265,7 @@ class ASTExtractor(abc.ABC):
         self._ts_parser = get_parser(language)  # type: ignore[arg-type]
         self._ts_language: Language = get_language(language)  # type: ignore[arg-type]
         self._compiled_query: Query | None = None
+        self._compile_failed: bool = False
         self._query_lock = threading.Lock()
         self._parsing_config: dict[str, Any] = parsing_config or {}
         self.logger = get_logger(__name__, operation="ast_extract").bind(
@@ -263,18 +273,35 @@ class ASTExtractor(abc.ABC):
         )
 
     def _get_compiled_query(self) -> Query | None:
-        """Compile and cache the tree-sitter query once per extractor instance."""
+        """Compile and cache the tree-sitter query once per extractor instance.
+
+        Returns ``None`` when compilation has failed or the query is unavailable.
+        Uses a flag to ensure a failed compilation is never retried.
+        """
+        # Fast path: already compiled (success) or already known to have failed.
+        if self._compile_failed:
+            return None
         if self._compiled_query is not None:
             return self._compiled_query
 
         with self._query_lock:
+            # Re-check under the lock (another thread may have compiled).
+            if self._compile_failed:
+                return None
             if self._compiled_query is not None:
                 return self._compiled_query
+
             try:
                 self._compiled_query = Query(self._ts_language, self._query_source())
             except (TypeError, ValueError) as exc:
-                self.logger.debug("query_creation_failed", error=str(exc))
-                self._compiled_query = None
+                self.logger.debug(
+                    "query_compilation_failed",
+                    error=str(exc),
+                    language=getattr(self, '_language_name', 'unknown'),
+                )
+                # Set the flag so future calls skip the lock entirely.
+                self._compile_failed = True
+                return None
             return self._compiled_query
 
     # ------------------------------------------------------------------
@@ -300,6 +327,7 @@ class ASTExtractor(abc.ABC):
         filepath: str,
         content: bytes,
         index_id: str | None = None,
+        include_gaps: bool = False,
     ) -> tuple[list[Entity], list[Relationship]]:
         """
         Parse *content* and return extracted entities and relationships.
@@ -313,6 +341,8 @@ class ASTExtractor(abc.ABC):
                       extracted Entity.
             content:  Raw source bytes.
             index_id: Optional index ID to stamp on entities.
+            include_gaps: When True, emit SYNTAX_GLUE entities for every byte
+                          not covered by semantic entities, producing 100% coverage.
 
         Returns:
             A 2-tuple ``(entities, relationships)``, both sorted by source position.
@@ -325,30 +355,15 @@ class ASTExtractor(abc.ABC):
         try:
             tree = self._ts_parser.parse(content)
         except (TypeError, ValueError) as exc:
-            if error_recovery:
-                # Try to parse with error recovery by using the old tree
-                # tree-sitter's parser will still produce a tree even with syntax errors
-                try:
-                    tree = self._ts_parser.parse(content)
-                    self.logger.warning(
-                        "parse_error_recovery_attempt",
-                        filepath=filepath,
-                        error=str(exc),
-                    )
-                except Exception:
-                    self.logger.warning(
-                        "parse_failed",
-                        filepath=filepath,
-                        error=str(exc),
-                    )
-                    return [], []
-            else:
-                self.logger.warning(
-                    "parse_failed",
-                    filepath=filepath,
-                    error=str(exc),
-                )
-                return [], []
+            # Error recovery: tree-sitter still produces a tree on syntax errors.
+            # A second parse() call with identical args will not change the result;
+            # just log and return empty to avoid blocking the whole build.
+            self.logger.warning(
+                "parse_failed",
+                filepath=filepath,
+                error=str(exc),
+            )
+            return [], []
 
         # Check if we should skip comment nodes
         skip_comments = self._parsing_config.get("skip_comments", False)
@@ -372,6 +387,7 @@ class ASTExtractor(abc.ABC):
             entities, relationships = self._process_captures(
                 raw_captures, content, filepath, index_id=index_id
             )
+            entities = self._enrich_bidirectional_attributes(entities, content)
         except Exception as exc:
             if error_recovery:
                 self.logger.warning(
@@ -389,6 +405,13 @@ class ASTExtractor(abc.ABC):
                 )
                 return [], []
 
+        if include_gaps:
+            gap_entities = self._extract_gaps(content, filepath, entities)
+            entities.extend(gap_entities)
+            entities.sort(key=lambda e: e.start_byte)
+        else:
+            gap_entities = []
+
         parse_ms = round((time.perf_counter() - t0) * 1000, 2)
         self.logger.debug(
             "parse_file_complete",
@@ -398,6 +421,8 @@ class ASTExtractor(abc.ABC):
             relationship_count=len(relationships),
             error_recovery=error_recovery,
             skip_comments=skip_comments,
+            include_gaps=include_gaps,
+            gap_count=len(gap_entities) if include_gaps else 0,
         )
         return entities, relationships
 
@@ -482,6 +507,13 @@ class ASTExtractor(abc.ABC):
         """Instantiate Entity models from grouped capture nodes."""
         entities: list[Entity] = []
 
+        # Pre-decode source lines once for the whole file to avoid repeated
+        # decode+splitlines in _extract_leading_doc_comment (EXT-04).
+        try:
+            _source_lines: list[str] = source.decode("utf-8", errors="replace").splitlines()
+        except Exception:
+            _source_lines = []
+
         for base_key, name_nodes in definition_nodes.items():
             entity_type = _CAPTURE_ENTITY_MAP.get(base_key)
             if entity_type is None:
@@ -497,7 +529,7 @@ class ASTExtractor(abc.ABC):
                 )
 
                 metadata = self._collect_metadata_with_source(
-                    base_key, decl_node, auxiliary_nodes, source
+                    base_key, decl_node, auxiliary_nodes, source, source_lines=_source_lines
                 )
                 signature = self._build_signature(
                     name, base_key, decl_node, auxiliary_nodes, source
@@ -521,6 +553,12 @@ class ASTExtractor(abc.ABC):
                         normalized_name = "__main__"
                         metadata["invocation_snippet"] = raw_snippet
 
+                # Decode with strict UTF-8, storing raw_bytes on error
+                raw_bytes_slice = source[decl_node.start_byte:decl_node.end_byte]
+                decoded_content, stored_raw_bytes = self._safe_decode(
+                    raw_bytes_slice, filepath, context=f"entity {normalized_name}"
+                )
+
                 entity = Entity(
                     type=entity_type,
                     name=normalized_name,
@@ -531,6 +569,10 @@ class ASTExtractor(abc.ABC):
                     end_byte=decl_node.end_byte,
                     signature=signature,
                     metadata=metadata,
+                    raw_content=decoded_content,
+                    content_hash=compute_bytes_hash(raw_bytes_slice),
+                    raw_bytes=stored_raw_bytes,
+                    ast_node_type=decl_node.type,
                 )
                 entities.append(entity)
 
@@ -554,16 +596,19 @@ class ASTExtractor(abc.ABC):
         emitted: set[tuple[str, str, str]] = set()
         unresolved_emitted: set[str] = set()
 
+        # Compute timestamp once per _build_relationships call rather than per
+        # unresolved entity (EXT-08: avoids repeated datetime.now() in hot loop).
+        now_ts = datetime.now(timezone.utc).isoformat()
+
         def _make_unresolved(
             ref_text: str, line: int, rel_type: RelationshipType
         ) -> Entity:
-            now = datetime.now(timezone.utc).isoformat()
             meta: dict[str, Any] = {
                 "reference_type": rel_type.name.lower(),
                 "resolution_reason": "not_found",
                 "attempts": 1,
-                "created_at": now,
-                "last_attempt": now,
+                "created_at": now_ts,
+                "last_attempt": now_ts,
                 "is_visible": False,
             }
             return Entity(
@@ -598,18 +643,26 @@ class ASTExtractor(abc.ABC):
                 )
 
         # CONTAINS: parent entity → child entity
-        for i, child in enumerate(entities):
-            for j in range(i - 1, -1, -1):
-                parent = entities[j]
-                if (
-                    parent.start_byte <= child.start_byte
-                    and parent.end_byte >= child.end_byte
-                    and parent.id != child.id
-                ):
-                    _add(
-                        parent.id, child.id, RelationshipType.CONTAINS, child.start_line
-                    )
-                    break
+        # O(N) monotonic stack algorithm (EXT-02: replaces O(N²) backward scan).
+        # Entities are assumed sorted by start_byte ascending, end_byte descending
+        # (i.e. outer entities appear before inner ones at the same start).
+        # Stack entries: Entity objects whose byte range is still "open".
+        parent_stack: list[Entity] = []
+        for child in entities:
+            # Pop any entries that cannot contain this child.
+            while parent_stack and parent_stack[-1].end_byte < child.start_byte:
+                parent_stack.pop()
+            if parent_stack and parent_stack[-1].id != child.id:
+                parent = parent_stack[-1]
+                _add(parent.id, child.id, RelationshipType.CONTAINS, child.start_line)
+            # Only push if this entity can contain future entities.
+            if not parent_stack or child.end_byte <= parent_stack[-1].end_byte:
+                parent_stack.append(child)
+            elif child.end_byte > parent_stack[-1].end_byte:
+                # This entity is wider than the current top — replace (unusual,
+                # happens when entities overlap rather than nest cleanly).
+                parent_stack.pop()
+                parent_stack.append(child)
 
         by_name: dict[str, Entity] = {e.name: e for e in entities}
         sorted_ents = entities
@@ -724,8 +777,18 @@ class ASTExtractor(abc.ABC):
         decl_node: Node,
         auxiliary_nodes: dict[tuple[str, str], list[Node]],
         source: bytes,
+        source_lines: list[str] | None = None,
     ) -> EntityMetadata:
-        """Collect full EntityMetadata including text fields that require source bytes."""
+        """Collect full EntityMetadata including text fields that require source bytes.
+
+        Args:
+            base_key:       Capture base key (e.g. ``"def.function"``).
+            decl_node:      tree-sitter declaration node.
+            auxiliary_nodes: Parsed capture auxiliary map.
+            source:         Raw file bytes.
+            source_lines:   Pre-split lines, passed to avoid repeated
+                            decode+splitlines in ``_extract_leading_doc_comment``.
+        """
         metadata: EntityMetadata = {}
         metadata["language"] = self._language_name
 
@@ -750,7 +813,7 @@ class ASTExtractor(abc.ABC):
 
         if not metadata.get("docstring"):
             fallback_doc = self._extract_leading_doc_comment(
-                decl_node=decl_node, source=source
+                decl_node=decl_node, source=source, lines=source_lines
             )
             if fallback_doc:
                 metadata["docstring"] = _clean_docstring(fallback_doc)
@@ -771,15 +834,26 @@ class ASTExtractor(abc.ABC):
         return metadata
 
     def _extract_leading_doc_comment(
-        self, decl_node: Node, source: bytes
+        self,
+        decl_node: Node,
+        source: bytes,
+        lines: list[str] | None = None,
     ) -> str | None:
-        """Extract contiguous comment lines immediately above a declaration."""
-        try:
-            text = source.decode("utf-8", errors="replace")
-        except Exception:
-            return None
+        """Extract contiguous comment lines immediately above a declaration.
 
-        lines = text.splitlines()
+        Args:
+            decl_node: The tree-sitter Node for the declaration.
+            source:    Raw source bytes (used only when *lines* is not provided).
+            lines:     Pre-split text lines.  When provided, the *source* bytes
+                       are NOT decoded, avoiding repeated O(n) decode+split per
+                       entity call (EXT-04).
+        """
+        if lines is None:
+            try:
+                text = source.decode("utf-8", errors="replace")
+            except Exception:
+                return None
+            lines = text.splitlines()
         line_idx = decl_node.start_point[0] - 1
         if line_idx < 0:
             return None
@@ -887,6 +961,315 @@ class ASTExtractor(abc.ABC):
         )
         return entity.model_copy(update={"metadata": full_metadata})
 
+    # ------------------------------------------------------------------
+    # UTF-8 decoding helpers
+    # ------------------------------------------------------------------
+
+    def _safe_decode(
+        self, raw_bytes: bytes, filepath: str, context: str = ""
+    ) -> tuple[str, bytes | None]:
+        """Decode bytes with strict UTF-8, falling back to replace mode on error.
+
+        Args:
+            raw_bytes: Bytes to decode.
+            filepath: File path for error reporting.
+            context: Additional context for error messages.
+
+        Returns:
+            Tuple of (decoded_string, raw_bytes_for_storage).
+            raw_bytes_for_storage is None if strict decode succeeded,
+            otherwise contains the original bytes for lossless reconstruction.
+
+        Note:
+            When UTF-8 decode fails, the returned decoded_string uses replacement
+            characters () for invalid bytes. The raw_bytes field preserves the
+            original bytes for truly lossless reconstruction during the bidirectional
+            phase. This means raw_content may not round-trip perfectly, but raw_bytes
+            ensures exact byte-level reconstruction.
+        """
+        try:
+            decoded = raw_bytes.decode("utf-8", errors="strict")
+            return decoded, None
+        except UnicodeDecodeError as exc:
+            self.logger.warning(
+                "utf8_decode_fallback",
+                filepath=filepath,
+                context=context,
+                error=str(exc),
+                bytes_length=len(raw_bytes),
+            )
+            # Store raw bytes for lossless reconstruction
+            decoded = raw_bytes.decode("utf-8", errors="replace")
+            return decoded, raw_bytes
+
+    # ------------------------------------------------------------------
+    # Gap extraction (SYNTAX_GLUE entities)
+    # ------------------------------------------------------------------
+
+    _COMMENT_PREFIXES: set[str] = {"#", "//", "--", ";", "%", "(*", "/*"}
+
+    def _classify_gap_type(self, raw: str) -> str:
+        """Classify a gap's content into a category.
+
+        Returns one of: ``whitespace``, ``comment``, ``import``, ``code``,
+        ``separator``, ``partial_entity``.
+        """
+        stripped = raw.strip()
+        if not stripped:
+            return "whitespace"
+        # Check for separator patterns first (before comment detection,
+        # since some separators like --- start with comment prefix --)
+        if re.match(r"^[=\-*]{3,}$", stripped):
+            return "separator"
+        # Check for comment prefixes
+        first_line = stripped.split("\n")[0].strip()
+        if any(first_line.startswith(p) for p in self._COMMENT_PREFIXES):
+            return "comment"
+        # Check for import statements
+        if (
+            first_line.startswith("import ")
+            or first_line.startswith("from ")
+            or first_line.startswith("#include")
+            or first_line.startswith("use ")
+            or first_line.startswith("require")
+            or "import " in first_line[:20]
+        ):
+            return "import"
+        # If the gap is between entities where one or both have partial coverage
+        # this is a heuristic fallback. We don't have AST access here but can infer
+        # from content that looks like code (not whitespace/comments)
+        return "code"
+
+    def _extract_gaps(
+        self,
+        content: bytes,
+        filepath: str,
+        entities: list[Entity],
+    ) -> list[Entity]:
+        """Emit SYNTAX_GLUE entities for every byte gap between semantic entities.
+
+        Args:
+            content: Raw source bytes.
+            filepath: Repo-relative path for the entity ``file`` field.
+            entities: Semantic entities already extracted (sorted by start_byte).
+
+        Returns:
+            List of SYNTAX_GLUE Entity models covering uncovered byte ranges.
+        """
+        if not content:
+            return []
+
+        file_size = len(content)
+        gap_entities: list[Entity] = []
+
+        # Merged intervals representing covered regions
+        intervals = [(e.start_byte, e.end_byte) for e in entities]
+        merged_intervals = []
+        if intervals:
+            # Sort by start_byte, then end_byte descending to process outer intervals first
+            sorted_intervals = sorted(intervals, key=lambda x: (x[0], -x[1]))
+            merged_intervals.append(sorted_intervals[0])
+            for start, end in sorted_intervals[1:]:
+                prev_start, prev_end = merged_intervals[-1]
+                if start <= prev_end:
+                    merged_intervals[-1] = (prev_start, max(prev_end, end))
+                else:
+                    merged_intervals.append((start, end))
+
+        # Precompute line start byte offsets using a single regex scan of newlines
+        line_starts = [0] + [m.start() + 1 for m in re.finditer(b"\n", content)]
+
+        # Helper to decode raw bytes with strict UTF-8 fallback
+        def _decode_slice(start: int, end: int) -> tuple[str, bytes | None]:
+            raw_bytes_slice = content[start:end]
+            decoded, stored_raw_bytes = self._safe_decode(
+                raw_bytes_slice, filepath, context=f"gap {start}-{end}"
+            )
+            return decoded, stored_raw_bytes
+
+        # Helper to compute line number from byte offset using fast binary search
+        def _byte_to_line(offset: int) -> int:
+            off = min(offset, file_size)
+            return bisect.bisect_right(line_starts, off)
+
+        def _add_gap(start: int, end: int) -> None:
+            if start >= end:
+                return
+            raw, raw_bytes = _decode_slice(start, end)
+            gap_entities.append(
+                Entity(
+                    type=EntityType.SYNTAX_GLUE,
+                    name="<glue>",
+                    file=filepath,
+                    start_line=_byte_to_line(start),
+                    end_line=_byte_to_line(end),
+                    start_byte=start,
+                    end_byte=end,
+                    raw_content=raw,
+                    content_hash=compute_bytes_hash(content[start:end]),
+                    raw_bytes=raw_bytes,
+                    metadata={
+                        "language": self._language_name,
+                        "gap_type": self._classify_gap_type(raw),
+                        "is_empty": not raw.strip(),
+                        "contains_comments": any(
+                            p in raw for p in self._COMMENT_PREFIXES
+                        ),
+                    },
+                )
+            )
+
+        if not merged_intervals:
+            _add_gap(0, file_size)
+        else:
+            # Leading gap
+            _add_gap(0, merged_intervals[0][0])
+            # Inter-interval gaps
+            for i in range(len(merged_intervals) - 1):
+                _add_gap(merged_intervals[i][1], merged_intervals[i+1][0])
+            # Trailing gap
+            _add_gap(merged_intervals[-1][1], file_size)
+
+        return gap_entities
+
+    def _enrich_bidirectional_attributes(
+        self,
+        entities: list[Entity],
+        content: bytes,
+    ) -> list[Entity]:
+        """Compute parent_id, children_order, leading_whitespace, and trailing_whitespace.
+
+        Uses a single-pass algorithm to resolve containment hierarchy via a
+        monotonic stack, then applies whitespace and relationship data in one
+        final ``_evolve()`` call per entity — avoiding the previous 3×
+        frozen-model reconstruction overhead.
+
+        Args:
+            entities: Extracted semantic entities (any order).
+            content: Raw file content bytes.
+
+        Returns:
+            List of updated Entity objects, in original input order.
+        """
+        if not content or not entities:
+            return entities
+
+        content_len = len(content)
+        ws_set = b" \t\n\r"
+
+        # ------------------------------------------------------------------
+        # Step 1: Whitespace resolution
+        # Compute leading/trailing whitespace bytes for each non-GLUE entity.
+        # Stored as a parallel list indexed by entity position in `entities`.
+        # ------------------------------------------------------------------
+        leading_list: list[str] = [""] * len(entities)
+        trailing_list: list[str] = [""] * len(entities)
+        semantic_indices: list[int] = []  # positions of non-GLUE entities
+
+        # First pass: identify semantic entities
+        for idx, e in enumerate(entities):
+            if e.type != EntityType.SYNTAX_GLUE:
+                semantic_indices.append(idx)
+
+        # Precompute limits for leading whitespace
+        leading_ws_bytes: list[bytes] = [b""] * len(entities)
+        for idx in semantic_indices:
+            e = entities[idx]
+            limit_left = 0
+            for other_idx in semantic_indices:
+                other = entities[other_idx]
+                if other.end_byte <= e.start_byte and other.end_byte > limit_left:
+                    limit_left = other.end_byte
+            
+            i = e.start_byte - 1
+            while i >= limit_left and content[i] in ws_set:
+                i -= 1
+            leading_bytes = content[i + 1:e.start_byte]
+            leading_ws_bytes[idx] = leading_bytes
+            leading_list[idx] = leading_bytes.decode("utf-8", errors="replace")
+
+        # Second pass: compute trailing whitespace with limits to avoid double counting
+        for idx in semantic_indices:
+            e = entities[idx]
+            # Find the min start of leading whitespace of any semantic entity starting at or after e.end_byte
+            limit_right = content_len
+            for other_idx in semantic_indices:
+                other = entities[other_idx]
+                if other.start_byte >= e.end_byte:
+                    other_leading_start = other.start_byte - len(leading_ws_bytes[other_idx])
+                    if other_leading_start < limit_right:
+                        limit_right = other_leading_start
+            
+            j = e.end_byte
+            while j < limit_right and content[j] in ws_set:
+                j += 1
+            trailing_list[idx] = content[e.end_byte:j].decode("utf-8", errors="replace")
+
+        # ------------------------------------------------------------------
+        # Step 2: Containment hierarchy via monotonic stack
+        # Sort semantic entities by (start_byte ASC, end_byte DESC) so that
+        # parent entities always precede their children.
+        # ------------------------------------------------------------------
+        # Map original index -> semantic order position for stack work
+        sorted_sem = sorted(
+            semantic_indices,
+            key=lambda idx: (entities[idx].start_byte, -entities[idx].end_byte),
+        )
+
+        stack: list[int] = []  # indices into `entities`
+        parent_map: dict[str, str] = {}   # child entity.id -> parent entity.id
+        children_map: dict[str, list[str]] = {}  # parent entity.id -> [child ids]
+
+        for idx in sorted_sem:
+            e = entities[idx]
+            # Pop stack until we find a true ancestor
+            while stack:
+                anc = entities[stack[-1]]
+                if anc.start_byte <= e.start_byte and e.end_byte <= anc.end_byte:
+                    break
+                stack.pop()
+
+            if stack:
+                parent_e = entities[stack[-1]]
+                parent_map[e.id] = parent_e.id
+                children_map.setdefault(parent_e.id, []).append(e.id)
+
+            stack.append(idx)
+
+        # ------------------------------------------------------------------
+        # Step 3: Single-pass final Entity construction via _evolve()
+        # Each entity is evolved at most once, applying whitespace + hierarchy
+        # together to avoid the previous 3× frozen-model reconstruction.
+        # ------------------------------------------------------------------
+        result: list[Entity] = []
+        for idx, e in enumerate(entities):
+            if e.type == EntityType.SYNTAX_GLUE:
+                result.append(e)
+                continue
+
+            p_id = e.parent_id or parent_map.get(e.id)
+            c_order = children_map.get(e.id, [])
+            leading = leading_list[idx]
+            trailing = trailing_list[idx]
+
+            # Only evolve if any attribute actually changed to avoid unnecessary
+            # model_copy() overhead on already-correct entities
+            if (
+                p_id != e.parent_id
+                or c_order != list(e.children_order)
+                or leading != e.leading_whitespace
+                or trailing != e.trailing_whitespace
+            ):
+                e = e._evolve(
+                    parent_id=p_id,
+                    leading_whitespace=leading,
+                    trailing_whitespace=trailing,
+                    children_order=c_order,
+                )
+            result.append(e)
+
+        return result
+
 
 # ---------------------------------------------------------------------------
 # MarkupConfigExtractor — base for markup and config file extractors
@@ -942,12 +1325,60 @@ class MarkupConfigExtractor(ASTExtractor):
         filepath: str,
         content: bytes,
         index_id: str | None = None,
+        include_gaps: bool = False,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Parse a markup or configuration file."""
         t0 = time.perf_counter()
 
         try:
             entities = self._extract_elements(content, filepath)
+
+            # Enrich extracted elements with raw content, content hash, and raw bytes sliced from content
+            enriched_entities = []
+            for entity in entities:
+                raw_content = entity.raw_content
+                content_hash = entity.content_hash
+                raw_bytes = entity.raw_bytes
+
+                if raw_content is None or not content_hash:
+                    start_byte = min(max(0, entity.start_byte), len(content))
+                    end_byte = min(max(start_byte, entity.end_byte), len(content))
+                    raw_bytes_slice = content[start_byte:end_byte]
+
+                    decoded_content, stored_raw_bytes = self._safe_decode(
+                        raw_bytes_slice, filepath, context=f"markup entity {entity.name}"
+                    )
+                    c_hash = compute_bytes_hash(raw_bytes_slice)
+
+                    if raw_content is None:
+                        raw_content = decoded_content
+                    if not content_hash:
+                        content_hash = c_hash
+                    if raw_bytes is None:
+                        raw_bytes = stored_raw_bytes
+
+                enriched_entity = Entity(
+                    type=entity.type,
+                    name=entity.name,
+                    file=entity.file,
+                    start_line=entity.start_line,
+                    end_line=entity.end_line,
+                    start_byte=entity.start_byte,
+                    end_byte=entity.end_byte,
+                    signature=entity.signature,
+                    metadata=entity.metadata,
+                    parent_id=entity.parent_id,
+                    raw_content=raw_content,
+                    content_hash=content_hash,
+                    raw_bytes=raw_bytes,
+                    leading_whitespace=entity.leading_whitespace,
+                    trailing_whitespace=entity.trailing_whitespace,
+                    ast_node_type=entity.ast_node_type,
+                    children_order=entity.children_order,
+                )
+                enriched_entities.append(enriched_entity)
+            entities = enriched_entities
+
             if index_id:
                 stamped_entities = []
                 for entity in entities:
@@ -964,11 +1395,24 @@ class MarkupConfigExtractor(ASTExtractor):
                         signature=entity.signature,
                         metadata=metadata,
                         parent_id=entity.parent_id,
+                        raw_content=entity.raw_content,
+                        content_hash=entity.content_hash,
+                        raw_bytes=entity.raw_bytes,
+                        leading_whitespace=entity.leading_whitespace,
+                        trailing_whitespace=entity.trailing_whitespace,
+                        ast_node_type=entity.ast_node_type,
+                        children_order=entity.children_order,
                     )
                     stamped_entities.append(stamped_entity)
                 entities = stamped_entities
+            entities = self._enrich_bidirectional_attributes(entities, content)
             relationships = self._extract_references(content, filepath, entities)
             entities.sort(key=lambda e: e.start_byte)
+
+            if include_gaps and entities:
+                gap_entities = self._extract_gaps(content, filepath, entities)
+                entities.extend(gap_entities)
+                entities.sort(key=lambda e: e.start_byte)
         except Exception as exc:
             self.logger.warning(
                 "markup_parse_failed",
@@ -984,6 +1428,7 @@ class MarkupConfigExtractor(ASTExtractor):
             parse_ms=parse_ms,
             entity_count=len(entities),
             relationship_count=len(relationships),
+            include_gaps=include_gaps,
         )
         return entities, relationships
 

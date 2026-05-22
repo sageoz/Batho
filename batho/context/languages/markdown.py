@@ -22,6 +22,17 @@ from typing import Any
 from ..extractor import MarkupConfigExtractor
 from ..schema import Entity, EntityType, Relationship, RelationshipType
 
+# Precompiled regex patterns for performance
+_HEADER_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+_CODE_BLOCK_PATTERN = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
+_LIST_PATTERN = re.compile(r"^(\s*[-*+]\s+|\s*\d+\.\s+)(.+)$", re.MULTILINE)
+_TABLE_PATTERN = re.compile(
+    r"^\|(.+)\|\n\|[-:\s|]+\|\n((?:\|.+\|\n?)+)",
+    re.MULTILINE,
+)
+_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+
 
 class MarkdownExtractor(MarkupConfigExtractor):
     """Extractor for Markdown files."""
@@ -76,9 +87,7 @@ class MarkdownExtractor(MarkupConfigExtractor):
             content_buffer: dict[str, list[str]] = {}  # entity_id -> content pieces
 
             # Extract headers (# H1, ## H2, etc.)
-            header_pattern = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
-
-            for match in header_pattern.finditer(content):
+            for match in _HEADER_PATTERN.finditer(content):
                 level = len(match.group(1))
                 text = match.group(2).strip()
 
@@ -107,12 +116,7 @@ class MarkdownExtractor(MarkupConfigExtractor):
                 content_buffer[header_entity.id] = []
 
             # Extract code blocks
-            code_block_pattern = re.compile(
-                r"```(\w*)\n(.*?)```",
-                re.DOTALL,
-            )
-
-            for match in code_block_pattern.finditer(content):
+            for match in _CODE_BLOCK_PATTERN.finditer(content):
                 lang = match.group(1) or "text"
                 code = match.group(2).strip()
 
@@ -138,9 +142,7 @@ class MarkdownExtractor(MarkupConfigExtractor):
                 entities.append(code_entity)
 
             # Roll up lists into parent headers (no individual list item nodes)
-            list_pattern = re.compile(r"^(\s*[-*+]\s+|\s*\d+\.\s+)(.+)$", re.MULTILINE)
-
-            for match in list_pattern.finditer(content):
+            for match in _LIST_PATTERN.finditer(content):
                 text = match.group(2).strip()
                 start_line = get_line_from_offset(match.start())
 
@@ -157,12 +159,7 @@ class MarkdownExtractor(MarkupConfigExtractor):
                 # If no header, we'll attach to document later
 
             # Extract tables
-            table_pattern = re.compile(
-                r"^\|(.+)\|\n\|[-:\s|]+\|\n((?:\|.+\|\n?)+)",
-                re.MULTILINE,
-            )
-
-            for match in table_pattern.finditer(content):
+            for match in _TABLE_PATTERN.finditer(content):
                 header = match.group(1)
                 rows = match.group(2)
 
@@ -292,9 +289,7 @@ class MarkdownExtractor(MarkupConfigExtractor):
                     )
 
             # Extract links: [text](url)
-            link_pattern = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-
-            for match in link_pattern.finditer(content):
+            for match in _LINK_PATTERN.finditer(content):
                 text = match.group(1)
                 url = match.group(2)
                 line_no = content[: match.start()].count("\n") + 1
@@ -334,9 +329,7 @@ class MarkdownExtractor(MarkupConfigExtractor):
                         )
 
             # Extract image references: ![alt](url)
-            image_pattern = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
-
-            for match in image_pattern.finditer(content):
+            for match in _IMAGE_PATTERN.finditer(content):
                 alt = match.group(1)
                 url = match.group(2)
                 line_no = content[: match.start()].count("\n") + 1

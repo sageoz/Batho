@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from batho.context.schema import Entity, Relationship
+from batho.context.schema import Entity, FileSnapshot, Relationship
 from batho.utils.logging import get_logger
 
 logger = get_logger(__name__, component="cache")
@@ -22,21 +22,35 @@ logger = get_logger(__name__, component="cache")
 class BathoCache:
     """Unified cache service for AST entries and file tracking."""
 
-    def __init__(self, cache_path: str = ".ctn/local/cache.db") -> None:
+    _global_init_lock = threading.Lock()
+
+    def __init__(self, cache_path: str = ".ctn/local/cache/cache.db") -> None:
         self._path = Path(cache_path).resolve()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._local = threading.local()
         self.logger = get_logger(__name__, component="cache")
-        self._initialize_db()
-        self._migrate_schema()
+        with BathoCache._global_init_lock:
+            self._initialize_db()
+            self._migrate_schema()
 
     def _get_connection(self) -> sqlite3.Connection:
+        """Return (or create) the per-thread SQLite connection with optimal PRAGMAs."""
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            self._local.conn = sqlite3.connect(
+            conn = sqlite3.connect(
                 self._path, check_same_thread=False, timeout=30.0
             )
-            self._local.conn.row_factory = sqlite3.Row
+            conn.row_factory = sqlite3.Row
+            # WAL mode allows concurrent reads alongside writes and is
+            # significantly faster for write-heavy workloads (2-3× throughput).
+            conn.execute("PRAGMA journal_mode=WAL")
+            # NORMAL sync gives full crash safety with WAL (WAL itself is
+            # already durable; only a power-cut during a checkpoint is risky,
+            # which is acceptable for a local dev tool cache).
+            conn.execute("PRAGMA synchronous=NORMAL")
+            # 64 MB page cache — reduces I/O for large repos.
+            conn.execute("PRAGMA cache_size=-65536")
+            self._local.conn = conn
         return self._local.conn
 
     def _initialize_db(self) -> None:
@@ -102,23 +116,51 @@ class BathoCache:
                 ON file_tracking(is_indexed)
                 """
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS file_snapshots (
+                    file_path TEXT PRIMARY KEY,
+                    file_hash TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    encoding TEXT DEFAULT 'utf-8',
+                    entity_ids TEXT NOT NULL,
+                    gap_sections TEXT NOT NULL,
+                    shebang TEXT,
+                    encoding_declaration TEXT,
+                    file_level_comments TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS fs_idx_file_hash
+                ON file_snapshots(file_hash)
+                """
+            )
             now = datetime.now(timezone.utc).isoformat()
             cursor.execute(
                 """
                 INSERT OR IGNORE INTO cache_metadata (key, value, updated_at)
                 VALUES (?, ?, ?)
                 """,
-                ("schema_version", "1", now),
+                ("schema_version", "2", now),
             )
             conn.commit()
             self.logger.debug("cache_initialized", cache_path=str(self._path))
 
     def _migrate_schema(self) -> None:
+        """Apply incremental schema migrations."""
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
+
+            # Fetch ast_entries columns once — reuse for both migration checks
+            # (previously called PRAGMA table_info twice, doubling the work).
             cursor.execute("PRAGMA table_info(ast_entries)")
             ast_columns = {row[1] for row in cursor.fetchall()}
+
             if "relationships" not in ast_columns:
                 cursor.execute(
                     "ALTER TABLE ast_entries ADD COLUMN relationships TEXT"
@@ -127,6 +169,15 @@ class BathoCache:
                 cursor.execute(
                     "ALTER TABLE ast_entries ADD COLUMN ttl_days INTEGER DEFAULT 30"
                 )
+            if "raw_content" not in ast_columns:
+                cursor.execute(
+                    "ALTER TABLE ast_entries ADD COLUMN raw_content BLOB"
+                )
+            if "content_hash" not in ast_columns:
+                cursor.execute(
+                    "ALTER TABLE ast_entries ADD COLUMN content_hash TEXT"
+                )
+
             cursor.execute("PRAGMA table_info(file_tracking)")
             file_columns = {row[1] for row in cursor.fetchall()}
             if "is_indexed" not in file_columns:
@@ -137,9 +188,19 @@ class BathoCache:
 
     @staticmethod
     def _parse_timestamp(value: str) -> datetime:
+        """Parse an ISO-format timestamp string, falling back to *now* on error.
+
+        A warning is logged when the fallback is used so that timestamp
+        corruption does not silently mask TTL-expiry bugs.
+        """
         try:
             ts = datetime.fromisoformat(value)
-        except ValueError:
+        except (ValueError, TypeError):
+            logger.warning(
+                "cache_timestamp_parse_failed",
+                raw_value=str(value),
+                fallback="datetime.now(utc)",
+            )
             return datetime.now(timezone.utc)
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
@@ -203,7 +264,8 @@ class BathoCache:
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            entities_json = json.dumps([e.to_dict() for e in entities])
+            # Use agent view for cache to avoid storing raw_content/raw_bytes (storage view can be regenerated)
+            entities_json = json.dumps([e.to_dict(view="agent") for e in entities])
             relationships_json = json.dumps([r.to_dict() for r in relationships])
             cached_at = datetime.now(timezone.utc).isoformat()
             cursor.execute(
@@ -283,6 +345,11 @@ class BathoCache:
             return deleted
 
     def enforce_max_size(self, max_size_mb: int) -> int:
+        """Evict the oldest cached entries until the cache is within max_size_mb.
+
+        Uses a single batched DELETE with a subquery to avoid the previous
+        N+1 per-entry DELETE pattern.
+        """
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -298,9 +365,8 @@ class BathoCache:
 
             target_size_mb = max_size_mb * 0.9
             bytes_to_remove = int((total_size_mb - target_size_mb) * 1024 * 1024)
-            deleted_count = 0
-            bytes_removed = 0
 
+            # Collect hashes to evict (oldest-first) until bytes_to_remove is met.
             cursor.execute(
                 """
                 SELECT file_hash, LENGTH(entities) as size
@@ -309,17 +375,24 @@ class BathoCache:
                 """
             )
             rows = cursor.fetchall()
+            evict_hashes: list[str] = []
+            bytes_evicted = 0
             for row in rows:
-                if bytes_removed >= bytes_to_remove:
+                if bytes_evicted >= bytes_to_remove:
                     break
+                evict_hashes.append(row["file_hash"])
+                bytes_evicted += row["size"]
+
+            if evict_hashes:
+                # Single batched DELETE instead of N individual DELETEs.
+                placeholders = ",".join("?" * len(evict_hashes))
                 cursor.execute(
-                    "DELETE FROM ast_entries WHERE file_hash = ?", (row["file_hash"],)
+                    f"DELETE FROM ast_entries WHERE file_hash IN ({placeholders})",
+                    evict_hashes,
                 )
-                deleted_count += 1
-                bytes_removed += row["size"]
 
             conn.commit()
-            return deleted_count
+            return len(evict_hashes)
 
     # ------------------------------------------------------------------
     # File tracking methods
@@ -388,23 +461,31 @@ class BathoCache:
     def save_all(
         self, file_hashes: dict[str, str], root: Path, is_indexed: bool = False
     ) -> None:
+        """Upsert all file tracking records without a preceding DELETE.
+
+        Uses ``INSERT OR REPLACE`` (upsert) to update existing records
+        while preserving any records not in *file_hashes*.  This avoids the
+        previous delete-then-reinsert pattern which could leave the table
+        empty if the process crashed between the DELETE commit and the
+        subsequent INSERTs.
+        """
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            existing_indexed = {}
+            # Preserve the is_indexed flag for files already tracked.
             cursor.execute("SELECT file_path, is_indexed FROM file_tracking")
-            for row in cursor.fetchall():
-                existing_indexed[row["file_path"]] = row["is_indexed"]
+            existing_indexed = {
+                row["file_path"]: row["is_indexed"] for row in cursor.fetchall()
+            }
 
             logger.debug(
-                "save_all_preserving_indexed",
+                "save_all_upserting",
                 total_files=len(file_hashes),
                 existing_indexed_count=len(existing_indexed),
                 is_indexed_param=is_indexed,
             )
 
-            cursor.execute("DELETE FROM file_tracking")
             now = datetime.now(timezone.utc).isoformat()
             indexed_count = 0
             for file_path, content_hash in file_hashes.items():
@@ -422,7 +503,7 @@ class BathoCache:
                     indexed_count += 1
                 cursor.execute(
                     """
-                    INSERT INTO file_tracking
+                    INSERT OR REPLACE INTO file_tracking
                     (file_path, content_hash, mtime, size, is_indexed, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
@@ -438,12 +519,145 @@ class BathoCache:
             conn.commit()
             logger.debug(
                 "save_all_complete",
-                total_inserted=len(file_hashes),
+                total_upserted=len(file_hashes),
                 indexed_preserved=indexed_count,
             )
 
     def load_all(self) -> dict[str, str]:
         return self.get_all_file_hashes()
+
+    # ------------------------------------------------------------------
+    # File snapshot methods (Phase 5 - Storage Layer)
+    # ------------------------------------------------------------------
+
+    def set_file_snapshot(self, snapshot: FileSnapshot) -> None:
+        """Store a file snapshot for reconstruction across index runs.
+
+        Args:
+            snapshot: The FileSnapshot to persist.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            now = datetime.now(timezone.utc).isoformat()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO file_snapshots
+                (file_path, file_hash, file_size, encoding, entity_ids, gap_sections,
+                 shebang, encoding_declaration, file_level_comments, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot.file_path,
+                    snapshot.file_hash,
+                    snapshot.file_size,
+                    snapshot.encoding,
+                    json.dumps(snapshot.entity_ids),
+                    json.dumps(snapshot.gap_sections),
+                    snapshot.shebang,
+                    snapshot.encoding_declaration,
+                    json.dumps(snapshot.file_level_comments),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            self.logger.debug(
+                "file_snapshot_saved",
+                file_path=snapshot.file_path,
+                file_hash=snapshot.file_hash,
+            )
+
+    def get_file_snapshot(self, file_path: str) -> FileSnapshot | None:
+        """Retrieve a stored file snapshot.
+
+        Args:
+            file_path: The file path to look up.
+
+        Returns:
+            The FileSnapshot if found, None otherwise.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM file_snapshots WHERE file_path = ?",
+                (file_path,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+
+            return FileSnapshot(
+                file_path=row["file_path"],
+                file_hash=row["file_hash"],
+                file_size=row["file_size"],
+                encoding=row["encoding"],
+                entity_ids=json.loads(row["entity_ids"]),
+                gap_sections=json.loads(row["gap_sections"]),
+                shebang=row["shebang"],
+                encoding_declaration=row["encoding_declaration"],
+                file_level_comments=json.loads(row["file_level_comments"] or "[]"),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+
+    def delete_file_snapshot(self, file_path: str) -> None:
+        """Delete a stored file snapshot.
+
+        Args:
+            file_path: The file path of the snapshot to delete.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM file_snapshots WHERE file_path = ?",
+                (file_path,),
+            )
+            conn.commit()
+            self.logger.debug(
+                "file_snapshot_deleted",
+                file_path=file_path,
+            )
+
+    def get_all_file_snapshots(self) -> dict[str, FileSnapshot]:
+        """Retrieve all stored file snapshots in a single query.
+
+        Previously used an N+1 pattern (SELECT file_path ... then one
+        get_file_snapshot() per path).  Now fetches all rows in a single
+        ``SELECT *`` and deserializes them in-process.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM file_snapshots")
+            rows = cursor.fetchall()
+
+        result: dict[str, FileSnapshot] = {}
+        for row in rows:
+            try:
+                snap = FileSnapshot(
+                    file_path=row["file_path"],
+                    file_hash=row["file_hash"],
+                    file_size=row["file_size"],
+                    encoding=row["encoding"],
+                    entity_ids=json.loads(row["entity_ids"]),
+                    gap_sections=json.loads(row["gap_sections"]),
+                    shebang=row["shebang"],
+                    encoding_declaration=row["encoding_declaration"],
+                    file_level_comments=json.loads(row["file_level_comments"] or "[]"),
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                )
+                result[row["file_path"]] = snap
+            except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                logger.warning(
+                    "file_snapshot_deserialize_failed",
+                    file_path=row["file_path"],
+                    error=str(exc),
+                )
+        return result
 
     # ------------------------------------------------------------------
     # Cache management

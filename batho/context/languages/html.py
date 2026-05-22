@@ -23,6 +23,27 @@ from typing import Any
 from ..extractor import MarkupConfigExtractor
 from ..schema import Entity, EntityType, Relationship, RelationshipType
 
+# Precompiled regex patterns for performance
+_TAG_PATTERN = re.compile(
+    r"<([a-zA-Z][a-zA-Z0-9]*)"  # Tag name
+    r"([^>]*)"  # Attributes
+    r"(/?)>",  # Self-closing
+    re.IGNORECASE,
+)
+_ATTR_PATTERN = re.compile(
+    r"([a-zA-Z][a-zA-Z0-9\-:]*)"  # Attribute name
+    r'=(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+))',  # Value
+)
+_TITLE_PATTERN = re.compile(r"<title>([^<]*)</title>", re.IGNORECASE)
+_LINK_PATTERN = re.compile(
+    r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>',
+    re.IGNORECASE,
+)
+_STYLE_PATTERN = re.compile(
+    r'<link[^>]+rel=["\']stylesheet["\'][^>]+href=["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
+
 
 class HTMLExtractor(MarkupConfigExtractor):
     """Extractor for HTML files."""
@@ -66,7 +87,7 @@ class HTMLExtractor(MarkupConfigExtractor):
             # Track entity IDs for relationship building
             self._entity_ids: dict[str, Entity] = {}
 
-            for match in tag_pattern.finditer(content):
+            for match in _TAG_PATTERN.finditer(content):
                 tag_name = match.group(1).lower()
                 attrs_str = match.group(2)
                 is_self_closing = match.group(3) == "/"
@@ -79,12 +100,7 @@ class HTMLExtractor(MarkupConfigExtractor):
                 # Parse attributes into dict
                 element_attributes = {}
                 if attrs_str:
-                    attr_pattern = re.compile(
-                        r"([a-zA-Z][a-zA-Z0-9\-:]*)"  # Attribute name
-                        r'=(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+))',  # Value
-                    )
-
-                    for attr_match in attr_pattern.finditer(attrs_str):
+                    for attr_match in _ATTR_PATTERN.finditer(attrs_str):
                         attr_name = attr_match.group(1).lower()
                         # Get the value (can be in quotes or unquoted)
                         attr_value = (
@@ -143,7 +159,7 @@ class HTMLExtractor(MarkupConfigExtractor):
 
     def _extract_title(self, content: str) -> str | None:
         """Extract document title if present."""
-        title_match = re.search(r"<title>([^<]*)</title>", content, re.IGNORECASE)
+        title_match = _TITLE_PATTERN.search(content)
         if title_match:
             return title_match.group(1).strip()
         return None
@@ -180,12 +196,7 @@ class HTMLExtractor(MarkupConfigExtractor):
                     )
 
             # Extract LINKS_TO relationships (anchor links)
-            link_pattern = re.compile(
-                r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>',
-                re.IGNORECASE,
-            )
-
-            for match in link_pattern.finditer(content):
+            for match in _LINK_PATTERN.finditer(content):
                 href = match.group(1)
                 if href.startswith(("http://", "https://", "//")):
                     # External link
@@ -201,12 +212,7 @@ class HTMLExtractor(MarkupConfigExtractor):
                         )
 
             # Extract IMPORTS_STYLE relationships (stylesheet links)
-            style_pattern = re.compile(
-                r'<link[^>]+rel=["\']stylesheet["\'][^>]+href=["\']([^"\']+)["\']',
-                re.IGNORECASE,
-            )
-
-            for match in style_pattern.finditer(content):
+            for match in _STYLE_PATTERN.finditer(content):
                 stylesheet = match.group(1)
                 line_no = content[: match.start()].count("\n") + 1
                 if doc:
