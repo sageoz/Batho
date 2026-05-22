@@ -34,7 +34,7 @@ batho cache stats
 
 ```
 📊 AST Cache Statistics
-  Cache path: .ctn/local/cache/ast_cache.db
+  Cache path: .ctn/local/cache/cache.db
   Entry count: 1523
   Total size: 45.2 MB
   Oldest entry: 2026-05-10T08:30:00Z

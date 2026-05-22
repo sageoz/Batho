@@ -49,6 +49,10 @@ inputs:
     description: "Extra arguments appended to `batho index` (advanced)."
     required: false
     default: ""
+  verify:
+    description: "Whether to run `batho verify --all` after indexing (\"true\" or \"false\")."
+    required: false
+    default: "false"
 
 outputs:
   index-id:
@@ -124,6 +128,18 @@ runs:
           INDEX_ID="$(python -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('current_index_id') or '')" "${INDEX_JSON}")"
         fi
         echo "index-id=${INDEX_ID}" >> "${GITHUB_OUTPUT}"
+
+    - name: Verify BSG integrity
+      if: ${{ inputs.verify == 'true' }}
+      shell: bash
+      env:
+        BATHO_ROOT: ${{ inputs.root }}
+      run: |
+        set -euo pipefail
+        ROOT_ABS="$(cd "${GITHUB_WORKSPACE}/${BATHO_ROOT}" && pwd)"
+        echo "Verifying BSG integrity for: ${ROOT_ABS}"
+        batho verify --all --root "${ROOT_ABS}" --report-json "${ROOT_ABS}/.ctn/verify-report.json"
+        echo "✅ BSG integrity check completed"
 
     - name: Write Step Summary
       if: ${{ inputs.summary == 'true' }}

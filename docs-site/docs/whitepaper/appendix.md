@@ -14,7 +14,7 @@ description: "Schema versions, directory structure, and glossary"
 | BSG | `bsg.v1` | `.ctn/<id>/bsg.json` |
 | Snapshot | `snapshot.v1` | `.ctn/snapshots/<id>.json` |
 | Index Metadata | `index-metadata.v1` | `.ctn/index.json` |
-| File Cache | `file-cache.v1` | `.ctn/local/cache/ast_cache.db` |
+| File Cache | `file-cache.v1` | `.ctn/local/cache/cache.db` |
 | BSG Plugin | `bsg-plugin.v1` | `batho/bsg/schemas/bsg-plugin-schema-v1.json` |
 
 ### Schema Dependency Graph
@@ -35,7 +35,7 @@ flowchart TB
     end
 
     subgraph Cache["Cache Layer"]
-        AST_DB["ast_cache.db<br/>(file-cache.v1)"]
+        AST_DB["cache.db<br/>(file-cache.v1)"]
     end
 
     BATHO_YAML -->|"Configures"| IDX
@@ -61,7 +61,7 @@ flowchart TB
 ├── index.json                    # Index metadata + history
 ├── local/
 │   ├── cache/
-│   │   └── ast_cache.db          # SQLite AST entity cache
+│   │   └── cache.db               # SQLite AST entity cache
 │   ├── metrics/
 │   │   └── metrics.json          # Indexing performance metrics
 │   └── sync/

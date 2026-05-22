@@ -104,7 +104,7 @@ bsg:
     chunk_size: 50
   cache:
     enabled: true
-    path: .ctn/local/cache/ast_cache.db
+    path: .ctn/local/cache/cache.db
     max_size_mb: 1024
     ttl_days: 30
   query:

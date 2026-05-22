@@ -22,7 +22,7 @@ batho invalidate --root /path/to/repo
 
 ## What It Does
 
-The `invalidate` command deletes the AST cache database at `.ctn/local/cache/ast_cache.db`. This cache stores parsed tree-sitter AST results to avoid re-parsing unchanged files.
+The `invalidate` command deletes the AST cache database at `.ctn/local/cache/cache.db`. This cache stores parsed tree-sitter AST results to avoid re-parsing unchanged files.
 
 Clearing this cache forces Batho to re-parse all files on the next `index` operation, even if they haven't changed.
 
