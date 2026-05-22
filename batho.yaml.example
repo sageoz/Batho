@@ -112,7 +112,7 @@ bsg:
 
   cache:
     enabled: true
-    path: .ctn/local/cache.db
+    path: .ctn/local/cache/cache.db
     max_size_mb: 1024
     ttl_days: 30
 
@@ -163,3 +163,9 @@ bsg:
       context_ttl_days: 90
       max_snapshots: 500
       max_patches: 5000
+
+  # Bidirectional BSG (lossless reconstruction support)
+  bidirectional:
+    enabled: true            # Enable bidirectional BSG features
+    include_gaps: true       # Emit SYNTAX_GLUE entities for 100% byte coverage
+    storage_view: true       # Persist raw_content in storage view (required for reconstruction)
