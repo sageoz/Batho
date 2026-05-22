@@ -74,6 +74,31 @@ batho patch --root . --scan
 
 ### ✨ Major New Features
 
+**BSG Bidirectional Graph — Lossless File Reconstruction**
+
+- **Full byte coverage**: Gap extraction (`SYNTAX_GLUE` entities) captures every byte between semantic entities, including whitespace, comments, and blank lines
+- **Deterministic reconstruction**: `FileReconstructor` reassembles original files from BSG entities with integrity verification (SHA-256 hash matching)
+- **Dual-view rendering**: Storage view (full fidelity with `raw_content`) for reconstruction; Agent view (compressed, excludes `SYNTAX_GLUE`) for LLM context
+- **Backward-compatible schema**: Existing serialized graphs load without changes; new fields have safe defaults
+- **CLI commands**: `batho reconstruct --file <path>` for file reconstruction, `batho verify --all` for bulk integrity checks, `batho export --bsg --file <path>` for export
+- **CLI flags**: `--with-gaps` enables gap extraction during indexing, `--storage-view` persists raw content for reconstruction
+- **CI integration**: `batho verify --all` can be added to any workflow to catch regressions in indexed artifacts
+- **Config**: `bsg.bidirectional.enabled`, `bsg.bidirectional.include_gaps`, `bsg.bidirectional.storage_view`
+
+```bash
+# Index with gap extraction for reconstruction
+batho index --root . --with-gaps --storage-view
+
+# Verify integrity of all indexed files
+batho verify --all --root . --report-json verify-report.json
+
+# Reconstruct a single file from BSG entities
+batho reconstruct src/main.py --root . --output /tmp/main.py
+
+# Export a file as reconstructed output
+batho export --bsg --file src/main.py --root . --output /tmp/main.py
+```
+
 **MCP Hub — Multi-Workspace Context Server**
 
 - **Multi-workspace support**: Manage 100+ codebases from one endpoint
@@ -470,7 +495,7 @@ indexer:
 bsg:
   cache:
     enabled: true
-    path: .ctn/local/cache.db
+    path: .ctn/local/cache/cache.db
   symbol_resolution:
     enabled: true
     fuzzy_matching: false
