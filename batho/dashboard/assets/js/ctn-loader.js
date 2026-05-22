@@ -779,6 +779,41 @@ export async function loadFileContent(filePath, indexId) {
   return normalize(data);
 }
 
+export async function getSnapshotFileList(snapshotId) {
+  const snapshot = await loadSnapshotJson(snapshotId);
+  const filesMap = new Map();
+  const entitiesById = {};
+  
+  for (const entity of snapshot.entities || []) {
+    entitiesById[entity.id] = entity;
+    const file = entity.file || '';
+    if (!filesMap.has(file)) {
+      filesMap.set(file, { path: file, entityCount: 0, entities: [] });
+    }
+    const fileEntry = filesMap.get(file);
+    fileEntry.entities.push(entity);
+    fileEntry.entityCount++;
+  }
+  
+  return {
+    files: Array.from(filesMap.values()),
+    relationships: snapshot.graph?.relationships || snapshot.relationships || [],
+    entitiesById
+  };
+}
+
+export async function getBsgFileEntities(indexId, filePath) {
+  const bsg = await loadBsg(indexId);
+  return (bsg.nodes || bsg.entities || []).filter(n => n.file === filePath);
+}
+
+export async function loadFileReconstruction(indexId, filePath) {
+  const encodedPath = encodeURIComponent(filePath);
+  const url = `file-reconstruction?path=${encodedPath}&index_id=${encodeURIComponent(indexId)}`;
+  const data = await bridgeGet(url);
+  return normalize(data);
+}
+
 export {
   MissingArtifactError,
   ParseError,

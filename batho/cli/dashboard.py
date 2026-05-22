@@ -140,11 +140,152 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Expires", "0")
         super().end_headers()
 
+    def _handle_file_reconstruction(self, query: dict[str, list[str]]) -> None:
+        """Handle GET /api/v1/bridge/file-reconstruction for the dashboard."""
+        import json
+        from pathlib import Path
+
+        path_param = query.get("path", [""])[0]
+        index_id = query.get("index_id", [""])[0]
+
+        if not path_param or not index_id:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": {"message": "path and index_id required"}}).encode())
+            return
+
+        # Try storage view first (has raw_content), fall back to agent view
+        bsg_path = self._ctn_dir / index_id / "bsg_storage_view.json"
+        if not bsg_path.exists():
+            LOGGER.info("Storage view not found, falling back to agent view", bsg_path=str(bsg_path))
+            bsg_path = self._ctn_dir / index_id / "bsg.json"
+        else:
+            LOGGER.info("Using storage view", bsg_path=str(bsg_path))
+        
+        if not bsg_path.exists():
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": {"message": f"BSG not found: {bsg_path}"}}).encode())
+            return
+
+        try:
+            bsg_data = json.loads(bsg_path.read_text(encoding="utf-8"))
+            
+            # Handle both storage view (file-based) and regular BSG (flat nodes) structures
+            if "files" in bsg_data:
+                # Storage view structure: { "files": [{ "file_path": "...", "entities": [...] }] }
+                bsg_root = bsg_data.get("root", str(self._ctn_dir.parent))  # Default to project root
+                relative_path = path_param
+                if bsg_root and path_param.startswith(bsg_root):
+                    relative_path = path_param[len(bsg_root):].lstrip("/")
+                
+                LOGGER.info("Path conversion", bsg_root=bsg_root, path_param=path_param, relative_path=relative_path)
+                
+                file_entities = []
+                file_found = False
+                for file_entry in bsg_data.get("files", []):
+                    # Storage view uses relative paths in file_path field
+                    entry_path = file_entry.get("file_path", "")
+                    LOGGER.debug("Checking file entry", entry_path=entry_path, relative_path=relative_path, path_param=path_param, match=(entry_path == relative_path or entry_path == path_param))
+                    if entry_path == relative_path or entry_path == path_param:
+                        file_entities = file_entry.get("entities", [])
+                        file_found = True
+                        LOGGER.info("Found file in storage view", entry_path=entry_path, entity_count=len(file_entities))
+                        break
+                
+                if not file_found:
+                    LOGGER.warning("File not found in storage view", relative_path=relative_path, path_param=path_param, total_files=len(bsg_data.get("files", [])))
+            else:
+                # Regular BSG structure: { "nodes": [...] }
+                nodes = bsg_data.get("nodes", bsg_data.get("entities", []))
+                
+                # BSG uses relative paths from the root, convert absolute path to relative
+                bsg_root = bsg_data.get("root", "")
+                relative_path = path_param
+                if bsg_root and path_param.startswith(bsg_root):
+                    relative_path = path_param[len(bsg_root):].lstrip("/")
+                
+                # Filter by path (try both relative and absolute)
+                file_entities = [n for n in nodes if n.get("file") == relative_path or n.get("file") == path_param]
+            if not file_entities:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": {"message": f"File not found in BSG: {path_param}"}}).encode())
+                return
+
+            # Sort by start_byte
+            file_entities.sort(key=lambda x: x.get("start_byte", x.get("startByte", 0)))
+            
+            reconstructed_content = ""
+            try:
+                from batho.context.reconstructor import FileReconstructor
+                from batho.context.schema import Entity
+                reconstructor = FileReconstructor()
+                
+                # Convert JSON dicts to Entity objects
+                entity_objects = [Entity.from_dict(e) for e in file_entities]
+                result = reconstructor.reconstruct_file(file_path=path_param, entities=entity_objects)
+                reconstructed_content = result.reconstructed_content
+            except Exception as e:
+                LOGGER.warning("FileReconstructor failed, falling back to simple concatenation", error=str(e))
+                # Fallback to simple concatenation
+                parts = []
+                for e in file_entities:
+                    if "raw_content" in e:
+                        parts.append(e["raw_content"])
+                    elif "raw_bytes" in e:
+                        try:
+                            raw_bytes_val = e["raw_bytes"]
+                            if isinstance(raw_bytes_val, str) and raw_bytes_val:
+                                parts.append(bytes.fromhex(raw_bytes_val).decode("utf-8"))
+                            elif isinstance(raw_bytes_val, bytes):
+                                parts.append(raw_bytes_val.decode("utf-8"))
+                        except Exception:
+                            pass
+                reconstructed_content = "".join(parts)
+
+            # Build response
+            syntax_glue_count = sum(1 for e in file_entities if e.get("type", "").upper() == "SYNTAX_GLUE")
+            response_data = {
+                "ok": True,
+                "data": {
+                    "content": reconstructed_content,
+                    "entities": file_entities,
+                    "metadata": {
+                        "entityCount": len(file_entities),
+                        "hasSyntaxGlue": syntax_glue_count > 0,
+                        "syntaxGlueCount": syntax_glue_count
+                    }
+                }
+            }
+            
+            body = json.dumps(response_data).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
+        except Exception as exc:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": {"message": str(exc)}}).encode())
+
+
     def do_GET(self):
         """Handle GET requests."""
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path.startswith("/api/v1/"):
             query = urllib.parse.parse_qs(parsed.query)
+            
+            if parsed.path == "/api/v1/bridge/file-reconstruction":
+                return self._handle_file_reconstruction(query)
+
             body, status, headers = self._get_bridge_api().dispatch(parsed.path, query)
             self.send_response(status)
             for key, value in headers.items():

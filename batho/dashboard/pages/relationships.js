@@ -11,7 +11,7 @@
  * - Enterprise icons and animations
  */
 
-import { loadIndex, loadGraph, MissingArtifactError } from '../assets/js/ctn-loader.js';
+import { loadIndex, getSnapshotFileList, MissingArtifactError } from '../assets/js/ctn-loader.js';
 import { formatInt } from '../assets/js/format.js';
 import { createDataTable, setRows } from '../shared/components/data-table.js';
 import { createChipFilter, setChipActive } from '../shared/components/chip-filter.js';
@@ -41,7 +41,7 @@ const ICONS = {
   gitBranch: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>`,
   layers: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
   code: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
-  activity: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`,
+  activity: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 6 12 2 12"/></svg>`,
 };
 
 // Render summary card for metrics
@@ -81,7 +81,12 @@ export async function renderRelationships(params) {
       ? savedIndexId
       : indexData.currentIndexId;
 
-    const graphData = await loadGraph(activeIndexId).catch((err) => {
+    const snapshotId = indexData.indexes[activeIndexId]?.snapshotId || indexData.indexes[activeIndexId]?.snapshot_id;
+    if (!snapshotId) {
+      throw new Error(`No snapshot available for index ${activeIndexId}`);
+    }
+
+    const graphData = await getSnapshotFileList(snapshotId).catch((err) => {
       if (err.name === 'MissingArtifactError') return null;
       throw err;
     });

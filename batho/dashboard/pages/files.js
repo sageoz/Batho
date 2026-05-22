@@ -2,7 +2,7 @@
  * Files page - categorized file tree + flat document list.
  */
 
-import { loadIndex, loadFiles, loadGraph, MissingArtifactError } from '../assets/js/ctn-loader.js';
+import { loadIndex, getSnapshotFileList, MissingArtifactError } from '../assets/js/ctn-loader.js';
 import { formatInt } from '../assets/js/format.js';
 import { filterByGlob } from '../assets/js/glob.js';
 import { router } from '../assets/js/router.js';
@@ -30,16 +30,63 @@ export async function renderFiles(params) {
       ? savedIndexId
       : indexData.currentIndexId;
 
-    const [filesDoc, graphData] = await Promise.all([
-      loadFiles(activeIndexId).catch((err) => {
-        if (err.name === 'MissingArtifactError') return null;
-        throw err;
-      }),
-      loadGraph(activeIndexId).catch((err) => {
-        if (err.name === 'MissingArtifactError') return null;
-        throw err;
-      }),
-    ]);
+    const snapshotId = indexData.indexes[activeIndexId]?.snapshotId || indexData.indexes[activeIndexId]?.snapshot_id;
+    if (!snapshotId) {
+      throw new Error(`No snapshot available for index ${activeIndexId}`);
+    }
+
+    const snapshotData = await getSnapshotFileList(snapshotId).catch((err) => {
+      if (err.name === 'MissingArtifactError') return null;
+      throw err;
+    });
+
+    let filesDoc = null;
+    let graphData = null;
+
+    if (snapshotData) {
+      const filesList = snapshotData.files;
+      const totalFiles = filesList.length;
+      let totalEntities = 0;
+
+      const dirMap = new Map();
+      for (const f of filesList) {
+        totalEntities += f.entityCount;
+        const parts = f.path.split('/');
+        const dirPath = parts.length > 1 ? parts.slice(0, -1).join('/') : '.';
+        const name = parts[parts.length - 1];
+
+        if (!dirMap.has(dirPath)) {
+          dirMap.set(dirPath, { path: dirPath, files: [] });
+        }
+
+        const breakdown = {};
+        for (const e of f.entities) {
+           const t = e.type || 'UNKNOWN';
+           breakdown[t] = (breakdown[t] || 0) + 1;
+        }
+
+        dirMap.get(dirPath).files.push({
+          name,
+          relativePath: f.path,
+          entitySummary: { total: f.entityCount, breakdown },
+          entities: f.entities
+        });
+      }
+
+      filesDoc = {
+        summary: { totalFiles, totalEntities },
+        categories: [{
+          name: "Files",
+          fileCount: totalFiles,
+          entityCount: totalEntities,
+          directories: Array.from(dirMap.values()).sort((a, b) => a.path.localeCompare(b.path))
+        }]
+      };
+
+      graphData = {
+        entities: Object.values(snapshotData.entitiesById)
+      };
+    }
 
     let viewMode = 'tree';
     let globFilter = '';
@@ -198,7 +245,7 @@ export async function renderFiles(params) {
             return;
           }
           const path = row.dataset.path;
-          if (path) router.navigate('/file/' + encodeURIComponent(path));
+          if (path) router.navigate('/file/' + encodeURIComponent(path), { indexId: activeIndexId });
         });
       });
     }

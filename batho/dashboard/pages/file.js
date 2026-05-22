@@ -2,24 +2,27 @@
  * File viewer page - displays source code with syntax highlighting and optional BSG mode.
  */
 
-import { loadFileContent, loadIndex, MissingArtifactError } from '../assets/js/ctn-loader.js';
+import { loadFileReconstruction, loadIndex, MissingArtifactError } from '../assets/js/ctn-loader.js';
 import { router } from '../assets/js/router.js';
 
 export async function renderFile(params) {
   const filePath = params.get('filePath');
-  let indexId = localStorage.getItem('batho.activeIndexId');
+  let indexId = params.get('indexId');
   
-  // Fallback: if no active index, try to get current index from API
   if (!indexId) {
-    try {
-      const indexData = await loadIndex();
-      indexId = indexData.currentIndexId;
-      if (indexId) {
-        localStorage.setItem('batho.activeIndexId', indexId);
-        console.log('[file viewer] set active index from API:', indexId);
+    indexId = localStorage.getItem('batho.activeIndexId');
+    // Fallback: if no active index, try to get current index from API
+    if (!indexId) {
+      try {
+        const indexData = await loadIndex();
+        indexId = indexData.currentIndexId;
+        if (indexId) {
+          localStorage.setItem('batho.activeIndexId', indexId);
+          console.log('[file viewer] set active index from API:', indexId);
+        }
+      } catch (e) {
+        console.warn('[file viewer] could not load index:', e);
       }
-    } catch (e) {
-      console.warn('[file viewer] could not load index:', e);
     }
   }
 
@@ -42,16 +45,17 @@ export async function renderFile(params) {
   }
 
   try {
-    console.log('[file viewer] loading file:', { filePath, indexId });
-    const fileData = await loadFileContent(filePath, indexId);
+    console.log('[file viewer] loading reconstructed file:', { filePath, indexId });
+    const fileData = await loadFileReconstruction(indexId, filePath);
+    
+    const content = fileData.content || '';
+    const entities = fileData.entities || [];
+    const metadata = fileData.metadata || {};
     
     // Debug: log what we received
-    console.log('[file viewer] fileData:', {
-      hasEntities: fileData.hasEntities,
-      entityCount: fileData.entityCount,
-      entitiesLength: fileData.entities?.length,
-      language: fileData.language,
-      path: fileData.path
+    console.log('[file viewer] reconstructed data:', {
+      entityCount: metadata.entityCount,
+      hasSyntaxGlue: metadata.hasSyntaxGlue
     });
 
     // Build breadcrumb from file path
@@ -61,6 +65,7 @@ export async function renderFile(params) {
 
     const fileExt = fileName.split('.').pop()?.toLowerCase() || '';
     const fileIcon = getFileIconForExt(fileExt);
+    const language = fileExt || 'plaintext';
     
     container.innerHTML = `
       <div class="file-viewer">
@@ -72,14 +77,6 @@ export async function renderFile(params) {
               Files
             </button>
             <div class="file-actions">
-              <button class="file-btn file-btn--toggle ${fileData.hasEntities ? '' : 'file-btn--disabled'}" 
-                      data-action="toggle-bsg" 
-                      ${fileData.hasEntities ? '' : 'disabled'}
-                      title="Toggle BSG entity highlighting">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-                <span class="toggle-label">BSG</span>
-                <span class="toggle-state">OFF</span>
-              </button>
               <button class="file-btn file-btn--copy" data-action="copy" title="Copy to clipboard">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                 <span class="btn-label">Copy</span>
@@ -94,18 +91,22 @@ export async function renderFile(params) {
             <span class="file-meta__icon">${fileIcon}</span>
             <span class="file-meta__item file-meta__filename">${escapeHtml(fileName)}</span>
             <span class="file-meta__sep">·</span>
-            <span class="file-meta__item">${fileData.totalLines || 0} lines</span>
+            <span class="file-meta__item" style="color: var(--accent-cyan)">Reconstructed from BSG</span>
             <span class="file-meta__sep">·</span>
-            <span class="file-meta__item">${formatBytes(fileData.sizeBytes || 0)}</span>
-            ${fileData.hasEntities ? `
+            <span class="file-meta__item">${content.split('\\n').length} lines</span>
+            <span class="file-meta__sep">·</span>
+            <span class="file-meta__item">${formatBytes(new TextEncoder().encode(content).length)}</span>
+            <span class="file-meta__sep">·</span>
+            <span class="file-meta__item">${metadata.entityCount || 0} entities</span>
+            ${metadata.hasSyntaxGlue ? `
               <span class="file-meta__sep">·</span>
-              <span class="file-meta__item">${fileData.entityCount || 0} entities</span>
+              <span class="file-meta__item" style="color: var(--primary-container)">${metadata.syntaxGlueCount} SYNTAX_GLUE</span>
             ` : ''}
           </div>
         </div>
         
         <div class="file-content-wrapper">
-          <div class="file-entity-sidebar" id="entity-sidebar" style="display: none;">
+          <div class="file-entity-sidebar" id="entity-sidebar" style="display: flex;">
             <div class="entity-sidebar__header">
               <span>Entities</span>
               <span class="entity-sidebar__count" id="entity-count"></span>
@@ -115,7 +116,7 @@ export async function renderFile(params) {
           </div>
           
           <div class="file-code-container">
-            <pre class="file-code"><code class="language-${fileData.language || 'plaintext'}" id="code-block"></code></pre>
+            <pre class="file-code"><code class="language-${language}" id="code-block"></code></pre>
           </div>
         </div>
       </div>
@@ -123,31 +124,9 @@ export async function renderFile(params) {
 
     // Render code content
     const codeBlock = container.querySelector('#code-block');
-    const content = fileData.content || '';
-    
-    // Store raw content for BSG mode and raw view
     codeBlock.dataset.rawContent = content;
-    codeBlock.dataset.language = fileData.language || 'plaintext';
-    if (fileData.entities && fileData.entities.length > 0) {
-      // Limit entities to prevent dataset attribute overflow (browser limit ~1-2MB)
-      // Keep only essential fields and cap at 1000 entities
-      const MAX_ENTITIES = 1000;
-      const limitedEntities = fileData.entities.slice(0, MAX_ENTITIES).map(e => ({
-        id: e.id,
-        name: e.name,
-        type: e.type,
-        startLine: e.startLine,
-        endLine: e.endLine
-      }));
-      codeBlock.dataset.entities = JSON.stringify(limitedEntities);
-      if (fileData.entities.length > MAX_ENTITIES) {
-        console.warn(`[file viewer] Entity count capped from ${fileData.entities.length} to ${MAX_ENTITIES}`);
-      }
-    }
+    codeBlock.dataset.language = language;
     
-    // Render with line numbers and syntax highlighting
-    renderCodeWithLineNumbers(codeBlock, content);
-
     // Wire up buttons
     const backBtn = container.querySelector('[data-action="back"]');
     if (backBtn) {
@@ -164,10 +143,21 @@ export async function renderFile(params) {
       rawBtn.addEventListener('click', () => viewRaw(filePath, content));
     }
 
-    const toggleBtn = container.querySelector('[data-action="toggle-bsg"]');
-    if (toggleBtn && fileData.hasEntities) {
-      toggleBtn.addEventListener('click', () => toggleBsgMode(container, toggleBtn));
-    }
+    // Always ON BSG Mode
+    const sidebar = container.querySelector('#entity-sidebar');
+    const entityList = container.querySelector('#entity-list');
+    const entityCount = container.querySelector('#entity-count');
+    const entityFilter = container.querySelector('#entity-filter');
+
+    highlightEntities(codeBlock, entities);
+    renderEntitySidebar(entityList, entities, entityCount);
+    renderEntityFilter(entityFilter, entities, (filteredType) => {
+      const filtered = filteredType 
+        ? entities.filter(e => (e.type || 'unknown').toLowerCase() === filteredType)
+        : entities;
+      renderEntitySidebar(entityList, filtered, entityCount);
+      highlightEntities(codeBlock, filtered);
+    });
 
     // Wire up breadcrumb navigation
     container.querySelectorAll('.breadcrumb-part[data-nav="files"]').forEach((el) => {
@@ -228,49 +218,6 @@ function buildBreadcrumb(pathParts) {
       </span>
     `;
   }).join('');
-}
-
-function toggleBsgMode(container, btn) {
-  const codeBlock = container.querySelector('#code-block');
-  const sidebar = container.querySelector('#entity-sidebar');
-  const entityList = container.querySelector('#entity-list');
-  const entityCount = container.querySelector('#entity-count');
-  const entityFilter = container.querySelector('#entity-filter');
-  const toggleState = btn.querySelector('.toggle-state');
-  
-  const isCurrentlyOn = toggleState.textContent === 'ON';
-  const newState = !isCurrentlyOn;
-  
-  toggleState.textContent = newState ? 'ON' : 'OFF';
-  btn.classList.toggle('file-btn--active', newState);
-  
-  if (newState) {
-    // Enable BSG mode
-    let entities = [];
-    try {
-      entities = JSON.parse(codeBlock.dataset.entities || '[]');
-    } catch (e) {
-      console.error('[file viewer] Failed to parse entities:', e);
-      entities = [];
-    }
-    highlightEntities(codeBlock, entities);
-    renderEntitySidebar(entityList, entities, entityCount);
-    renderEntityFilter(entityFilter, entities, (filteredType) => {
-      const filtered = filteredType 
-        ? entities.filter(e => (e.type || 'unknown').toLowerCase() === filteredType)
-        : entities;
-      renderEntitySidebar(entityList, filtered, entityCount);
-      highlightEntities(codeBlock, filtered);
-    });
-    sidebar.style.display = 'flex';
-  } else {
-    // Disable BSG mode
-    const rawContent = codeBlock.dataset.rawContent;
-    sidebar.style.display = 'none';
-    
-    // Re-render with line numbers and syntax highlighting
-    renderCodeWithLineNumbers(codeBlock, rawContent);
-  }
 }
 
 function renderEntityFilter(container, entities, onFilter) {
