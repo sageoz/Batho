@@ -191,8 +191,64 @@ def cmd_plugins_trace(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plugins_verify_bidirectional(args: argparse.Namespace) -> int:
+    """Validate bidirectional flow integrity via BSG plugins."""
+    root = _resolve_root(args)
+    if not root.exists() or not root.is_dir():
+        print(f"root does not exist or is not a directory: {root}")
+        return 1
+
+    cfg = get_config_cached_for_root(root)
+    rules_cfg = (cfg.get("bsg", {}) or {}).get("rules", {}) if isinstance(cfg, dict) else {}
+
+    ctn_dir_name = str(
+        (cfg.get("paths", {}) or {}).get("ctn_dir", ".ctn")
+        if isinstance(cfg, dict)
+        else ".ctn"
+    )
+    ctn_dir = root / ctn_dir_name
+    index_meta_path = ctn_dir / "index.json"
+    if not index_meta_path.exists():
+        print("no .ctn/index.json found — run 'batho index' first")
+        return 1
+
+    try:
+        index_meta = json.loads(index_meta_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"failed to read index metadata: {exc}")
+        return 1
+
+    current_index_id = str(index_meta.get("current_index_id") or "").strip()
+    if not current_index_id:
+        print("no current_index_id recorded in index.json")
+        return 1
+
+    try:
+        from batho.context.graph_cache import load_cached_graph
+        graph = load_cached_graph(ctn_dir, current_index_id)
+    except Exception as exc:
+        print(f"failed to load cached graph: {exc}")
+        return 1
+
+    if graph is None:
+        print(f"no cached graph for index_id={current_index_id}")
+        return 1
+
+    summary = apply_rule_plugins(
+        graph=graph,
+        root_path=root,
+        rules_config=rules_cfg,
+        profile=bool(getattr(args, "profile", False)),
+        trace=bool(getattr(args, "trace", False)),
+        bidirectional_only=True,
+    )
+
+    print(json.dumps(summary, indent=2, default=str))
+    return 0
+
+
 def register_cli_subcommands(plugins_sub: argparse._SubParsersAction[Any]) -> None:
-    """Attach ``test``, ``validate-strict`` and ``trace`` subparsers to
+    """Attach ``test``, ``validate-strict``, ``trace`` and ``verify-bidirectional`` subparsers to
     an existing ``plugins`` subparser group (see ``batho_cli.build_parser``).
     """
 
@@ -254,10 +310,28 @@ def register_cli_subcommands(plugins_sub: argparse._SubParsersAction[Any]) -> No
     )
     trace_parser.set_defaults(func=cmd_plugins_trace)
 
+    verify_bidir_parser = plugins_sub.add_parser(
+        "verify-bidirectional",
+        help="Validate bidirectional flow integrity via BSG plugins",
+    )
+    verify_bidir_parser.add_argument("--root", required=True, help="Repository root")
+    verify_bidir_parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Collect per-rule timing and persist .ctn/bsg_perf.json",
+    )
+    verify_bidir_parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Emit detailed trace log for bidirectional plugin execution",
+    )
+    verify_bidir_parser.set_defaults(func=cmd_plugins_verify_bidirectional)
+
 
 __all__ = [
     "cmd_plugins_test",
     "cmd_plugins_trace",
     "cmd_plugins_validate_strict",
+    "cmd_plugins_verify_bidirectional",
     "register_cli_subcommands",
 ]

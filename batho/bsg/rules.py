@@ -9,7 +9,6 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
-import pickle
 import re
 import time
 from collections import defaultdict
@@ -35,8 +34,8 @@ if TYPE_CHECKING:
 
 _LOGGER = get_logger(__name__, component="bsg_rules")
 
-_SCHEMA_VERSION = "bsg-plugin.v1"
-_CACHE_SCHEMA_VERSION = "bsg-rules-cache.v1"
+_SCHEMA_VERSION = "bsg-plugin.v2"
+_CACHE_SCHEMA_VERSION = "bsg-rules-cache.v2"
 _CACHE_FILENAME = "rules_cache.bin"
 _INTERCEPTION_SCHEMA_VERSION = "interception-stats.v1"
 _INTERCEPTION_FILENAME = "interception_stats.json"
@@ -45,6 +44,13 @@ _PERF_FILENAME = "bsg_perf.json"
 
 _PLUGIN_ALIASES: dict[str, str] = {
     "bsg_core": "bsg_graph_foundation",
+}
+
+_ENTITY_TYPE_ALIASES: dict[str, str] = {
+    "SYNTAX_GLUE": "SYNTAX_GLUE",
+    "GLOBAL_STATEMENT": "GLOBAL_STATEMENT",
+    "IMPORT_BLOCK": "IMPORT_BLOCK",
+    "COMMENT_BLOCK": "COMMENT_BLOCK",
 }
 
 _EDGE_ALIASES: dict[str, str] = {
@@ -231,6 +237,16 @@ class ASTEdgeMatcher:
     target_metadata_equals: tuple[tuple[str, Any], ...] = ()
     min_count: int = 1
 
+    _target_entity_types_set: set[str] = field(init=False, repr=False, compare=False, default_factory=set)
+    _target_usn_tags_any_set: set[str] = field(init=False, repr=False, compare=False, default_factory=set)
+    _target_name_patterns_lower: tuple[str, ...] = field(init=False, repr=False, compare=False, default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_target_entity_types_set", set(self.target_entity_types))
+        object.__setattr__(self, "_target_usn_tags_any_set", set(self.target_usn_tags_any))
+        object.__setattr__(self, "_target_name_patterns_lower", tuple(p.lower() for p in self.target_name_patterns))
+
+
 
 @dataclass(frozen=True)
 class MetadataCondition:
@@ -278,6 +294,36 @@ class RuleMatch:
     ast_edges_any: tuple[ASTEdgeMatcher, ...] = ()
     ast_edges_all: tuple[ASTEdgeMatcher, ...] = ()
     metadata_conditions: tuple[MetadataCondition, ...] = ()
+    # Bidirectional matchers (v2)
+    gap_entity_types: tuple[str, ...] = ()
+    has_raw_content: bool | None = None
+    has_coverage_gap: bool | None = None
+    byte_range_start: int | None = None
+    byte_range_end: int | None = None
+    content_hash_pattern: str | None = None
+
+    _entity_types_set: set[str] = field(init=False, repr=False, compare=False, default_factory=set)
+    _usn_tags_any_set: set[str] = field(init=False, repr=False, compare=False, default_factory=set)
+    _name_patterns_lower: tuple[str, ...] = field(init=False, repr=False, compare=False, default_factory=tuple)
+    _file_patterns_lower: tuple[str, ...] = field(init=False, repr=False, compare=False, default_factory=tuple)
+    _gap_entity_types_lower: tuple[str, ...] = field(init=False, repr=False, compare=False, default_factory=tuple)
+    _compiled_hash_pattern: "re.Pattern[str] | None" = field(init=False, repr=False, compare=False, default=None)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_entity_types_set", set(self.entity_types))
+        object.__setattr__(self, "_usn_tags_any_set", set(self.usn_tags_any))
+        object.__setattr__(self, "_name_patterns_lower", tuple(p.lower() for p in self.name_patterns))
+        object.__setattr__(self, "_file_patterns_lower", tuple(p.lower() for p in self.file_patterns))
+        object.__setattr__(self, "_gap_entity_types_lower", tuple(t.lower() for t in self.gap_entity_types))
+        if self.content_hash_pattern is not None:
+            try:
+                compiled = re.compile(self.content_hash_pattern)
+                object.__setattr__(self, "_compiled_hash_pattern", compiled)
+            except re.error as exc:
+                raise ValueError(
+                    f"Invalid content_hash_pattern regex {self.content_hash_pattern!r}: {exc}"
+                ) from exc
+
 
 
 @dataclass(frozen=True)
@@ -298,6 +344,13 @@ class RuleActions:
     assign_category: dict[str, Any] = field(default_factory=dict)
     # Conditional action gate: suppresses actions when clause does not match.
     when: WhenClause = field(default_factory=WhenClause)
+    # Bidirectional actions (v2)
+    verify_coverage: bool = False
+    verify_integrity: bool = False
+    add_reconstruction_metadata: dict[str, Any] = field(default_factory=dict)
+    flag_for_reconstruction: bool = False
+    apply_token_budget: int | None = None
+
 
 
 @dataclass(frozen=True)
@@ -314,6 +367,7 @@ class RuleDefinition:
     score: int = 0
     tags: tuple[str, ...] = ()
     schema_version: str = _SCHEMA_VERSION
+    bidirectional: bool = False
 
     def to_cache_dict(self) -> dict[str, Any]:
         return {
@@ -327,6 +381,7 @@ class RuleDefinition:
             "priority": self.priority,
             "enabled": self.enabled,
             "plugin": self.plugin,
+            "bidirectional": self.bidirectional,
             "match": {
                 "entity_types": list(self.match.entity_types),
                 "name_patterns": list(self.match.name_patterns),
@@ -348,6 +403,13 @@ class RuleDefinition:
                         _edge_matcher_to_dict(item) for item in self.match.ast_edges_all
                     ],
                 },
+                # Bidirectional matchers (v2)
+                "gap_entity_types": list(self.match.gap_entity_types),
+                "has_raw_content": self.match.has_raw_content,
+                "has_coverage_gap": self.match.has_coverage_gap,
+                "byte_range_start": self.match.byte_range_start,
+                "byte_range_end": self.match.byte_range_end,
+                "content_hash_pattern": self.match.content_hash_pattern,
             },
             "actions": {
                 "metadata": dict(self.actions.metadata),
@@ -363,6 +425,12 @@ class RuleDefinition:
                 "detect_infra": dict(self.actions.detect_infra),
                 "assign_category": dict(self.actions.assign_category),
                 "when": _when_clause_to_dict(self.actions.when),
+                # Bidirectional actions (v2)
+                "verify_coverage": self.actions.verify_coverage,
+                "verify_integrity": self.actions.verify_integrity,
+                "add_reconstruction_metadata": dict(self.actions.add_reconstruction_metadata),
+                "flag_for_reconstruction": self.actions.flag_for_reconstruction,
+                "apply_token_budget": self.actions.apply_token_budget,
             },
         }
 
@@ -374,6 +442,7 @@ class RuleDefinition:
             str(raw.get("plugin", "custom")),
             normalized,
             schema_version=schema_version,
+            plugin_bidirectional=bool(raw.get("bidirectional", False)),
         )
 
 
@@ -382,6 +451,14 @@ _PLUGIN_VALIDATORS: dict[str, Any] = {}
 
 
 def _schema_path() -> Path:
+    return (
+        Path(__file__).resolve().parent
+        / "schemas"
+        / "bsg-plugin-schema-v2.json"
+    )
+
+
+def _schema_v1_path() -> Path:
     return (
         Path(__file__).resolve().parent
         / "schemas"
@@ -396,10 +473,10 @@ def _plugins_root() -> Path:
 def _get_plugin_validator(schema_version: str = _SCHEMA_VERSION) -> Any:
     """Return a cached JSON Schema validator for the plugin schema."""
 
-    if schema_version != _SCHEMA_VERSION:
+    if schema_version not in (_SCHEMA_VERSION, "bsg-plugin.v1"):
         raise ValueError(
             f"Unsupported plugin schema_version '{schema_version}'. "
-            f"Expected '{_SCHEMA_VERSION}'."
+            f"Expected '{_SCHEMA_VERSION}' or 'bsg-plugin.v1'."
         )
 
     validator = _PLUGIN_VALIDATORS.get(schema_version)
@@ -411,7 +488,8 @@ def _get_plugin_validator(schema_version: str = _SCHEMA_VERSION) -> Any:
             "jsonschema is required for BSG plugin validation; install the 'jsonschema' package"
         )
 
-    schema_file = _schema_path()
+    # Use v1 schema for v1 plugins, v2 for v2
+    schema_file = _schema_v1_path() if schema_version == "bsg-plugin.v1" else _schema_path()
     try:
         schema_doc = json.loads(schema_file.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -494,7 +572,7 @@ def _read_cache(cache_path: Path) -> dict[str, Any] | None:
     if not cache_path.exists():
         return None
     try:
-        payload = pickle.loads(cache_path.read_bytes())
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
     except Exception:
         return None
     if not isinstance(payload, dict):
@@ -506,7 +584,7 @@ def _read_cache(cache_path: Path) -> dict[str, Any] | None:
 
 def _write_cache(cache_path: Path, payload: dict[str, Any]) -> None:
     tmp_path = cache_path.with_suffix(".tmp")
-    tmp_path.write_bytes(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     tmp_path.replace(cache_path)
     register_artifact_for_path(
         cache_path,
@@ -798,6 +876,20 @@ def _normalize_matchers(raw_matchers: Any) -> dict[str, Any]:
             raw_matchers.get("regex_patterns")
         )
 
+    # Bidirectional matchers (v2 only)
+    if raw_matchers.get("gap_entity_types") is not None:
+        result["gap_entity_types"] = _as_str_list(raw_matchers.get("gap_entity_types"), "gap_entity_types")
+    if raw_matchers.get("has_raw_content") is not None:
+        result["has_raw_content"] = raw_matchers.get("has_raw_content")
+    if raw_matchers.get("has_coverage_gap") is not None:
+        result["has_coverage_gap"] = raw_matchers.get("has_coverage_gap")
+    if raw_matchers.get("byte_range_start") is not None:
+        result["byte_range_start"] = raw_matchers.get("byte_range_start")
+    if raw_matchers.get("byte_range_end") is not None:
+        result["byte_range_end"] = raw_matchers.get("byte_range_end")
+    if raw_matchers.get("content_hash_pattern") is not None:
+        result["content_hash_pattern"] = raw_matchers.get("content_hash_pattern")
+
     return result
 
 
@@ -867,6 +959,18 @@ def _normalize_actions(raw_actions: Any) -> dict[str, Any]:
         ),
     }
 
+    # Bidirectional actions (v2 only)
+    if raw_actions.get("verify_coverage") is not None:
+        result["verify_coverage"] = bool(raw_actions.get("verify_coverage"))
+    if raw_actions.get("verify_integrity") is not None:
+        result["verify_integrity"] = bool(raw_actions.get("verify_integrity"))
+    if raw_actions.get("add_reconstruction_metadata") is not None:
+        result["add_reconstruction_metadata"] = dict(raw_actions.get("add_reconstruction_metadata"))
+    if raw_actions.get("flag_for_reconstruction") is not None:
+        result["flag_for_reconstruction"] = bool(raw_actions.get("flag_for_reconstruction"))
+    if raw_actions.get("apply_token_budget") is not None:
+        result["apply_token_budget"] = int(raw_actions.get("apply_token_budget"))
+
     # Preserve the `when` block only when declared so the normalised document
     # stays minimal for plugins that don't use action gates.
     if raw_actions.get("when") is not None:
@@ -891,8 +995,17 @@ def _normalize_rule_dict(raw_rule: dict[str, Any]) -> dict[str, Any]:
         "entity_types",
         "name_patterns",
         "file_patterns",
+        "content_patterns",
         "usn_tags_any",
+        "metadata_conditions",
         "ast_edges",
+        "regex_patterns",
+        "gap_entity_types",
+        "has_raw_content",
+        "has_coverage_gap",
+        "byte_range_start",
+        "byte_range_end",
+        "content_hash_pattern",
     ):
         if key in normalized:
             if not isinstance(matchers_raw, dict):
@@ -908,6 +1021,20 @@ def _normalize_rule_dict(raw_rule: dict[str, Any]) -> dict[str, Any]:
         "add_usn_tags",
         "derive_scope_tier",
         "derive_service_tag",
+        "truncate_docstring",
+        "max_docstring_length",
+        "normalize_entry_point",
+        "detect_language",
+        "detect_framework",
+        "detect_package_manager",
+        "detect_infra",
+        "assign_category",
+        "verify_coverage",
+        "verify_integrity",
+        "add_reconstruction_metadata",
+        "flag_for_reconstruction",
+        "apply_token_budget",
+        "when",
     ):
         if key in normalized:
             if not isinstance(actions_raw, dict):
@@ -953,6 +1080,8 @@ def _normalize_rule_dict(raw_rule: dict[str, Any]) -> dict[str, Any]:
         "matchers": _normalize_matchers(matchers_raw),
         "actions": _normalize_actions(actions_raw),
     }
+    if "bidirectional" in normalized:
+        result["bidirectional"] = bool(normalized["bidirectional"])
     # Only emit optional fields when they are explicitly declared, so the
     # normalised document mirrors the source plugin faithfully.
     if has_score:
@@ -1000,6 +1129,8 @@ def _normalize_plugin_document(
         "description": str(plugin_meta.get("description", "")),
         "rules": normalized_rules,
     }
+    if "bidirectional" in plugin_meta:
+        doc["bidirectional"] = bool(plugin_meta["bidirectional"])
 
     depends_on_raw = plugin_meta.get("depends_on")
     if depends_on_raw is not None:
@@ -1138,6 +1269,7 @@ def _rule_from_plugin_rule(
     plugin_name: str,
     raw_rule: dict[str, Any],
     schema_version: str = _SCHEMA_VERSION,
+    plugin_bidirectional: bool = False,
 ) -> RuleDefinition:
     matchers = raw_rule.get("matchers", {})
     ast_edges = matchers.get("ast_edges", {})
@@ -1152,6 +1284,8 @@ def _rule_from_plugin_rule(
 
     actions_raw = raw_rule.get("actions", {}) or {}
 
+    bidirectional = bool(raw_rule.get("bidirectional", plugin_bidirectional))
+
     return RuleDefinition(
         rule_id=str(raw_rule["rule_id"]),
         name=str(raw_rule["name"]),
@@ -1163,6 +1297,7 @@ def _rule_from_plugin_rule(
         score=int(raw_rule.get("score", 0) or 0),
         tags=tuple(str(t) for t in raw_rule.get("tags", []) or []),
         schema_version=schema_version,
+        bidirectional=bidirectional,
         match=RuleMatch(
             entity_types=tuple(
                 item.lower() for item in matchers.get("entity_types", [])
@@ -1181,6 +1316,13 @@ def _rule_from_plugin_rule(
             ast_edges_all=tuple(
                 _edge_matcher_from_dict(item) for item in ast_edges.get("all", [])
             ),
+            # Bidirectional matchers (v2)
+            gap_entity_types=tuple(matchers.get("gap_entity_types", [])),
+            has_raw_content=matchers.get("has_raw_content"),
+            has_coverage_gap=matchers.get("has_coverage_gap"),
+            byte_range_start=matchers.get("byte_range_start"),
+            byte_range_end=matchers.get("byte_range_end"),
+            content_hash_pattern=matchers.get("content_hash_pattern"),
         ),
         actions=RuleActions(
             metadata=dict(actions_raw.get("metadata", {})),
@@ -1196,6 +1338,12 @@ def _rule_from_plugin_rule(
             detect_infra=dict(actions_raw.get("detect_infra", {})),
             assign_category=dict(actions_raw.get("assign_category", {})),
             when=_when_clause_from_dict(actions_raw.get("when")),
+            # Bidirectional actions (v2)
+            verify_coverage=bool(actions_raw.get("verify_coverage", False)),
+            verify_integrity=bool(actions_raw.get("verify_integrity", False)),
+            add_reconstruction_metadata=dict(actions_raw.get("add_reconstruction_metadata", {})),
+            flag_for_reconstruction=bool(actions_raw.get("flag_for_reconstruction", False)),
+            apply_token_budget=actions_raw.get("apply_token_budget"),
         ),
     )
 
@@ -1253,6 +1401,7 @@ def _rule_to_document(rule: RuleDefinition) -> dict[str, Any]:
         "severity": rule.severity,
         "priority": rule.priority,
         "enabled": rule.enabled,
+        "bidirectional": rule.bidirectional,
         "matchers": {
             "entity_types": list(rule.match.entity_types),
             "name_patterns": list(rule.match.name_patterns),
@@ -1291,6 +1440,34 @@ def _rule_to_document(rule: RuleDefinition) -> dict[str, Any]:
         ]
     if not rule.actions.when.is_empty:
         doc["actions"]["when"] = _when_clause_to_dict(rule.actions.when)
+
+    # Bidirectional matchers (v2) — emit only when non-default
+    if rule.match.gap_entity_types:
+        doc["matchers"]["gap_entity_types"] = list(rule.match.gap_entity_types)
+    if rule.match.has_raw_content is not None:
+        doc["matchers"]["has_raw_content"] = rule.match.has_raw_content
+    if rule.match.has_coverage_gap is not None:
+        doc["matchers"]["has_coverage_gap"] = rule.match.has_coverage_gap
+    if rule.match.byte_range_start is not None:
+        doc["matchers"]["byte_range_start"] = rule.match.byte_range_start
+    if rule.match.byte_range_end is not None:
+        doc["matchers"]["byte_range_end"] = rule.match.byte_range_end
+    if rule.match.content_hash_pattern is not None:
+        doc["matchers"]["content_hash_pattern"] = rule.match.content_hash_pattern
+
+    # Bidirectional actions (v2) — emit only when non-default
+    if rule.actions.verify_coverage:
+        doc["actions"]["verify_coverage"] = rule.actions.verify_coverage
+    if rule.actions.verify_integrity:
+        doc["actions"]["verify_integrity"] = rule.actions.verify_integrity
+    if rule.actions.add_reconstruction_metadata:
+        doc["actions"]["add_reconstruction_metadata"] = dict(
+            rule.actions.add_reconstruction_metadata
+        )
+    if rule.actions.flag_for_reconstruction:
+        doc["actions"]["flag_for_reconstruction"] = rule.actions.flag_for_reconstruction
+    if rule.actions.apply_token_budget is not None:
+        doc["actions"]["apply_token_budget"] = rule.actions.apply_token_budget
 
     return doc
 
@@ -1590,6 +1767,7 @@ def _apply_rule_overrides(
                     existing.plugin,
                     normalized,
                     schema_version=existing.schema_version,
+                    plugin_bidirectional=existing.bidirectional,
                 )
             except Exception as exc:
                 _handle_error(
@@ -1756,9 +1934,13 @@ def load_effective_rules(
             if deps:
                 plugin_dependencies[plugin_name] = list(deps)
 
+            plugin_bidirectional = bool(plugin_doc.get("bidirectional", False))
             for raw_rule in plugin_doc.get("rules", []):
                 compiled = _rule_from_plugin_rule(
-                    plugin_name, raw_rule, schema_version=plugin_schema_version
+                    plugin_name,
+                    raw_rule,
+                    schema_version=plugin_schema_version,
+                    plugin_bidirectional=plugin_bidirectional,
                 )
                 _register_rule(rules_by_name, compiled, stats)
         except Exception as exc:
@@ -1784,11 +1966,13 @@ def load_effective_rules(
                 "",
                 schema_version=plugin_schema_version,
             )
+            plugin_bidirectional = bool(plugin_doc.get("bidirectional", False))
             for raw_rule in plugin_doc.get("rules", []):
                 compiled = _rule_from_plugin_rule(
                     "custom_inline",
                     raw_rule,
                     schema_version=plugin_schema_version,
+                    plugin_bidirectional=plugin_bidirectional,
                 )
                 _register_rule(rules_by_name, compiled, stats)
         except Exception as exc:
@@ -1812,11 +1996,13 @@ def load_effective_rules(
                 schema_version=plugin_schema_version,
             )
             stats["custom_file_count"] = len(plugin_doc.get("rules", []))
+            plugin_bidirectional = bool(plugin_doc.get("bidirectional", False))
             for raw_rule in plugin_doc.get("rules", []):
                 compiled = _rule_from_plugin_rule(
                     "custom_file",
                     raw_rule,
                     schema_version=plugin_schema_version,
+                    plugin_bidirectional=plugin_bidirectional,
                 )
                 _register_rule(rules_by_name, compiled, stats)
         except yaml.YAMLError as exc:
@@ -1937,12 +2123,10 @@ def _to_relative_posix(file_path: str, root_path: Path) -> str:
     return candidate.as_posix()
 
 
-def _pattern_matches(text: str, patterns: tuple[str, ...]) -> bool:
-    if not patterns:
+def _pattern_matches_lower(text_lower: str, patterns_lower: tuple[str, ...]) -> bool:
+    if not patterns_lower:
         return True
-    text_lower = text.lower()
-    for pattern in patterns:
-        pattern_lower = pattern.lower()
+    for pattern_lower in patterns_lower:
         # Handle ** glob pattern (matches zero or more directory levels)
         if "**" in pattern_lower:
             # Convert **/*.py to */*.py and *.py and check both
@@ -1961,11 +2145,19 @@ def _pattern_matches(text: str, patterns: tuple[str, ...]) -> bool:
     return False
 
 
+def _pattern_matches(text: str, patterns: tuple[str, ...]) -> bool:
+    if not patterns:
+        return True
+    return _pattern_matches_lower(text.lower(), tuple(p.lower() for p in patterns))
+
+
+
 def _matches_content_patterns(
     file_path: str,
     patterns: tuple[str, ...],
     graph: InMemoryGraph,
     file_content_cache: dict[str, str],
+    root_path: Path,
 ) -> bool:
     """Check if file content matches any of the given patterns.
 
@@ -1984,11 +2176,6 @@ def _matches_content_patterns(
     # Check cache first to avoid repeated file I/O
     if file_path not in file_content_cache:
         try:
-            if hasattr(graph, "root") and graph.root:
-                root_path = Path(graph.root)
-            else:
-                root_path = Path.cwd()
-
             full_path = root_path / file_path
 
             if not full_path.exists():
@@ -2409,6 +2596,7 @@ def _append_semantic_relations(
 def _target_matches_filters(
     target_entity: Entity | None,
     matcher: ASTEdgeMatcher,
+    get_entity_tags_fn = None,
 ) -> bool:
     if target_entity is None:
         if (
@@ -2423,18 +2611,21 @@ def _target_matches_filters(
     if matcher.target_entity_types:
         entity_type = str(target_entity.type).lower()
         if (
-            "*" not in matcher.target_entity_types
-            and entity_type not in matcher.target_entity_types
+            "*" not in matcher._target_entity_types_set
+            and entity_type not in matcher._target_entity_types_set
         ):
             return False
 
     if matcher.target_usn_tags_any:
-        target_tags = _entity_usn_tags(target_entity)
-        if not target_tags.intersection(set(matcher.target_usn_tags_any)):
+        if get_entity_tags_fn is not None:
+            target_tags = get_entity_tags_fn(target_entity.id, target_entity)
+        else:
+            target_tags = _entity_usn_tags(target_entity)
+        if not target_tags.intersection(matcher._target_usn_tags_any_set):
             return False
 
-    if matcher.target_name_patterns and not _pattern_matches(
-        target_entity.name, matcher.target_name_patterns
+    if matcher.target_name_patterns and not _pattern_matches_lower(
+        target_entity.name.lower(), matcher._target_name_patterns_lower
     ):
         return False
 
@@ -2453,6 +2644,7 @@ def _count_edge_matches(
     graph: InMemoryGraph,
     outbound: dict[str, list[Any]],
     inbound: dict[str, list[Any]],
+    get_entity_tags_fn = None,
 ) -> int:
     candidates: list[tuple[Any, str]] = []
     if matcher.direction == "outbound":
@@ -2484,7 +2676,7 @@ def _count_edge_matches(
             continue
 
         target_entity = graph.get_entity(other_id)
-        if _target_matches_filters(target_entity, matcher):
+        if _target_matches_filters(target_entity, matcher, get_entity_tags_fn):
             count += 1
 
     return count
@@ -2496,10 +2688,11 @@ def _matches_ast_edges(
     graph: InMemoryGraph,
     outbound: dict[str, list[Any]],
     inbound: dict[str, list[Any]],
+    get_entity_tags_fn = None,
 ) -> bool:
     for matcher in match.ast_edges_all:
         if (
-            _count_edge_matches(entity_id, matcher, graph, outbound, inbound)
+            _count_edge_matches(entity_id, matcher, graph, outbound, inbound, get_entity_tags_fn)
             < matcher.min_count
         ):
             return False
@@ -2507,13 +2700,14 @@ def _matches_ast_edges(
     if match.ast_edges_any:
         for matcher in match.ast_edges_any:
             if (
-                _count_edge_matches(entity_id, matcher, graph, outbound, inbound)
+                _count_edge_matches(entity_id, matcher, graph, outbound, inbound, get_entity_tags_fn)
                 >= matcher.min_count
             ):
                 return True
         return False
 
     return True
+
 
 
 def _evaluate_metadata_condition(
@@ -2638,25 +2832,35 @@ def _matches_rule(
     inbound: dict[str, list[Any]],
     file_content_cache: dict[str, str],
     regex_cache: dict[tuple[str, bool], re.Pattern[str]] | None = None,
+    entity_type_lower: str | None = None,
+    entity_name_lower: str | None = None,
+    rel_file_path_lower: str | None = None,
+    entity_tags: set[str] | None = None,
+    get_entity_tags_fn = None,
+    root_path: Path | None = None,
 ) -> bool:
     if rule.match.entity_types:
-        entity_type = str(entity.type).lower()
+        ent_type = entity_type_lower if entity_type_lower is not None else str(entity.type).lower()
         if (
-            "*" not in rule.match.entity_types
-            and entity_type not in rule.match.entity_types
+            "*" not in rule.match._entity_types_set
+            and ent_type not in rule.match._entity_types_set
         ):
             return False
 
     if rule.match.usn_tags_any:
-        entity_tags = _entity_usn_tags(entity)
-        if not entity_tags.intersection(set(rule.match.usn_tags_any)):
+        ent_tags = entity_tags if entity_tags is not None else _entity_usn_tags(entity)
+        if not ent_tags.intersection(rule.match._usn_tags_any_set):
             return False
 
-    if not _pattern_matches(entity.name, rule.match.name_patterns):
-        return False
+    if rule.match.name_patterns:
+        ent_name = entity_name_lower if entity_name_lower is not None else entity.name.lower()
+        if not _pattern_matches_lower(ent_name, rule.match._name_patterns_lower):
+            return False
 
-    if not _pattern_matches(rel_file_path, rule.match.file_patterns):
-        return False
+    if rule.match.file_patterns:
+        fp_lower = rel_file_path_lower if rel_file_path_lower is not None else rel_file_path.lower()
+        if not _pattern_matches_lower(fp_lower, rule.match._file_patterns_lower):
+            return False
 
     if rule.match.regex_patterns:
         local_cache = regex_cache if regex_cache is not None else {}
@@ -2667,18 +2871,59 @@ def _matches_rule(
 
     if rule.match.content_patterns:
         if not _matches_content_patterns(
-            rel_file_path, rule.match.content_patterns, graph, file_content_cache
+            rel_file_path,
+            rule.match.content_patterns,
+            graph,
+            file_content_cache,
+            root_path if root_path is not None else Path("."),
         ):
             return False
 
-    if not _matches_ast_edges(entity_id, rule.match, graph, outbound, inbound):
+    if not _matches_ast_edges(entity_id, rule.match, graph, outbound, inbound, get_entity_tags_fn):
         return False
 
     if rule.match.metadata_conditions:
         if not _matches_metadata_conditions(entity, rule.match.metadata_conditions):
             return False
 
+    # Bidirectional matchers (v2)
+    if rule.match.gap_entity_types:
+        ent_type = entity_type_lower if entity_type_lower is not None else str(entity.type).lower()
+        if ent_type not in rule.match._gap_entity_types_lower:
+            return False
+
+    if rule.match.has_raw_content is not None:
+        has_raw = entity.raw_content is not None
+        if has_raw != rule.match.has_raw_content:
+            return False
+
+    if rule.match.has_coverage_gap is not None:
+        if entity.start_byte > entity.end_byte:
+            return False
+        # Check if entity has coverage gap (end_byte - start_byte != raw_content length)
+        if entity.raw_content is None and entity.raw_bytes is None:
+            return False
+        byte_length = len(entity.raw_bytes) if entity.raw_bytes is not None else len(entity.raw_content.encode("utf-8"))
+        has_gap = (entity.end_byte - entity.start_byte) != byte_length
+        if has_gap != rule.match.has_coverage_gap:
+            return False
+
+    if rule.match.byte_range_start is not None:
+        if entity.start_byte < rule.match.byte_range_start:
+            return False
+
+    if rule.match.byte_range_end is not None:
+        if entity.end_byte > rule.match.byte_range_end:
+            return False
+
+    if rule.match._compiled_hash_pattern is not None:
+        if not entity.content_hash:
+            return False
+        if not rule.match._compiled_hash_pattern.search(entity.content_hash):
+            return False
+
     return True
+
 
 
 def _derive_scope_tier(entity: Entity) -> str:
@@ -2765,6 +3010,7 @@ def apply_rule_plugins(
     logger: Any | None = None,
     profile: bool = False,
     trace: bool = False,
+    bidirectional_only: bool = False,
 ) -> dict[str, Any]:
     """Apply configured BSG rules in-place and return execution stats.
 
@@ -2777,12 +3023,17 @@ def apply_rule_plugins(
             `.ctn/bsg_perf.json` with the aggregate report.
         trace: When True, the returned summary includes a `trace_log` entry per
             entity/rule with match outcomes and actions.
+        bidirectional_only: When True, only run bidirectional flow plugins.
     """
 
     log = logger or _LOGGER
     rules, load_stats = load_effective_rules(
         rules_config=rules_config, root_path=root_path, logger=log
     )
+
+    # Filter rules if bidirectional_only is True
+    if bidirectional_only:
+        rules = [r for r in rules if r.bidirectional]
 
     if not load_stats.get("enabled", False):
         return {
@@ -2816,15 +3067,42 @@ def apply_rule_plugins(
     regex_cache: dict[tuple[str, bool], re.Pattern[str]] = {}
     trace_log: list[dict[str, Any]] = []
 
+    # Rules pre-filtering by entity type cache
+    rules_by_type_cache: dict[str, list[RuleDefinition]] = {}
+
+    def get_rules_for_type(ent_type_lower: str) -> list[RuleDefinition]:
+        if ent_type_lower not in rules_by_type_cache:
+            rules_by_type_cache[ent_type_lower] = [
+                r for r in rules
+                if not r.match.entity_types
+                or "*" in r.match._entity_types_set
+                or ent_type_lower in r.match._entity_types_set
+            ]
+        return rules_by_type_cache[ent_type_lower]
+
+    entity_tags_cache: dict[str, set[str]] = {}
+
+    def get_entity_tags(ent_id: str, ent: Entity) -> set[str]:
+        if ent_id not in entity_tags_cache:
+            entity_tags_cache[ent_id] = _entity_usn_tags(ent)
+        return entity_tags_cache[ent_id]
+
     overall_start_ns = time.perf_counter_ns()
 
     for entity_id, entity in list(graph.entities.items()):
         rel_file_path = _to_relative_posix(entity.file, root_path)
+        rel_file_path_lower = rel_file_path.lower()
+        entity_name_lower = entity.name.lower()
+        entity_type_lower = str(entity.type).lower()
+
         metadata = dict(entity.metadata or {})
         matched_rules: list[str] = []
         changed = False
 
-        for rule in rules:
+        entity_rules = get_rules_for_type(entity_type_lower)
+        entity_tags = get_entity_tags(entity_id, entity)
+
+        for rule in entity_rules:
             match_start_ns = time.perf_counter_ns() if profile else 0
             rule_match_calls[rule.name] += 1
             matched = _matches_rule(
@@ -2837,6 +3115,12 @@ def apply_rule_plugins(
                 inbound=inbound,
                 file_content_cache=file_content_cache,
                 regex_cache=regex_cache,
+                entity_type_lower=entity_type_lower,
+                entity_name_lower=entity_name_lower,
+                rel_file_path_lower=rel_file_path_lower,
+                entity_tags=entity_tags,
+                get_entity_tags_fn=get_entity_tags,
+                root_path=root_path,
             )
             if profile:
                 rule_timings_ns[rule.name] += (
@@ -2905,6 +3189,8 @@ def apply_rule_plugins(
                 if existing != merged_tags:
                     metadata["bsg.usn"] = merged_tags
                     changed = True
+                    entity_tags_cache[entity_id] = {str(item).strip().lower() for item in merged_tags if str(item).strip()}
+                    entity_tags = entity_tags_cache[entity_id]
 
             if rule.actions.derive_scope_tier:
                 scope_tier = _derive_scope_tier(entity)
@@ -2923,7 +3209,7 @@ def apply_rule_plugins(
                 docstring = metadata.get("docstring")
                 if docstring and isinstance(docstring, str):
                     max_len = rule.actions.max_docstring_length
-                    if len(docstring) > max_len:
+                    if max_len > 0 and len(docstring) > max_len:
                         metadata["docstring"] = docstring[:max_len] + "..."
                         changed = True
 
@@ -3003,6 +3289,29 @@ def apply_rule_plugins(
                 if category and metadata.get("bsg.category") != category:
                     metadata["bsg.category"] = category
                     changed = True
+
+            # Bidirectional actions (v2)
+            if rule.actions.verify_coverage:
+                metadata["bsg.verify_coverage"] = True
+                changed = True
+
+            if rule.actions.verify_integrity:
+                metadata["bsg.verify_integrity"] = True
+                changed = True
+
+            if rule.actions.add_reconstruction_metadata:
+                for key, value in rule.actions.add_reconstruction_metadata.items():
+                    if metadata.get(f"bsg.reconstruction.{key}") != value:
+                        metadata[f"bsg.reconstruction.{key}"] = value
+                        changed = True
+
+            if rule.actions.flag_for_reconstruction:
+                metadata["bsg.flag_for_reconstruction"] = True
+                changed = True
+
+            if rule.actions.apply_token_budget is not None:
+                metadata["bsg.token_budget"] = rule.actions.apply_token_budget
+                changed = True
 
         if matched_rules:
             existing_rules = metadata.get("bsg.rules")
@@ -3187,10 +3496,14 @@ def validate_plugin_file(
 
         compiled_rules: list[RuleDefinition] = []
         seen_rule_ids: dict[str, int] = {}
+        plugin_bidirectional = bool(plugin_doc.get("bidirectional", False))
         for idx, raw_rule in enumerate(rules if isinstance(rules, list) else []):
             try:
                 compiled = _rule_from_plugin_rule(
-                    plugin_path.stem, raw_rule, schema_version=schema_version
+                    plugin_path.stem,
+                    raw_rule,
+                    schema_version=schema_version,
+                    plugin_bidirectional=plugin_bidirectional,
                 )
                 compiled_rules.append(compiled)
                 if compiled.rule_id in seen_rule_ids:
@@ -3227,6 +3540,12 @@ def validate_plugin_file(
                 or m.metadata_conditions
                 or m.ast_edges_any
                 or m.ast_edges_all
+                or m.gap_entity_types
+                or m.has_raw_content is not None
+                or m.has_coverage_gap is not None
+                or m.byte_range_start is not None
+                or m.byte_range_end is not None
+                or m.content_hash_pattern is not None
                 or compiled.actions.derive_scope_tier
                 or compiled.actions.derive_service_tag
             ):

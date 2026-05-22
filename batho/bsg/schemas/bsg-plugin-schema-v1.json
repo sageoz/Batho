@@ -18,6 +18,9 @@
       "type": "string",
       "const": "bsg-plugin.v1"
     },
+    "bidirectional": {
+      "type": "boolean"
+    },
     "plugin_id": {
       "type": "string",
       "minLength": 1
@@ -69,6 +72,9 @@
         "rule_id": {
           "type": "string",
           "minLength": 1
+        },
+        "bidirectional": {
+          "type": "boolean"
         },
         "name": {
           "type": "string",

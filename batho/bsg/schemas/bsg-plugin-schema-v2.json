@@ -1,0 +1,353 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sageoz.org/batho/schemas/bsg-plugin-schema-v2.json",
+  "title": "Batho BSG Plugin Schema v2",
+  "description": "Unified BSG plugin schema with bidirectional flow support.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "plugin_id",
+    "name",
+    "version",
+    "enabled",
+    "rules"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "bsg-plugin.v2"
+    },
+    "bidirectional": {
+      "type": "boolean"
+    },
+    "plugin_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "description": {
+      "type": "string"
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rule"
+      }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "name",
+        "description",
+        "severity",
+        "priority",
+        "enabled",
+        "matchers",
+        "actions"
+      ],
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bidirectional": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning", "block"]
+        },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "tags": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "matchers": {
+          "$ref": "#/$defs/matchers"
+        },
+        "actions": {
+          "$ref": "#/$defs/actions"
+        }
+      }
+    },
+    "matchers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "entity_types": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "name_patterns": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "file_patterns": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "content_patterns": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "regex_patterns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/regex_matcher"
+          }
+        },
+        "usn_tags_any": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "metadata_conditions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metadata_condition"
+          }
+        },
+        "ast_edges": {
+          "$ref": "#/$defs/ast_edges"
+        },
+        "gap_entity_types": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Match SYNTAX_GLUE, COMMENT_BLOCK, IMPORT_BLOCK, GLOBAL_STATEMENT entities for bidirectional gap validation"
+        },
+        "has_raw_content": {
+          "type": "boolean",
+          "description": "Match entities with raw_content field present"
+        },
+        "has_coverage_gap": {
+          "type": "boolean",
+          "description": "Match entities with coverage gaps"
+        },
+        "byte_range_start": {
+          "type": "integer",
+          "description": "Match entities by byte range start"
+        },
+        "byte_range_end": {
+          "type": "integer",
+          "description": "Match entities by byte range end"
+        },
+        "content_hash_pattern": {
+          "type": "string",
+          "description": "Match entities by content hash pattern"
+        }
+      }
+    },
+    "actions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "metadata": {
+          "type": "object"
+        },
+        "set_metadata": {
+          "type": "object"
+        },
+        "add_usn_tags": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "derive_scope_tier": {
+          "type": "boolean"
+        },
+        "derive_service_tag": {
+          "type": "boolean"
+        },
+        "truncate_docstring": {
+          "type": "boolean"
+        },
+        "max_docstring_length": {
+          "type": "integer"
+        },
+        "normalize_entry_point": {
+          "type": "boolean"
+        },
+        "detect_language": {
+          "type": "object"
+        },
+        "detect_framework": {
+          "type": "object"
+        },
+        "detect_package_manager": {
+          "type": "object"
+        },
+        "detect_infra": {
+          "type": "object"
+        },
+        "assign_category": {
+          "type": "object"
+        },
+        "when": {
+          "$ref": "#/$defs/when_clause"
+        },
+        "verify_coverage": {
+          "type": "boolean",
+          "description": "Validate entity byte coverage for bidirectional flow"
+        },
+        "verify_integrity": {
+          "type": "boolean",
+          "description": "Verify file integrity against snapshot"
+        },
+        "add_reconstruction_metadata": {
+          "type": "object",
+          "description": "Add reconstruction-specific metadata"
+        },
+        "flag_for_reconstruction": {
+          "type": "boolean",
+          "description": "Flag entities for reconstruction"
+        },
+        "apply_token_budget": {
+          "type": "integer",
+          "description": "Apply token budget for agent view"
+        }
+      }
+    },
+    "regex_matcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern"],
+      "properties": {
+        "pattern": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string",
+          "enum": ["name", "file_path", "signature", "metadata"]
+        },
+        "metadata_key": {
+          "type": "string"
+        },
+        "case_insensitive": {
+          "type": "boolean"
+        }
+      }
+    },
+    "metadata_condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "operator"],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "operator": {
+          "type": "string"
+        },
+        "value": {
+          "description": "Value to compare against (type depends on operator)"
+        }
+      }
+    },
+    "ast_edges": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "any": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge_matcher"
+          }
+        },
+        "all": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge_matcher"
+          }
+        }
+      }
+    },
+    "edge_matcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["edge"],
+      "properties": {
+        "edge": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["inbound", "outbound", "either"]
+        },
+        "target_entity_types": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "target_usn_tags_any": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "target_name_patterns": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "target_metadata_equals": {
+          "type": "object"
+        },
+        "min_count": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "when_clause": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metadata_condition"
+          }
+        },
+        "any": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metadata_condition"
+          }
+        }
+      }
+    }
+  }
+}
