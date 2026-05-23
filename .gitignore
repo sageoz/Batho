@@ -1,0 +1,50 @@
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+wheels/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Test, coverage, and output
+.coverage
+.pytest_cache/
+htmlcov/
+coverage.xml
+test-results.xml
+test_output.puml
+
+# Editor/OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.bak
+*.tmp
+~$*
+/.ctn/*
+# IDE/project files
+.vscode/
+.idea/
+*.iml
+docs/*
+BSGautoresearch/repos/
+BSGautoresearch/generated/
+BSGautoresearch/state/
+BSGautoresearch/.env
+bsg_analysis.ipynb
+.DS_Store
+issue.md
+plans/*
+tests/testdata/repositories/flask/.ctn/*
+tests/testdata/repositories/multi_language/.ctn/*
+tests/testdata/repositories/simple_python/.ctn/*
