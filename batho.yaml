@@ -9,7 +9,7 @@ logging:
   format: "%(message)s"
 
 paths:
-  ctn_dir: .ctn
+  db_path: .batho
 
 indexer:
   max_file_size_kb: 500

@@ -14,6 +14,7 @@ from pathlib import Path
 from batho.config import BSG_SCHEMA_VERSION
 from batho.utils.hash import generate_relationship_id
 from ..schema import EntityType, BSGViewType
+from .relativizer import PathRelativizer
 
 if TYPE_CHECKING:
     from . import BSGMap
@@ -376,6 +377,16 @@ def render_json(
     """
     # Check serialization config to determine method
     method = bsg._serialization_config.get("method", "streaming")
+    _rel = PathRelativizer(bsg._root)
+    opaque_files_data = [
+        {
+            "file_path": _rel(snap.file_path),
+            "file_hash": snap.file_hash,
+            "file_size": snap.file_size,
+            "encoding": snap.encoding,
+        }
+        for snap in sorted(bsg._opaque_snapshots.values(), key=lambda s: s.file_path)
+    ]
 
     if method == "streaming":
         components = _build_render_components(
@@ -394,6 +405,7 @@ def render_json(
             "quality_warnings": components["quality_warnings"],
             "indexes": components["indexes"],
             "views": components["views"],
+            "opaque_files": opaque_files_data,
         }
 
     # Legacy mode - use original implementation
@@ -404,7 +416,9 @@ def render_json(
         and default_index_id is None
         and default_service_tag is None
     ):
-        return copy.deepcopy(bsg._serialized_bsg)
+        res = copy.deepcopy(bsg._serialized_bsg)
+        res["opaque_files"] = opaque_files_data
+        return res
 
     # Full rebuild if needed (legacy path)
     components = _build_render_components(
@@ -424,6 +438,7 @@ def render_json(
         "quality_warnings": components["quality_warnings"],
         "indexes": components["indexes"],
         "views": components["views"],
+        "opaque_files": opaque_files_data,
     }
 
 
@@ -733,6 +748,15 @@ def render_json_streaming(
         ("quality_warnings", components["quality_warnings"]),
         ("indexes", components["indexes"]),
         ("views", components["views"]),
+        ("opaque_files", [
+            {
+                "file_path": PathRelativizer(bsg._root)(snap.file_path),
+                "file_hash": snap.file_hash,
+                "file_size": snap.file_size,
+                "encoding": snap.encoding,
+            }
+            for snap in sorted(bsg._opaque_snapshots.values(), key=lambda s: s.file_path)
+        ]),
     ]
 
     overrides: dict[str, Any] = {}

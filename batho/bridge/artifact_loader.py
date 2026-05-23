@@ -1,4 +1,4 @@
-"""Artifact loader — resolves and loads JSON content from .batho artifacts."""
+"""Artifact loader — resolves and loads JSON content from artifact_<dirname>.batho databases."""
 
 from __future__ import annotations
 

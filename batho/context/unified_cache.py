@@ -1,4 +1,4 @@
-"""Unified cache service delegating to the .batho SQLite database.
+"""Unified cache service delegating to the artifact_<dirname>.batho SQLite database.
 
 All AST caching, file tracking, and file snapshot operations are performed
 against the unified BathoDatabase. No separate cache.db file is created.
@@ -27,13 +27,19 @@ class BathoCache:
         path = Path(cache_path).resolve()
         if path.name == ".batho" or path.suffix == ".batho":
             repo_root = path.parent
+            db_path = path
         elif path.name == "cache.db":
             # Legacy callers passing .ctn/local/cache/cache.db — resolve repo root
             repo_root = path.parent.parent.parent.parent
+            db_path = None
+        elif path.is_file():
+            repo_root = path.parent
+            db_path = path
         else:
             repo_root = path
+            db_path = None
 
-        self._db = get_database(repo_root)
+        self._db = get_database(repo_root, db_path=db_path)
         self.logger = logger
 
     # ------------------------------------------------------------------

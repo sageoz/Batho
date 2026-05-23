@@ -1,7 +1,7 @@
 """Orchestrator for `batho build` — full index build for new working directories.
 
-Creates a .batho SQLite database with: code graph, BSG map, context outputs,
-baseline snapshot, and file tracking records. If .batho already exists,
+Creates an `artifact_<dirname>.batho` SQLite database with: code graph, BSG map, context outputs,
+baseline snapshot, and file tracking records. If the artifact database already exists,
 exits early directing the user to `batho patch`.
 """
 
@@ -82,17 +82,18 @@ def _compute_file_hash(file_path: Path) -> str:
 def run_build(options: BuildOptions) -> BuildResult:
     """Execute a full index build for a working directory.
 
-    If .batho already exists and force_full is False, returns early
+    If the database already exists and force_full is False, returns early
     with success=True and a warning indicating patch should be used.
     """
+    from batho.storage.engine import artifact_filename
     t0 = time.monotonic()
     root = options.root.resolve()
-    db_path = root / ".batho"
+    db_path = root / artifact_filename(root)
 
     # --- Guard: existing database ---
     if db_path.exists() and not options.force_full:
         msg = (
-            f".batho database already exists at {db_path}.\n"
+            f"Database already exists at {db_path}.\n"
             f"To update incrementally, run: batho patch --root {root}\n"
             f"To force a full rebuild, run: batho build --root {root} --full"
         )
@@ -135,140 +136,152 @@ def run_build(options: BuildOptions) -> BuildResult:
     db = BathoDatabase(db_path, repo_root=root)
     run_id = _generate_run_id()
     db.create_run(run_id, schema_version="batho-db.v1", root_path=str(root))
-
     LOGGER.info("build_started", root=str(root), run_id=run_id)
-
-    # --- Build code graph ---
     from batho.context.codegraph import CodeGraphIndexer
 
-    indexer = CodeGraphIndexer(cache_path=str(db_path), root=str(root))
-    graph = indexer.build_graph(
-        root=str(root),
-        max_workers=options.max_workers or 0,
-        max_file_size_kb=max_file_size_kb,
-        verbose=options.verbose,
-        index_id=run_id,
-        ast_cache_enabled=True,
-    )
-
-    entity_count = len(graph.entities)
-    rel_count = len(graph.relationships)
-
-    if entity_count == 0:
-        LOGGER.warning("build_no_entities", root=str(root))
-        db.fail_run(run_id, error_message="No indexable files found")
-        return BuildResult(
-            success=False,
-            run_id=run_id,
-            warnings=["No indexable files found in " + str(root)],
-            duration_ms=int((time.monotonic() - t0) * 1000),
+    with CodeGraphIndexer(cache_path=str(db_path), root=str(root)) as indexer:
+        graph = indexer.build_graph(
+            root=str(root),
+            max_workers=options.max_workers or 0,
+            max_file_size_kb=max_file_size_kb,
+            verbose=options.verbose,
+            index_id=run_id,
+            ast_cache_enabled=True,
         )
 
-    LOGGER.info(
-        "build_graph_complete",
-        entities=entity_count,
-        relationships=rel_count,
-    )
+        entity_count = len(graph.entities)
+        rel_count = len(graph.relationships)
 
-    # --- Persist entities & relationships to DB ---
-    db.insert_entities(run_id, [e.to_dict() for e in graph.entities.values()])
-    db.insert_relationships(run_id, [r.to_dict() for r in graph.relationships])
-
-    # --- Apply BSG plugin rules ---
-    rules_cfg = cfg.get("rules", {})
-    if rules_cfg:
-        try:
-            from batho.bsg.rules import apply_rule_plugins
-
-            apply_rule_plugins(
-                graph=graph,
-                root_path=root,
-                rules_config=rules_cfg,
-                logger=LOGGER,
+        if entity_count == 0:
+            LOGGER.warning("build_no_entities", root=str(root))
+            db.fail_run(run_id, error_message="No indexable files found")
+            return BuildResult(
+                success=False,
+                run_id=run_id,
+                warnings=["No indexable files found in " + str(root)],
+                duration_ms=int((time.monotonic() - t0) * 1000),
             )
-        except Exception as exc:
-            LOGGER.warning("build_rules_failed", error=str(exc))
 
-    # --- Build BSG map & persist ---
-    from batho.context.bsg_map import BSGMap
-
-    bsg_map = BSGMap.build(graph, str(root))
-    bsg_file_count = len(bsg_map._by_file)
-
-    # Persist BSG entries per file
-    bsg_entries: list[dict[str, Any]] = []
-    for file_path, entities in bsg_map._by_file.items():
-        bsg_json_data = json.dumps(
-            [e.to_dict(view="agent") for e in entities],
-            ensure_ascii=True,
+        LOGGER.info(
+            "build_graph_complete",
+            entities=entity_count,
+            relationships=rel_count,
         )
-        checksum = hashlib.sha256(bsg_json_data.encode()).hexdigest()[:16]
-        bsg_entries.append({
-            "file_path": file_path,
-            "view_type": "agent",
-            "bsg_json": bsg_json_data,
-            "node_count": len(entities),
-            "checksum": checksum,
-        })
 
-    if bsg_entries:
-        db.insert_bsg_entries(run_id, bsg_entries)
+        # --- Persist entities & relationships to DB ---
+        db.insert_entities(run_id, [e.to_dict() for e in graph.entities.values()])
+        db.insert_relationships(run_id, [r.to_dict() for r in graph.relationships])
 
-    LOGGER.info("build_bsg_complete", files=bsg_file_count)
+        # --- Apply BSG plugin rules ---
+        rules_cfg = cfg.get("rules", {})
+        if rules_cfg:
+            try:
+                from batho.bsg.rules import apply_rule_plugins
 
-    # --- Build & persist context outputs ---
-    overview_data = _build_context_overview(graph, root)
-    files_data = _build_context_files(graph, root)
-    db.set_context_output(run_id, "overview", json.dumps(overview_data, ensure_ascii=True))
-    db.set_context_output(run_id, "files", json.dumps(files_data, ensure_ascii=True))
+                apply_rule_plugins(
+                    graph=graph,
+                    root_path=root,
+                    rules_config=rules_cfg,
+                    logger=LOGGER,
+                )
+            except Exception as exc:
+                LOGGER.warning("build_rules_failed", error=str(exc))
 
-    # --- Create baseline snapshot ---
-    from batho.time_machine import create_snapshot
+        # --- Load opaque snapshots for files the extractor engine could not parse ---
+        from batho.context.schema import FileSnapshot
 
-    snapshot_id = create_snapshot(
-        ctn_dir=root,
-        root=root,
-        graph=graph,
-        bsg_map=bsg_map,
-        label="baseline",
-    )
+        opaque_snapshots: list[FileSnapshot] = []
+        try:
+            for _abs_path, rel in indexer.get_unindexed_files():
+                snap = indexer._cache.get_file_snapshot(_abs_path) or indexer._cache.get_file_snapshot(rel)
+                if snap is not None:
+                    opaque_snapshots.append(snap)
+        except Exception as exc:
+            LOGGER.warning("build_opaque_snapshots_failed", error=str(exc))
 
-    LOGGER.info("build_snapshot_created", snapshot_id=snapshot_id)
+        # --- Build BSG map & persist ---
+        from batho.context.bsg_map import BSGMap
 
-    # --- Persist file tracking ---
-    file_tracking_records = _build_file_tracking(graph, root)
-    if file_tracking_records:
-        db.upsert_file_tracking(file_tracking_records)
+        bsg_map = BSGMap.build(graph, str(root), opaque_snapshots=opaque_snapshots)
+        bsg_file_count = len(bsg_map._by_file)
 
-    # --- Complete run ---
-    elapsed_ms = int((time.monotonic() - t0) * 1000)
-    db.complete_run(
-        run_id,
-        entity_count=entity_count,
-        rel_count=rel_count,
-        file_count=bsg_file_count,
-        duration_ms=elapsed_ms,
-    )
+        # Persist BSG entries per file
+        bsg_entries: list[dict[str, Any]] = []
+        for file_path, entities in bsg_map._by_file.items():
+            bsg_json_data = json.dumps(
+                [e.to_dict(view="agent") for e in entities],
+                ensure_ascii=True,
+            )
+            checksum = hashlib.sha256(bsg_json_data.encode()).hexdigest()
+            bsg_entries.append({
+                "file_path": file_path,
+                "view_type": "agent",
+                "bsg_json": bsg_json_data,
+                "node_count": len(entities),
+                "checksum": checksum,
+            })
 
-    LOGGER.info(
-        "build_complete",
-        run_id=run_id,
-        entities=entity_count,
-        relationships=rel_count,
-        files=bsg_file_count,
-        duration_ms=elapsed_ms,
-    )
+        if bsg_entries:
+            db.insert_bsg_entries(run_id, bsg_entries)
 
-    return BuildResult(
-        success=True,
-        run_id=run_id,
-        entity_count=entity_count,
-        relationship_count=rel_count,
-        file_count=bsg_file_count,
-        bsg_file_count=bsg_file_count,
-        snapshot_id=snapshot_id,
-        duration_ms=elapsed_ms,
-    )
+        LOGGER.info("build_bsg_complete", files=bsg_file_count)
+
+        # --- Build & persist context outputs ---
+        overview_data = _build_context_overview(graph, root)
+        files_data = _build_context_files(graph, root)
+        db.set_context_output(run_id, "overview", json.dumps(overview_data, ensure_ascii=True))
+        db.set_context_output(run_id, "files", json.dumps(files_data, ensure_ascii=True))
+
+        # --- Create baseline snapshot ---
+        from batho.time_machine import create_snapshot
+
+        snapshot_id = create_snapshot(
+            ctn_dir=root,
+            root=root,
+            graph=graph,
+            bsg_map=bsg_map,
+            label="baseline",
+        )
+
+        LOGGER.info("build_snapshot_created", snapshot_id=snapshot_id)
+
+        # --- Persist file tracking ---
+        file_tracking_records = _build_file_tracking(graph, root, indexer)
+        if file_tracking_records:
+            db.upsert_file_tracking(file_tracking_records)
+
+        if indexer is not None:
+            indexer.clear_unindexed_files()
+
+        # --- Complete run ---
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        db.complete_run(
+            run_id,
+            entity_count=entity_count,
+            rel_count=rel_count,
+            file_count=bsg_file_count,
+            duration_ms=elapsed_ms,
+        )
+
+        LOGGER.info(
+            "build_complete",
+            run_id=run_id,
+            entities=entity_count,
+            relationships=rel_count,
+            files=bsg_file_count,
+            duration_ms=elapsed_ms,
+        )
+
+        return BuildResult(
+            success=True,
+            run_id=run_id,
+            entity_count=entity_count,
+            relationship_count=rel_count,
+            file_count=bsg_file_count,
+            bsg_file_count=bsg_file_count,
+            snapshot_id=snapshot_id,
+            duration_ms=elapsed_ms,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +349,7 @@ def _build_context_files(graph: Any, root: Path) -> dict[str, Any]:
     }
 
 
-def _build_file_tracking(graph: Any, root: Path) -> list[dict[str, Any]]:
+def _build_file_tracking(graph: Any, root: Path, indexer: Any = None) -> list[dict[str, Any]]:
     """Build file tracking records from the indexed graph."""
     import os
 
@@ -345,14 +358,16 @@ def _build_file_tracking(graph: Any, root: Path) -> list[dict[str, Any]]:
 
     for entity in graph.entities.values():
         file_path = entity.file
-        if not file_path or file_path in seen:
+        if not file_path:
             continue
-        seen.add(file_path)
-
         try:
             rel = str(Path(file_path).relative_to(root))
         except ValueError:
             rel = file_path
+
+        if rel in seen:
+            continue
+        seen.add(rel)
 
         full_path = root / rel
         if not full_path.exists():
@@ -371,5 +386,27 @@ def _build_file_tracking(graph: Any, root: Path) -> list[dict[str, Any]]:
             })
         except OSError:
             continue
+
+    if indexer is not None:
+        for _abs_path, rel in indexer.get_unindexed_files():
+            if rel in seen:
+                continue
+            seen.add(rel)
+            full_path = root / rel
+            if not full_path.exists():
+                continue
+            try:
+                stat = full_path.stat()
+                content_hash = _compute_file_hash(full_path)
+                records.append({
+                    "file_path": rel,
+                    "content_hash": content_hash,
+                    "mtime": stat.st_mtime,
+                    "size": stat.st_size,
+                    "is_indexed": 0,
+                    "last_run_id": None,
+                })
+            except OSError:
+                continue
 
     return records

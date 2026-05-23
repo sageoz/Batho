@@ -1,6 +1,6 @@
 """batho/storage/engine.py — Unified SQLite persistence engine.
 
-Single-file `.batho` database that replaces the legacy `.ctn` directory.
+Per-directory `artifact_<dirname>.batho` database that replaces the legacy `.ctn` directory.
 All graph data, BSG payloads, context outputs, snapshots, and sync metadata
 live in one ACID-compliant SQLite database per project.
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import importlib.resources
 import json
+import re
 import sqlite3
 import sys
 import threading
@@ -33,7 +34,7 @@ LOGGER = get_logger(__name__, component="storage_engine")
 # Constants
 # ---------------------------------------------------------------------------
 
-BATHO_DB_FILENAME = ".batho"
+BATHO_DB_FILENAME = ".batho"  # Legacy constant, use artifact_filename() instead
 BATHO_CONFIG_DIR = ".batho-config"
 SCHEMA_VERSION = "batho-db.v1"
 DEFAULT_PAGE_SIZE = 8192
@@ -42,6 +43,17 @@ DEFAULT_BUSY_TIMEOUT_MS = 5000
 # Module-level cache
 _DB_CACHE: dict[str, "BathoDatabase"] = {}
 _DB_CACHE_LOCK = threading.Lock()
+
+
+def artifact_filename(root: Path) -> str:
+    """Generate the artifact database filename for a repo root."""
+    dirname = root.resolve().name
+    sanitized = re.sub(r'[^a-z0-9_-]', '-', dirname.lower())
+    sanitized = re.sub(r'-+', '-', sanitized).strip('-')
+    if not sanitized or sanitized == 'default':
+        path_hash = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:8]
+        sanitized = f"default-{path_hash}"
+    return f"artifact_{sanitized}.batho"
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +78,7 @@ def get_database(repo_root: Path | str, *, db_path: Path | str | None = None) ->
     Args:
         repo_root: Path to the repository root.
         db_path: Optional override for the .batho file location.
-                 If None, defaults to <repo_root>/.batho.
+                 If None, defaults to <repo_root>/artifact_<dirname>.batho.
 
     Returns:
         A cached BathoDatabase instance.
@@ -75,12 +87,12 @@ def get_database(repo_root: Path | str, *, db_path: Path | str | None = None) ->
     if db_path is not None:
         resolved_path = Path(db_path).resolve()
     else:
-        resolved_path = root / BATHO_DB_FILENAME
+        resolved_path = root / artifact_filename(root)
 
     key = str(resolved_path)
     with _DB_CACHE_LOCK:
         existing = _DB_CACHE.get(key)
-        if existing is not None:
+        if existing is not None and not getattr(existing, "_closed", False):
             return existing
         db = BathoDatabase(resolved_path, repo_root=root)
         _DB_CACHE[key] = db
@@ -1058,11 +1070,12 @@ class BathoDatabase:
 
     def close(self) -> None:
         """Close the database connection for this thread."""
-        with self._lock:
-            self._closed = True
-            if hasattr(self._local, "conn") and self._local.conn is not None:
-                self._local.conn.close()
-                self._local.conn = None
+        with _DB_CACHE_LOCK:
+            with self._lock:
+                self._closed = True
+                if hasattr(self._local, "conn") and self._local.conn is not None:
+                    self._local.conn.close()
+                    self._local.conn = None
 
     def __repr__(self) -> str:
         return f"BathoDatabase(path={self._db_path!s})"

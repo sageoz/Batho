@@ -13,6 +13,10 @@ from .reconstructor import FileReconstructor
 from .schema import BSGViewType
 from .storage import ArtifactRegistry, register_artifact
 from .unified_cache import BathoCache
+from .incremental import (
+    get_changed_file_status_since,
+    PatchMode,
+)
 
 __all__ = [
     "ASTCache",
@@ -25,4 +29,5 @@ __all__ = [
     "QueryService",
     "ArtifactRegistry",
     "register_artifact",
+    "PatchMode",
 ]

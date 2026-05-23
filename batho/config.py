@@ -913,7 +913,7 @@ logging:
   format: "%(message)s"
 
 paths:
-  db_path: .batho
+  db_path: .batho # Replaced dynamically with artifact_<dirname>.batho
   config_dir: .batho-config
 
 indexer:

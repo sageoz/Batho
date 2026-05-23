@@ -12,7 +12,10 @@ from batho.context.bsg_map import BSGMap
 
 # Import and re-export public APIs from submodules
 from batho.context.codegraph import CodeGraphIndexer, InMemoryGraph
-from batho.context.incremental import get_changed_file_status_since
+from batho.context.incremental import (
+    get_changed_file_status_since,
+    PatchMode,
+)
 from batho.context.query import QueryService
 from batho.time_machine import (
     FileChange,
@@ -37,6 +40,7 @@ __all__ = [
     "BSGMap",
     # Incremental
     "get_changed_file_status_since",
+    "PatchMode",
     # Time machine
     "create_snapshot",
     "diff_snapshots",

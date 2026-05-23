@@ -177,8 +177,9 @@ def cmd_mcp_add(args: argparse.Namespace) -> int:
         print(f"error: workspace path not found: {ctn_path}")
         return 1
 
-    if not (ctn_path / ".batho").is_file():
-        print(f"error: {ctn_path} is not a valid Batho workspace (missing .batho database)")
+    matches = list(ctn_path.glob("artifact_*.batho"))
+    if not matches:
+        print(f"error: {ctn_path} is not a valid Batho workspace (missing artifact_*.batho database)")
         return 1
 
     registry = WorkspaceRegistry(user_config_path=config_path)
@@ -368,7 +369,7 @@ def register_cli_subcommands(mcp_sub: argparse._SubParsersAction[Any]) -> None:
 
     add_parser = mcp_sub_parser.add_parser("add", help="Add a workspace")
     add_parser.add_argument("--config", default=None, help="Path to config file")
-    add_parser.add_argument("--ctn", required=True, help="Path to workspace root (with .batho file)")
+    add_parser.add_argument("--ctn", required=True, help="Path to workspace root (with artifact_*.batho database)")
     add_parser.add_argument("--id", help="Workspace ID (default: derived from directory name)")
     add_parser.add_argument("--label", help="Workspace label")
     add_parser.add_argument("--tag", action="append", help="Tags (can be repeated)")

@@ -21,6 +21,7 @@ from .constants import EXT_TO_LANGUAGE_DISPLAY, EXT_TO_LANGUAGE_ID
 
 if TYPE_CHECKING:
     from batho.time_machine import FileChange
+    from batho.context.unified_cache import BathoCache
     from ..codegraph import InMemoryGraph
 
 
@@ -37,6 +38,7 @@ class BSGMap:
     _serialized_bsg: dict[str, Any] | None = field(default=None, repr=False)
     _serialization_config: dict[str, Any] = field(default_factory=dict, repr=False)
     _file_snapshots: dict[str, "FileSnapshot"] = field(default_factory=dict, repr=False)
+    _opaque_snapshots: dict[str, "FileSnapshot"] = field(default_factory=dict, repr=False)
     _view_config: dict[str, Any] = field(default_factory=dict, repr=False)
     _view_cache_dirty: bool = field(default=True, repr=False)
     _logger: Any = field(default=None, init=False, repr=False)
@@ -44,7 +46,12 @@ class BSGMap:
     def __post_init__(self) -> None:
         self._logger = get_logger(__name__, operation="bsg")
 
-    def patch(self, changes: list["FileChange"], graph: "InMemoryGraph") -> None:
+    def patch(
+        self,
+        changes: list["FileChange"],
+        graph: "InMemoryGraph",
+        cache: "BathoCache | None" = None,
+    ) -> None:
         """
         Incrementally update the BSGMap for changed files only.
         """
@@ -96,6 +103,47 @@ class BSGMap:
         self._relationships = list(graph.relationships)
         self._serialized_bsg = None
 
+        # Update _opaque_snapshots (Bug 7 Fix)
+        from batho.time_machine import FileChangeType
+        local_cache: BathoCache | None = None
+        cache_created = False
+        try:
+            # Create local cache once if needed, outside the loop
+            if cache is None:
+                from batho.context.unified_cache import BathoCache as BC
+                local_cache = BC(self._root)
+                cache_created = True
+                c = local_cache
+            else:
+                c = cache
+
+            for change in changes:
+                change_rel = _rel(change.path)
+                if change.change_type == FileChangeType.DELETED:
+                    self._opaque_snapshots.pop(change_rel, None)
+                elif change.change_type in (FileChangeType.ADDED, FileChangeType.MODIFIED):
+                    has_entities = False
+                    for entity in graph.entities.values():
+                        entity_rel = _rel(entity.file)
+                        if entity_rel == change_rel:
+                            has_entities = True
+                            break
+                    if not has_entities:
+                        try:
+                            abs_path = change.path
+                            if not Path(abs_path).is_absolute():
+                                abs_path = str(Path(self._root) / change.path)
+                            snap = c.get_file_snapshot(abs_path) or c.get_file_snapshot(change_rel)
+                            if snap is not None:
+                                self._opaque_snapshots[change_rel] = snap
+                        except Exception as e:
+                            self._logger.warning("patch_opaque_snapshot_load_failed", filepath=change.path, error=str(e))
+                    else:
+                        self._opaque_snapshots.pop(change_rel, None)
+        finally:
+            if local_cache is not None and cache_created:
+                local_cache.close()
+
         self._logger.debug(
             "bsg_incrementally_patched",
             change_count=len(changes),
@@ -110,6 +158,7 @@ class BSGMap:
         graph: "object",
         root: str,
         serialization_config: dict[str, Any] | None = None,
+        opaque_snapshots: "list[FileSnapshot] | None" = None,
     ) -> "BSGMap":
         """
         Build a BSGMap from an InMemoryGraph.
@@ -147,17 +196,25 @@ class BSGMap:
             path: sorted(list(deps)) for path, deps in dependencies.items()
         }
 
+        opaque_map: dict[str, "FileSnapshot"] = (
+            {_rel(snap.file_path): snap for snap in opaque_snapshots}
+            if opaque_snapshots
+            else {}
+        )
+
         instance = cls(
             _root=str(_rel.root_path()),
             _by_file=sorted_map,
             _dependencies=sorted_deps,
             _relationships=list(graph.relationships),
             _serialization_config=serialization_config or {},
+            _opaque_snapshots=opaque_map,
         )
         instance._logger.debug(
             "bsg_built",
             root=str(_rel.root_path()),
             file_count=len(sorted_map),
+            opaque_file_count=len(opaque_map),
             entity_count=sum(len(v) for v in sorted_map.values()),
         )
         return instance
@@ -208,6 +265,21 @@ class BSGMap:
                 ]
                 by_file[file_path] = entities
 
+        opaque_map = {}
+        if isinstance(data.get("opaque_files"), list):
+            from ..schema import FileSnapshot
+            _rel = PathRelativizer(root_value)
+            for item in data.get("opaque_files", []):
+                if isinstance(item, dict) and "file_path" in item:
+                    snap = FileSnapshot(
+                        file_path=item["file_path"],
+                        file_hash=item.get("file_hash", ""),
+                        file_size=item.get("file_size", 0),
+                        encoding=item.get("encoding", "utf-8"),
+                    )
+                    fp_rel = _rel(item["file_path"]) if Path(item["file_path"]).is_absolute() else item["file_path"]
+                    opaque_map[fp_rel] = snap
+
         return cls(
             _root=root_value,
             _by_file=by_file,
@@ -215,6 +287,7 @@ class BSGMap:
             _relationships=[],
             _serialized_bsg=serialized_bsg,
             _serialization_config=serialization_config or {},
+            _opaque_snapshots=opaque_map,
         )
 
     def render_full(self) -> str:
@@ -446,6 +519,17 @@ class BSGMap:
         else:
             byte_coverage = "unknown"
 
+        _rel = PathRelativizer(self._root)
+        opaque_files_data = [
+            {
+                "file_path": _rel(snap.file_path),
+                "file_hash": snap.file_hash,
+                "file_size": snap.file_size,
+                "encoding": snap.encoding,
+            }
+            for snap in sorted(self._opaque_snapshots.values(), key=lambda s: s.file_path)
+        ]
+
         return {
             "view_type": str(BSGViewType.STORAGE),
             "schema_version": BSG_SCHEMA_VERSION,
@@ -458,6 +542,7 @@ class BSGMap:
             "fully_covered_files": fully_covered_files,
             "byte_coverage": byte_coverage,
             "files": files_data,
+            "opaque_files": opaque_files_data,
         }
 
     def render_agent_view(self, token_budget: int | None = None) -> tuple[dict[str, Any], dict[str, Any]]:

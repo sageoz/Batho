@@ -12,6 +12,15 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from enum import Enum
+
+class PatchMode(Enum):
+    """Change detection modes for batho patch."""
+    COMMIT = "commit"      # Compare snapshot commit to HEAD
+    STAGED = "staged"      # Staged changes only (--cached)
+    MODIFIED = "modified"  # Unstaged working directory changes
+    AUTO = "auto"          # Staged + Modified combined
+
 
 _SNAPSHOT_ID_RE = re.compile(
     r"^batho_(?P<project>.+)_(?P<commit>[0-9a-f]{7,64}|nogit)_(?P<timestamp>\d{8}T\d{6}(?:\d{6})?Z)$"
@@ -196,3 +205,60 @@ def get_changed_files_since(
 
     files = sorted({entry.path for entry in entries if entry.path})
     return files
+
+
+def get_changed_files_by_mode(
+    mode: PatchMode,
+    repo_root: str | Path,
+    base_commit: str | None = None,
+) -> list[GitDiffEntry] | None:
+    """Detect file changes based on specified mode.
+    
+    Args:
+        mode: PatchMode determining what changes to detect
+        repo_root: Path to git repository
+        base_commit: Required for COMMIT mode, ignored for others
+        
+    Returns:
+        List of GitDiffEntry or None if not a git repo / git failure
+    """
+    repo_path = Path(repo_root).resolve()
+    if not is_git_repo(repo_path):
+        return None
+    
+    if mode == PatchMode.COMMIT:
+        if not base_commit:
+            return None
+        result = _run_git(
+            repo_path,
+            ["diff", "--name-status", "-M", "--diff-filter=ACDMRT", 
+             f"{base_commit}..HEAD"],
+        )
+    elif mode == PatchMode.STAGED:
+        result = _run_git(
+            repo_path,
+            ["diff", "--cached", "--name-status", "-M", "--diff-filter=ACDMRT"],
+        )
+    elif mode == PatchMode.MODIFIED:
+        result = _run_git(
+            repo_path,
+            ["diff", "--name-status", "-M", "--diff-filter=ACDMRT"],
+        )
+    elif mode == PatchMode.AUTO:
+        # Combine staged and modified
+        staged = get_changed_files_by_mode(PatchMode.STAGED, repo_root)
+        modified = get_changed_files_by_mode(PatchMode.MODIFIED, repo_root)
+        if staged is None and modified is None:
+            return None
+        # Merge with staged taking precedence
+        merged = {e.path: e for e in (modified or [])}
+        for e in (staged or []):
+            merged[e.path] = e
+        return list(merged.values())
+    else:
+        return None
+    
+    if result is None:
+        return None
+    return _parse_name_status_output(result.stdout)
+

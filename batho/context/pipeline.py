@@ -21,6 +21,7 @@ from batho.context.unified_cache import BathoCache
 from batho.context.extractor import ASTExtractor
 from batho.context.schema import Entity, EntityType, FileSnapshot, Relationship
 from batho.utils.file_io import read_file_bytes
+from batho.utils.hash import _is_binary
 from batho.utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__, component="pipeline")
@@ -339,10 +340,15 @@ def process_file_worker(
             
         content_hash = compute_bytes_hash(content)
 
-        # Check AST cache for existing entities and relationships
+        cache = None
         if cache_enabled:
-            # Use persisted worker cache if available, else fallback to per-call instance
-            cache = _WORKER_CACHE or BathoCache(cache_path=cache_path)
+            if _WORKER_CACHE is not None:
+                cache = _WORKER_CACHE
+            elif cache_path is not None:
+                cache = BathoCache(cache_path=cache_path)
+
+        # Check AST cache for existing entities and relationships
+        if cache_enabled and cache is not None:
             cached_result = cache.get_ast(content_hash)
             if cached_result is not None:
                 cached_entities, cached_relationships = cached_result
@@ -364,7 +370,7 @@ def process_file_worker(
                 if include_gaps and cached_entities:
                     existing_snapshot = cache.get_file_snapshot(filepath)
                     if existing_snapshot is None:
-                        _create_file_snapshot(filepath, content_hash, size, cached_entities, cache)
+                        _create_file_snapshot(filepath, content_hash, len(content), cached_entities, cache)
 
                 return (filepath, cached_entities, cached_relationships, True)
 
@@ -377,7 +383,14 @@ def process_file_worker(
             file_path, content
         ) or _registry_get_extractor(suffix)
         if file_extractor is None:
-            return None
+            if cache_enabled and cache is not None:
+                _snap = FileSnapshot.create_opaque(
+                    file_path=filepath,
+                    content=content,
+                    file_size=len(content),
+                )
+                cache.set_file_snapshot(_snap)
+            return None  # opaque file — no extractor
 
         if not isinstance(file_extractor, ASTExtractor):
             return None
@@ -411,8 +424,7 @@ def process_file_worker(
 
         # Cache the extracted entities and relationships if cache is enabled
         # Skip caching empty results to avoid re-parsing files that legitimately have no entities
-        if cache_enabled and entities:
-            cache = _WORKER_CACHE or BathoCache(cache_path=cache_path)
+        if cache_enabled and entities and cache is not None:
             cache.set_ast(
                 content_hash,
                 filepath,

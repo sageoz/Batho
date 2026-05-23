@@ -1,6 +1,6 @@
 """Time Machine utilities for Batho core (DB-backed snapshots and diffs).
 
-- Snapshots are stored in the unified .batho SQLite database (snapshots table).
+- Snapshots are stored in the unified `artifact_<dirname>.batho` SQLite database (snapshots table).
 - snapshot_id format: `batho_<uuid>_<timestamp>` (UTC).
 - Diff reports entity/relationship deltas and changed files.
 - PR patching stub provided for future incremental updates.
@@ -236,7 +236,7 @@ class FileChangeTracker:
         self._cache: BathoCache | None = None
 
     def _get_cache(self) -> BathoCache:
-        if self._cache is None:
+        if self._cache is None or getattr(self._cache._db, "_closed", False):
             self._cache = BathoCache(str(self.root))
         return self._cache
 
@@ -549,7 +549,7 @@ def create_snapshot(
     bsg_map: BSGMap,
     label: str | None = None,
 ) -> str:
-    """Persist a snapshot to the .batho database."""
+    """Persist a snapshot to the artifact database."""
     repo_root = root.resolve()
     snapshot_id = generate_snapshot_id(repo_root)
 
@@ -609,7 +609,7 @@ def create_snapshot(
 
 
 def list_snapshots(ctn_dir: Path) -> list[dict[str, Any]]:
-    """List all snapshots from the .batho database."""
+    """List all snapshots from the artifact database."""
     db = _get_db(ctn_dir)
     rows = db.list_snapshots()
     return [
@@ -625,7 +625,7 @@ def list_snapshots(ctn_dir: Path) -> list[dict[str, Any]]:
 
 
 def load_snapshot(ctn_dir: Path, snapshot_id: str) -> dict[str, Any] | None:
-    """Load a snapshot from the .batho database."""
+    """Load a snapshot from the artifact database."""
     db = _get_db(ctn_dir)
     row = db.get_snapshot(snapshot_id)
     if row is None:
@@ -895,6 +895,7 @@ def incremental_patch(
             # Create file change tracker for validation
             tracker = FileChangeTracker(root_path)
             tracker.load()
+            cache = tracker._get_cache()
 
             # Apply changes in order: deletions first, then modifications, then additions
             ordered_changes = aggregate_changes(changes)
@@ -905,12 +906,14 @@ def incremental_patch(
             batch_size = max(
                 100, len(ordered_changes) // 10
             )  # Progress logging batches
+
             for i, change in enumerate(ordered_changes):
                 try:
                     abs_path = root_path / change.path
 
                     if change.change_type == FileChangeType.DELETED:
                         updater.remove_entities_for_file(base_graph, str(abs_path))
+                        cache.delete_file_snapshot(str(abs_path))
                         rollback_actions.append(("add_file", change.path))
 
                     elif change.change_type == FileChangeType.MODIFIED:
@@ -932,6 +935,28 @@ def incremental_patch(
                             logger.warning(
                                 "no_extractor_for_modified_file", path=change.path
                             )
+                            try:
+                                stat_info = abs_path.stat()
+                                size = stat_info.st_size
+                                content = abs_path.read_bytes()
+                                from batho.context.schema import FileSnapshot
+                                # Retrieve old snapshot for rollback
+                                old_snap = cache.get_file_snapshot(str(abs_path))
+                                _snap = FileSnapshot.create_opaque(
+                                    file_path=str(abs_path),
+                                    content=content,
+                                    file_size=size,
+                                )
+                                cache.set_file_snapshot(_snap)
+                                rollback_actions.append(
+                                    ("restore_opaque_file", change.path, old_snap)
+                                )
+                            except (OSError, IOError) as e:
+                                logger.warning(
+                                    "opaque_file_read_failed",
+                                    path=change.path,
+                                    error=str(e),
+                                )
 
                     elif change.change_type == FileChangeType.ADDED:
                         # For new files, we need an extractor
@@ -946,6 +971,27 @@ def incremental_patch(
                                 base_graph, str(abs_path), extractor
                             )
                             rollback_actions.append(("delete_file", change.path))
+                        else:
+                            try:
+                                stat_info = abs_path.stat()
+                                size = stat_info.st_size
+                                content = abs_path.read_bytes()
+                                from batho.context.schema import FileSnapshot
+                                _snap = FileSnapshot.create_opaque(
+                                    file_path=str(abs_path),
+                                    content=content,
+                                    file_size=size,
+                                )
+                                cache.set_file_snapshot(_snap)
+                                rollback_actions.append(
+                                    ("delete_opaque_file", change.path)
+                                )
+                            except (OSError, IOError) as e:
+                                logger.warning(
+                                    "opaque_file_read_failed",
+                                    path=change.path,
+                                    error=str(e),
+                                )
 
                     applied_changes.append(change)
 
@@ -972,6 +1018,7 @@ def incremental_patch(
                         rollback_actions,
                         updater,
                         root_path,
+                        cache=cache,
                     )
                     raise PatchFileError(
                         f"Failed to apply change to {change.path}: {str(exc)}",
@@ -979,13 +1026,14 @@ def incremental_patch(
                         operation=change.change_type.value,
                     ) from exc
 
+
             # Resolve imports and apply semantic overlay (same as build_graph)
             from batho.context.symbol_index import SymbolIndex
             from batho.context.codegraph import CodeGraphIndexer
 
             symbol_index = SymbolIndex.build(base_graph)
-            indexer = CodeGraphIndexer()
-            base_graph, _, _ = indexer._resolve_imports(base_graph, symbol_index=symbol_index)
+            with CodeGraphIndexer(cache_path=str(root_path), root=str(root_path)) as indexer:
+                base_graph, _, _ = indexer._resolve_imports(base_graph, symbol_index=symbol_index)
             from batho.bsg import apply_semantic_overlay
 
             apply_semantic_overlay(graph=base_graph, root_path=root_path, logger=logger)
@@ -1003,7 +1051,7 @@ def incremental_patch(
                 )
 
             # Update bsg map
-            base_bsg.patch(changes, base_graph)
+            base_bsg.patch(changes, base_graph, cache=tracker._get_cache())
 
             # Create new snapshot
             new_snapshot_id = create_snapshot(
@@ -1180,12 +1228,14 @@ def incremental_patch(
         }
 
 
+
 def _rollback_changes(
     graph: InMemoryGraph,
     applied_changes: list[FileChange],
     rollback_actions: list[tuple],
     updater: IncrementalGraphUpdater,
     root_path: Path,
+    cache: Any = None,
 ) -> None:
     """Rollback applied changes in reverse order."""
     logger.info("rollback_start", applied_count=len(applied_changes))
@@ -1197,10 +1247,13 @@ def _rollback_changes(
 
             if action_type == "add_file":
                 # File was deleted, need to restore it
-                # Note: This is a simplified rollback - in practice we'd need the original content
-                updater.add_entities_for_file(
-                    graph, str(abs_path), None
-                )  # Extractor would need to be determined
+                # Note: This is a simplified rollback - full restoration would need the original content
+                logger.warning(
+                    "rollback_add_file_not_implemented",
+                    path=path,
+                    note="Full restoration of deleted files requires original content backup"
+                )
+                # Skip this rollback action - the file will need to be re-parsed from disk
 
             elif action_type == "restore_file":
                 # File was modified, restore to previous state
@@ -1210,6 +1263,30 @@ def _rollback_changes(
             elif action_type == "delete_file":
                 # File was added, remove it
                 updater.remove_entities_for_file(graph, str(abs_path))
+
+            elif action_type == "delete_opaque_file":
+                if cache is not None:
+                    cache.delete_file_snapshot(str(abs_path))
+                else:
+                    logger.warning(
+                        "rollback_delete_opaque_file_no_cache",
+                        path=path,
+                        note="Cache required for opaque file rollback but not provided"
+                    )
+
+            elif action_type == "restore_opaque_file":
+                if cache is not None:
+                    old_snap = args[0] if args else None
+                    if old_snap is not None:
+                        cache.set_file_snapshot(old_snap)
+                    else:
+                        cache.delete_file_snapshot(str(abs_path))
+                else:
+                    logger.warning(
+                        "rollback_restore_opaque_file_no_cache",
+                        path=path,
+                        note="Cache required for opaque file rollback but not provided"
+                    )
 
         except Exception as exc:
             logger.error("rollback_action_failed", action=action, error=str(exc))
@@ -1223,7 +1300,7 @@ def _rollback_changes(
 
 
 def save_patch_operation(ctn_dir: Path, operation: PatchOperation) -> None:
-    """Save a patch operation to the .batho database."""
+    """Save a patch operation to the artifact database."""
     db = _get_db(ctn_dir)
     patch_data = operation.serialize()
     db.register_artifact(
@@ -1240,7 +1317,7 @@ def save_patch_operation(ctn_dir: Path, operation: PatchOperation) -> None:
 
 
 def load_patch_operation(ctn_dir: Path, operation_id: str) -> PatchOperation | None:
-    """Load a patch operation from the .batho database."""
+    """Load a patch operation from the artifact database."""
     db = _get_db(ctn_dir)
     with db.connection(read_only=True) as conn:
         row = conn.execute(
@@ -1278,7 +1355,7 @@ def update_patch_index(ctn_dir: Path, operation: PatchOperation) -> None:
 def list_patch_operations(
     ctn_dir: Path, filters: dict[str, Any] | None = None
 ) -> list[PatchOperation]:
-    """List patch operations from the .batho database."""
+    """List patch operations from the artifact database."""
     db = _get_db(ctn_dir)
     with db.connection(read_only=True) as conn:
         rows = conn.execute(
@@ -1545,7 +1622,7 @@ def _validate_patch_dependencies(
     Args:
         dependencies: List of patch IDs that this patch depends on
         base_snapshot_id: Base snapshot ID
-        ctn_dir: .ctn directory path
+        ctn_dir: Repository root path (legacy name, actually repo root)
 
     Returns:
         True if all dependencies are satisfied, False otherwise
@@ -1553,22 +1630,15 @@ def _validate_patch_dependencies(
     logger = get_logger(__name__, component="patch_validation")
 
     for dep_patch_id in dependencies:
-        # Check if dependency patch exists
-        dep_patch_path = ctn_dir / "patches" / f"{dep_patch_id}.json"
-        if not dep_patch_path.exists():
+        # Check if dependency patch exists in database
+        dep_patch = load_patch_operation(ctn_dir, dep_patch_id)
+        if dep_patch is None:
             logger.error("patch_dependency_not_found", dependency=dep_patch_id)
             return False
 
-        # Load and validate dependency patch
-        try:
-            dep_data = json.loads(dep_patch_path.read_text(encoding="utf-8"))
-            if not dep_data.get("success", True):
-                logger.error("patch_dependency_failed", dependency=dep_patch_id)
-                return False
-        except (json.JSONDecodeError, OSError) as e:
-            logger.error(
-                "patch_dependency_invalid", dependency=dep_patch_id, error=str(e)
-            )
+        # Validate dependency patch was successful
+        if not dep_patch.validate():
+            logger.error("patch_dependency_checksum_invalid", dependency=dep_patch_id)
             return False
 
     return True

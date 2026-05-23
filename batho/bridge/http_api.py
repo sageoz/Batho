@@ -438,7 +438,7 @@ class BridgeAPIHandler:
                                 "name": name,
                                 "path": str(entry_path),
                                 "is_dir": is_dir,
-                                "is_batho": name == ".batho" and not is_dir
+                                "is_batho": name.startswith("artifact_") and name.endswith(".batho") and not is_dir
                             })
                         except PermissionError:
                             continue

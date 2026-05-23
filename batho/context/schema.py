@@ -478,6 +478,21 @@ class FileSnapshot(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
 
+    @classmethod
+    def create_opaque(cls, file_path: str, content: bytes, file_size: int | None = None) -> FileSnapshot:
+        """Create a FileSnapshot for unindexable/opaque files."""
+        from batho.utils.hash import _is_binary, compute_bytes_hash
+        encoding = "binary" if _is_binary(content) else "utf-8"
+        size = file_size if file_size is not None else len(content)
+        return cls(
+            file_path=file_path,
+            file_hash=compute_bytes_hash(content),
+            file_size=size,
+            encoding=encoding,
+            entity_ids=[],
+            gap_sections=[],
+        )
+
 
 class ReconstructionResult(BaseModel):
     """Result summary for a reconstruction attempt."""

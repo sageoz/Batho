@@ -66,7 +66,8 @@ class ArtifactRegistryBridge:
             return self._pool._db_path
         if self._registry:
             return self._registry.path
-        return self.ctn_dir / ".batho"
+        from batho.storage.engine import artifact_filename
+        return self.ctn_dir / artifact_filename(self.ctn_dir)
 
     @property
     def enabled(self) -> bool:

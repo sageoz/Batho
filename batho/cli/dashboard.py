@@ -29,11 +29,11 @@ MAX_PORT_RETRIES = 10
 
 
 def _find_ctn_dir(start_path: Path) -> Path | None:
-    """Walk up from start_path to find the nearest ancestor with .batho file."""
+    """Walk up from start_path to find the nearest ancestor with artifact_*.batho database."""
     current = start_path.resolve()
     while True:
-        batho_path = current / ".batho"
-        if batho_path.is_file():
+        matches = list(current.glob("artifact_*.batho"))
+        if matches:
             return current
         parent = current.parent
         if parent == current:
@@ -371,8 +371,8 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
     ctn_path = _find_ctn_dir(root_path)
     if not ctn_path:
-        print(f"error: No .batho database found walking up from {root_path}")
-        print("Run `batho index` from the repo root to create .batho")
+        print(f"error: No artifact database (artifact_*.batho) found walking up from {root_path}")
+        print("Run `batho build` from the repo root to create one")
         return 1
 
     workspace_root = _find_workspace_root(ctn_path)

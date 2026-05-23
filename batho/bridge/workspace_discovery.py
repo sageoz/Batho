@@ -41,21 +41,20 @@ def _generate_unique_id(base_id: str, existing_ids: set[str]) -> str:
 
 
 def _find_ctn_directories(globs: list[str]) -> Iterator[Path]:
-    """Find all .batho databases matching the given globs."""
+    """Find all artifact_*.batho databases matching the given globs."""
     for glob_pattern in globs:
         expanded = os.path.expanduser(glob_pattern)
         for match in Path(".").glob(expanded) if Path(".").exists() else []:
-            if match.is_file() and match.name == ".batho":
+            if match.is_file() and match.name.startswith("artifact_") and match.name.endswith(".batho"):
                 yield match.parent
             elif match.is_dir():
-                batho_db = match / ".batho"
-                if batho_db.is_file():
+                if any(match.glob("artifact_*.batho")):
                     yield match
 
 
 def _is_valid_ctn_directory(ctn_dir: Path) -> bool:
-    """Check if a directory has a valid .batho database."""
-    return (ctn_dir / ".batho").is_file()
+    """Check if a directory has a valid artifact_*.batho database."""
+    return any(ctn_dir.glob("artifact_*.batho"))
 
 
 def _matches_ignore_pattern(workspace_id: str, ignore_patterns: list[str]) -> bool:
@@ -155,7 +154,8 @@ class WorkspaceDiscovery:
                 inner_self._pending_scan = False
 
             def on_any_event(inner_self, event):
-                if ".batho" in event.src_path:
+                filename = Path(event.src_path).name
+                if filename.startswith("artifact_") and ".batho" in filename:
                     if not inner_self._pending_scan:
                         inner_self._pending_scan = True
                         LOGGER.info("batho_db_changed", path=event.src_path)

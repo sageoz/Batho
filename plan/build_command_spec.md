@@ -1,7 +1,7 @@
 # Specification: `batho build` — Fresh Index Build
 
 This document defines the implementation spec for `batho build`. Scope is **fresh full build only**.
-If `.batho` already exists, the command exits early directing the user to `batho patch` (implemented separately).
+If the database already exists, the command exits early directing the user to `batho patch` (implemented separately).
 
 ---
 
@@ -14,7 +14,7 @@ batho build --root DIR [--full] [--verbose] [--max-workers N] [--max-file-size-k
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--root` | `Path` | `.` | Repository root directory |
-| `--full` | `bool` | `False` | Force rebuild (deletes existing `.batho` and rebuilds from scratch) |
+| `--full` | `bool` | `False` | Force rebuild (deletes existing database and rebuilds from scratch) |
 | `--verbose` | `bool` | `False` | Debug-level structured logging |
 | `--max-workers` | `int` | CPU count | Parallel parse worker limit |
 | `--max-file-size-kb` | `int` | config | Skip files exceeding this size |
@@ -71,7 +71,7 @@ class BuildResult:
 def run_build(options: BuildOptions) -> BuildResult:
     """Execute a full index build for a working directory.
 
-    If .batho already exists and force_full is False, returns early
+    If the database already exists and force_full is False, returns early
     with success=True and a warning indicating patch should be used.
     """
 ```
@@ -163,7 +163,7 @@ All imports come from core libraries. **No** `cmd_*` functions are called.
 | Condition | Exit | Output |
 |-----------|------|--------|
 | Fresh build success | `0` | `Built <root>: N entities, M relationships, F files in Xms` |
-| `.batho` exists, no `--full` | `0` | `.batho already exists. Use batho patch --root <path> or batho build --root <path> --full` |
+| Database exists, no `--full` | `0` | `Database already exists. Use batho patch --root <path> or batho build --root <path> --full` |
 | `--full` rebuild success | `0` | Same as fresh build |
 | No indexable files | `1` | `No indexable files found in <root>` |
 | Config/IO error | `1` | Error message |
@@ -179,7 +179,7 @@ All imports come from core libraries. **No** `cmd_*` functions are called.
 
 When `batho patch` is implemented, `batho build` will not call it. The two commands are peers:
 - `build` = create from nothing (or `--full` to recreate)
-- `patch` = update existing `.batho` incrementally
+- `patch` = update existing database incrementally
 
 ---
 
@@ -189,6 +189,6 @@ When `batho patch` is implemented, `batho build` will not call it. The two comma
 - [ ] Create `batho/orchestrator/build.py` with `BuildOptions`, `BuildResult`, `run_build()`
 - [ ] Create `batho/cli/build.py` with argparse subcommand registration
 - [ ] Wire `batho build` into the CLI entry point
-- [ ] Verify: fresh build on a test repo produces valid `.batho` with all expected data
+- [ ] Verify: fresh build on a test repo produces valid `artifact_<dirname>.batho` with all expected data
 - [ ] Verify: re-running without `--full` exits early with guidance message
 - [ ] Verify: `--full` deletes and rebuilds successfully

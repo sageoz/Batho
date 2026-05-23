@@ -88,11 +88,14 @@ def _resolve_db_path(root_or_db: Path | None = None) -> Path:
     if root_or_db is None:
         root_or_db = Path.cwd()
     resolved = Path(root_or_db).resolve()
-    if resolved.suffix == ".batho" or resolved.name == ".batho":
+    if resolved.suffix == ".batho":
         return resolved
     # Treat as repo root
     cfg = get_config_cached()
     db_name = cfg.get("paths", {}).get("db_path", ".batho")
+    if not db_name or db_name == ".batho":
+        from batho.storage.engine import artifact_filename
+        return resolved / artifact_filename(resolved)
     return resolved / db_name
 
 
@@ -129,11 +132,11 @@ def infer_ctn_dir_for_path(path: Path) -> Path | None:
     Returns the repo root (not .ctn dir, which no longer exists).
     """
     resolved = Path(path).resolve()
-    # Walk up looking for batho.yaml or .batho file as repo markers
+    # Walk up looking for batho.yaml or artifact_*.batho file as repo markers
     for parent in [resolved] + list(resolved.parents):
         if (parent / "batho.yaml").exists():
             return parent
-        if (parent / ".batho").exists():
+        if list(parent.glob("artifact_*.batho")):
             return parent
     return None
 

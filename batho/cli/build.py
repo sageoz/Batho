@@ -14,10 +14,10 @@ def register_build_parser(subparsers: argparse._SubParsersAction) -> None:
     """Register the `build` subcommand on the given subparsers action."""
     parser = subparsers.add_parser(
         "build",
-        help="Full index build for a repository (creates .batho database)",
+        help="Full index build for a repository (creates artifact_<dirname>.batho database)",
         description=(
             "Build a complete code graph, BSG map, and baseline snapshot for a "
-            "repository. If .batho already exists, exits with guidance to use "
+            "repository. If the artifact database already exists, exits with guidance to use "
             "`batho patch` for incremental updates."
         ),
     )
@@ -31,7 +31,7 @@ def register_build_parser(subparsers: argparse._SubParsersAction) -> None:
         "--full",
         action="store_true",
         default=False,
-        help="Force full rebuild (deletes existing .batho and rebuilds from scratch)",
+        help="Force full rebuild (deletes existing database and rebuilds from scratch)",
     )
     parser.add_argument(
         "--verbose",

@@ -16,10 +16,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Register subcommands
     from batho.cli.build import register_build_parser
+    from batho.cli.patch import register_patch_parser
+    from batho.cli.fix import register_fix_parser
+    from batho.cli.export import register_export_parser
 
     register_build_parser(subparsers)
-
-    # Future: register_patch_parser, register_doctor_parser, etc.
+    register_patch_parser(subparsers)
+    register_fix_parser(subparsers)
+    register_export_parser(subparsers)
 
     return parser
 

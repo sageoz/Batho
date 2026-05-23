@@ -560,6 +560,7 @@ class CodeGraphIndexer:
         self._root: Path | None = root_path
         self.build_stats: dict[str, Any] = {}  # populated after build_graph(); distinct from stats() method
         self._last_reconstruction: Any = None  # set after reconstruct_file
+        self._unindexed_files: list[tuple[str, str]] = []  # (abs_path_str, rel_path_str) populated by build_graph()
 
     def close(self) -> None:
         """Close the cache database connection to release file locks."""
@@ -573,6 +574,18 @@ class CodeGraphIndexer:
         """Context manager exit - ensures cache is closed."""
         self.close()
         return False
+
+    def get_unindexed_files(self) -> list[tuple[str, str]]:
+        """Return list of files that could not be indexed (no extractor available).
+
+        Returns:
+            List of tuples (absolute_path, relative_path) for unindexed files.
+        """
+        return list(self._unindexed_files)
+
+    def clear_unindexed_files(self) -> None:
+        """Clear the list of unindexed files."""
+        self._unindexed_files.clear()
 
     # ------------------------------------------------------------------
     # Public API
@@ -692,6 +705,7 @@ class CodeGraphIndexer:
 
             # --- Collect files to process ---
             candidates: list[tuple[Path, str]] = []  # (path, rel_str)
+            self._unindexed_files = []
             for dirpath, dirnames, filenames in walk_ignored_filtered(root_path, spec=ignore_spec):
                 for filename in filenames:
                     file_path = dirpath / filename
@@ -707,6 +721,11 @@ class CodeGraphIndexer:
                     else:
                         file_extractor = _registry_get_extractor(suffix)
                         if file_extractor is None:
+                            try:
+                                rel = str(file_path.relative_to(root_path))
+                            except ValueError:
+                                rel = str(file_path)
+                            self._unindexed_files.append((str(file_path), rel))
                             continue
                         if ext_set is not None and suffix not in ext_set:
                             continue
@@ -953,6 +972,32 @@ class CodeGraphIndexer:
                     files_skipped=files_skipped,
                     files_cached=files_cached,
                 )
+
+            # Write snapshots for unindexed files to cache (Bug 1 & Bug 5 Fix)
+            if bsg_cache_cfg.get("enabled", True):
+                from batho.context.schema import FileSnapshot
+                from batho.utils.hash import compute_bytes_hash, _is_binary
+                from batho.utils.file_io import read_file_bytes
+
+                for abs_path_str, rel in self._unindexed_files:
+                    try:
+                        abs_path = Path(abs_path_str)
+                        if abs_path.exists():
+                            stat_info = abs_path.stat()
+                            size = stat_info.st_size
+                            content = read_file_bytes(abs_path_str, max_size_kb=configured_max_file_size_kb, detect_binary=True)
+                            if content is not None:
+                                content_hash = compute_bytes_hash(content)
+                                existing_snap = self._cache.get_file_snapshot(abs_path_str) or self._cache.get_file_snapshot(rel)
+                                if existing_snap is None or existing_snap.file_hash != content_hash:
+                                    _snap = FileSnapshot.create_opaque(
+                                        file_path=abs_path_str,
+                                        content=content,
+                                        file_size=size,
+                                    )
+                                    self._cache.set_file_snapshot(_snap)
+                    except Exception as e:
+                        self.logger.warning("failed_to_write_opaque_snapshot", filepath=abs_path_str, error=str(e))
 
             # Validate graph consistency before returning
             updater = IncrementalGraphUpdater()
