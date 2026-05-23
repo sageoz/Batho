@@ -105,14 +105,15 @@ class CloudSyncUploader:
 
         for index, row in enumerate(rows, start=1):
             artifact_id = str(row.get("artifact_id") or "")
-            artifact_path = Path(str(row.get("physical_path") or ""))
+            logical_path = str(row.get("logical_path") or "")
+            artifact_path = (ctn_dir / logical_path) if logical_path else None
             retry_count = int(row.get("retry_count") or 0)
 
             if progress_callback:
                 progress_callback(index, len(rows), {"artifact_id": artifact_id})
 
-            if not artifact_path.exists():
-                error_msg = f"artifact file missing: {artifact_path}"
+            if artifact_path is None or not artifact_path.exists():
+                error_msg = f"artifact file missing: {logical_path}"
                 registry.mark_sync_failed(
                     artifact_id,
                     error=error_msg,

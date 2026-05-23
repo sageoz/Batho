@@ -1,7 +1,7 @@
 """Deterministic failure synthesizer and evolution ledger persistence.
 
 This module converts patch failures into concise "Don't" guidance and
-stores entries in `.ctn/evolution_ledger.json`.
+stores entries in the .batho database (artifacts table).
 """
 
 from __future__ import annotations

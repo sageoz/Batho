@@ -1,4 +1,4 @@
-"""Artifact loader — resolves paths and loads JSON content from .ctn artifacts."""
+"""Artifact loader — resolves and loads JSON content from .batho artifacts."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ class ArtifactLoader:
         self._bridge = ArtifactRegistryBridge(self.ctn_dir)
 
     def _resolve_index_id(self) -> str | None:
-        """Return the current index_id from index.json, if any."""
+        """Return the current index_id from the latest completed run."""
         latest = self._bridge.get_latest_index()
         return latest.index_id if latest else None
 
@@ -75,15 +75,12 @@ class ArtifactLoader:
         Resolution order:
         1. Registry lookup by type (most recent active artifact).
         2. Default pattern using provided or current index_id.
-        3. index.json ``outputs`` map lookup.
+        3. Latest index outputs map lookup.
         """
         # 1. Registry lookup
         candidates = self._bridge.get_artifacts_by_type(artifact_type, limit=1)
         if candidates:
             record = candidates[0]
-            phys = Path(record.physical_path)
-            if phys.exists():
-                return phys
             logical = self.ctn_dir / record.logical_path
             if logical.exists():
                 return logical
@@ -102,7 +99,7 @@ class ArtifactLoader:
                 if resolved.exists():
                     return resolved
 
-        # 3. index.json outputs map
+        # 3. Latest index outputs map
         latest = self._bridge.get_latest_index()
         if latest and latest.outputs:
             output_key = _artifact_type_to_output_key(artifact_type)
@@ -168,11 +165,9 @@ class ArtifactLoader:
 
     def load_artifact(self, record: ArtifactRecord, *, verify_checksum: bool = True) -> ArtifactContent:
         """Load a specific artifact by its registry record."""
-        path = Path(record.physical_path)
+        path = self.ctn_dir / record.logical_path
         if not path.exists():
-            path = self.ctn_dir / record.logical_path
-        if not path.exists():
-            raise ArtifactNotFoundError(record.artifact_type, str(record.physical_path))
+            raise ArtifactNotFoundError(record.artifact_type, record.logical_path)
 
         checksum_verified = False
         if verify_checksum and record.checksum:
@@ -199,7 +194,7 @@ class ArtifactLoader:
 
 
 def _artifact_type_to_output_key(artifact_type: str) -> str | None:
-    """Map artifact types to keys used in index.json ``outputs``."""
+    """Map artifact types to keys used in index outputs."""
     mapping = {
         "graph_json": "graph_json",
         "bsg_json": "bsg_json",

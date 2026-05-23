@@ -539,7 +539,7 @@ def build_graph_parallel(
     # Get cache configuration
     bsg_cache_cfg = bsg_cfg.get("cache", {})
     cache_enabled = bsg_cache_cfg.get("enabled", True)
-    cache_path = bsg_cache_cfg.get("path", ".ctn/local/cache/cache.db")
+    cache_path = bsg_cache_cfg.get("path", ".batho")
     ttl_days = bsg_cache_cfg.get("ttl_days", 30)
 
     if not parallel_enabled:
@@ -673,7 +673,7 @@ def build_graph_sequential(
     """
     bsg_cache_cfg = bsg_cfg.get("cache", {})
     cache_enabled = bsg_cache_cfg.get("enabled", True)
-    cache_path = bsg_cache_cfg.get("path", ".ctn/local/cache/cache.db")
+    cache_path = bsg_cache_cfg.get("path", ".batho")
     ttl_days = bsg_cache_cfg.get("ttl_days", 30)
 
     results = []

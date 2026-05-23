@@ -24,12 +24,13 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from batho.cloud_sync.config import CloudSyncConfig
 
 DEFAULT_LOG_LEVEL = "INFO"
-DEFAULT_CTN_DIR = ".ctn"
+DEFAULT_DB_PATH = ".batho"
+DEFAULT_CONFIG_DIR = ".batho-config"
 DEFAULT_MAX_FILE_SIZE_KB = 500
 DEFAULT_MAX_INDEXED_FILES = 200000  # allow large repos
 DEFAULT_INDEX_WORKERS = 0  # auto
 DEFAULT_IGNORE_FILES: list[str] | None = None
-DEFAULT_METRICS_OUTPUT: str | None = ".ctn/local/metrics/metrics.json"
+DEFAULT_METRICS_OUTPUT: str | None = None
 DEFAULT_ROOT_CONFIG_FILE = "batho.yaml"
 DEFAULT_RULES_ENABLED = True
 DEFAULT_RULES_AUTO_LOAD_ALL_PLUGINS = True
@@ -50,7 +51,8 @@ DEFAULT_PATCH_TIMEOUT_SECONDS = 300  # 5 minutes
 DEFAULT_MAX_PATCH_CHANGES = 10000  # Max changes in a single patch
 DEFAULT_PATCH_HISTORY_DAYS = 90  # Retention policy for patches
 DEFAULT_PATCH_COUNT = 1000  # Alternative retention limit
-DEFAULT_STORAGE_REGISTRY_PATH = ".ctn/local/sync/artifact_registry.db"
+DEFAULT_STORAGE_BUSY_TIMEOUT_MS = 5000
+DEFAULT_STORAGE_PAGE_SIZE = 8192
 DEFAULT_STORAGE_RETENTION_SNAPSHOT_DAYS = 90
 DEFAULT_STORAGE_RETENTION_PATCH_DAYS = 90
 DEFAULT_STORAGE_RETENTION_METRICS_DAYS = 30
@@ -104,7 +106,8 @@ class LoggingConfig(BaseModel):
 
 
 class PathsConfig(BaseModel):
-    ctn_dir: str = Field(default=DEFAULT_CTN_DIR)
+    db_path: str = Field(default=DEFAULT_DB_PATH)
+    config_dir: str = Field(default=DEFAULT_CONFIG_DIR)
 
 
 class IndexerConfig(BaseModel):
@@ -179,7 +182,6 @@ class BsgIgnoreConfig(BaseModel):
 
 class BsgCacheConfig(BaseModel):
     enabled: bool = Field(default=True)
-    path: str = Field(default=".ctn/local/cache/cache.db")
     max_size_mb: int = Field(default=1024, ge=1)
     ttl_days: int = Field(default=30, ge=1)
 
@@ -244,23 +246,13 @@ class BsgStorageRetentionConfig(BaseModel):
 
 class BsgStorageConfig(BaseModel):
     enabled: bool = Field(default=True)
-    backend: str = Field(default="sqlite")
-    registry_path: str = Field(default=DEFAULT_STORAGE_REGISTRY_PATH)
     content_scope: str = Field(default="durable")
-    strict_compatibility: bool = Field(default=True)
     cloud_sync_ready: bool = Field(default=True)
     track_content_ids: bool = Field(default=True)
-    mmap_enabled: bool = Field(default=False)
-    mmap_min_size_mb: int = Field(default=8, ge=1)
+    busy_timeout_ms: int = Field(default=DEFAULT_STORAGE_BUSY_TIMEOUT_MS, ge=100)
+    page_size: int = Field(default=DEFAULT_STORAGE_PAGE_SIZE)
+    auto_vacuum: str = Field(default="incremental")
     retention: BsgStorageRetentionConfig = Field(default_factory=BsgStorageRetentionConfig)
-
-    @field_validator("backend")
-    @classmethod
-    def _validate_backend(cls, value: str) -> str:  # noqa: B902
-        normalized = value.strip().lower()
-        if normalized not in {"sqlite"}:
-            return "sqlite"
-        return normalized
 
     @field_validator("content_scope")
     @classmethod
@@ -268,6 +260,14 @@ class BsgStorageConfig(BaseModel):
         normalized = value.strip().lower()
         if normalized not in {"durable", "all"}:
             return "durable"
+        return normalized
+
+    @field_validator("auto_vacuum")
+    @classmethod
+    def _validate_auto_vacuum(cls, value: str) -> str:  # noqa: B902
+        normalized = value.strip().lower()
+        if normalized not in {"none", "full", "incremental"}:
+            return "incremental"
         return normalized
 
 
@@ -430,7 +430,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             "file": None,
             "format": "%(message)s",
         },
-        "paths": {"ctn_dir": DEFAULT_CTN_DIR},
+        "paths": {"db_path": DEFAULT_DB_PATH, "config_dir": DEFAULT_CONFIG_DIR},
         "indexer": {
             "max_file_size_kb": DEFAULT_MAX_FILE_SIZE_KB,
             "max_indexed_files": DEFAULT_MAX_INDEXED_FILES,
@@ -439,14 +439,14 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             "ignore_patterns": [],
             "ignore_files": DEFAULT_IGNORE_FILES,
             "default_patterns_file": None,
-            "metrics_output": DEFAULT_METRICS_OUTPUT,
+            "metrics_output": None,
             "fail_on_warning": False,
             "strict": False,
         },
         "patch": {
             "timeout_seconds": DEFAULT_PATCH_TIMEOUT_SECONDS,
             "max_changes": DEFAULT_MAX_PATCH_CHANGES,
-            "audit_log_path": ".ctn/patch_audit.log",
+            "audit_log_path": None,
             "history_days": DEFAULT_PATCH_HISTORY_DAYS,
             "max_count": DEFAULT_PATCH_COUNT,
             "cleanup_on_startup": False,
@@ -499,7 +499,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             },
             "cache": {
                 "enabled": True,
-                "path": ".ctn/local/cache/cache.db",
                 "max_size_mb": 1024,
                 "ttl_days": 30,
             },
@@ -534,14 +533,12 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             },
             "storage": {
                 "enabled": True,
-                "backend": "sqlite",
-                "registry_path": DEFAULT_STORAGE_REGISTRY_PATH,
                 "content_scope": "durable",
-                "strict_compatibility": True,
                 "cloud_sync_ready": True,
                 "track_content_ids": True,
-                "mmap_enabled": False,
-                "mmap_min_size_mb": 8,
+                "busy_timeout_ms": DEFAULT_STORAGE_BUSY_TIMEOUT_MS,
+                "page_size": DEFAULT_STORAGE_PAGE_SIZE,
+                "auto_vacuum": "incremental",
                 "retention": {
                     "enabled": True,
                     "snapshot_ttl_days": DEFAULT_STORAGE_RETENTION_SNAPSHOT_DAYS,
@@ -588,9 +585,13 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
     env_log_file = _env("BATHO_LOG_FILE")
     if env_log_file is not None:
         base_cfg["logging"]["file"] = env_log_file
-    base_cfg["paths"]["ctn_dir"] = (
-        _env("BATHO_CTN_DIR", base_cfg["paths"]["ctn_dir"])
-        or base_cfg["paths"]["ctn_dir"]
+    base_cfg["paths"]["db_path"] = (
+        _env("BATHO_DB_PATH", base_cfg["paths"]["db_path"])
+        or base_cfg["paths"]["db_path"]
+    )
+    base_cfg["paths"]["config_dir"] = (
+        _env("BATHO_CONFIG_DIR", base_cfg["paths"]["config_dir"])
+        or base_cfg["paths"]["config_dir"]
     )
     base_cfg["indexer"]["max_file_size_kb"] = _env_int(
         "BATHO_MAX_FILE_SIZE_KB", base_cfg["indexer"]["max_file_size_kb"]
@@ -724,9 +725,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
     base_cfg["bsg"]["cache"]["enabled"] = _env_bool(
         "BATHO_BSG_CACHE_ENABLED", base_cfg["bsg"]["cache"]["enabled"]
     )
-    env_cache_path = _env("BATHO_BSG_CACHE_PATH")
-    if env_cache_path:
-        base_cfg["bsg"]["cache"]["path"] = env_cache_path
     base_cfg["bsg"]["cache"]["max_size_mb"] = _env_int(
         "BATHO_BSG_CACHE_MAX_SIZE_MB", base_cfg["bsg"]["cache"]["max_size_mb"]
     )
@@ -812,19 +810,9 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
         "BATHO_BSG_STORAGE_ENABLED",
         base_cfg["bsg"]["storage"]["enabled"],
     )
-    env_storage_backend = _env("BATHO_BSG_STORAGE_BACKEND")
-    if env_storage_backend:
-        base_cfg["bsg"]["storage"]["backend"] = env_storage_backend
-    env_storage_registry_path = _env("BATHO_BSG_STORAGE_REGISTRY_PATH")
-    if env_storage_registry_path:
-        base_cfg["bsg"]["storage"]["registry_path"] = env_storage_registry_path
     env_storage_scope = _env("BATHO_BSG_STORAGE_CONTENT_SCOPE")
     if env_storage_scope:
         base_cfg["bsg"]["storage"]["content_scope"] = env_storage_scope
-    base_cfg["bsg"]["storage"]["strict_compatibility"] = _env_bool(
-        "BATHO_BSG_STORAGE_STRICT_COMPATIBILITY",
-        base_cfg["bsg"]["storage"]["strict_compatibility"],
-    )
     base_cfg["bsg"]["storage"]["cloud_sync_ready"] = _env_bool(
         "BATHO_BSG_STORAGE_CLOUD_SYNC_READY",
         base_cfg["bsg"]["storage"]["cloud_sync_ready"],
@@ -832,10 +820,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
     base_cfg["bsg"]["storage"]["track_content_ids"] = _env_bool(
         "BATHO_BSG_STORAGE_TRACK_CONTENT_IDS",
         base_cfg["bsg"]["storage"]["track_content_ids"],
-    )
-    base_cfg["bsg"]["storage"]["mmap_enabled"] = _env_bool(
-        "BATHO_BSG_STORAGE_MMAP_ENABLED",
-        base_cfg["bsg"]["storage"]["mmap_enabled"],
     )
     base_cfg["bsg"]["bidirectional"]["enabled"] = _env_bool(
         "BATHO_BSG_BIDIRECTIONAL_ENABLED",
@@ -853,9 +837,9 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
         "BATHO_BSG_BIDIRECTIONAL_STORAGE_VIEW",
         base_cfg["bsg"]["bidirectional"]["storage_view"],
     )
-    base_cfg["bsg"]["storage"]["mmap_min_size_mb"] = _env_int(
-        "BATHO_BSG_STORAGE_MMAP_MIN_SIZE_MB",
-        base_cfg["bsg"]["storage"]["mmap_min_size_mb"],
+    base_cfg["bsg"]["storage"]["busy_timeout_ms"] = _env_int(
+        "BATHO_STORAGE_BUSY_TIMEOUT_MS",
+        base_cfg["bsg"]["storage"]["busy_timeout_ms"],
     )
     base_cfg["bsg"]["storage"]["retention"]["enabled"] = _env_bool(
         "BATHO_BSG_STORAGE_RETENTION_ENABLED",
@@ -919,6 +903,7 @@ def get_default_batho_yaml_content() -> str:
     """Return default batho.yaml content for auto-creation."""
     return """# Batho configuration
 # Auto-generated default config. Edit as needed for your project.
+# Persistence: single .batho SQLite database at repo root.
 
 logging:
   level: INFO
@@ -928,7 +913,8 @@ logging:
   format: "%(message)s"
 
 paths:
-  ctn_dir: .ctn
+  db_path: .batho
+  config_dir: .batho-config
 
 indexer:
   max_file_size_kb: 500
@@ -937,14 +923,14 @@ indexer:
   max_files: null
   ignore_patterns: []
   ignore_files: null
-  metrics_output: .ctn/local/metrics/metrics.json
+  metrics_output: null
   fail_on_warning: false
   strict: false
 
 patch:
   timeout_seconds: 300
   max_changes: 10000
-  audit_log_path: .ctn/patch_audit.log
+  audit_log_path: null
   history_days: 90
   max_count: 1000
   cleanup_on_startup: false
@@ -1006,10 +992,8 @@ bsg:
     chunk_size: 50
   ignore:
     enabled: true
-    file: ""  # Deprecated: .bathoignore support removed
   cache:
     enabled: true
-    path: .ctn/local/cache/cache.db
     max_size_mb: 1024
     ttl_days: 30
   incremental:
@@ -1038,14 +1022,12 @@ bsg:
     query_timeout_ms: 5000
   storage:
     enabled: true
-    backend: sqlite
-    registry_path: .ctn/local/sync/artifact_registry.db
     content_scope: durable
-    strict_compatibility: true
     cloud_sync_ready: true
     track_content_ids: true
-    mmap_enabled: false
-    mmap_min_size_mb: 8
+    busy_timeout_ms: 5000
+    page_size: 8192
+    auto_vacuum: incremental
     retention:
       enabled: true
       snapshot_ttl_days: 90
@@ -1054,10 +1036,8 @@ bsg:
       context_ttl_days: 90
       max_snapshots: 500
       max_patches: 5000
-
-  # Bidirectional BSG (lossless reconstruction support)
   bidirectional:
-    enabled: true            # Enable bidirectional BSG features
-    include_gaps: true       # Emit SYNTAX_GLUE entities for 100% byte coverage
-    storage_view: true       # Persist raw_content in storage view (required for reconstruction)
+    enabled: true
+    include_gaps: true
+    storage_view: true
 """

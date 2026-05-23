@@ -174,11 +174,11 @@ def cmd_mcp_add(args: argparse.Namespace) -> int:
 
     ctn_path = Path(args.ctn).resolve()
     if not ctn_path.exists():
-        print(f"error: .ctn directory not found: {ctn_path}")
+        print(f"error: workspace path not found: {ctn_path}")
         return 1
 
-    if not (ctn_path / "index.json").exists() and not (ctn_path / "artifact_registry.sqlite3").exists():
-        print(f"error: {ctn_path} is not a valid .ctn directory (missing index.json or artifact_registry.sqlite3)")
+    if not (ctn_path / ".batho").is_file():
+        print(f"error: {ctn_path} is not a valid Batho workspace (missing .batho database)")
         return 1
 
     registry = WorkspaceRegistry(user_config_path=config_path)
@@ -238,7 +238,7 @@ def cmd_mcp_discover(args: argparse.Namespace) -> int:
     config = registry.load()
 
     if not config.discovery.ctn_dir_globs:
-        print("error: No ctn_dir_globs configured in config")
+        print("error: No discovery globs configured in config")
         print(f"Add 'discovery.ctn_dir_globs' to {config_path}")
         return 1
 
@@ -368,7 +368,7 @@ def register_cli_subcommands(mcp_sub: argparse._SubParsersAction[Any]) -> None:
 
     add_parser = mcp_sub_parser.add_parser("add", help="Add a workspace")
     add_parser.add_argument("--config", default=None, help="Path to config file")
-    add_parser.add_argument("--ctn", required=True, help="Path to .ctn directory")
+    add_parser.add_argument("--ctn", required=True, help="Path to workspace root (with .batho file)")
     add_parser.add_argument("--id", help="Workspace ID (default: derived from directory name)")
     add_parser.add_argument("--label", help="Workspace label")
     add_parser.add_argument("--tag", action="append", help="Tags (can be repeated)")

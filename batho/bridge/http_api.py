@@ -22,16 +22,23 @@ class BridgeAPIHandler:
         self._index = None
 
     def _load_index(self) -> dict | None:
-        """Load the .ctn/index.json file."""
+        """Load index metadata from the .batho database."""
         if self._index is not None:
             return self._index
-        index_path = self._ctn_dir / "index.json"
-        if index_path.exists():
-            try:
-                self._index = json.loads(index_path.read_text())
-                return self._index
-            except Exception as e:
-                LOGGER.warning("failed_to_load_index", error=str(e))
+        try:
+            from batho.context.storage import get_artifact_registry
+            db = get_artifact_registry(self._ctn_dir)
+            run_id = db.get_latest_run_id()
+            if not run_id:
+                return None
+            self._index = {
+                "current_index_id": run_id,
+                "schema_version": "batho-db.v1",
+                "indexes": {run_id: {"created_at": "", "artifact_count": 0}},
+            }
+            return self._index
+        except Exception as e:
+            LOGGER.warning("failed_to_load_index", error=str(e))
         return None
 
     def dispatch(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
@@ -138,104 +145,75 @@ class BridgeAPIHandler:
     def _handle_bsg_json(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
         """Handle /artifacts/bsg_json endpoint."""
         index_id = query.get("index_id", [None])[0]
-        index = self._load_index()
-        if not index:
-            return self._ok({"entities": []})
-
-        idx = index.get("indexes", {}).get(index_id or index.get("current_index_id", ""))
-        if not idx:
-            return self._ok({"entities": []})
-
-        bsg_path = idx.get("outputs", {}).get(".ctn/artifacts/bsg_json")
-        if bsg_path:
-            full_path = self._ctn_dir / bsg_path.lstrip("/.ctn/")
-            if full_path.exists():
-                try:
-                    data = json.loads(full_path.read_text())
-                    return self._ok(data)
-                except Exception as e:
-                    LOGGER.warning("failed_to_load_bsg", error=str(e))
-
+        try:
+            from batho.context.storage import get_artifact_registry
+            db = get_artifact_registry(self._ctn_dir)
+            run_id = index_id or db.get_latest_run_id()
+            if run_id:
+                entries = db.get_bsg_entries_for_run(run_id)
+                return self._ok({"entries": entries})
+        except Exception as e:
+            LOGGER.warning("failed_to_load_bsg", error=str(e))
         return self._ok({"entities": []})
 
     def _handle_context_overview_json(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
         """Handle /artifacts/context_overview_json endpoint."""
         index_id = query.get("index_id", [None])[0]
-        index = self._load_index()
-        if not index:
-            return self._ok({"file_distribution": [], "total_entities": 0})
-
-        idx = index.get("indexes", {}).get(index_id or index.get("current_index_id", ""))
-        if not idx:
-            return self._ok({"file_distribution": [], "total_entities": 0})
-
-        overview_path = idx.get("outputs", {}).get(".ctn/artifacts/context_overview_json")
-        if overview_path:
-            full_path = self._ctn_dir / overview_path.lstrip("/.ctn/")
-            if full_path.exists():
-                try:
-                    data = json.loads(full_path.read_text())
-                    return self._ok(data)
-                except Exception as e:
-                    LOGGER.warning("failed_to_load_overview", error=str(e))
-
+        try:
+            from batho.context.storage import get_artifact_registry
+            db = get_artifact_registry(self._ctn_dir)
+            run_id = index_id or db.get_latest_run_id()
+            if run_id:
+                output = db.get_context_output(run_id, "overview")
+                if output:
+                    return self._ok(json.loads(output))
+        except Exception as e:
+            LOGGER.warning("failed_to_load_overview", error=str(e))
         return self._ok({"file_distribution": [], "total_entities": 0})
 
     def _handle_context_files_json(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
         """Handle /artifacts/context_files_json endpoint."""
         index_id = query.get("index_id", [None])[0]
-        index = self._load_index()
-        if not index:
-            return self._ok({"categories": []})
-
-        idx = index.get("indexes", {}).get(index_id or index.get("current_index_id", ""))
-        if not idx:
-            return self._ok({"categories": []})
-
-        files_path = idx.get("outputs", {}).get(".ctn/artifacts/context_files_json")
-        if files_path:
-            full_path = self._ctn_dir / files_path.lstrip("/.ctn/")
-            if full_path.exists():
-                try:
-                    data = json.loads(full_path.read_text())
-                    return self._ok(data)
-                except Exception as e:
-                    LOGGER.warning("failed_to_load_files", error=str(e))
-
+        try:
+            from batho.context.storage import get_artifact_registry
+            db = get_artifact_registry(self._ctn_dir)
+            run_id = index_id or db.get_latest_run_id()
+            if run_id:
+                output = db.get_context_output(run_id, "files")
+                if output:
+                    return self._ok(json.loads(output))
+        except Exception as e:
+            LOGGER.warning("failed_to_load_files", error=str(e))
         return self._ok({"categories": []})
 
     def _handle_patches(self, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
         """Handle /patches endpoint."""
-        patches_dir = self._ctn_dir / "patches"
-        patches = []
-
-        if patches_dir.exists():
-            for patch_file in sorted(patches_dir.glob("*.json")):
-                try:
-                    data = json.loads(patch_file.read_text())
-                    patches.append({
-                        "id": data.get("id") or patch_file.stem,
-                        "created_at": data.get("created_at"),
-                        "operation_type": data.get("operation_type"),
-                        "status": data.get("status"),
-                    })
-                except Exception:
-                    pass
-
+        try:
+            from batho.time_machine import list_patch_operations
+            ops = list_patch_operations(self._ctn_dir)
+            patches = [
+                {
+                    "id": op.operation_id,
+                    "created_at": op.timestamp.isoformat(),
+                    "operation_type": op.operation_type,
+                    "status": "completed",
+                }
+                for op in ops
+            ]
+        except Exception:
+            patches = []
         return self._ok({"patches": patches, "schema_version": "1.0"})
 
     def _handle_patch(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
         """Handle /patches/{operationId} endpoint."""
         patch_id = path.split("/")[-1]
-        patch_file = self._ctn_dir / "patches" / f"{patch_id}.json"
-
-        if patch_file.exists():
-            try:
-                data = json.loads(patch_file.read_text())
-                return self._ok(data)
-            except Exception as e:
-                return self._ok({"error": str(e)})
-
+        try:
+            from batho.time_machine import load_patch_operation
+            op = load_patch_operation(self._ctn_dir, patch_id)
+            if op:
+                return self._ok(op.serialize())
+        except Exception as e:
+            return self._ok({"error": str(e)})
         return self._ok({"error": "Patch not found"})
 
     def _handle_snapshots_diff(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
@@ -246,43 +224,30 @@ class BridgeAPIHandler:
         if not base or not new:
             return self._ok({"error": "Missing base or new parameter"})
 
-        base_file = self._ctn_dir / "snapshots" / f"{base}.json"
-        new_file = self._ctn_dir / "snapshots" / f"{new}.json"
-
-        if not base_file.exists() or not new_file.exists():
-            return self._ok({"error": "Snapshot not found"})
-
         try:
-            base_data = json.loads(base_file.read_text())
-            new_data = json.loads(new_file.read_text())
-            return self._ok({
-                "base": base_data,
-                "new": new_data,
-            })
+            from batho.time_machine import load_snapshot, diff_snapshots
+            base_data = load_snapshot(self._ctn_dir, base)
+            new_data = load_snapshot(self._ctn_dir, new)
+            if not base_data or not new_data:
+                return self._ok({"error": "Snapshot not found"})
+            diff = diff_snapshots(base_data, new_data)
+            return self._ok({"base": base_data.get("stats"), "new": new_data.get("stats"), "diff": diff})
         except Exception as e:
             return self._ok({"error": str(e)})
 
     def _handle_metrics_json(self, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
         """Handle /artifacts/metrics_json endpoint."""
         index_id = query.get("index_id", [None])[0]
-        index = self._load_index()
-        if not index:
-            return self._ok({"metrics": {}})
-
-        idx = index.get("indexes", {}).get(index_id or index.get("current_index_id", ""))
-        if not idx:
-            return self._ok({"metrics": {}})
-
-        metrics_path = idx.get("outputs", {}).get(".ctn/artifacts/metrics_json")
-        if metrics_path:
-            full_path = self._ctn_dir / metrics_path.lstrip("/.ctn/")
-            if full_path.exists():
-                try:
-                    data = json.loads(full_path.read_text())
-                    return self._ok(data)
-                except Exception as e:
-                    LOGGER.warning("failed_to_load_metrics", error=str(e))
-
+        try:
+            from batho.context.storage import get_artifact_registry
+            db = get_artifact_registry(self._ctn_dir)
+            run_id = index_id or db.get_latest_run_id()
+            if run_id:
+                output = db.get_context_output(run_id, "metrics")
+                if output:
+                    return self._ok(json.loads(output))
+        except Exception as e:
+            LOGGER.warning("failed_to_load_metrics", error=str(e))
         return self._ok({"metrics": {}})
 
     def _handle_file_content(self, path: str, query: dict[str, list[str]]) -> tuple[bytes, int, dict[str, str]]:
@@ -291,7 +256,7 @@ class BridgeAPIHandler:
         if not file_path:
             return self._ok({"error": "Missing path parameter"})
 
-        full_path = self._ctn_dir / file_path.lstrip("/.ctn/")
+        full_path = (self._ctn_dir / file_path.lstrip("/")).resolve()
         if full_path.exists() and full_path.is_file():
             try:
                 content = full_path.read_text()
@@ -473,7 +438,7 @@ class BridgeAPIHandler:
                                 "name": name,
                                 "path": str(entry_path),
                                 "is_dir": is_dir,
-                                "is_ctn": name == ".ctn" and is_dir
+                                "is_batho": name == ".batho" and not is_dir
                             })
                         except PermissionError:
                             continue

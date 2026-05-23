@@ -1,6 +1,6 @@
-"""Time Machine utilities for Batho core (JSON snapshots and diffs).
+"""Time Machine utilities for Batho core (DB-backed snapshots and diffs).
 
-- Snapshots are stored under `.ctn/snapshots/<snapshot_id>.json`.
+- Snapshots are stored in the unified .batho SQLite database (snapshots table).
 - snapshot_id format: `batho_<uuid>_<timestamp>` (UTC).
 - Diff reports entity/relationship deltas and changed files.
 - PR patching stub provided for future incremental updates.
@@ -237,7 +237,7 @@ class FileChangeTracker:
 
     def _get_cache(self) -> BathoCache:
         if self._cache is None:
-            self._cache = BathoCache(str(self.root / ".ctn/local/cache/cache.db"))
+            self._cache = BathoCache(str(self.root))
         return self._cache
 
     def load(self, cache_path: Path | None = None) -> bool:
@@ -497,10 +497,10 @@ class FileChangeTracker:
         ]
 
 
-def _snapshot_dir(ctn_dir: Path) -> Path:
-    p = ctn_dir / "snapshots"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+def _get_db(ctn_dir: Path):
+    """Get the BathoDatabase for the given root or legacy ctn_dir."""
+    from batho.context.storage import get_artifact_registry
+    return get_artifact_registry(ctn_dir)
 
 
 def _sanitize_project_slug(value: str) -> str:
@@ -549,29 +549,22 @@ def create_snapshot(
     bsg_map: BSGMap,
     label: str | None = None,
 ) -> str:
-    """Persist a snapshot of the current graph/bsg to JSON."""
+    """Persist a snapshot to the .batho database."""
     repo_root = root.resolve()
     snapshot_id = generate_snapshot_id(repo_root)
-    snap_path = _snapshot_dir(ctn_dir) / f"{snapshot_id}.json"
 
     git_repo = is_git_repo(repo_root)
     head_commit = get_head_commit(repo_root) if git_repo else None
-    git_metadata = {
-        "is_git_repo": git_repo,
-        "commit_sha": head_commit,
-        "branch": _git_branch_name(repo_root) if git_repo else None,
-    }
+    git_branch = _git_branch_name(repo_root) if git_repo else None
 
     file_hashes: dict[str, str] = {}
     for entity in graph.entities.values():
         entity_file = entity.file
         if entity_file:
-            # Convert absolute path to relative for consistency with FileChangeTracker
             try:
                 rel_path = Path(entity_file).relative_to(repo_root)
                 file_path = str(rel_path)
             except ValueError:
-                # Already relative or different root
                 file_path = entity_file
             if file_path and file_path not in file_hashes:
                 full_path = repo_root / file_path
@@ -581,84 +574,89 @@ def create_snapshot(
                     except OSError:
                         pass
 
-    data = {
-        "schema_version": SNAPSHOT_SCHEMA_VERSION,
-        "snapshot_id": snapshot_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "root": str(repo_root),
-        "label": label or "",
-        "git_metadata": git_metadata,
-        "graph": graph.to_dict(),
+    stats = {
+        "entity_count": len(graph.entities),
+        "relationship_count": len(graph.relationships),
+        "file_count": len(bsg_map._by_file),
         "file_hashes": file_hashes,
+        "graph": graph.to_dict(),
         "bsg": bsg_map.render_json(
             default_index_id=snapshot_id,
             default_service_tag=repo_root.name,
         ),
-        "stats": {
-            "entity_count": len(graph.entities),
-            "relationship_count": len(graph.relationships),
-            "file_count": len(bsg_map._by_file),
-        },
     }
-    data["_checksum"] = compute_bytes_hash(
-        json.dumps(
-            {k: v for k, v in data.items() if k != "_checksum"}, sort_keys=True
-        ).encode("utf-8")
+
+    checksum = compute_bytes_hash(
+        json.dumps(stats, sort_keys=True, ensure_ascii=True).encode("utf-8")
     )
-    tmp = snap_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(snap_path)
-    register_artifact(
-        ctn_dir,
-        snap_path,
-        "snapshot_json",
-        producer="time_machine.create_snapshot",
-        metadata={"snapshot_id": snapshot_id, "label": label or ""},
-        schema_version=SNAPSHOT_SCHEMA_VERSION,
-        retention_class="snapshot",
-    )
-    logger.info("snapshot_created", snapshot_id=snapshot_id, path=str(snap_path))
+
+    db = _get_db(ctn_dir)
+    db.create_snapshot({
+        "snapshot_id": snapshot_id,
+        "parent_id": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "label": label or "",
+        "git_commit": head_commit,
+        "git_branch": git_branch,
+        "root_path": str(repo_root),
+        "schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "stats": stats,
+        "checksum": checksum,
+    })
+
+    logger.info("snapshot_created", snapshot_id=snapshot_id)
     return snapshot_id
 
 
 def list_snapshots(ctn_dir: Path) -> list[dict[str, Any]]:
-    snaps = []
-    snap_dir = _snapshot_dir(ctn_dir)
-    for p in sorted(snap_dir.glob("*.json")):
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            snaps.append(
-                {
-                    "snapshot_id": data.get("snapshot_id", p.stem),
-                    "created_at": data.get("created_at"),
-                    "label": data.get("label", ""),
-                    "path": str(p),
-                }
-            )
-        except (json.JSONDecodeError, OSError):
-            continue
-    return snaps
+    """List all snapshots from the .batho database."""
+    db = _get_db(ctn_dir)
+    rows = db.list_snapshots()
+    return [
+        {
+            "snapshot_id": row.get("snapshot_id", ""),
+            "created_at": row.get("created_at"),
+            "label": row.get("label", ""),
+            "git_commit": row.get("git_commit"),
+            "git_branch": row.get("git_branch"),
+        }
+        for row in rows
+    ]
 
 
 def load_snapshot(ctn_dir: Path, snapshot_id: str) -> dict[str, Any] | None:
-    snap_path = _snapshot_dir(ctn_dir) / f"{snapshot_id}.json"
-    if not snap_path.exists():
+    """Load a snapshot from the .batho database."""
+    db = _get_db(ctn_dir)
+    row = db.get_snapshot(snapshot_id)
+    if row is None:
         return None
-    try:
-        data = json.loads(snap_path.read_text(encoding="utf-8"))
-        checksum = data.get("_checksum")
-        if checksum:
-            calc = compute_bytes_hash(
-                json.dumps(
-                    {k: v for k, v in data.items() if k != "_checksum"}, sort_keys=True
-                ).encode("utf-8")
-            )
-            if calc != checksum:
-                logger.warning("snapshot_corrupt_checksum", snapshot_id=snapshot_id)
-                return None
-        return data
-    except (json.JSONDecodeError, OSError):
-        return None
+
+    # Reconstruct the legacy payload format from stored data
+    stats_json = row.get("stats_json", "{}")
+    stats = json.loads(stats_json) if isinstance(stats_json, str) else stats_json
+
+    data: dict[str, Any] = {
+        "schema_version": row.get("schema_version", SNAPSHOT_SCHEMA_VERSION),
+        "snapshot_id": row["snapshot_id"],
+        "created_at": row.get("created_at"),
+        "root": row.get("root_path", ""),
+        "label": row.get("label", ""),
+        "git_metadata": {
+            "is_git_repo": bool(row.get("git_commit")),
+            "commit_sha": row.get("git_commit"),
+            "branch": row.get("git_branch"),
+        },
+        "_checksum": row.get("checksum", ""),
+        "stats": {
+            "entity_count": stats.get("entity_count", 0),
+            "relationship_count": stats.get("relationship_count", 0),
+            "file_count": stats.get("file_count", 0),
+        },
+        "file_hashes": stats.get("file_hashes", {}),
+        "graph": stats.get("graph", {}),
+        "bsg": stats.get("bsg", {}),
+    }
+    return data
 
 
 def diff_snapshots(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
@@ -896,7 +894,7 @@ def incremental_patch(
 
             # Create file change tracker for validation
             tracker = FileChangeTracker(root_path)
-            tracker.load(ctn_dir / "file_tracker.json")
+            tracker.load()
 
             # Apply changes in order: deletions first, then modifications, then additions
             ordered_changes = aggregate_changes(changes)
@@ -1023,7 +1021,7 @@ def incremental_patch(
                 else:
                     tracker.file_hashes[change.path] = change.new_hash or ""
 
-            tracker.save(ctn_dir / "file_tracker.json")
+            tracker.save()
 
             # Create patch operation record
             operation_id = generate_snapshot_id()
@@ -1224,63 +1222,47 @@ def _rollback_changes(
 # ---------------------------------------------------------------------------
 
 
-def _patch_dir(ctn_dir: Path) -> Path:
-    """Get the patches directory."""
-    return ctn_dir / "patches"
-
-
 def save_patch_operation(ctn_dir: Path, operation: PatchOperation) -> None:
-    """Save a patch operation to disk and update the index."""
-    patches_dir = _patch_dir(ctn_dir)
-    patches_dir.mkdir(parents=True, exist_ok=True)
-
-    # Save individual patch file
-    patch_file = patches_dir / f"patch_{operation.operation_id}.json"
+    """Save a patch operation to the .batho database."""
+    db = _get_db(ctn_dir)
     patch_data = operation.serialize()
-    patch_file.write_text(json.dumps(patch_data, indent=2), encoding="utf-8")
-    register_artifact(
-        ctn_dir,
-        patch_file,
-        "patch_operation_json",
+    db.register_artifact(
+        operation.operation_id,
+        artifact_type="patch_operation_json",
+        logical_path=f"patch_{operation.operation_id}",
+        size_bytes=len(json.dumps(patch_data).encode("utf-8")),
+        schema_version="patch-operation.v1",
         producer="time_machine.save_patch_operation",
-        metadata={
-            "operation_id": operation.operation_id,
-            "operation_type": operation.operation_type,
-            "base_snapshot_id": operation.base_snapshot_id,
-            "new_snapshot_id": operation.new_snapshot_id,
-        },
+        metadata=patch_data,
         retention_class="patch",
     )
-
-    # Update index
-    update_patch_index(ctn_dir, operation)
-
     logger.info("patch_operation_saved", operation_id=operation.operation_id)
 
 
 def load_patch_operation(ctn_dir: Path, operation_id: str) -> PatchOperation | None:
-    """Load a patch operation by ID."""
-    patches_dir = _patch_dir(ctn_dir)
-    patch_file = patches_dir / f"patch_{operation_id}.json"
+    """Load a patch operation from the .batho database."""
+    db = _get_db(ctn_dir)
+    with db.connection(read_only=True) as conn:
+        row = conn.execute(
+            """SELECT metadata_json FROM artifacts
+            WHERE artifact_id = ? AND artifact_type = 'patch_operation_json'
+            AND deleted = 0""",
+            (operation_id,),
+        ).fetchone()
 
-    if not patch_file.exists():
+    if row is None:
         logger.warning("patch_operation_not_found", operation_id=operation_id)
         return None
 
     try:
-        data = json.loads(patch_file.read_text(encoding="utf-8"))
+        data = json.loads(row["metadata_json"])
         operation = PatchOperation.from_dict(data)
-
-        # Validate checksum
         if not operation.validate():
             logger.warning(
                 "patch_operation_checksum_invalid", operation_id=operation_id
             )
             return None
-
-        logger.debug("patch_operation_loaded", operation_id=operation_id)
         return operation
-
     except Exception as exc:
         logger.error(
             "patch_operation_load_failed", operation_id=operation_id, error=str(exc)
@@ -1289,93 +1271,41 @@ def load_patch_operation(ctn_dir: Path, operation_id: str) -> PatchOperation | N
 
 
 def update_patch_index(ctn_dir: Path, operation: PatchOperation) -> None:
-    """Update the patch index with a new operation."""
-    patches_dir = _patch_dir(ctn_dir)
-    index_file = patches_dir / "index.json"
-
-    # Load existing index or create new one
-    if index_file.exists():
-        try:
-            index_data = json.loads(index_file.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.warning("patch_index_load_failed", error=str(exc))
-            index_data = {"schema_version": "1.0", "patches": []}
-    else:
-        index_data = {"schema_version": "1.0", "patches": []}
-
-    # Add new operation to index
-    index_entry = {
-        "operation_id": operation.operation_id,
-        "timestamp": operation.timestamp.isoformat(),
-        "base_snapshot_id": operation.base_snapshot_id,
-        "new_snapshot_id": operation.new_snapshot_id,
-        "operation_type": operation.operation_type,
-        "metrics": operation.metrics,
-    }
-
-    index_data["patches"].append(index_entry)
-    index_data["total_patches"] = len(index_data["patches"])
-    index_data["last_updated"] = datetime.now(timezone.utc).isoformat()
-
-    # Sort by timestamp
-    index_data["patches"].sort(key=lambda x: x["timestamp"])
-
-    # Save index
-    index_file.write_text(json.dumps(index_data, indent=2), encoding="utf-8")
-    register_artifact(
-        ctn_dir,
-        index_file,
-        "patch_index_json",
-        producer="time_machine.update_patch_index",
-        metadata={"last_operation_id": operation.operation_id},
-        retention_class="patch",
-    )
-    logger.debug("patch_index_updated", operation_id=operation.operation_id)
+    """No-op: patch operations are stored individually in the DB."""
+    pass
 
 
 def list_patch_operations(
     ctn_dir: Path, filters: dict[str, Any] | None = None
 ) -> list[PatchOperation]:
-    """List patch operations with optional filtering."""
-    patches_dir = _patch_dir(ctn_dir)
-    index_file = patches_dir / "index.json"
+    """List patch operations from the .batho database."""
+    db = _get_db(ctn_dir)
+    with db.connection(read_only=True) as conn:
+        rows = conn.execute(
+            """SELECT artifact_id, metadata_json FROM artifacts
+            WHERE artifact_type = 'patch_operation_json' AND deleted = 0
+            ORDER BY updated_at DESC"""
+        ).fetchall()
 
-    if not index_file.exists():
-        return []
+    patches: list[PatchOperation] = []
+    for row in rows:
+        try:
+            data = json.loads(row["metadata_json"])
+            op = PatchOperation.from_dict(data)
 
-    try:
-        index_data = json.loads(index_file.read_text(encoding="utf-8"))
-        patches = []
-
-        for entry in index_data.get("patches", []):
-            # Apply filters if provided
             if filters:
-                if (
-                    "operation_type" in filters
-                    and entry["operation_type"] != filters["operation_type"]
-                ):
+                if "operation_type" in filters and op.operation_type != filters["operation_type"]:
                     continue
-                if (
-                    "base_snapshot_id" in filters
-                    and entry["base_snapshot_id"] != filters["base_snapshot_id"]
-                ):
+                if "base_snapshot_id" in filters and op.base_snapshot_id != filters["base_snapshot_id"]:
                     continue
-                if (
-                    "new_snapshot_id" in filters
-                    and entry["new_snapshot_id"] != filters["new_snapshot_id"]
-                ):
+                if "new_snapshot_id" in filters and op.new_snapshot_id != filters["new_snapshot_id"]:
                     continue
 
-            # Load full operation
-            operation = load_patch_operation(ctn_dir, entry["operation_id"])
-            if operation:
-                patches.append(operation)
+            patches.append(op)
+        except Exception:
+            continue
 
-        return patches
-
-    except Exception as exc:
-        logger.error("list_patch_operations_failed", error=str(exc))
-        return []
+    return patches
 
 
 def get_patches_for_snapshot(ctn_dir: Path, snapshot_id: str) -> list[PatchOperation]:
@@ -1391,47 +1321,30 @@ def get_patches_for_snapshot(ctn_dir: Path, snapshot_id: str) -> list[PatchOpera
 
 
 def cleanup_old_patches(ctn_dir: Path, config: dict[str, Any]) -> int:
-    """Clean up old patches based on retention policy."""
-    patches_dir = _patch_dir(ctn_dir)
+    """Clean up old patches based on retention policy (soft-delete in DB)."""
     max_days = config.get("max_patch_history_days", 90)
     max_count = config.get("max_patch_count", 1000)
-
-    if not patches_dir.exists():
-        return 0
 
     cutoff_time = datetime.now(timezone.utc) - timedelta(days=max_days)
     patches = list_patch_operations(ctn_dir)
     cleaned_count = 0
 
-    # Sort by timestamp (newest first)
     patches.sort(key=lambda x: x.timestamp, reverse=True)
 
-    # Keep patches within time limit or count limit
-    patches_to_keep = []
+    db = _get_db(ctn_dir)
     for i, patch in enumerate(patches):
-        if i < max_count and patch.timestamp >= cutoff_time:
-            patches_to_keep.append(patch)
-        else:
-            # Delete this patch
-            patch_file = patches_dir / f"patch_{patch.operation_id}.json"
-            if patch_file.exists():
-                patch_file.unlink()
-                cleaned_count += 1
-                logger.debug("patch_deleted", operation_id=patch.operation_id)
+        if i >= max_count or patch.timestamp < cutoff_time:
+            # Soft-delete in the DB
+            with db.connection() as conn:
+                conn.execute(
+                    "UPDATE artifacts SET deleted = 1, updated_at = ? WHERE artifact_id = ?",
+                    (datetime.now(timezone.utc).isoformat(), patch.operation_id),
+                )
+                conn.commit()
+            cleaned_count += 1
 
-    # Rebuild index
     if cleaned_count > 0:
-        index_file = patches_dir / "index.json"
-        index_data = {"schema_version": "1.0", "patches": []}
-
-        for patch in patches_to_keep:
-            update_patch_index(ctn_dir, patch)
-
-        logger.info(
-            "patches_cleaned",
-            cleaned_count=cleaned_count,
-            remaining=len(patches_to_keep),
-        )
+        logger.info("patches_cleaned", cleaned_count=cleaned_count)
 
     return cleaned_count
 

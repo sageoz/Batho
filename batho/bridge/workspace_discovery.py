@@ -41,17 +41,21 @@ def _generate_unique_id(base_id: str, existing_ids: set[str]) -> str:
 
 
 def _find_ctn_directories(globs: list[str]) -> Iterator[Path]:
-    """Find all .ctn directories matching the given globs."""
+    """Find all .batho databases matching the given globs."""
     for glob_pattern in globs:
         expanded = os.path.expanduser(glob_pattern)
         for match in Path(".").glob(expanded) if Path(".").exists() else []:
-            if match.is_dir() and match.name == ".ctn":
-                yield match
+            if match.is_file() and match.name == ".batho":
+                yield match.parent
+            elif match.is_dir():
+                batho_db = match / ".batho"
+                if batho_db.is_file():
+                    yield match
 
 
 def _is_valid_ctn_directory(ctn_dir: Path) -> bool:
-    """Check if a .ctn directory contains required files."""
-    return (ctn_dir / "index.json").exists() or (ctn_dir / "artifact_registry.sqlite3").exists()
+    """Check if a directory has a valid .batho database."""
+    return (ctn_dir / ".batho").is_file()
 
 
 def _matches_ignore_pattern(workspace_id: str, ignore_patterns: list[str]) -> bool:
@@ -71,7 +75,7 @@ class WorkspaceDiscovery:
         self._config = config
 
     def scan(self) -> HubConfigDiff:
-        """Scan filesystem for new .ctn directories and update registry."""
+        """Scan filesystem for .batho databases and update registry."""
         existing = {ws.id: ws for ws in self._registry.list()}
         discovered: dict[str, WorkspaceConfig] = {}
 
@@ -151,10 +155,10 @@ class WorkspaceDiscovery:
                 inner_self._pending_scan = False
 
             def on_any_event(inner_self, event):
-                if event.is_directory and ".ctn" in event.src_path:
+                if ".batho" in event.src_path:
                     if not inner_self._pending_scan:
                         inner_self._pending_scan = True
-                        LOGGER.info("ctn_dir_changed", path=event.src_path)
+                        LOGGER.info("batho_db_changed", path=event.src_path)
 
         self._file_watcher = Observer()
         for glob_pattern in self._config.ctn_dir_globs:

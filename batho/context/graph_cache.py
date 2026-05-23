@@ -1,4 +1,8 @@
-"""Helpers for loading persisted graph artifacts from .ctn storage."""
+"""Graph data loading backed by the unified .batho SQLite database.
+
+All graph data (entities + relationships) is stored in the graph_entities
+and graph_relationships tables. No JSON files are read.
+"""
 
 from __future__ import annotations
 
@@ -6,52 +10,57 @@ import json
 from pathlib import Path
 from typing import Any
 
-from batho.config import get_config_cached
 from batho.context.codegraph import InMemoryGraph
-from batho.context.mmap_storage import load_json_with_optional_mmap
+from batho.context.storage import get_artifact_registry
 from batho.utils.logging import get_logger
 
 LOGGER = get_logger(__name__, component="graph_cache")
 
 
-def _storage_mmap_config() -> tuple[bool, int]:
-    cfg = get_config_cached()
-    bsg_cfg = cfg.get("bsg", {}) if isinstance(cfg, dict) else {}
-    storage_cfg = bsg_cfg.get("storage", {}) if isinstance(bsg_cfg, dict) else {}
-    mmap_enabled = bool(storage_cfg.get("mmap_enabled", False))
-    mmap_min_size_mb = max(1, int(storage_cfg.get("mmap_min_size_mb", 8)))
-    return mmap_enabled, mmap_min_size_mb * 1024 * 1024
-
-
 def load_graph_payload(ctn_dir: Path, index_id: str) -> dict[str, Any] | None:
-    """Load persisted graph payload for an index using optional mmap acceleration."""
-    graph_path = ctn_dir / index_id / "graph.json"
-    if not graph_path.exists():
+    """Load graph payload from the .batho database for the given run_id."""
+    db = get_artifact_registry(ctn_dir)
+
+    entities = db.query_entities(index_id, limit=999999)
+    relationships = db.query_relationships(index_id, limit=999999)
+
+    if not entities and not relationships:
         return None
 
-    mmap_enabled, mmap_min_size_bytes = _storage_mmap_config()
-    try:
-        payload = load_json_with_optional_mmap(
-            graph_path,
-            mmap_enabled=mmap_enabled,
-            min_size_bytes=mmap_min_size_bytes,
-        )
-    except (json.JSONDecodeError, OSError, ValueError) as exc:
-        LOGGER.warning(
-            "graph_cache_load_failed",
-            index_id=index_id,
-            path=str(graph_path),
-            error=str(exc),
-        )
-        return None
-
-    if not isinstance(payload, dict):
-        return None
+    # Reconstruct the dict format expected by InMemoryGraph.from_dict()
+    payload: dict[str, Any] = {
+        "entities": [
+            {
+                "id": e.get("entity_id", ""),
+                "type": e.get("entity_type", ""),
+                "name": e.get("name", ""),
+                "file": e.get("file_path", ""),
+                "start_line": e.get("start_line", 0),
+                "end_line": e.get("end_line", 0),
+                "signature": e.get("signature"),
+                "parent_id": e.get("parent_id"),
+                "content_hash": e.get("content_hash", ""),
+                "ast_node_type": e.get("ast_node_type"),
+                "metadata": json.loads(e.get("metadata_json", "{}")),
+            }
+            for e in entities
+        ],
+        "relationships": [
+            {
+                "id": r.get("relationship_id", ""),
+                "type": r.get("relationship_type", ""),
+                "source_id": r.get("source_id", ""),
+                "target_id": r.get("target_id", ""),
+                "metadata": json.loads(r.get("metadata_json", "{}")),
+            }
+            for r in relationships
+        ],
+    }
     return payload
 
 
 def load_cached_graph(ctn_dir: Path, index_id: str) -> InMemoryGraph | None:
-    """Load graph object from persisted graph.json for index_id."""
+    """Load InMemoryGraph from the .batho database for the given run_id."""
     payload = load_graph_payload(ctn_dir, index_id)
     if payload is None:
         return None
@@ -70,30 +79,27 @@ def load_cached_graph(ctn_dir: Path, index_id: str) -> InMemoryGraph | None:
 def get_cached_graph_stats(
     ctn_dir: Path, index_id: str | None = None
 ) -> dict[str, Any]:
-    """Return cache stats for persisted graph artifacts."""
-    metadata_path = ctn_dir / "index.json"
+    """Return stats for graph data in the .batho database."""
+    db = get_artifact_registry(ctn_dir)
+
     current_index_id = index_id
+    if not current_index_id:
+        current_index_id = db.get_latest_run_id()
 
-    if not current_index_id and metadata_path.exists():
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            current_index_id = str(metadata.get("current_index_id") or "") or None
-        except (json.JSONDecodeError, OSError):
-            current_index_id = None
+    if not current_index_id:
+        return {
+            "current_index_id": "",
+            "graph_exists": False,
+            "graph_size_bytes": 0,
+        }
 
-    graph_size_bytes = 0
-    graph_exists = False
-    if current_index_id:
-        graph_path = ctn_dir / current_index_id / "graph.json"
-        graph_exists = graph_path.exists()
-        if graph_exists:
-            try:
-                graph_size_bytes = int(graph_path.stat().st_size)
-            except OSError:
-                graph_size_bytes = 0
+    entity_count = db.get_entity_count(current_index_id)
+    rel_count = db.get_relationship_count(current_index_id)
+    graph_exists = entity_count > 0 or rel_count > 0
 
     return {
-        "current_index_id": current_index_id or "",
+        "current_index_id": current_index_id,
         "graph_exists": graph_exists,
-        "graph_size_bytes": graph_size_bytes,
+        "entity_count": entity_count,
+        "relationship_count": rel_count,
     }

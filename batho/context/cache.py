@@ -34,7 +34,7 @@ class ASTCache:
     Includes mtime and size validation to ensure cache hits are valid.
     """
 
-    def __init__(self, cache_path: str = ".ctn/local/cache/ast_cache.db") -> None:
+    def __init__(self, cache_path: str = ".batho") -> None:
         """
         Initialize the AST cache.
 
@@ -484,7 +484,7 @@ class FileHashCache:
     SQLite storage that supports fast lookups and atomic updates.
     """
 
-    def __init__(self, cache_path: str = ".ctn/local/cache/file_hash_cache.db") -> None:
+    def __init__(self, cache_path: str = ".batho") -> None:
         warnings.warn(
             "FileHashCache is deprecated; use BathoCache from unified_cache",
             DeprecationWarning,

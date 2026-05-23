@@ -527,25 +527,22 @@ def _hash_file(path: Path) -> str:
 
 
 def _rules_cache_path(root_path: Path) -> Path:
-    ctn_dir_name = str(get_config_cached().get("paths", {}).get("ctn_dir", ".ctn"))
-    ctn_dir = root_path / ctn_dir_name
-    cache_dir = ctn_dir / "local" / "cache"
+    config_dir = str(get_config_cached().get("paths", {}).get("config_dir", ".batho-config"))
+    cache_dir = root_path / config_dir / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir / _CACHE_FILENAME
 
 
 def _interception_stats_path(root_path: Path) -> Path:
-    ctn_dir_name = str(get_config_cached().get("paths", {}).get("ctn_dir", ".ctn"))
-    ctn_dir = root_path / ctn_dir_name
-    metrics_dir = ctn_dir / "local" / "metrics"
+    config_dir = str(get_config_cached().get("paths", {}).get("config_dir", ".batho-config"))
+    metrics_dir = root_path / config_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     return metrics_dir / _INTERCEPTION_FILENAME
 
 
 def _perf_stats_path(root_path: Path) -> Path:
-    ctn_dir_name = str(get_config_cached().get("paths", {}).get("ctn_dir", ".ctn"))
-    ctn_dir = root_path / ctn_dir_name
-    metrics_dir = ctn_dir / "local" / "metrics"
+    config_dir = str(get_config_cached().get("paths", {}).get("config_dir", ".batho-config"))
+    metrics_dir = root_path / config_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     return metrics_dir / _PERF_FILENAME
 
@@ -3020,7 +3017,7 @@ def apply_rule_plugins(
         rules_config: The `rules` block from batho.yaml (or equivalent dict).
         logger: Optional structured logger.
         profile: When True, collect per-rule match/apply timing and persist
-            `.ctn/bsg_perf.json` with the aggregate report.
+            `.batho-config/metrics/bsg_perf.json` with the aggregate report.
         trace: When True, the returned summary includes a `trace_log` entry per
             entity/rule with match outcomes and actions.
         bidirectional_only: When True, only run bidirectional flow plugins.

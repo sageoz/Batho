@@ -17,7 +17,7 @@ KNOWN_ARTIFACT_TYPES: set[str] = {
     "patch_detail",
 }
 
-# Default logical path patterns relative to .ctn/ for each artifact type.
+# Default logical path patterns relative to repo root for each artifact type.
 # The {index_id} placeholder is resolved from the current index.
 DEFAULT_PATH_PATTERNS: dict[str, str] = {
     "interception_stats_json": "local/metrics/interception_stats.json",

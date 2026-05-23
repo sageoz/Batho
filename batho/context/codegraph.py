@@ -543,7 +543,7 @@ class CodeGraphIndexer:
 
     Usage::
 
-        indexer = CodeGraphIndexer(cache_path=".ctn/local/cache/cache.db")
+        indexer = CodeGraphIndexer(cache_path=".batho")
         graph = indexer.build_graph(
             root="/path/to/repo",
             max_workers=8,
@@ -552,7 +552,7 @@ class CodeGraphIndexer:
     """
 
     def __init__(
-        self, cache_path: str = ".ctn/local/cache/cache.db", root: str | None = None
+        self, cache_path: str = ".batho", root: str | None = None
     ) -> None:
         self.logger = get_logger(__name__, operation="index")
         root_path = Path(root).resolve() if root else None

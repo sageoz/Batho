@@ -114,7 +114,7 @@ def cmd_plugins_trace(args: argparse.Namespace) -> int:
 
     By default we only run the loader to avoid requiring a built code graph.
     ``--apply`` forces a full ``apply_rule_plugins`` run; this requires that
-    ``.ctn`` already contains a code graph for the target repository, or an
+    ``.batho`` already contains a code graph for the target repository, or an
     empty graph is used in which case no entities will match.
     """
 
@@ -136,39 +136,22 @@ def cmd_plugins_trace(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2, default=str))
         return 0 if not stats.get("errors") else 1
 
-    # Apply path: reload the cached graph from .ctn/<current_index_id>/graph.json
+    # Apply path: reload the cached graph from the .batho database
     try:
         from batho.context.graph_cache import load_cached_graph
+        from batho.context.storage import get_artifact_registry
     except Exception as exc:  # pragma: no cover - import side-effect
         print(f"cannot load graph cache module: {exc}")
         return 1
 
-    ctn_dir_name = str(
-        (cfg.get("paths", {}) or {}).get("ctn_dir", ".ctn")
-        if isinstance(cfg, dict)
-        else ".ctn"
-    )
-    ctn_dir = root / ctn_dir_name
-    index_meta_path = ctn_dir / "index.json"
-    if not index_meta_path.exists():
-        print(
-            "no .ctn/index.json found — run 'batho index' first to use --apply"
-        )
-        return 1
-
-    try:
-        index_meta = json.loads(index_meta_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        print(f"failed to read index metadata: {exc}")
-        return 1
-
-    current_index_id = str(index_meta.get("current_index_id") or "").strip()
+    db = get_artifact_registry(root)
+    current_index_id = db.get_latest_run_id()
     if not current_index_id:
-        print("no current_index_id recorded in index.json")
+        print("no completed index run found — run 'batho index' first to use --apply")
         return 1
 
     try:
-        graph = load_cached_graph(ctn_dir, current_index_id)
+        graph = load_cached_graph(root, current_index_id)
     except Exception as exc:
         print(f"failed to load cached graph: {exc}")
         return 1
@@ -201,31 +184,21 @@ def cmd_plugins_verify_bidirectional(args: argparse.Namespace) -> int:
     cfg = get_config_cached_for_root(root)
     rules_cfg = (cfg.get("bsg", {}) or {}).get("rules", {}) if isinstance(cfg, dict) else {}
 
-    ctn_dir_name = str(
-        (cfg.get("paths", {}) or {}).get("ctn_dir", ".ctn")
-        if isinstance(cfg, dict)
-        else ".ctn"
-    )
-    ctn_dir = root / ctn_dir_name
-    index_meta_path = ctn_dir / "index.json"
-    if not index_meta_path.exists():
-        print("no .ctn/index.json found — run 'batho index' first")
-        return 1
-
-    try:
-        index_meta = json.loads(index_meta_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        print(f"failed to read index metadata: {exc}")
-        return 1
-
-    current_index_id = str(index_meta.get("current_index_id") or "").strip()
-    if not current_index_id:
-        print("no current_index_id recorded in index.json")
-        return 1
-
     try:
         from batho.context.graph_cache import load_cached_graph
-        graph = load_cached_graph(ctn_dir, current_index_id)
+        from batho.context.storage import get_artifact_registry
+    except Exception as exc:  # pragma: no cover
+        print(f"cannot load graph cache module: {exc}")
+        return 1
+
+    db = get_artifact_registry(root)
+    current_index_id = db.get_latest_run_id()
+    if not current_index_id:
+        print("no completed index run found — run 'batho index' first")
+        return 1
+
+    try:
+        graph = load_cached_graph(root, current_index_id)
     except Exception as exc:
         print(f"failed to load cached graph: {exc}")
         return 1
@@ -306,7 +279,7 @@ def register_cli_subcommands(plugins_sub: argparse._SubParsersAction[Any]) -> No
     trace_parser.add_argument(
         "--profile",
         action="store_true",
-        help="Collect per-rule timing and persist .ctn/bsg_perf.json",
+        help="Collect per-rule timing and persist .batho-config/metrics/bsg_perf.json",
     )
     trace_parser.set_defaults(func=cmd_plugins_trace)
 
@@ -318,7 +291,7 @@ def register_cli_subcommands(plugins_sub: argparse._SubParsersAction[Any]) -> No
     verify_bidir_parser.add_argument(
         "--profile",
         action="store_true",
-        help="Collect per-rule timing and persist .ctn/bsg_perf.json",
+        help="Collect per-rule timing and persist .batho-config/metrics/bsg_perf.json",
     )
     verify_bidir_parser.add_argument(
         "--trace",

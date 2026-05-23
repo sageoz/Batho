@@ -29,12 +29,12 @@ MAX_PORT_RETRIES = 10
 
 
 def _find_ctn_dir(start_path: Path) -> Path | None:
-    """Walk up from start_path to find the nearest ancestor with .ctn/."""
+    """Walk up from start_path to find the nearest ancestor with .batho file."""
     current = start_path.resolve()
     while True:
-        ctn_path = current / ".ctn"
-        if ctn_path.is_dir():
-            return ctn_path
+        batho_path = current / ".batho"
+        if batho_path.is_file():
+            return current
         parent = current.parent
         if parent == current:
             break
@@ -43,8 +43,8 @@ def _find_ctn_dir(start_path: Path) -> Path | None:
 
 
 def _find_workspace_root(ctn_path: Path) -> Path:
-    """Return the workspace root (parent of .ctn/)."""
-    return ctn_path.parent
+    """Return the workspace root (where .batho lives)."""
+    return ctn_path
 
 
 def _find_dashboard_assets() -> Path | None:
@@ -121,9 +121,9 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
         if clean_path.startswith("/dashboard/"):
             rel_path = clean_path[len("/dashboard/"):]
             return str(self._dashboard_dir / rel_path)
-        elif clean_path.startswith("/.ctn/"):
-            rel_path = clean_path[len("/.ctn/"):]
-            return str(self._ctn_dir / rel_path)
+        elif clean_path.startswith("/.batho-config/"):
+            rel_path = clean_path[len("/.batho-config/"):]
+            return str(self._ctn_dir / ".batho-config" / rel_path)
         elif clean_path == "/dashboard" or clean_path == "/dashboard/":
             return str(self._dashboard_dir / "index.html")
         elif clean_path == "/" or clean_path == "":
@@ -134,7 +134,7 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         """Add cache-control for dashboard assets to prevent stale caches."""
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path.startswith("/dashboard/") or parsed.path.startswith("/.ctn/"):
+        if parsed.path.startswith("/dashboard/") or parsed.path.startswith("/.batho-config/"):
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.send_header("Pragma", "no-cache")
             self.send_header("Expires", "0")
@@ -297,7 +297,7 @@ class DualRootHandler(http.server.SimpleHTTPRequestHandler):
         clean_path = parsed.path
         if clean_path not in ["/", "/dashboard", "/dashboard/"] and \
            not clean_path.startswith("/dashboard/") and \
-           not clean_path.startswith("/.ctn/"):
+           not clean_path.startswith("/.batho-config/"):
             self.send_error(404, "Not Found")
             return
         super().do_GET()
@@ -371,8 +371,8 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
     ctn_path = _find_ctn_dir(root_path)
     if not ctn_path:
-        print(f"error: No .ctn/ directory found walking up from {root_path}")
-        print("Run `batho index` from the repo root to populate .ctn/")
+        print(f"error: No .batho database found walking up from {root_path}")
+        print("Run `batho index` from the repo root to create .batho")
         return 1
 
     workspace_root = _find_workspace_root(ctn_path)
@@ -435,7 +435,7 @@ def register_cli_subcommands(dashboard_sub: argparse._SubParsersAction[Any]) -> 
     dashboard_parser.add_argument(
         "--root",
         default=".",
-        help="Path to repository root (walks up to find .ctn/)",
+        help="Path to repository root (walks up to find .batho)",
     )
     dashboard_parser.add_argument(
         "--port",

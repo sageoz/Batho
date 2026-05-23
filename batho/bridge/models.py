@@ -33,7 +33,7 @@ class ArtifactRecord(BaseModel):
 
 
 class IndexEntry(BaseModel):
-    """A single index entry from .ctn/index.json."""
+    """A single index entry representing a completed run."""
 
     index_id: str
     timestamp: str

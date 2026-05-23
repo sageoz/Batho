@@ -1,4 +1,4 @@
-"""Artifact registry bridge — queries the SQLite-backed artifact registry."""
+"""Artifact registry bridge — queries the unified .batho database."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ class ArtifactRegistryBridge:
         self,
         ctn_dir: Path,
         connection_factory: ConnectionFactory | None = None,
-        pool: ConnectionPool | None = None,
+        pool: "ConnectionPool | None" = None,
     ) -> None:
         self.ctn_dir = ctn_dir.resolve()
         self._connection_factory = connection_factory
@@ -45,29 +45,28 @@ class ArtifactRegistryBridge:
             self._registry = get_artifact_registry(self.ctn_dir)
 
     def _get_connection(self) -> sqlite3.Connection:
-        """Get a connection using the pool, factory, or registry."""
+        """Get a connection from BathoDatabase or legacy pool/factory."""
         if self._pool:
             return self._pool.acquire()
         if self._connection_factory:
             return self._connection_factory()
         if self._registry:
-            return self._registry._connect(row_factory=True)
+            return self._registry._get_connection()
         raise RuntimeError("No connection source available")
 
     def _release_connection(self, conn: sqlite3.Connection) -> None:
         """Release a connection back to the source."""
         if self._pool:
             self._pool.release(conn)
-        else:
-            conn.close()
+        # BathoDatabase connections are per-thread; do not close them.
 
     @property
     def registry_path(self) -> Path:
         if self._pool:
             return self._pool._db_path
         if self._registry:
-            return self._registry.registry_path
-        return self.ctn_dir / "artifact_registry.sqlite3"
+            return self._registry.path
+        return self.ctn_dir / ".batho"
 
     @property
     def enabled(self) -> bool:
@@ -75,7 +74,7 @@ class ArtifactRegistryBridge:
             return self.registry_path.exists()
         if self._connection_factory:
             return self.registry_path.exists()
-        return bool(self._registry and self._registry.enabled and self._registry._ready)
+        return bool(self._registry and self._registry.exists)
 
     def list_artifact_types(self) -> list[str]:
         """Return distinct artifact types present in the registry."""
@@ -100,7 +99,7 @@ class ArtifactRegistryBridge:
         conn = self._get_connection()
         try:
             rows = conn.execute(
-                "SELECT artifact_id, content_id, artifact_type, logical_path, physical_path, "
+                "SELECT artifact_id, content_id, artifact_type, logical_path, "
                 "checksum, size_bytes, schema_version, producer, run_id, sync_status, "
                 "cloud_content_id, last_sync_at, sync_error, retry_count, retention_class, "
                 "metadata_json, created_at, updated_at "
@@ -119,7 +118,7 @@ class ArtifactRegistryBridge:
         conn = self._get_connection()
         try:
             row = conn.execute(
-                "SELECT artifact_id, content_id, artifact_type, logical_path, physical_path, "
+                "SELECT artifact_id, content_id, artifact_type, logical_path, "
                 "checksum, size_bytes, schema_version, producer, run_id, sync_status, "
                 "cloud_content_id, last_sync_at, sync_error, retry_count, retention_class, "
                 "metadata_json, created_at, updated_at "
@@ -134,44 +133,32 @@ class ArtifactRegistryBridge:
             self._release_connection(conn)
 
     def get_latest_index(self) -> IndexEntry | None:
-        """Read ``.ctn/index.json`` and return the current index entry."""
-        index_path = self.ctn_dir / "index.json"
-        if not index_path.exists():
+        """Get the latest completed index run from the .batho database."""
+        if not self._registry:
             return None
-        try:
-            data = json.loads(index_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            LOGGER.warning("index_json_read_failed", path=str(index_path), error=str(exc))
+        run_id = self._registry.get_latest_run_id()
+        if not run_id:
             return None
-
-        current_index_id = data.get("current_index_id")
-        indexes = data.get("indexes", {})
-        entry = indexes.get(current_index_id) if current_index_id else None
-        if not entry:
+        run = self._registry.get_run(run_id)
+        if not run:
             return None
-
-        return _dict_to_index_entry(current_index_id, entry)
+        return _run_to_index_entry(run)
 
     def list_indexes(self) -> tuple[list[IndexEntry], str, str | None, str | None]:
-        """Return all index entries plus current_index_id from ``.ctn/index.json``.
+        """Return all completed index runs from the .batho database.
 
-        Returns ``(entries, current_index_id, persistence_model, schema_version)``.
+        Returns ``(entries, current_run_id, persistence_model, schema_version)``.
         """
-        index_path = self.ctn_dir / "index.json"
-        if not index_path.exists():
+        if not self._registry:
             return [], "", None, None
-        try:
-            data = json.loads(index_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            LOGGER.warning("index_json_read_failed", path=str(index_path), error=str(exc))
-            return [], "", None, None
-
-        current_index_id = data.get("current_index_id", "")
-        persistence_model = data.get("persistence_model")
-        schema_version = data.get("schema_version")
-        indexes = data.get("indexes", {})
-        entries = [_dict_to_index_entry(idx_id, entry) for idx_id, entry in indexes.items()]
-        return entries, current_index_id, persistence_model, schema_version
+        conn = self._get_connection()
+        rows = conn.execute(
+            "SELECT * FROM index_runs WHERE status = 'completed' ORDER BY completed_at DESC"
+        ).fetchall()
+        current_run_id = self._registry.get_latest_run_id() or ""
+        schema_version = self._registry.get_meta("schema_version")
+        entries = [_run_to_index_entry(dict(row)) for row in rows]
+        return entries, current_run_id, "unified_sqlite", schema_version
 
     def search_artifacts(self, query: str, artifact_type: str | None = None) -> list[ArtifactRecord]:
         """Fuzzy search on logical paths."""
@@ -182,7 +169,7 @@ class ArtifactRegistryBridge:
         try:
             if artifact_type:
                 rows = conn.execute(
-                    "SELECT artifact_id, content_id, artifact_type, logical_path, physical_path, "
+                    "SELECT artifact_id, content_id, artifact_type, logical_path, "
                     "checksum, size_bytes, schema_version, producer, run_id, sync_status, "
                     "cloud_content_id, last_sync_at, sync_error, retry_count, retention_class, "
                     "metadata_json, created_at, updated_at "
@@ -192,7 +179,7 @@ class ArtifactRegistryBridge:
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT artifact_id, content_id, artifact_type, logical_path, physical_path, "
+                    "SELECT artifact_id, content_id, artifact_type, logical_path, "
                     "checksum, size_bytes, schema_version, producer, run_id, sync_status, "
                     "cloud_content_id, last_sync_at, sync_error, retry_count, retention_class, "
                     "metadata_json, created_at, updated_at "
@@ -205,35 +192,16 @@ class ArtifactRegistryBridge:
             self._release_connection(conn)
 
     def stats(self) -> RegistryStats:
-        """Return registry statistics."""
-        if self._pool or self._connection_factory:
-            try:
-                conn = self._get_connection()
-                try:
-                    cursor = conn.execute("SELECT COUNT(*) as count FROM artifacts WHERE deleted = 0")
-                    row = cursor.fetchone()
-                    artifact_count = row["count"] if row else 0
-                    return RegistryStats(
-                        enabled=self.enabled,
-                        registry_path=str(self.registry_path),
-                        backend="sqlite",
-                        artifact_count=artifact_count,
-                    )
-                finally:
-                    self._release_connection(conn)
-            except Exception:
-                return RegistryStats(enabled=False)
-        raw = self._registry.stats()
+        """Return registry statistics from .batho database."""
+        if not self._registry:
+            return RegistryStats(enabled=False)
+        raw = self._registry.get_stats()
         return RegistryStats(
-            enabled=raw.get("enabled", False),
-            registry_path=raw.get("registry_path", ""),
-            backend=raw.get("backend", "sqlite"),
-            artifact_count=raw.get("artifact_count", 0),
-            deleted_artifact_count=raw.get("deleted_artifact_count", 0),
-            content_blob_count=raw.get("content_blob_count", 0),
-            artifact_types=raw.get("artifact_types", {}),
-            sync_status=raw.get("sync_status", {}),
-            db_size_bytes=raw.get("db_size_bytes", 0),
+            enabled=self.enabled,
+            registry_path=str(self.registry_path),
+            backend="unified_sqlite",
+            artifact_count=raw.get("artifacts_count", 0),
+            db_size_bytes=raw.get("file_size_bytes", 0),
         )
 
 
@@ -243,7 +211,7 @@ def _row_to_record(row: sqlite3.Row) -> ArtifactRecord:
         artifact_id=str(row["artifact_id"]),
         artifact_type=str(row["artifact_type"]),
         logical_path=str(row["logical_path"]),
-        physical_path=str(row["physical_path"]),
+        physical_path="",  # No longer stored separately
         checksum=str(row["checksum"] or ""),
         size_bytes=int(row["size_bytes"] or 0),
         schema_version=str(row["schema_version"] or ""),
@@ -258,6 +226,28 @@ def _row_to_record(row: sqlite3.Row) -> ArtifactRecord:
         metadata=metadata,
         created_at=str(row["created_at"] or ""),
         updated_at=str(row["updated_at"] or ""),
+    )
+
+
+def _run_to_index_entry(run: dict[str, Any]) -> IndexEntry:
+    """Convert a DB index_runs row dict to an IndexEntry model."""
+    return IndexEntry(
+        index_id=run.get("run_id", ""),
+        timestamp=run.get("completed_at") or run.get("started_at", ""),
+        root=run.get("root_path", ""),
+        file_count=run.get("file_count", 0),
+        entity_count=run.get("entity_count", 0),
+        relationship_count=run.get("relationship_count", 0),
+        repo_hash=run.get("config_hash", ""),
+        staleness_score=0.0,
+        stack={},
+        outputs={},
+        stats={},
+        metrics={},
+        build={},
+        schemas={"version": run.get("schema_version", "")},
+        persistence={"model": "unified_sqlite"},
+        snapshot_id="",
     )
 
 
