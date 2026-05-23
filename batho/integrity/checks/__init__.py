@@ -68,8 +68,6 @@ from .database import DatabaseIntegrityCheck
 from .registry import RegistryIntegrityCheck
 from .index import IndexIntegrityCheck
 from .bsg import BSGIntegrityCheck
-from .snapshots import SnapshotIntegrityCheck
-from .cache import CacheIntegrityCheck
 from .views import ViewIntegrityCheck
 
 __all__ = [
@@ -82,7 +80,5 @@ __all__ = [
     "RegistryIntegrityCheck",
     "IndexIntegrityCheck",
     "BSGIntegrityCheck",
-    "SnapshotIntegrityCheck",
-    "CacheIntegrityCheck",
     "ViewIntegrityCheck",
 ]

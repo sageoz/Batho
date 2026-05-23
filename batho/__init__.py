@@ -5,7 +5,7 @@ This package provides the core functionality for analyzing code repositories,
 building dependency graphs, and generating contextual information for LLMs.
 """
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 
 from batho.config import get_config_cached, reload_config
 from batho.context.bsg_map import BSGMap
@@ -17,17 +17,6 @@ from batho.context.incremental import (
     PatchMode,
 )
 from batho.context.query import QueryService
-from batho.time_machine import (
-    FileChange,
-    FileChangeSummary,
-    FileChangeTracker,
-    FileChangeType,
-    create_snapshot,
-    diff_snapshots,
-    incremental_patch,
-    list_snapshots,
-    load_snapshot,
-)
 from batho.utils.logging import get_logger
 
 __all__ = [
@@ -41,16 +30,6 @@ __all__ = [
     # Incremental
     "get_changed_file_status_since",
     "PatchMode",
-    # Time machine
-    "create_snapshot",
-    "diff_snapshots",
-    "FileChange",
-    "FileChangeSummary",
-    "FileChangeTracker",
-    "FileChangeType",
-    "incremental_patch",
-    "list_snapshots",
-    "load_snapshot",
     # Config
     "get_config_cached",
     "reload_config",
