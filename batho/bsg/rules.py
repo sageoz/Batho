@@ -23,7 +23,6 @@ try:
 except Exception:  # pragma: no cover - handled by runtime error in validator init
     Draft202012Validator = None  # type: ignore[assignment]
 
-from batho.config import get_config_cached
 from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
 
 from batho.utils.logging import get_logger
@@ -527,22 +526,19 @@ def _hash_file(path: Path) -> str:
 
 
 def _rules_cache_path(root_path: Path) -> Path:
-    config_dir = str(get_config_cached().get("paths", {}).get("config_dir", ".batho-config"))
-    cache_dir = root_path / config_dir / "cache"
+    cache_dir = root_path / ".batho-config" / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir / _CACHE_FILENAME
 
 
 def _interception_stats_path(root_path: Path) -> Path:
-    config_dir = str(get_config_cached().get("paths", {}).get("config_dir", ".batho-config"))
-    metrics_dir = root_path / config_dir / "metrics"
+    metrics_dir = root_path / ".batho-config" / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     return metrics_dir / _INTERCEPTION_FILENAME
 
 
 def _perf_stats_path(root_path: Path) -> Path:
-    config_dir = str(get_config_cached().get("paths", {}).get("config_dir", ".batho-config"))
-    metrics_dir = root_path / config_dir / "metrics"
+    metrics_dir = root_path / ".batho-config" / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     return metrics_dir / _PERF_FILENAME
 

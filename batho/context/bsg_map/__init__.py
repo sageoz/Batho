@@ -11,9 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from batho.config import BSG_SCHEMA_VERSION
+from batho.config import SCHEMA_VERSIONS
 from batho.utils.hash import generate_relationship_id
 from batho.utils.logging import get_logger
+
+BSG_SCHEMA_VERSION = SCHEMA_VERSIONS["bsg"]
 
 from ..schema import BSGViewType, Entity, EntityType, FileSnapshot, IntegrityError
 from .relativizer import PathRelativizer

@@ -30,7 +30,6 @@ LOGGER = get_logger(__name__, component="storage_engine")
 # ---------------------------------------------------------------------------
 
 BATHO_DB_FILENAME = ".batho"
-BATHO_CONFIG_DIR = ".batho-config"
 SCHEMA_VERSION = "batho-db.v7"
 DEFAULT_PAGE_SIZE = 8192
 DEFAULT_BUSY_TIMEOUT_MS = 5000

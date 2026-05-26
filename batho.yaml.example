@@ -1,43 +1,59 @@
-# Batho unified root configuration
+# Batho unified root configuration — v1.1.0
 # Copy this file to ./batho.yaml and edit values for your environment.
+# All state is persisted in a single SQLite artifact: artifact_<dirname>.batho
+schema_version: batho-config.v1
 
 logging:
   level: INFO               # DEBUG | INFO | WARNING | ERROR | CRITICAL
-  json_format: null         # true = JSON logs, false = console logs, null = auto
+  json_format: null         # true = JSON logs, false = console logs, null = auto-detect
   quiet: false              # Suppress all non-error output
-  file: null                # Optional log file path (e.g. .ctn/batho.log)
+  file: null                # Optional log file path
   format: "%(message)s"     # Log format string
 
 paths:
-  ctn_dir: .ctn             # Output/index directory
+  db_path: .batho           # Base SQLite artifact name prefix
 
 indexer:
-  max_file_size_kb: 500
-  max_indexed_files: 200000
-  max_workers: 0            # 0 = auto
-  max_files: null           # Optional hard cap for files processed
-  ignore_patterns: []       # Extra glob patterns
-  ignore_files: null        # null uses defaults; or provide list of ignore filenames
-  default_patterns_file: null  # Path to custom default patterns YAML (null = use built-in)
-  metrics_output: .ctn/local/metrics/metrics.json
+  max_file_size_kb: 500     # Skip files exceeding this size
+  max_indexed_files: 200000 # Hard cap on total files indexed
+  max_workers: 0            # 0 = auto (CPU count)
+  max_files: null           # Optional per-run file cap
+  ignore_patterns: []       # Extra gitignore-style patterns
+  ignore_files: null        # null = use built-in defaults
+  default_patterns_file: null  # Path to custom patterns YAML (null = built-in)
   fail_on_warning: false
-  strict: false
+  strict: false             # Treat parse warnings as errors
 
 patch:
-  timeout_seconds: 300
-  max_changes: 10000
-  audit_log_path: .ctn/patch_audit.log
-  history_days: 90
-  max_count: 1000
-  cleanup_on_startup: false
+  timeout_seconds: 300      # Max seconds for a patch run
+  max_changes: 10000        # Max file changes in one patch
+  history_days: 90          # Retention for patch history
+  max_count: 1000           # Max patches to retain
+  cleanup_on_startup: false # Purge expired patches on start
 
 flags:
   fail_on_warning: false
   strict: false
-  audit_log_enabled: true
+  audit_log_enabled: true   # Enable patch audit trail in run_artifacts
+
+# Fine-grained control over which blobs are written to the SQLite artifact.
+# Disable blobs you don't need to reduce artifact size.
+artifact_blobs:
+  file_artifacts:           # Blobs per file in file_artifacts table
+    bsg_agent_view: true    # LLM-optimised structural nodes (lightweight)
+    bsg_storage_view: true  # Full-fidelity delta blobs (raw_content, syntax_glue)
+    bsg_rel_view: true      # Relationships array
+  run_artifacts:            # Blobs per run in run_artifacts table
+    context_overview: true  # Language / file category / entity distribution
+    telemetry_metrics: true # Duration phases, cache stats, file/entity counts
+    structural_metrics: true # Entity type dist, fan-in/fan-out, LOC
+    security_audit: false   # BSG interceptor hits (opt-in, off by default)
+    artifact_payload: true  # Pre-minified entity+rel summary for LLM injection
+    delta_stats: true       # Churn / node diffs (null for initial build runs)
 
 rules:
-  enabled: false            # Enable BSG rule plugins during indexing
+  enabled: true             # Enable BSG rule plugins during indexing
+  auto_load_all_plugins: true
   builtin_plugins:
     - bsg_core
     - bsg_silent_failure_catcher
@@ -50,13 +66,13 @@ rules:
     - bsg_hardcoded_secret_catcher
     - bsg_auth_boundary_shield
   disabled_rules: []
-  custom_rules_path: null   # Optional path to YAML file with custom rules
-  custom_rules_inline: []   # Optional inline rules (same schema as file-based rules)
-  strict_validation: false  # True = fail on invalid plugin/custom rules
-  cache_ttl: 3600
+  custom_rules_path: null   # Path to YAML file with custom rules
+  custom_rules_inline: []   # Inline rules (same schema as file-based)
+  strict_validation: false  # Fail on invalid plugin/custom rules
+  cache_ttl: 3600           # Rule cache TTL in seconds
   fail_on_rule_error: false
 
-  # Example custom rules
+  # Example custom rules:
   # custom_rules_inline:
   #   - name: mark-test-files
   #     file_patterns: ["tests/**", "**/*_test.py"]
@@ -75,85 +91,67 @@ plugins:
   #   bsg_graph_foundation:
   #     bsg-category-tests:
   #       severity: warning
-  #       actions:
-  #         metadata:
-  #           bsg.category: TEST
-
-hooks:
-  enabled: true              # Enable/disable hooks system
-  include: true              # Include .batho/hooks.yaml as config source
-
-schemas:
-  graph: graph.v1
-  bsg: bsg.v1
-  snapshot: snapshot.v1
-  index_metadata: index-metadata.v1
-  file_cache: file-cache.v1
 
 bsg:
   parallel:
     enabled: true
-    max_workers: 16
-    chunk_size: 50
+    max_workers: 16         # Max parallel BSG workers (1-32)
+    chunk_size: 50          # Files per parallel chunk
 
   ignore:
-    enabled: true
-    file: ""  # Deprecated: .bathoignore support removed
+    enabled: true           # Apply ignore patterns during BSG parsing
 
   cache:
     enabled: true
-    path: .ctn/local/cache/cache.db
-    max_size_mb: 1024
-    ttl_days: 30
+    max_size_mb: 1024       # In-process BSG cache size limit
+    ttl_days: 30            # BSG cache entry TTL
 
   incremental:
     enabled: true
-    auto_detect_git: true
+    auto_detect_git: true   # Use git for faster change detection hint
 
   symbol_resolution:
     enabled: true
-    fuzzy_matching: false
+    fuzzy_matching: false   # Enable fuzzy symbol matching (slower)
     cache_symbols: true
 
   serialization:
-    method: legacy          # legacy | streaming
+    method: streaming       # streaming (default)
     compression: false
     batch_size: 1000
 
   parsing:
-    error_recovery: true
+    error_recovery: true    # Continue past parse errors
     partial_parsing: false
-    max_file_size_mb: 10
+    max_file_size_mb: 10    # Skip files larger than this
     skip_comments: false
 
   query:
     enabled: true
-    index_on_write: true
+    index_on_write: true    # Maintain query index on every write
     cache_enabled: true
-    cache_size: 256
-    default_limit: 200
-    query_timeout_ms: 5000
+    cache_size: 256         # LRU cache size for query results
+    default_limit: 200      # Default result page size
+    query_timeout_ms: 5000  # Query timeout in milliseconds
 
   storage:
     enabled: true
-    backend: sqlite          # sqlite
-    registry_path: .ctn/local/sync/artifact_registry.db
-    content_scope: durable   # durable | all
-    strict_compatibility: true
+    content_scope: durable  # durable | all
     track_content_ids: true
-    mmap_enabled: false
-    mmap_min_size_mb: 8
+    busy_timeout_ms: 5000   # SQLite busy timeout
+    page_size: 8192         # SQLite page size
+    auto_vacuum: incremental # none | full | incremental
     retention:
       enabled: true
       snapshot_ttl_days: 90
       patch_ttl_days: 90
       metrics_ttl_days: 30
       context_ttl_days: 90
-      max_snapshots: 500
-      max_patches: 5000
+      max_snapshots: 500    # Maximum snapshots retained
+      max_patches: 5000     # Maximum patch records retained
 
-  # Bidirectional BSG (lossless reconstruction support)
   bidirectional:
-    enabled: true            # Enable bidirectional BSG features
-    include_gaps: true       # Emit SYNTAX_GLUE entities for 100% byte coverage
-    storage_view: true       # Persist raw_content in storage view (required for reconstruction)
+    enabled: true           # Enable bidirectional BSG (lossless reconstruction)
+    include_gaps: true      # Emit SYNTAX_GLUE entities for 100% byte coverage
+    verify_integrity: false # Enforce hash verification during reconstruction
+    storage_view: false     # Persist raw_content in storage view (larger artifact)

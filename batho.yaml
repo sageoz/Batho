@@ -1,5 +1,5 @@
-# Batho configuration
-# Auto-generated default config. Edit as needed for your project.
+# Batho unified root configuration — v1.1.0
+schema_version: batho-config.v1
 
 logging:
   level: INFO
@@ -18,14 +18,12 @@ indexer:
   max_files: null
   ignore_patterns: []
   ignore_files: null
-  metrics_output: .ctn/local/metrics/metrics.json
   fail_on_warning: false
   strict: false
 
 patch:
   timeout_seconds: 300
   max_changes: 10000
-  audit_log_path: .ctn/patch_audit.log
   history_days: 90
   max_count: 1000
   cleanup_on_startup: false
@@ -34,6 +32,19 @@ flags:
   fail_on_warning: false
   strict: false
   audit_log_enabled: true
+
+artifact_blobs:
+  file_artifacts:
+    bsg_agent_view: true
+    bsg_storage_view: true
+    bsg_rel_view: true
+  run_artifacts:
+    context_overview: true
+    telemetry_metrics: true
+    structural_metrics: true
+    security_audit: false
+    artifact_payload: true
+    delta_stats: true
 
 rules:
   enabled: true
@@ -59,17 +70,6 @@ rules:
 plugins:
   overrides: {}
 
-hooks:
-  enabled: true
-  include: true
-
-schemas:
-  graph: graph.v1
-  bsg: bsg.v1
-  snapshot: snapshot.v1
-  index_metadata: index-metadata.v1
-  file_cache: file-cache.v1
-
 bsg:
   parallel:
     enabled: true
@@ -77,10 +77,8 @@ bsg:
     chunk_size: 50
   ignore:
     enabled: true
-    file: ""  # Deprecated: .bathoignore support removed
   cache:
     enabled: true
-    path: .ctn/local/cache/cache.db
     max_size_mb: 1024
     ttl_days: 30
   incremental:
@@ -91,7 +89,7 @@ bsg:
     fuzzy_matching: false
     cache_symbols: true
   serialization:
-    method: legacy
+    method: streaming
     compression: false
     batch_size: 1000
   parsing:
@@ -108,13 +106,11 @@ bsg:
     query_timeout_ms: 5000
   storage:
     enabled: true
-    backend: sqlite
-    registry_path: .ctn/local/sync/artifact_registry.db
     content_scope: durable
-    strict_compatibility: true
     track_content_ids: true
-    mmap_enabled: false
-    mmap_min_size_mb: 8
+    busy_timeout_ms: 5000
+    page_size: 8192
+    auto_vacuum: incremental
     retention:
       enabled: true
       snapshot_ttl_days: 90
@@ -123,9 +119,8 @@ bsg:
       context_ttl_days: 90
       max_snapshots: 500
       max_patches: 5000
-
-  # Bidirectional BSG (lossless reconstruction support)
   bidirectional:
-    enabled: true            # Enable bidirectional BSG features
-    include_gaps: true       # Emit SYNTAX_GLUE entities for 100% byte coverage
-    storage_view: true       # Persist raw_content in storage view (required for reconstruction)
+    enabled: true
+    include_gaps: true
+    verify_integrity: false
+    storage_view: false

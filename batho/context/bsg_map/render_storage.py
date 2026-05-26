@@ -11,10 +11,13 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
 
-from batho.config import BSG_SCHEMA_VERSION
+from batho.config import SCHEMA_VERSIONS
 from batho.utils.hash import generate_relationship_id
+
 from ..schema import EntityType, BSGViewType
 from .relativizer import PathRelativizer
+
+BSG_SCHEMA_VERSION = SCHEMA_VERSIONS["bsg"]
 
 if TYPE_CHECKING:
     from . import BSGMap

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from batho.config import SCHEMA_VERSIONS
 from batho.utils.logging import get_logger
 
 logger = get_logger(__name__, component="patch_errors")
@@ -186,7 +187,7 @@ class PatchAuditLogger:
         try:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
             audit_data = {
-                "schema_version": "1.0",
+                "schema_version": SCHEMA_VERSIONS["config"],
                 "last_updated": datetime.now(timezone.utc).isoformat(),
                 "entries": [
                     entry.to_dict() for entry in self.entries if entry.end_time
@@ -232,17 +233,7 @@ def _get_audit_logger() -> PatchAuditLogger:
     """Get or create the global audit logger instance (lazy initialization)."""
     global _audit_logger_instance
     if _audit_logger_instance is None:
-        try:
-            from batho.config import get_config_cached
-
-            audit_log_path = get_config_cached().get("patch", {}).get("audit_log_path")
-            if audit_log_path:
-                _audit_logger_instance = PatchAuditLogger(Path(audit_log_path))
-            else:
-                _audit_logger_instance = PatchAuditLogger()
-        except Exception:
-            # Fallback if config fails
-            _audit_logger_instance = PatchAuditLogger()
+        _audit_logger_instance = PatchAuditLogger()
     return _audit_logger_instance
 
 
