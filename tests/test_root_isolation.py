@@ -16,7 +16,6 @@ from batho.orchestrator.export import ExportOptions, run_export
 from batho.storage.engine import get_database, artifact_filename, close_all_databases
 from batho.cli.diff import cmd_diff
 from batho.cli.fix import cmd_fix
-from batho.cli.bridge import cmd_bridge_serve
 from batho.cli._utils import find_workspace_with_db
 
 
@@ -319,35 +318,6 @@ def test_fix_from_different_cwd(temp_project, monkeypatch, capsys):
     
     ret = cmd_fix(args)
     assert ret == 0
-
-
-def test_bridge_root_resolves_artifact(temp_project, monkeypatch):
-    options = BuildOptions(root=temp_project, force_full=True, verbose=False)
-    build_res = run_build(options)
-    assert build_res.success
-    
-    other_dir = temp_project / "other"
-    other_dir.mkdir()
-    monkeypatch.chdir(other_dir)
-    
-    import argparse
-    args = argparse.Namespace(
-        root=temp_project,
-        global_db=None,
-        scan_dir=None,
-        register=False,
-        transport="http",
-        port=8765,
-        host="127.0.0.1",
-        open_browser=False
-    )
-    
-    with patch("batho.cli.bridge.serve") as mock_serve:
-        ret = cmd_bridge_serve(args)
-        assert ret == 0
-        mock_serve.assert_called_once()
-        called_args, called_kwargs = mock_serve.call_args
-        assert called_kwargs.get("repo_root") == temp_project
 
 
 def test_no_legacy_batho_subdir_fallback(temp_project):
