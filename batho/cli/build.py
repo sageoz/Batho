@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
+
+from batho.cli._utils import create_base_parser
 
 
 def register_build_parser(subparsers: argparse._SubParsersAction) -> None:
     """Register the `build` subcommand on the given subparsers action."""
     parser = subparsers.add_parser(
         "build",
+        parents=[create_base_parser()],
         help="Full index build for a repository (creates artifact_<dirname>.batho database)",
         description=(
             "Build a complete code graph, BSG map, and baseline snapshot for a "
@@ -22,22 +24,10 @@ def register_build_parser(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     parser.add_argument(
-        "--root",
-        type=Path,
-        default=Path("."),
-        help="Repository root directory (default: current directory)",
-    )
-    parser.add_argument(
         "--full",
         action="store_true",
         default=False,
         help="Force full rebuild (deletes existing database and rebuilds from scratch)",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        default=False,
-        help="Enable verbose debug logging",
     )
     parser.add_argument(
         "--max-workers",

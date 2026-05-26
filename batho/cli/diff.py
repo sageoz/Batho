@@ -1,20 +1,30 @@
+"""CLI subcommand: batho diff
+
+Query node-level changes across runs, entities, or files.
+"""
+
 from __future__ import annotations
 
 import argparse
 import json
 import orjson
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+from batho.cli._utils import create_base_parser
+
 
 def register_diff_parser(subparsers: argparse._SubParsersAction) -> None:
     """Register the `diff` subcommand on the given subparsers action."""
     parser = subparsers.add_parser(
         "diff",
+        parents=[create_base_parser()],
         help="Query node-level changes across runs, entities, or files",
         description="Tracks granular node evolution and prints node-level diff history.",
     )
-    
+
     # Mutually exclusive group for targets
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
@@ -32,7 +42,7 @@ def register_diff_parser(subparsers: argparse._SubParsersAction) -> None:
         type=str,
         help="All node changes in a file across runs (relative path)",
     )
-    
+
     parser.add_argument(
         "--since",
         type=str,
@@ -44,13 +54,7 @@ def register_diff_parser(subparsers: argparse._SubParsersAction) -> None:
         default=False,
         help="Output in machine-readable JSON format",
     )
-    parser.add_argument(
-        "--root",
-        type=Path,
-        default=Path("."),
-        help="Repository root directory (default: current directory)",
-    )
-    
+
     parser.set_defaults(func=cmd_diff)
 
 
@@ -71,8 +75,8 @@ def cmd_diff(args: argparse.Namespace) -> int:
         
     try:
         db = get_database(root)
-    except Exception as e:
-        print(f"error: {e}", file=sys.stderr)
+    except (FileNotFoundError, PermissionError, ConnectionError) as exc:
+        print(f"error: Failed to open database: {exc}", file=sys.stderr)
         return 1
         
     if args.run:
@@ -101,8 +105,7 @@ def _handle_run_diff(db: Any, run_uuid: str, output_json: bool) -> int:
     if not changes:
         print(f"No node changes in run {run_uuid}.")
         return 0
-        
-    from collections import defaultdict
+
     by_kind = defaultdict(list)
     for c in changes:
         by_kind[c["change_kind"]].append(c)
@@ -246,10 +249,9 @@ def _handle_file_diff(db: Any, rel_path: str, output_json: bool) -> int:
     if not results:
         print(f"No node changes found for file {rel_path}.")
         return 0
-        
+
     print(f"File: {rel_path}\n")
-    
-    from collections import defaultdict
+
     by_transition = defaultdict(list)
     transition_order = []
     for item in results:

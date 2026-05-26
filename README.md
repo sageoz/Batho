@@ -469,7 +469,6 @@ Batho stores all artifacts in `.ctn/` (CTN = Code Tracking Network):
 - Symbol resolution is now **enabled by default** (can be disabled in config)
 - Storage registry is **enabled by default** (SQLite backend)
 - BSG plugins are **disabled by default** (enable via `rules.enabled: true`)
-- Cloud sync is **disabled by default** (enable via `cloud_sync.enabled: true`)
 
 **Recommended Migration Steps:**
 
@@ -530,11 +529,6 @@ rules:
 hooks:
   enabled: true
   include: true
-
-cloud_sync:
-  enabled: false
-  endpoint: https://sync.batho.dev/v1
-  api_key: ${BATHO_CLOUD_API_KEY}
 ```
 
 See `batho.yaml.example` for complete configuration options.

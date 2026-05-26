@@ -9,24 +9,20 @@ import argparse
 import sys
 from pathlib import Path
 
+from batho.cli._utils import create_base_parser
+
 
 def register_fix_parser(subparsers: argparse._SubParsersAction) -> None:
     """Register the `fix` subcommand."""
     parser = subparsers.add_parser(
         "fix",
+        parents=[create_base_parser()],
         help="Verify and repair artifact database integrity",
         description=(
             "Comprehensive integrity check and automatic repair for the Batho artifact database. "
             "Detects corruption, validates data structures, and repairs issues where possible. "
             "Quick mode by default; use --deep for comprehensive verification."
         ),
-    )
-
-    parser.add_argument(
-        "--root",
-        type=Path,
-        default=Path("."),
-        help="Repository root directory (default: current directory)",
     )
 
     parser.add_argument(

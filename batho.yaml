@@ -70,16 +70,6 @@ schemas:
   index_metadata: index-metadata.v1
   file_cache: file-cache.v1
 
-cloud_sync:
-  enabled: false
-  endpoint: ""
-  api_key: ""
-  organization_id: ""
-  project_id: ""
-  timeout_seconds: 300
-  max_retries: 3
-  batch_size: 10
-
 bsg:
   parallel:
     enabled: true
@@ -95,7 +85,6 @@ bsg:
     ttl_days: 30
   incremental:
     enabled: true
-    fallback_to_full: true
     auto_detect_git: true
   symbol_resolution:
     enabled: true
@@ -123,7 +112,6 @@ bsg:
     registry_path: .ctn/local/sync/artifact_registry.db
     content_scope: durable
     strict_compatibility: true
-    cloud_sync_ready: true
     track_content_ids: true
     mmap_enabled: false
     mmap_min_size_mb: 8

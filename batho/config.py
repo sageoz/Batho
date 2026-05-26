@@ -4,7 +4,7 @@ Typed configuration and build info helpers for Batho core.
 Features
 - Pydantic-validated config with sane defaults.
 - Single root config file ``./batho.yaml`` as the source of truth.
-- Env-variable overrides kept for compatibility.
+- Environment variable overrides for 12-factor app support.
 - Strict/fail-on-warning flags for regulated environments.
 - Schema identifiers for persisted artifacts.
 """
@@ -17,12 +17,11 @@ import os
 import contextvars
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from batho.cloud_sync.config import CloudSyncConfig
 
 _active_root: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
     "_active_root", default=None
@@ -42,8 +41,6 @@ DEFAULT_CONFIG_DIR = ".batho-config"
 DEFAULT_MAX_FILE_SIZE_KB = 500
 DEFAULT_MAX_INDEXED_FILES = 200000  # allow large repos
 DEFAULT_INDEX_WORKERS = 0  # auto
-DEFAULT_IGNORE_FILES: list[str] | None = None
-DEFAULT_METRICS_OUTPUT: str | None = None
 DEFAULT_ROOT_CONFIG_FILE = "batho.yaml"
 DEFAULT_RULES_ENABLED = True
 DEFAULT_RULES_AUTO_LOAD_ALL_PLUGINS = True
@@ -82,11 +79,11 @@ FILE_CACHE_SCHEMA_VERSION = "file-cache.v1"
 
 class LoggingConfig(BaseModel):
     level: str = Field(default=DEFAULT_LOG_LEVEL)
-    json_format: Optional[bool] = Field(
+    json_format: bool | None = Field(
         default=None, description="Force JSON logs when True, console when False"
     )
     quiet: bool = Field(default=False, description="Suppress all non-error output")
-    file: Optional[str] = Field(default=None, description="Optional log file path")
+    file: str | None = Field(default=None, description="Optional log file path")
     format: str = Field(default="%(message)s", description="Log format string")
 
     @field_validator("quiet", mode="before")
@@ -127,14 +124,14 @@ class IndexerConfig(BaseModel):
     max_file_size_kb: int = Field(default=DEFAULT_MAX_FILE_SIZE_KB, ge=1)
     max_indexed_files: int = Field(default=DEFAULT_MAX_INDEXED_FILES, ge=1)
     max_workers: int = Field(default=DEFAULT_INDEX_WORKERS, ge=0)
-    max_files: Optional[int] = Field(
+    max_files: int | None = Field(
         default=None, ge=1, description="Hard cap on files processed in a run"
     )
     ignore_patterns: list[str] = Field(
         default_factory=list, description="Extra ignore patterns"
     )
     ignore_files: list[str] | None = Field(
-        default=DEFAULT_IGNORE_FILES,
+        default=None,
         description="Ignore file names to load (None uses defaults)",
     )
     default_patterns_file: str | None = Field(
@@ -142,7 +139,7 @@ class IndexerConfig(BaseModel):
         description="Path to custom default patterns YAML (null = use built-in)",
     )
     metrics_output: str | None = Field(
-        default=DEFAULT_METRICS_OUTPUT,
+        default=None,
         description="Optional path to write metrics JSON",
     )
     fail_on_warning: bool = Field(default=False)
@@ -200,7 +197,6 @@ class BsgCacheConfig(BaseModel):
 
 class BsgIncrementalConfig(BaseModel):
     enabled: bool = Field(default=True)
-    fallback_to_full: bool = Field(default=True)
     auto_detect_git: bool = Field(default=True)
 
 
@@ -251,7 +247,6 @@ class BsgStorageRetentionConfig(BaseModel):
 class BsgStorageConfig(BaseModel):
     enabled: bool = Field(default=True)
     content_scope: str = Field(default="durable")
-    cloud_sync_ready: bool = Field(default=True)
     track_content_ids: bool = Field(default=True)
     busy_timeout_ms: int = Field(default=DEFAULT_STORAGE_BUSY_TIMEOUT_MS, ge=100)
     page_size: int = Field(default=DEFAULT_STORAGE_PAGE_SIZE)
@@ -327,7 +322,6 @@ class Config(BaseModel):
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     schemas: dict = Field(default_factory=dict)
-    cloud_sync: CloudSyncConfig = Field(default_factory=CloudSyncConfig)
     bsg: BsgConfig = Field(default_factory=BsgConfig)
 
     @field_validator("logging")
@@ -337,7 +331,7 @@ class Config(BaseModel):
         return v
 
 
-def _env(name: str, default: Optional[str] = None) -> Optional[str]:
+def _env(name: str, default: str | None = None) -> str | None:
     val = os.getenv(name, default)
     return val if val else default
 
@@ -381,7 +375,7 @@ def _load_config_file(path: Path) -> dict[str, Any]:
     raise ValueError(f"Unsupported config file format: {path.suffix}")
 
 
-def _merge_config(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = {**base}
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -391,19 +385,19 @@ def _merge_config(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, A
     return merged
 
 
-def get_config_cached() -> Dict[str, Any]:
+def get_config_cached() -> dict[str, Any]:
     return _get_config_cached_for_root(get_active_root())
 
 
 @lru_cache(maxsize=None)
-def _get_config_cached_for_root(root_dir: Path) -> Dict[str, Any]:
+def _get_config_cached_for_root(root_dir: Path) -> dict[str, Any]:
     return get_config_with_root(root_dir)
 
 
-def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
+def get_config_with_root(root_dir: Path) -> dict[str, Any]:
     """Return validated config as a plain dict with batho.yaml resolved from root_dir."""
 
-    base_cfg: Dict[str, Any] = {
+    base_cfg: dict[str, Any] = {
         "logging": {
             "level": DEFAULT_LOG_LEVEL,
             "json_format": None,
@@ -418,7 +412,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             "max_workers": DEFAULT_INDEX_WORKERS,
             "max_files": None,
             "ignore_patterns": [],
-            "ignore_files": DEFAULT_IGNORE_FILES,
+            "ignore_files": None,
             "default_patterns_file": None,
             "metrics_output": None,
             "fail_on_warning": False,
@@ -458,16 +452,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             "index_metadata": INDEX_METADATA_SCHEMA_VERSION,
             "file_cache": FILE_CACHE_SCHEMA_VERSION,
         },
-        "cloud_sync": {
-            "enabled": False,
-            "endpoint": "",
-            "api_key": "",
-            "organization_id": "",
-            "project_id": "",
-            "timeout_seconds": 300,
-            "max_retries": 3,
-            "batch_size": 10,
-        },
         "bsg": {
             "parallel": {
                 "enabled": True,
@@ -484,7 +468,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             },
             "incremental": {
                 "enabled": True,
-                "fallback_to_full": True,
                 "auto_detect_git": True,
             },
             "symbol_resolution": {
@@ -514,7 +497,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             "storage": {
                 "enabled": True,
                 "content_scope": "durable",
-                "cloud_sync_ready": True,
                 "track_content_ids": True,
                 "busy_timeout_ms": DEFAULT_STORAGE_BUSY_TIMEOUT_MS,
                 "page_size": DEFAULT_STORAGE_PAGE_SIZE,
@@ -544,10 +526,10 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
         try:
             file_cfg = _load_config_file(cfg_path)
             base_cfg = _merge_config(base_cfg, file_cfg)
-        except Exception:
-            pass  # fall back to defaults + env overrides
+        except (FileNotFoundError, yaml.YAMLError, ValueError):
+            pass  # use defaults + env overrides
 
-    # Env overrides (compatible with previous behavior)
+    # Environment variable overrides
     base_cfg["logging"]["level"] = (
         _env("BATHO_LOG_LEVEL", base_cfg["logging"]["level"])
         or base_cfg["logging"]["level"]
@@ -618,7 +600,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
         "BATHO_RULES_CACHE_TTL", base_cfg["rules"]["cache_ttl"]
     )
 
-    # Strict/fail-on-warning flags can be set at either indexer.* or flags.* (keep compatibility)
+    # Strict/fail-on-warning flags can be set at either indexer.* or flags.*
     env_fail_on_warning = os.getenv("BATHO_FAIL_ON_WARNING")
     env_strict = os.getenv("BATHO_STRICT")
     if env_fail_on_warning is not None:
@@ -655,32 +637,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
     if env_audit_log_path:
         base_cfg["patch"]["audit_log_path"] = env_audit_log_path
 
-    # Cloud sync configuration environment variables
-    base_cfg["cloud_sync"]["enabled"] = _env_bool(
-        "BATHO_CLOUD_SYNC_ENABLED", base_cfg["cloud_sync"]["enabled"]
-    )
-    env_cloud_endpoint = _env("BATHO_CLOUD_ENDPOINT")
-    if env_cloud_endpoint is not None:
-        base_cfg["cloud_sync"]["endpoint"] = env_cloud_endpoint
-    env_cloud_api_key = _env("BATHO_CLOUD_API_KEY")
-    if env_cloud_api_key is not None:
-        base_cfg["cloud_sync"]["api_key"] = env_cloud_api_key
-    env_cloud_org_id = _env("BATHO_CLOUD_ORG_ID")
-    if env_cloud_org_id is not None:
-        base_cfg["cloud_sync"]["organization_id"] = env_cloud_org_id
-    env_cloud_project_id = _env("BATHO_CLOUD_PROJECT_ID")
-    if env_cloud_project_id is not None:
-        base_cfg["cloud_sync"]["project_id"] = env_cloud_project_id
-    base_cfg["cloud_sync"]["timeout_seconds"] = _env_int(
-        "BATHO_CLOUD_TIMEOUT_SECONDS", base_cfg["cloud_sync"]["timeout_seconds"]
-    )
-    base_cfg["cloud_sync"]["max_retries"] = _env_int(
-        "BATHO_CLOUD_MAX_RETRIES", base_cfg["cloud_sync"]["max_retries"]
-    )
-    base_cfg["cloud_sync"]["batch_size"] = _env_int(
-        "BATHO_CLOUD_BATCH_SIZE", base_cfg["cloud_sync"]["batch_size"]
-    )
-
     # BSG configuration environment variables
     base_cfg["bsg"]["parallel"]["enabled"] = _env_bool(
         "BATHO_BSG_PARALLEL_ENABLED", base_cfg["bsg"]["parallel"]["enabled"]
@@ -694,14 +650,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
     base_cfg["bsg"]["ignore"]["enabled"] = _env_bool(
         "BATHO_BSG_IGNORE_ENABLED", base_cfg["bsg"]["ignore"]["enabled"]
     )
-    env_bathoignore_file = _env("BATHO_BSG_IGNORE_FILE")
-    if env_bathoignore_file:
-        import logging
-
-        logging.getLogger("batho.config").warning(
-            "BATHO_BSG_IGNORE_FILE is deprecated and ignored (no .bathoignore support): %s",
-            env_bathoignore_file,
-        )
     base_cfg["bsg"]["cache"]["enabled"] = _env_bool(
         "BATHO_BSG_CACHE_ENABLED", base_cfg["bsg"]["cache"]["enabled"]
     )
@@ -714,10 +662,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
     base_cfg["bsg"]["incremental"]["enabled"] = _env_bool(
         "BATHO_BSG_INCREMENTAL_ENABLED",
         base_cfg["bsg"]["incremental"]["enabled"],
-    )
-    base_cfg["bsg"]["incremental"]["fallback_to_full"] = _env_bool(
-        "BATHO_BSG_INCREMENTAL_FALLBACK_TO_FULL",
-        base_cfg["bsg"]["incremental"]["fallback_to_full"],
     )
     base_cfg["bsg"]["incremental"]["auto_detect_git"] = _env_bool(
         "BATHO_BSG_INCREMENTAL_AUTO_DETECT_GIT",
@@ -791,10 +735,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
     env_storage_scope = _env("BATHO_BSG_STORAGE_CONTENT_SCOPE")
     if env_storage_scope:
         base_cfg["bsg"]["storage"]["content_scope"] = env_storage_scope
-    base_cfg["bsg"]["storage"]["cloud_sync_ready"] = _env_bool(
-        "BATHO_BSG_STORAGE_CLOUD_SYNC_READY",
-        base_cfg["bsg"]["storage"]["cloud_sync_ready"],
-    )
     base_cfg["bsg"]["storage"]["track_content_ids"] = _env_bool(
         "BATHO_BSG_STORAGE_TRACK_CONTENT_IDS",
         base_cfg["bsg"]["storage"]["track_content_ids"],
@@ -855,23 +795,10 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
 
     cfg_dict = cfg.model_dump()
     cfg_dict["logging"]["level"] = cfg.logging.std_level
-    # Provide flat schema helpers for legacy callers
-    schemas = cfg_dict.get("schemas", {})
-    cfg_dict["graph_schema_version"] = schemas.get("graph", GRAPH_SCHEMA_VERSION)
-    cfg_dict["bsg_schema_version"] = schemas.get("bsg", BSG_SCHEMA_VERSION)
-    cfg_dict["snapshot_schema_version"] = schemas.get(
-        "snapshot", SNAPSHOT_SCHEMA_VERSION
-    )
-    cfg_dict["index_metadata_schema_version"] = schemas.get(
-        "index_metadata", INDEX_METADATA_SCHEMA_VERSION
-    )
-    cfg_dict["file_cache_schema_version"] = schemas.get(
-        "file_cache", FILE_CACHE_SCHEMA_VERSION
-    )
     return cfg_dict
 
 
-def reload_config() -> Dict[str, Any]:
+def reload_config() -> dict[str, Any]:
     _get_config_cached_for_root.cache_clear()
     return get_config_cached()
 
@@ -952,16 +879,6 @@ schemas:
   index_metadata: index-metadata.v1
   file_cache: file-cache.v1
 
-cloud_sync:
-  enabled: false
-  endpoint: ""
-  api_key: ""
-  organization_id: ""
-  project_id: ""
-  timeout_seconds: 300
-  max_retries: 3
-  batch_size: 10
-
 bsg:
   parallel:
     enabled: true
@@ -975,7 +892,6 @@ bsg:
     ttl_days: 30
   incremental:
     enabled: true
-    fallback_to_full: true
     auto_detect_git: true
   symbol_resolution:
     enabled: true
@@ -1000,7 +916,6 @@ bsg:
   storage:
     enabled: true
     content_scope: durable
-    cloud_sync_ready: true
     track_content_ids: true
     busy_timeout_ms: 5000
     page_size: 8192

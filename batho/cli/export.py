@@ -9,22 +9,19 @@ import argparse
 import sys
 from pathlib import Path
 
+from batho.cli._utils import create_base_parser
+
 
 def register_export_parser(subparsers: argparse._SubParsersAction) -> None:
     """Register the `export` subcommand on the given subparsers action."""
     parser = subparsers.add_parser(
         "export",
+        parents=[create_base_parser()],
         help="Export BSG artifacts as JSON (storage, agent, overview, files, symbols, dependencies, delta)",
         description=(
             "Export the latest BSG artifact from a .batho database into one of "
             "several JSON views. Supports streaming mode for large repositories."
         ),
-    )
-    parser.add_argument(
-        "--root",
-        type=Path,
-        default=Path("."),
-        help="Repository root directory (default: current directory)",
     )
     parser.add_argument(
         "--view",

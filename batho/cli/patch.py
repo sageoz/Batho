@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
+
+from batho.cli._utils import create_base_parser
 
 
 def register_patch_parser(subparsers: argparse._SubParsersAction) -> None:
     """Register the `patch` subcommand on the given subparsers action."""
     parser = subparsers.add_parser(
         "patch",
+        parents=[create_base_parser()],
         help="Incremental patch of an existing artifact database",
         description=(
             "Detects changes natively using content hashing against the SQLite "
@@ -21,18 +23,6 @@ def register_patch_parser(subparsers: argparse._SubParsersAction) -> None:
             "status for change detection, eliminating false positives from "
             "uncommitted files."
         ),
-    )
-    parser.add_argument(
-        "--root",
-        type=Path,
-        default=Path("."),
-        help="Repository root directory (default: current directory)",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        default=False,
-        help="Enable verbose debug logging",
     )
     parser.add_argument(
         "--max-file-size-kb",
