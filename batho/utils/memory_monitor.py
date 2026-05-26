@@ -11,7 +11,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-import psutil
+try:
+    import psutil as _psutil
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    _psutil = None  # type: ignore[assignment]
+    _PSUTIL_AVAILABLE = False
 
 from batho.utils.logging import get_logger
 
@@ -44,7 +49,7 @@ class MemoryMonitor:
         """
         self.warning_threshold_mb = warning_threshold_mb
         self.critical_threshold_mb = critical_threshold_mb
-        self.process = psutil.Process(os.getpid())
+        self.process = _psutil.Process(os.getpid()) if _PSUTIL_AVAILABLE else None
         self._cached_stats = None
         self._cache_timestamp = 0
         self._cache_ttl = 0.5  # Cache stats for 500ms to reduce overhead
@@ -65,12 +70,15 @@ class MemoryMonitor:
         ):
             return self._cached_stats
 
+        if not _PSUTIL_AVAILABLE or self.process is None:
+            return MemoryStats(0, 0, 0, 0, 0)
+
         try:
             memory_info = self.process.memory_info()
             memory_percent = self.process.memory_percent()
 
             # Get system memory info
-            system_memory = psutil.virtual_memory()
+            system_memory = _psutil.virtual_memory()
 
             # Get garbage collector stats (expensive operation)
             try:
@@ -106,7 +114,7 @@ class MemoryMonitor:
             self._cache_timestamp = current_time
 
             return stats
-        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+        except Exception as e:
             logger.error("failed_to_get_memory_stats", error=str(e))
             return MemoryStats(0, 0, 0, 0, 0)
 
@@ -268,9 +276,11 @@ def get_system_memory_info() -> Dict[str, Any]:
     Returns:
         Dictionary with system memory statistics
     """
+    if not _PSUTIL_AVAILABLE:
+        return {}
     try:
-        virtual_memory = psutil.virtual_memory()
-        swap_memory = psutil.swap_memory()
+        virtual_memory = _psutil.virtual_memory()
+        swap_memory = _psutil.swap_memory()
 
         return {
             "total_mb": virtual_memory.total / 1024 / 1024,
@@ -296,8 +306,10 @@ def check_memory_pressure(threshold_percent: float = 90.0) -> bool:
     Returns:
         True if system is under memory pressure, False otherwise
     """
+    if not _PSUTIL_AVAILABLE:
+        return False
     try:
-        virtual_memory = psutil.virtual_memory()
+        virtual_memory = _psutil.virtual_memory()
         return virtual_memory.percent > threshold_percent
     except Exception as e:
         logger.error("failed_to_check_memory_pressure", error=str(e))

@@ -121,7 +121,6 @@ class LoggingConfig(BaseModel):
 class PathsConfig(BaseModel):
     db_path: str = Field(default=DEFAULT_DB_PATH)
     config_dir: str = Field(default=DEFAULT_CONFIG_DIR)
-    global_db_path: Optional[str] = Field(default=None)
 
 
 class IndexerConfig(BaseModel):
