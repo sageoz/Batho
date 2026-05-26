@@ -29,7 +29,6 @@ class FixContext:
 
     # Cached data (lazy loaded)
     _index_runs: list[dict] | None = None
-    _artifacts: list[dict] | None = None
     _snapshots: list[dict] | None = None
     _latest_run: dict | None = None
 
@@ -53,15 +52,7 @@ class FixContext:
                     break
         return self._latest_run
 
-    def get_artifacts(self) -> list[dict]:
-        """Get all non-deleted artifacts from registry."""
-        if self._artifacts is None:
-            with self.db.connection(read_only=True) as conn:
-                rows = conn.execute(
-                    "SELECT * FROM artifacts WHERE deleted = 0 ORDER BY updated_at DESC"
-                ).fetchall()
-                self._artifacts = [dict(row) for row in rows]
-        return self._artifacts
+
 
     def get_snapshots(self) -> list[dict]:
         """Get all snapshots from database."""
@@ -206,7 +197,6 @@ class FixEngine:
         """Get list of checks to run (filtered if repair_only specified)."""
         from .checks import (
             DatabaseIntegrityCheck,
-            RegistryIntegrityCheck,
             IndexIntegrityCheck,
             BSGIntegrityCheck,
             SnapshotIntegrityCheck,
@@ -216,7 +206,6 @@ class FixEngine:
 
         all_checks = [
             DatabaseIntegrityCheck(),
-            RegistryIntegrityCheck(),
             IndexIntegrityCheck(),
             BSGIntegrityCheck(),
             SnapshotIntegrityCheck(),

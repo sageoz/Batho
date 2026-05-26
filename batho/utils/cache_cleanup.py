@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from batho.config import get_config_cached_for_root
+from batho.config import get_config_cached, set_active_root
 from batho.utils.logging import get_logger
 
 logger = get_logger(__name__, component="cache_cleanup")
@@ -25,8 +25,9 @@ def cleanup_old_caches(root: Path, dry_run: bool = False) -> dict[str, Any]:
         Summary of cleanup operation including deleted files and warnings
     """
     root = root.resolve()
-    cfg = get_config_cached_for_root(root)
-    ctn_dir = root / cfg["paths"]["ctn_dir"]
+    set_active_root(root)
+    cfg = get_config_cached()
+    ctn_dir = root / cfg["paths"]["config_dir"]
 
     old_cache_dir = ctn_dir / "local" / "cache"
     backup_dir = ctn_dir / "local" / "cache.backup"
@@ -82,8 +83,9 @@ def cleanup_old_caches(root: Path, dry_run: bool = False) -> dict[str, Any]:
 def get_cache_dir_status(root: Path) -> dict[str, Any]:
     """Check status of old and new cache directories."""
     root = root.resolve()
-    cfg = get_config_cached_for_root(root)
-    ctn_dir = root / cfg["paths"]["ctn_dir"]
+    set_active_root(root)
+    cfg = get_config_cached()
+    ctn_dir = root / cfg["paths"]["config_dir"]
 
     old_cache_dir = ctn_dir / "local" / "cache"
     new_cache_file = ctn_dir / "local" / "cache" / "cache.db"

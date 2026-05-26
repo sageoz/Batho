@@ -25,7 +25,7 @@ except Exception:  # pragma: no cover - handled by runtime error in validator in
 
 from batho.config import get_config_cached
 from batho.context.schema import Entity, EntityType, Relationship, RelationshipType
-from batho.context.storage import register_artifact_for_path
+
 from batho.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -554,15 +554,6 @@ def _write_perf_stats(path: Path, payload: dict[str, Any]) -> None:
         encoding="utf-8",
     )
     tmp_path.replace(path)
-    register_artifact_for_path(
-        path,
-        "bsg_perf_json",
-        producer="bsg.rules",
-        metadata={
-            "schema_version": payload.get("schema_version", _PERF_SCHEMA_VERSION)
-        },
-        schema_version=_PERF_SCHEMA_VERSION,
-    )
 
 
 def _read_cache(cache_path: Path) -> dict[str, Any] | None:
@@ -583,15 +574,6 @@ def _write_cache(cache_path: Path, payload: dict[str, Any]) -> None:
     tmp_path = cache_path.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     tmp_path.replace(cache_path)
-    register_artifact_for_path(
-        cache_path,
-        "rules_cache_binary",
-        producer="bsg.rules",
-        metadata={
-            "schema_version": payload.get("schema_version", _CACHE_SCHEMA_VERSION)
-        },
-        schema_version=_CACHE_SCHEMA_VERSION,
-    )
 
 
 def _plugin_display_name(plugin_id: str) -> str:
@@ -642,17 +624,6 @@ def _write_interception_stats(path: Path, payload: dict[str, Any]) -> None:
         encoding="utf-8",
     )
     tmp_path.replace(path)
-    register_artifact_for_path(
-        path,
-        "interception_stats_json",
-        producer="bsg.rules",
-        metadata={
-            "schema_version": payload.get(
-                "schema_version", _INTERCEPTION_SCHEMA_VERSION
-            )
-        },
-        schema_version=_INTERCEPTION_SCHEMA_VERSION,
-    )
 
 
 def _record_interceptions(

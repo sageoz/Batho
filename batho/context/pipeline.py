@@ -13,7 +13,9 @@ Features:
 
 from __future__ import annotations
 
+import gc
 import os
+import orjson
 from pathlib import Path
 from typing import Any
 
@@ -321,7 +323,7 @@ def process_file_worker(
     bsg_cache_cfg: dict[str, Any],
     index_id: str | None = None,
     include_gaps: bool = False,
-) -> tuple[str, list[Entity], list[Relationship], bool] | None:
+) -> tuple[str, bytes, bytes, bool] | None:
     """
     Worker function for parallel file processing.
 
@@ -330,6 +332,7 @@ def process_file_worker(
     """
     global _WORKER_CACHE
 
+    gc.disable()
     try:
         # Step 1: Read content and compute hash inside the worker (reduces pickle traffic)
         from batho.utils.hash import compute_bytes_hash
@@ -372,7 +375,10 @@ def process_file_worker(
                     if existing_snapshot is None:
                         _create_file_snapshot(filepath, content_hash, len(content), cached_entities, cache)
 
-                return (filepath, cached_entities, cached_relationships, True)
+                # Serialize cached entities and relationships to orjson bytes
+                ent_bytes = orjson.dumps([e.to_dict() for e in cached_entities])
+                rel_bytes = orjson.dumps([r.to_dict() for r in cached_relationships])
+                return (filepath, ent_bytes, rel_bytes, True)
 
         # Cache miss or cache disabled - parse the file
         from .languages.detector import default_detector
@@ -439,7 +445,10 @@ def process_file_worker(
             if include_gaps:
                 _create_file_snapshot(filepath, content_hash, size, entities, cache)
 
-        return (filepath, entities, relationships, False)
+        # Serialize entities and relationships to orjson bytes
+        ent_bytes = orjson.dumps([e.to_dict() for e in entities])
+        rel_bytes = orjson.dumps([r.to_dict() for r in relationships])
+        return (filepath, ent_bytes, rel_bytes, False)
     except Exception as exc:
         logger.warning(
             "worker_parse_failed",
@@ -447,6 +456,9 @@ def process_file_worker(
             error=str(exc),
         )
         return None
+    finally:
+        gc.enable()
+        gc.collect()
 
 
 # ---------------------------------------------------------------------------
@@ -520,6 +532,22 @@ def _calculate_optimal_chunk_size(
     return min(chunk_size, 200)  # Cap at 200 to avoid memory issues
 
 
+def _deserialize_result(result: tuple[str, bytes, bytes, bool] | None) -> tuple[str, list[Entity], list[Relationship], bool] | None:
+    """Helper to deserialize raw JSON bytes back into Entity and Relationship objects."""
+    if result is None:
+        return None
+    try:
+        filepath, ent_bytes, rel_bytes, cached_hit = result
+        ent_dicts = orjson.loads(ent_bytes)
+        rel_dicts = orjson.loads(rel_bytes)
+        entities = [Entity.from_dict(d) for d in ent_dicts]
+        relationships = [Relationship.from_dict(d) for d in rel_dicts]
+        return (filepath, entities, relationships, cached_hit)
+    except Exception as exc:
+        logger.warning("deserialization_failed", error=str(exc))
+        return None
+
+
 def build_graph_parallel(
     candidates: list[tuple[Path, str]],
     configured_max_file_size_kb: int,
@@ -551,7 +579,7 @@ def build_graph_parallel(
     # Get cache configuration
     bsg_cache_cfg = bsg_cfg.get("cache", {})
     cache_enabled = bsg_cache_cfg.get("enabled", True)
-    cache_path = bsg_cache_cfg.get("path", ".batho")
+    cache_path = bsg_cache_cfg.get("path") or None
     ttl_days = bsg_cache_cfg.get("ttl_days", 30)
 
     if not parallel_enabled:
@@ -658,9 +686,18 @@ def build_graph_parallel(
             include_gaps=include_gaps,
         )
 
-    # Filter out None results (errors)
-    valid_results = [r for r in results if r is not None]
-    error_count = len(results) - len(valid_results)
+    # Filter out None results (errors) and deserialize
+    valid_results = []
+    error_count = 0
+    for r in results:
+        if r is None:
+            error_count += 1
+        else:
+            deser = _deserialize_result(r)
+            if deser is not None:
+                valid_results.append(deser)
+            else:
+                error_count += 1
 
     logger.info(
         "parallel_complete",
@@ -685,7 +722,7 @@ def build_graph_sequential(
     """
     bsg_cache_cfg = bsg_cfg.get("cache", {})
     cache_enabled = bsg_cache_cfg.get("enabled", True)
-    cache_path = bsg_cache_cfg.get("path", ".batho")
+    cache_path = bsg_cache_cfg.get("path") or None
     ttl_days = bsg_cache_cfg.get("ttl_days", 30)
 
     results = []
@@ -722,6 +759,10 @@ def build_graph_sequential(
         if result is None:
             errors += 1
         else:
-            results.append(result)
+            deser = _deserialize_result(result)
+            if deser is not None:
+                results.append(deser)
+            else:
+                errors += 1
 
     return results, errors

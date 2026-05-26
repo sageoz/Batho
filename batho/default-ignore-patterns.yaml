@@ -59,7 +59,7 @@ patterns:
   # Batho's own directories
   - ".ctn/"
   - ".batho/"
-  - "artifact_*.batho"
+  - "artifact_*.batho*"
   - ".aider/"
   - ".roo/"
   - ".cline/"

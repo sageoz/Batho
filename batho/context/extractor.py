@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import abc
 import bisect
+import hashlib
 import re
 import threading
 import time
@@ -514,67 +515,105 @@ class ASTExtractor(abc.ABC):
         except Exception:
             _source_lines = []
 
+        # 1. Collect flat list of all captured definitions with their node bounds
+        flat_definitions = []
         for base_key, name_nodes in definition_nodes.items():
             entity_type = _CAPTURE_ENTITY_MAP.get(base_key)
             if entity_type is None:
                 continue
-
             for name_node in name_nodes:
                 name = _node_text(name_node, source)
                 if not name:
                     continue
+                decl_node = name_node.parent if name_node.parent is not None else name_node
+                flat_definitions.append((
+                    decl_node.start_byte,
+                    -decl_node.end_byte,
+                    base_key,
+                    entity_type,
+                    name,
+                    name_node,
+                    decl_node
+                ))
 
-                decl_node: Node = (
-                    name_node.parent if name_node.parent is not None else name_node
+        # 2. Sort definitions by start_byte ascending, end_byte descending to process outer scopes first
+        flat_definitions.sort(key=lambda x: (x[0], x[1]))
+
+        # 3. Process definitions using a monotonic stack to resolve nested scoping (FQN dot-notation)
+        scope_stack: list[tuple[int, str]] = []  # Stack of (end_byte, parent_fqn)
+        for start_byte, neg_end_byte, base_key, entity_type, raw_name, name_node, decl_node in flat_definitions:
+            end_byte = -neg_end_byte
+
+            # Pop scopes that do not enclose the current definition node
+            while scope_stack and scope_stack[-1][0] < start_byte:
+                scope_stack.pop()
+
+            # Append parent prefix if nested, else keep raw name
+            if scope_stack:
+                parent_fqn = scope_stack[-1][1]
+                fqn_name = f"{parent_fqn}.{raw_name}"
+            else:
+                fqn_name = raw_name
+
+            # For overloading or same-name scopes, optionally append short hash of params signature
+            params_nodes = auxiliary_nodes.get((base_key, "params"), [])
+            params_node = self._nearest_ancestor(params_nodes, decl_node)
+            params_text = _node_text(params_node, source) if params_node else ""
+            if params_text and params_text != "()":
+                param_hash = hashlib.sha256(params_text.encode("utf-8")).hexdigest()[:6]
+                fqn_name = f"{fqn_name}_[{param_hash}]"
+
+            # Push current definition to scope stack if it can contain children (e.g. Class, Module, Namespace)
+            if entity_type in (EntityType.CLASS, EntityType.MODULE, EntityType.NAMESPACE, EntityType.STRUCT):
+                scope_stack.append((end_byte, fqn_name))
+
+            metadata = self._collect_metadata_with_source(
+                base_key, decl_node, auxiliary_nodes, source, source_lines=_source_lines
+            )
+            signature = self._build_signature(
+                raw_name, base_key, decl_node, auxiliary_nodes, source
+            )
+
+            if index_id:
+                metadata["bsg.index_id"] = index_id
+
+            normalized_name = fqn_name
+            if entity_type == EntityType.ENTRY_POINT:
+                raw_snippet_value = metadata.get("invocation_snippet")
+                raw_snippet = (
+                    str(raw_snippet_value)
+                    if isinstance(raw_snippet_value, str)
+                    and raw_snippet_value.strip()
+                    else raw_name
                 )
+                if (
+                    "__name__" in raw_snippet and "__main__" in raw_snippet
+                ) or raw_name == "__name__":
+                    normalized_name = "__main__"
+                    metadata["invocation_snippet"] = raw_snippet
 
-                metadata = self._collect_metadata_with_source(
-                    base_key, decl_node, auxiliary_nodes, source, source_lines=_source_lines
-                )
-                signature = self._build_signature(
-                    name, base_key, decl_node, auxiliary_nodes, source
-                )
+            # Decode with strict UTF-8, storing raw_bytes on error
+            raw_bytes_slice = source[decl_node.start_byte:decl_node.end_byte]
+            decoded_content, stored_raw_bytes = self._safe_decode(
+                raw_bytes_slice, filepath, context=f"entity {normalized_name}"
+            )
 
-                if index_id:
-                    metadata["bsg.index_id"] = index_id
-
-                normalized_name = name
-                if entity_type == EntityType.ENTRY_POINT:
-                    raw_snippet_value = metadata.get("invocation_snippet")
-                    raw_snippet = (
-                        str(raw_snippet_value)
-                        if isinstance(raw_snippet_value, str)
-                        and raw_snippet_value.strip()
-                        else name
-                    )
-                    if (
-                        "__name__" in raw_snippet and "__main__" in raw_snippet
-                    ) or name == "__name__":
-                        normalized_name = "__main__"
-                        metadata["invocation_snippet"] = raw_snippet
-
-                # Decode with strict UTF-8, storing raw_bytes on error
-                raw_bytes_slice = source[decl_node.start_byte:decl_node.end_byte]
-                decoded_content, stored_raw_bytes = self._safe_decode(
-                    raw_bytes_slice, filepath, context=f"entity {normalized_name}"
-                )
-
-                entity = Entity(
-                    type=entity_type,
-                    name=normalized_name,
-                    file=filepath,
-                    start_line=decl_node.start_point[0] + 1,
-                    end_line=decl_node.end_point[0] + 1,
-                    start_byte=decl_node.start_byte,
-                    end_byte=decl_node.end_byte,
-                    signature=signature,
-                    metadata=metadata,
-                    raw_content=decoded_content,
-                    content_hash=compute_bytes_hash(raw_bytes_slice),
-                    raw_bytes=stored_raw_bytes,
-                    ast_node_type=decl_node.type,
-                )
-                entities.append(entity)
+            entity = Entity(
+                type=entity_type,
+                name=normalized_name,
+                file=filepath,
+                start_line=decl_node.start_point[0] + 1,
+                end_line=decl_node.end_point[0] + 1,
+                start_byte=decl_node.start_byte,
+                end_byte=decl_node.end_byte,
+                signature=signature,
+                metadata=metadata,
+                raw_content=decoded_content,
+                content_hash=compute_bytes_hash(raw_bytes_slice),
+                raw_bytes=stored_raw_bytes,
+                ast_node_type=decl_node.type,
+            )
+            entities.append(entity)
 
         entities.sort(key=lambda e: e.start_byte)
         return entities

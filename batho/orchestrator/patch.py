@@ -1,35 +1,20 @@
-"""Orchestrator for `batho patch` — incremental index update for existing databases.
+"""Orchestrator for `batho patch` — incremental index update (v3.0).
 
-Detects changes (git-first, hash-scan fallback), applies incremental graph updates,
-and refreshes all DB artifacts (entities, relationships, BSG, context outputs, snapshot, file tracking).
+Uses native hash-based change detection against the file_tracking table.
+Git is no longer used for change detection; it is only captured for metadata.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from batho.config import get_config_cached
+from batho.config import get_config_cached, set_active_root
 from batho.utils.logging import get_logger
-from batho.storage.engine import BathoDatabase
-from batho.time_machine import (
-    FileChange,
-    FileChangeType,
-    FileChangeTracker,
-    incremental_patch,
-    load_snapshot,
-)
-from batho.context.incremental import (
-    get_changed_file_status_since,
-    GitDiffEntry,
-    PatchMode,
-    get_changed_files_by_mode,
-)
+
 from batho.context.bsg_map import BSGMap
 from batho.context.codegraph import InMemoryGraph
 from batho.utils.hash import compute_file_hash
@@ -37,9 +22,18 @@ from batho.utils.hash import compute_file_hash
 LOGGER = get_logger(__name__, component="orchestrator.patch")
 
 
-# ---------------------------------------------------------------------------
-# Public data types
-# ---------------------------------------------------------------------------
+class FileChangeType:
+    ADDED = "added"
+    MODIFIED = "modified"
+    DELETED = "deleted"
+
+
+@dataclass
+class FileChange:
+    path: str
+    change_type: str
+    old_hash: str | None = None
+    new_hash: str | None = None
 
 
 @dataclass
@@ -49,7 +43,6 @@ class PatchOptions:
     root: Path
     verbose: bool = False
     max_file_size_kb: int | None = None
-    mode: PatchMode = PatchMode.AUTO
 
 
 @dataclass
@@ -68,403 +61,476 @@ class PatchResult:
     relationship_count: int = 0
     duration_ms: int = 0
     warnings: list[str] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+    nodes_added: int = 0
+    nodes_removed: int = 0
+    nodes_modified: int = 0
+    nodes_renamed: int = 0
 
 
 def _generate_run_id() -> str:
-    """Generate a unique run ID (timestamp + short uuid) for patch."""
     ts = int(time.time())
     short = uuid.uuid4().hex[:8]
     return f"patch_{ts}_{short}"
 
 
-def _git_entries_to_file_changes(
-    entries: list[GitDiffEntry], root: Path, max_file_size_kb: int | None = None
+
+def _hash_scan_changes(
+    root: Path,
+    known_tracking: dict[str, dict],
+    max_file_size_kb: int | None = None,
 ) -> list[FileChange]:
-    """Convert GitDiffEntry list to FileChange list."""
-    mapping = {
-        "A": FileChangeType.ADDED,
-        "M": FileChangeType.MODIFIED,
-        "D": FileChangeType.DELETED,
-    }
-    changes = []
+    """Fallback: scan filesystem for added/modified/deleted files.
+
+    known_tracking maps relative path -> {"content_hash": str, "mtime": float, "size": int}.
+    Files whose mtime AND size match the tracked values are skipped without hashing.
+    """
+    from batho.context.incremental import _collect_candidate_files
+
     max_bytes = (max_file_size_kb * 1024) if max_file_size_kb else None
-    for entry in entries:
-        change_type = mapping.get(entry.status)
-        if not change_type:
+    changes: list[FileChange] = []
+    current_files: set[str] = set()
+
+    for abs_path in _collect_candidate_files(root):
+        try:
+            rel = str(abs_path.relative_to(root))
+        except ValueError:
             continue
-        full = root / entry.path
-        new_hash = None
-        if full.exists():
-            # Skip hashing for files exceeding size limit
-            if max_bytes is not None:
-                try:
-                    file_size = full.stat().st_size
-                    if file_size > max_bytes:
-                        LOGGER.debug("skipping_hash_large_file", path=entry.path, size_kb=file_size // 1024)
-                        new_hash = None
-                    else:
-                        new_hash = compute_file_hash(full)
-                except (OSError, IOError):
-                    new_hash = None
-            else:
-                new_hash = compute_file_hash(full)
-        changes.append(
-            FileChange(
-                path=entry.path,
-                change_type=change_type,
-                old_hash=None,
-                new_hash=new_hash,
-            )
-        )
+        current_files.add(rel)
+
+        try:
+            st = abs_path.stat()
+        except OSError:
+            continue
+
+        if max_bytes is not None and st.st_size > max_bytes:
+            continue
+
+        tracked = known_tracking.get(rel)
+        if tracked is None:
+            new_hash = compute_file_hash(abs_path)
+            changes.append(FileChange(rel, FileChangeType.ADDED, new_hash=new_hash))
+            continue
+
+        old_hash = tracked["content_hash"]
+        # Cheap pre-filter: skip hashing when mtime and size are unchanged.
+        if st.st_mtime == tracked.get("mtime") and st.st_size == tracked.get("size"):
+            continue
+
+        new_hash = compute_file_hash(abs_path)
+        if old_hash != new_hash:
+            changes.append(FileChange(rel, FileChangeType.MODIFIED, old_hash=old_hash, new_hash=new_hash))
+
+    for rel, tracked in known_tracking.items():
+        if rel not in current_files:
+            changes.append(FileChange(rel, FileChangeType.DELETED, old_hash=tracked["content_hash"]))
+
     return changes
-
-
-# ---------------------------------------------------------------------------
-# Main orchestrator
-# ---------------------------------------------------------------------------
 
 
 def run_patch(options: PatchOptions) -> PatchResult:
     """Incremental patch of an existing .batho database."""
     from batho.storage.engine import artifact_filename, get_database
+
     t0 = time.monotonic()
     root = options.root.resolve()
+    
+    if not root.exists():
+        return PatchResult(
+            success=False,
+            warnings=[f"Repository root does not exist: {root}"],
+        )
+    if not root.is_dir():
+        return PatchResult(
+            success=False,
+            warnings=[f"Repository root is not a directory: {root}"],
+        )
+
+    set_active_root(root)
     db_path = root / artifact_filename(root)
 
-    # 1. Resolve root, validate database exists
     if not db_path.exists():
         msg = f"No artifact database found at {root}. Run: batho build --root {root}"
         LOGGER.error("patch_failed_no_db", root=str(root))
-        return PatchResult(
-            success=False,
-            warnings=[msg],
-        )
+        return PatchResult(success=False, warnings=[msg])
 
-    # 2. Open DB, get latest snapshot
     db = get_database(root)
+    run_uuid = ""
+    base_run_uuid = ""
     try:
-        snapshots = db.list_snapshots()
-        if not snapshots:
-            msg = f"No baseline snapshot found. Run: batho build --root {root} --full"
-            LOGGER.error("patch_failed_no_snapshot", root=str(root))
-            return PatchResult(
-                success=False,
-                warnings=[msg],
-            )
+        base_run_uuid = db.get_latest_run_id() or ""
+        if not base_run_uuid:
+            msg = f"No completed run found. Run: batho build --root {root}"
+            LOGGER.error("patch_failed_no_run", root=str(root))
+            return PatchResult(success=False, warnings=[msg])
 
-        # Sort snapshots by created_at ascending so that [-1] is the newest
-        snapshots_sorted = sorted(snapshots, key=lambda s: s.get("created_at", ""))
-        latest_snap = snapshots_sorted[-1]
-        base_snapshot_id = latest_snap["snapshot_id"]
-        base_snapshot = load_snapshot(root, base_snapshot_id)
-        if base_snapshot is None:
-            LOGGER.error("patch_failed_load_snapshot", snapshot_id=base_snapshot_id)
-            return PatchResult(
-                success=False,
-                base_snapshot_id=base_snapshot_id,
-                warnings=[f"Failed to load baseline snapshot: {base_snapshot_id}"],
-            )
+        base_run_internal_id = db.get_run_internal_id(base_run_uuid)
+        cfg = get_config_cached()
+        max_file_size_kb = options.max_file_size_kb or cfg.get("indexer", {}).get("max_file_size_kb", 500)
 
-        # Get base run ID before we start the new run (fixes concurrent race condition)
-        base_run_id = db.get_latest_run_id()
+        # --- Detect changes natively (Batho's Local Git Model) ---
+        known_tracking = db.get_all_file_tracking()
+        changes = _hash_scan_changes(root, known_tracking, max_file_size_kb)
 
-        # Compute max_file_size_kb early for use in both git and fallback paths
-        max_file_size_kb = options.max_file_size_kb or \
-            get_config_cached().get("indexer", {}).get("max_file_size_kb", 500)
-
-        # 3. Detect changes based on mode
-        if options.mode == PatchMode.COMMIT:
-            # Original commit-based detection
-            git_entries = get_changed_file_status_since(
-                base_snapshot_id, root, base_snapshot
-            )
-        else:
-            # Staged/Modified/Auto mode - compare against HEAD
-            git_entries = get_changed_files_by_mode(options.mode, root)
-
-        if git_entries is not None:
-            changes = _git_entries_to_file_changes(git_entries, root, max_file_size_kb)
-        else:
-            # FALLBACK: Hash scan (works for all modes)
-            if base_snapshot is None:
-                error_msg = f"Failed to load baseline snapshot for hash scan: {base_snapshot_id}"
-                LOGGER.error("patch_failed_base_snapshot_none", snapshot_id=base_snapshot_id)
-                return PatchResult(
-                    success=False,
-                    base_snapshot_id=base_snapshot_id,
-                    warnings=[error_msg],
-                )
-            tracker = FileChangeTracker(root)
-            tracker.load()
-            changes = tracker.scan_for_changes(
-                max_file_size_kb=max_file_size_kb,
-                base_snapshot=base_snapshot,
-            )
-
-        # 4. No changes?
         if not changes:
             LOGGER.info("patch_no_changes", root=str(root))
             return PatchResult(
                 success=True,
-                base_snapshot_id=base_snapshot_id,
+                base_snapshot_id=base_run_uuid,
                 warnings=["No changes detected since last build/patch"],
             )
 
-        # 5. Create new run in DB
-        run_id = _generate_run_id()
+        # --- Create new run ---
+        run_uuid = _generate_run_id()
         from batho.context.incremental import get_head_commit, is_git_repo
-        from batho.time_machine import _git_branch_name
         git_commit = get_head_commit(root) if is_git_repo(root) else None
-        git_branch = _git_branch_name(root) if is_git_repo(root) else None
-        db.create_run(
-            run_id,
-            schema_version="batho-db.v1",
+        git_branch: str | None = None
+        try:
+            from batho.context.incremental import get_current_branch
+            git_branch = get_current_branch(root) if is_git_repo(root) else None
+        except (ImportError, Exception):
+            pass
+
+        run_internal_id = db.create_run(
+            run_uuid,
             root_path=str(root),
             git_commit=git_commit,
             git_branch=git_branch,
         )
-        LOGGER.info("patch_started", root=str(root), run_id=run_id, base_snapshot_id=base_snapshot_id)
+        LOGGER.info("patch_started", root=str(root), run_id=run_uuid, base_run=base_run_uuid)
 
-        # 6. Apply incremental patch via time_machine
-        patch_op_result = incremental_patch(root, base_snapshot_id, changes)
-        if not patch_op_result.get("success"):
-            error_msg = patch_op_result.get("error", "Incremental patch execution failed.")
-            LOGGER.error("patch_engine_failed", error=error_msg)
-            db.fail_run(run_id, error_message=error_msg)
-            return PatchResult(
-                success=False,
-                run_id=run_id,
-                base_snapshot_id=base_snapshot_id,
-                warnings=[error_msg],
-            )
-
-        new_snapshot_id = patch_op_result["new_snapshot_id"]
-
-        # 7. Refresh BSG entries in DB for changed files (BUG FIX)
-        new_snapshot = load_snapshot(root, new_snapshot_id)
-        if new_snapshot is None:
-            error_msg = f"Failed to load newly created snapshot: {new_snapshot_id}"
-            LOGGER.error("patch_failed_load_new_snapshot", snapshot_id=new_snapshot_id)
-            db.fail_run(run_id, error_message=error_msg)
-            return PatchResult(
-                success=False,
-                run_id=run_id,
-                base_snapshot_id=base_snapshot_id,
-                new_snapshot_id=new_snapshot_id,
-                warnings=[error_msg],
-            )
-
-        patched_graph = InMemoryGraph.from_dict(new_snapshot["graph"])
-
-        opaque_snapshots = []
-        try:
-            from batho.context.unified_cache import BathoCache
-            cache = BathoCache(str(db_path))
-            try:
-                all_snaps_dict = cache.get_all_file_snapshots()
-                if all_snaps_dict:
-                    opaque_snapshots = [s for s in all_snaps_dict.values() if not s.entity_ids]
-            finally:
-                cache.close()
-        except Exception as exc:
-            LOGGER.warning("patch_opaque_snapshots_failed", error=str(exc))
-
-        bsg_map = BSGMap.build(patched_graph, str(root), opaque_snapshots=opaque_snapshots)
-
-        # Copy all BSG entries from base run
-        if base_run_id:
-            with db.connection() as conn:
-                conn.execute(
-                    """INSERT INTO bsg_entries(run_id, file_path, view_type, bsg_json, token_count, node_count, checksum)
-                       SELECT ? as run_id, file_path, view_type, bsg_json, token_count, node_count, checksum
-                       FROM bsg_entries WHERE run_id = ?""",
-                    (run_id, base_run_id)
+        # --- Blob-level copy-on-write for unchanged files ---
+        # INVARIANT: c.path must be a relative path (relative to root) because:
+        #   - file_artifacts uses integer file_id (looked up from string_dict by relative path)
+        #   - query_entities.file_path stores the same relative path string
+        # `_hash_scan_changes` produces relative paths.
+        # If this invariant breaks, query_entities for changed files won't be excluded and
+        # stale entities from the base run will bleed into the new run.
+        changed_file_paths = {c.path for c in changes}
+        # Enforce relative path invariant — absolute paths would silently break
+        # the query_entities copy-on-write filter.
+        for _p in changed_file_paths:
+            if Path(_p).is_absolute():
+                raise ValueError(
+                    f"FileChange.path must be relative to root, got absolute: {_p!r}"
                 )
-                conn.commit()
+        if base_run_internal_id is not None:
+            with db.transaction() as conn:
+                changed_ids_rows = conn.execute(
+                    f"SELECT id FROM string_dict WHERE val IN ({','.join('?' * len(changed_file_paths))})",
+                    list(changed_file_paths),
+                ).fetchall()
+                changed_file_ids = {row["id"] for row in changed_ids_rows}
 
-        # Delete old BSG entries for changed files under the new run ID
-        from batho.context.bsg_map.relativizer import PathRelativizer
-        path_rel = PathRelativizer(root)
+                if changed_file_ids:
+                    placeholders = ",".join("?" * len(changed_file_ids))
+                    conn.execute(
+                        f"""INSERT INTO file_artifacts(run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash)
+                            SELECT ?, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
+                            FROM file_artifacts
+                            WHERE run_id = ? AND file_id NOT IN ({placeholders})""",
+                        [run_internal_id, base_run_internal_id] + list(changed_file_ids),
+                    )
+                    # Copy query_entities for unchanged files
+                    path_placeholders = ",".join("?" * len(changed_file_paths))
+                    conn.execute(
+                        f"""INSERT INTO query_entities (entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported)
+                            SELECT entity_id, ?, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
+                            FROM query_entities
+                            WHERE run_id = ? AND file_path NOT IN ({path_placeholders})""",
+                        [run_internal_id, base_run_internal_id] + list(changed_file_paths),
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO file_artifacts(run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash)
+                           SELECT ?, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
+                           FROM file_artifacts WHERE run_id = ?""",
+                        (run_internal_id, base_run_internal_id),
+                    )
+                    # Copy all query_entities from base run
+                    conn.execute(
+                        """INSERT INTO query_entities (entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported)
+                           SELECT entity_id, ?, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
+                           FROM query_entities WHERE run_id = ?""",
+                        (run_internal_id, base_run_internal_id),
+                    )
 
-        with db.connection() as conn:
-            for change in changes:
-                conn.execute(
-                    "DELETE FROM bsg_entries WHERE run_id = ? AND file_path = ?",
-                    (run_id, path_rel(change.path))
-                )
-            conn.commit()
+        # --- Re-parse changed (non-deleted) files ---
+        added_or_modified = [c for c in changes if c.change_type != FileChangeType.DELETED]
+        deleted = [c for c in changes if c.change_type == FileChangeType.DELETED]
 
-        # Insert new BSG entries for changed files
-        bsg_entries_to_insert = []
-        for change in changes:
-            if change.change_type == FileChangeType.DELETED:
-                continue
-            change_rel = path_rel(change.path)
-            entities = bsg_map._by_file.get(change_rel)
-            if entities is not None:
-                bsg_json_data = json.dumps(
-                    [e.to_dict(view="agent") for e in entities],
-                    ensure_ascii=True,
-                )
-                checksum = hashlib.sha256(bsg_json_data.encode()).hexdigest()
-                bsg_entries_to_insert.append({
-                    "file_path": change_rel,
-                    "view_type": "agent",
-                    "bsg_json": bsg_json_data,
-                    "node_count": len(entities),
-                    "checksum": checksum,
-                })
-        if bsg_entries_to_insert:
-            db.insert_bsg_entries(run_id, bsg_entries_to_insert)
+        t_batch_prep_ms = 0.0
+        t_batch_write_ms = 0.0
+        new_entity_count = 0
+        new_rel_count = 0
+        nodes_added = 0
+        nodes_removed = 0
+        nodes_modified = 0
+        nodes_renamed = 0
 
-        # 8. Refresh context outputs
-        from batho.orchestrator.build import _build_context_overview, _build_context_files
-        overview_data = _build_context_overview(patched_graph, root)
-        files_data = _build_context_files(patched_graph, root)
-        db.set_context_output(run_id, "overview", json.dumps(overview_data, ensure_ascii=True))
-        db.set_context_output(run_id, "files", json.dumps(files_data, ensure_ascii=True))
+        if added_or_modified:
+            bsg_cfg = dict(cfg.get("bsg", {}))
+            cache_cfg = dict(bsg_cfg.get("cache", {}))
+            cache_cfg["enabled"] = True
+            cache_cfg["path"] = str(db_path)
+            bsg_cfg["cache"] = cache_cfg
 
-        # 9. Update file tracking
-        def _rel(fp):
-            try:
-                return str(Path(fp).relative_to(root))
-            except ValueError:
-                return str(fp)
+            from batho.context.codegraph import CodeGraphIndexer
+            from batho.storage.engine import _minify_graph_payload
+            from collections import defaultdict
 
-        for change in changes:
-            if change.change_type == FileChangeType.DELETED:
-                db.delete_file_tracking(change.path)
-            elif change.change_type in (FileChangeType.ADDED, FileChangeType.MODIFIED):
-                full_path = root / change.path
-                if full_path.exists():
+            with CodeGraphIndexer(cache_path=str(db_path), root=str(root)) as indexer:
+                write_batch = []
+                for change in added_or_modified:
+                    full_path = root / change.path
+                    if not full_path.exists():
+                        continue
                     try:
-                        stat = full_path.stat()
-                        rel_path = str(Path(change.path))
-                        has_entities = any(_rel(e.file) == rel_path for e in patched_graph.entities.values())
-                        is_indexed = 1 if has_entities else 0
-                        content_hash = change.new_hash or compute_file_hash(full_path) or ""
-                        record = {
-                            "file_path": change.path,
-                            "content_hash": content_hash,
-                            "mtime": stat.st_mtime,
-                            "size": stat.st_size,
-                            "is_indexed": is_indexed,
-                            "last_run_id": run_id,
-                        }
-                        db.upsert_file_tracking([record])
-                    except OSError:
-                        pass
+                        single_graph = indexer.build_graph(
+                            root=str(root),
+                            file_list=[str(full_path)],
+                            max_workers=1,
+                            max_file_size_kb=max_file_size_kb,
+                            verbose=options.verbose,
+                            index_id=run_uuid,
+                        )
+                    except Exception as exc:
+                        LOGGER.warning("patch_file_parse_failed", path=change.path, error=str(exc))
+                        continue
 
-        # 10. Persist updated entities/relationships
-        if base_run_id:
-            with db.connection() as conn:
-                conn.execute(
-                    """INSERT INTO graph_entities(
-                        run_id, entity_id, entity_type, name, file_path,
-                        start_line, end_line, start_byte, end_byte,
-                        signature, parent_id, content_hash, ast_node_type, metadata_json
-                    )
-                    SELECT ? as run_id, entity_id, entity_type, name, file_path,
-                           start_line, end_line, start_byte, end_byte,
-                           signature, parent_id, content_hash, ast_node_type, metadata_json
-                    FROM graph_entities WHERE run_id = ?""",
-                    (run_id, base_run_id)
-                )
-                conn.execute(
-                    """INSERT INTO graph_relationships(
-                        run_id, relationship_id, relationship_type, source_id, target_id, metadata_json
-                    )
-                    SELECT ? as run_id, relationship_id, relationship_type, source_id, target_id, metadata_json
-                    FROM graph_relationships WHERE run_id = ?""",
-                    (run_id, base_run_id)
-                )
-                conn.commit()
+                    file_rel = change.path
+                    entities_list = [
+                        e.to_dict() for e in single_graph.entities.values()
+                    ]
+                    rels_list = [r.to_dict() for r in single_graph.relationships]
 
-        # Apply changes (delete changed files' entities and relationships)
-        with db.connection() as conn:
-            for change in changes:
-                abs_path = str((root / change.path).resolve())
-                conn.execute(
-                    """DELETE FROM graph_relationships
-                       WHERE run_id = ? AND (
-                           source_id IN (SELECT entity_id FROM graph_entities WHERE run_id = ? AND file_path = ?)
-                           OR
-                           target_id IN (SELECT entity_id FROM graph_entities WHERE run_id = ? AND file_path = ?)
-                       )""",
-                    (run_id, run_id, abs_path, run_id, abs_path)
-                )
-                conn.execute(
-                    "DELETE FROM graph_entities WHERE run_id = ? AND file_path = ?",
-                    (run_id, abs_path)
-                )
-            conn.commit()
+                    bsg_map_single = BSGMap.build(single_graph, str(root))
+                    file_entities = bsg_map_single._by_file.get(file_rel)
+                    if not file_entities:
+                        file_entities = entities_list
 
-        # Insert new entities and relationships from the patched graph
-        changed_abs_paths = {str((root / c.path).resolve()) for c in changes if c.change_type in (FileChangeType.ADDED, FileChangeType.MODIFIED)}
-        new_entities = []
-        changed_entity_ids = set()
-        for entity in patched_graph.entities.values():
-            if str(Path(entity.file).resolve()) in changed_abs_paths:
-                new_entities.append(entity.to_dict())
-                changed_entity_ids.add(entity.id)
+                    t_prep_0 = time.monotonic()
+                    agent_entities = []
+                    for e in file_entities:
+                        e_dict = e.to_dict(view="agent") if hasattr(e, "to_dict") else e
+                        agent_entities.append({
+                            "id": e_dict.get("id"),
+                            "name": e_dict.get("name"),
+                            "type": e_dict.get("type") or e_dict.get("entity_type"),
+                            "start_line": e_dict.get("start_line"),
+                            "end_line": e_dict.get("end_line"),
+                            "signature": e_dict.get("signature"),
+                            "content_hash": e.content_hash if hasattr(e, "content_hash") else e_dict.get("content_hash", ""),
+                        })
 
-        new_relationships = []
-        for r in patched_graph.relationships:
-            if r.source_id in changed_entity_ids or r.target_id in changed_entity_ids:
-                new_relationships.append(r.to_dict())
+                    delta_entities = []
+                    for e in file_entities:
+                        e_dict = e.to_dict(view="storage") if hasattr(e, "to_dict") else e
+                        delta_entities.append({
+                            "id": e_dict.get("id"),
+                            "raw_content": e_dict.get("raw_content"),
+                            "syntax_glue": {
+                                "leading_whitespace": e_dict.get("leading_whitespace", ""),
+                                "trailing_whitespace": e_dict.get("trailing_whitespace", ""),
+                            },
+                            "raw_bytes": e_dict.get("raw_bytes"),
+                            "start_byte": e_dict.get("start_byte"),
+                            "end_byte": e_dict.get("end_byte"),
+                            "parent_id": e_dict.get("parent_id"),
+                            "ast_node_type": e_dict.get("ast_node_type"),
+                            "children_order": e_dict.get("children_order"),
+                            "metadata": e_dict.get("metadata"),
+                            "content_hash": e_dict.get("content_hash"),
+                        })
 
-        if new_entities:
-            db.insert_entities(run_id, new_entities)
-        if new_relationships:
-            db.insert_relationships(run_id, new_relationships)
+                    agent_view_data = {"entities": agent_entities}
+                    storage_delta_data = {
+                        "entities": delta_entities,
+                    }
+                    relationships_data = rels_list
 
-        # 11. Complete run
-        entity_count = db.get_entity_count(run_id)
-        rel_count = db.get_relationship_count(run_id)
+                    content_hash = change.new_hash or compute_file_hash(full_path) or ""
+                    write_batch.append({
+                        "file_path": file_rel,
+                        "content_hash": content_hash,
+                        "agent_view_data": agent_view_data,
+                        "storage_delta_data": storage_delta_data,
+                        "relationships_data": relationships_data,
+                    })
+                    t_batch_prep_ms += (time.monotonic() - t_prep_0) * 1000
+                    new_entity_count += len(entities_list)
+                    new_rel_count += len(rels_list)
 
+                    # Flush batch when it reaches 50 files
+                    if len(write_batch) >= 50:
+                        t_write_0 = time.monotonic()
+                        db.insert_file_artifacts_batch(run_internal_id, write_batch)
+                        t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
+                        write_batch = []
+
+                    # Fetch base-run entities for this file and diff
+                    if base_run_internal_id is not None:
+                        old_entities = db.get_agent_entities_for_file(base_run_internal_id, file_rel) or []
+                        from batho.context.node_diff import diff_file_nodes
+                        node_diffs = diff_file_nodes(old_entities, agent_entities, file_rel)
+                        if node_diffs:
+                            db.record_file_changelog(run_internal_id, base_run_internal_id, node_diffs)
+                            for diff in node_diffs:
+                                if diff.change_kind == "added":
+                                    nodes_added += 1
+                                elif diff.change_kind == "removed":
+                                    nodes_removed += 1
+                                elif diff.change_kind == "modified":
+                                    nodes_modified += 1
+                                elif diff.change_kind == "renamed":
+                                    nodes_renamed += 1
+
+                # Flush any remaining files in batch
+                if write_batch:
+                    t_write_0 = time.monotonic()
+                    db.insert_file_artifacts_batch(run_internal_id, write_batch)
+                    t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
+
+        # --- Update file tracking ---
+        for change in deleted:
+            db.delete_file_tracking(change.path)
+            # Fetch base-run entities for this deleted file and record their removal
+            if base_run_internal_id is not None:
+                old_entities = db.get_agent_entities_for_file(base_run_internal_id, change.path) or []
+                if old_entities:
+                    from batho.context.node_diff import diff_file_nodes
+                    node_diffs = diff_file_nodes(old_entities, [], change.path)
+                    if node_diffs:
+                        db.record_file_changelog(run_internal_id, base_run_internal_id, node_diffs)
+                        for diff in node_diffs:
+                            if diff.change_kind == "removed":
+                                nodes_removed += 1
+
+        for change in added_or_modified:
+            full_path = root / change.path
+            if full_path.exists():
+                try:
+                    stat = full_path.stat()
+                    content_hash = change.new_hash or compute_file_hash(full_path) or ""
+                    db.upsert_file_tracking([{
+                        "file_path": change.path,
+                        "content_hash": content_hash,
+                        "mtime": stat.st_mtime,
+                        "size": stat.st_size,
+                        "is_indexed": 1,
+                        "last_run_id": run_uuid,
+                    }])
+                except OSError:
+                    pass
+
+        # --- Resolve dangling cross-file references via SQL JOIN ---
+        try:
+            resolved_joined = db.resolve_dangling_references(run_internal_id)
+            LOGGER.info("cross_file_relationships_resolved_via_sql_join", count=resolved_joined)
+        except Exception as exc:
+            LOGGER.warning("cross_file_relationships_sql_join_failed", error=str(exc))
+
+        # --- Complete run ---
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
         with db.connection(read_only=True) as conn:
             row = conn.execute(
-                "SELECT COUNT(DISTINCT file_path) as cnt FROM bsg_entries WHERE run_id = ?",
-                (run_id,)
+                "SELECT COUNT(*) as cnt FROM file_artifacts WHERE run_id = ?",
+                (run_internal_id,),
             ).fetchone()
             file_count = row["cnt"] if row else 0
 
-        elapsed_ms = int((time.monotonic() - t0) * 1000)
         db.complete_run(
-            run_id,
-            entity_count=entity_count,
-            rel_count=rel_count,
+            run_uuid,
+            entity_count=new_entity_count,
+            rel_count=new_rel_count,
             file_count=file_count,
             duration_ms=elapsed_ms,
         )
 
+        # --- Finalize Run Artifacts ---
+        from batho.orchestrator.build import _compute_run_metrics
+        metrics = _compute_run_metrics(db, run_internal_id, root)
+        
+        telemetry = {
+            "duration_ms": elapsed_ms,
+            "batch_prep_ms": t_batch_prep_ms,
+            "batch_write_ms": t_batch_write_ms,
+            "files_indexed": file_count,
+            "entity_count": metrics["context_overview"]["total_entities"],
+            "rel_count": metrics["context_overview"]["total_relationships"],
+            "git_commit": git_commit,
+            "git_branch": git_branch,
+        }
+        
+        total_base_files = len(known_tracking)
+        files_changed = len(changes)
+        churn_pct = (files_changed / total_base_files * 100.0) if total_base_files > 0 else 0.0
+        churn_pct = float(min(max(churn_pct, 0.0), 100.0))
+        
+        delta_stats = {
+            "nodes_added": nodes_added,
+            "nodes_removed": nodes_removed,
+            "nodes_modified": nodes_modified,
+            "nodes_renamed": nodes_renamed,
+            "files_changed": files_changed,
+            "files_added": sum(1 for c in changes if c.change_type == FileChangeType.ADDED),
+            "files_deleted": sum(1 for c in changes if c.change_type == FileChangeType.DELETED),
+            "churn_pct": churn_pct,
+            "base_run_uuid": base_run_uuid or None,
+        }
+        
+        db.finalize_run_artifacts(
+            run_internal_id,
+            artifacts={
+                "context_overview": metrics["context_overview"],
+                "telemetry_metrics": telemetry,
+                "structural_metrics": metrics["structural_metrics"],
+                "security_audit": None,
+                "artifact_payload": metrics["artifact_payload"],
+                "delta_stats": delta_stats,
+            }
+        )
+
         LOGGER.info(
             "patch_complete",
-            run_id=run_id,
-            entities=entity_count,
-            relationships=rel_count,
+            run_id=run_uuid,
             files=file_count,
+            changes=len(changes),
             duration_ms=elapsed_ms,
         )
 
-        # 12. Return PatchResult
+        # Prune file changelog
+        file_changelog_max_runs = cfg.get("indexer", {}).get("file_changelog_max_runs", 100)
+        db.prune_file_changelog(max_runs=file_changelog_max_runs)
+
         return PatchResult(
             success=True,
-            run_id=run_id,
-            base_snapshot_id=base_snapshot_id,
-            new_snapshot_id=new_snapshot_id,
+            run_id=run_uuid,
+            base_snapshot_id=base_run_uuid,
+            new_snapshot_id="",
             changes_applied=len(changes),
             added=sum(1 for c in changes if c.change_type == FileChangeType.ADDED),
             modified=sum(1 for c in changes if c.change_type == FileChangeType.MODIFIED),
             deleted=sum(1 for c in changes if c.change_type == FileChangeType.DELETED),
-            entity_count=entity_count,
-            relationship_count=rel_count,
+            entity_count=new_entity_count,
+            relationship_count=new_rel_count,
             duration_ms=elapsed_ms,
+            nodes_added=nodes_added,
+            nodes_removed=nodes_removed,
+            nodes_modified=nodes_modified,
+            nodes_renamed=nodes_renamed,
         )
-    finally:
-        pass
+
+    except Exception as e:
+        # Mark run as failed on any unhandled exception
+        LOGGER.error("patch_unhandled_exception", error=str(e))
+        if run_uuid:
+            try:
+                db.fail_run(run_uuid, error_message=str(e))
+            except Exception:
+                pass  # Best effort
+        return PatchResult(
+            success=False,
+            run_id=run_uuid,
+            base_snapshot_id=base_run_uuid,
+            warnings=[f"Unhandled exception: {e}"],
+        )

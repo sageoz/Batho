@@ -7,7 +7,6 @@ exits early directing the user to `batho patch`.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 import uuid
@@ -15,8 +14,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from batho.config import get_config_cached
+from batho.config import get_config_cached, set_active_root
+from batho.utils.hash import _is_binary, compute_file_hash
 from batho.utils.logging import get_logger
+from batho.context.incremental import get_head_commit, get_current_branch, is_git_repo
 
 LOGGER = get_logger(__name__, component="orchestrator.build")
 
@@ -64,16 +65,6 @@ def _generate_run_id() -> str:
     return f"build_{ts}_{short}"
 
 
-def _compute_file_hash(file_path: Path) -> str:
-    """Compute SHA-256 hash of file contents."""
-    h = hashlib.sha256()
-    try:
-        h.update(file_path.read_bytes())
-    except OSError:
-        return ""
-    return h.hexdigest()
-
-
 # ---------------------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------------------
@@ -88,6 +79,19 @@ def run_build(options: BuildOptions) -> BuildResult:
     from batho.storage.engine import artifact_filename
     t0 = time.monotonic()
     root = options.root.resolve()
+    
+    if not root.exists():
+        return BuildResult(
+            success=False,
+            warnings=[f"Repository root does not exist: {root}"],
+        )
+    if not root.is_dir():
+        return BuildResult(
+            success=False,
+            warnings=[f"Repository root is not a directory: {root}"],
+        )
+
+    set_active_root(root)
     db_path = root / artifact_filename(root)
 
     # --- Guard: existing database ---
@@ -134,8 +138,19 @@ def run_build(options: BuildOptions) -> BuildResult:
     from batho.storage.engine import BathoDatabase
 
     db = BathoDatabase(db_path, repo_root=root)
-    run_id = _generate_run_id()
-    db.create_run(run_id, schema_version="batho-db.v1", root_path=str(root))
+    run_uuid = _generate_run_id()
+    git_commit: str | None = None
+    git_branch: str | None = None
+    if is_git_repo(root):
+        git_commit = get_head_commit(root)
+        git_branch = get_current_branch(root)
+    run_internal_id = db.create_run(
+        run_uuid,
+        root_path=str(root),
+        git_commit=git_commit,
+        git_branch=git_branch,
+    )
+    run_id = run_uuid
     LOGGER.info("build_started", root=str(root), run_id=run_id)
     from batho.context.codegraph import CodeGraphIndexer
 
@@ -168,10 +183,6 @@ def run_build(options: BuildOptions) -> BuildResult:
             relationships=rel_count,
         )
 
-        # --- Persist entities & relationships to DB ---
-        db.insert_entities(run_id, [e.to_dict() for e in graph.entities.values()])
-        db.insert_relationships(run_id, [r.to_dict() for r in graph.relationships])
-
         # --- Apply BSG plugin rules ---
         rules_cfg = cfg.get("rules", {})
         if rules_cfg:
@@ -193,60 +204,137 @@ def run_build(options: BuildOptions) -> BuildResult:
         opaque_snapshots: list[FileSnapshot] = []
         try:
             for _abs_path, rel in indexer.get_unindexed_files():
+                # NOTE: Accessing private _cache attribute breaks encapsulation.
+                # Consider adding get_file_snapshot() public method to CodeGraphIndexer
+                # or exposing via CodeGraphIndexer.get_unindexed_files_with_snapshots().
                 snap = indexer._cache.get_file_snapshot(_abs_path) or indexer._cache.get_file_snapshot(rel)
                 if snap is not None:
                     opaque_snapshots.append(snap)
         except Exception as exc:
             LOGGER.warning("build_opaque_snapshots_failed", error=str(exc))
 
-        # --- Build BSG map & persist ---
+        # --- Build BSG map ---
         from batho.context.bsg_map import BSGMap
+        from batho.storage.engine import _minify_graph_payload
 
         bsg_map = BSGMap.build(graph, str(root), opaque_snapshots=opaque_snapshots)
         bsg_file_count = len(bsg_map._by_file)
-
-        # Persist BSG entries per file
-        bsg_entries: list[dict[str, Any]] = []
-        for file_path, entities in bsg_map._by_file.items():
-            bsg_json_data = json.dumps(
-                [e.to_dict(view="agent") for e in entities],
-                ensure_ascii=True,
-            )
-            checksum = hashlib.sha256(bsg_json_data.encode()).hexdigest()
-            bsg_entries.append({
-                "file_path": file_path,
-                "view_type": "agent",
-                "bsg_json": bsg_json_data,
-                "node_count": len(entities),
-                "checksum": checksum,
-            })
-
-        if bsg_entries:
-            db.insert_bsg_entries(run_id, bsg_entries)
-
         LOGGER.info("build_bsg_complete", files=bsg_file_count)
 
-        # --- Build & persist context outputs ---
-        overview_data = _build_context_overview(graph, root)
-        files_data = _build_context_files(graph, root)
-        db.set_context_output(run_id, "overview", json.dumps(overview_data, ensure_ascii=True))
-        db.set_context_output(run_id, "files", json.dumps(files_data, ensure_ascii=True))
+        # --- Group entities/relationships by file and persist as compressed blobs ---
+        from collections import defaultdict
+        t_group_start = time.monotonic()
+        entities_by_file: dict[str, list[Any]] = defaultdict(list)
+        for entity in graph.entities.values():
+            try:
+                rel = str(Path(entity.file).relative_to(root))
+            except ValueError:
+                rel = entity.file
+            entities_by_file[rel].append(entity.to_dict())
 
-        # --- Create baseline snapshot ---
-        from batho.time_machine import create_snapshot
+        rels_by_source_file: dict[str, list[Any]] = defaultdict(list)
+        for rel in graph.relationships:
+            source_ent = graph.get_entity(rel.source_id)
+            if source_ent:
+                # Relationship source is an entity - use entity's file
+                try:
+                    rel_file = str(Path(source_ent.file).relative_to(root))
+                except ValueError:
+                    rel_file = source_ent.file
+            else:
+                # Relationship source is not an entity (e.g., file-level import)
+                # Treat source_id as a file path directly
+                try:
+                    rel_file = str(Path(rel.source_id).relative_to(root))
+                except ValueError:
+                    rel_file = rel.source_id
+            rels_by_source_file[rel_file].append(rel.to_dict())
 
-        snapshot_id = create_snapshot(
-            ctn_dir=root,
-            root=root,
-            graph=graph,
-            bsg_map=bsg_map,
-            label="baseline",
-        )
+        all_file_paths = set(entities_by_file.keys()) | set(rels_by_source_file.keys())
+        write_batch = []
+        t_batch_prep_ms = 0.0
+        t_batch_write_ms = 0.0
 
-        LOGGER.info("build_snapshot_created", snapshot_id=snapshot_id)
+        for file_rel in all_file_paths:
+            t_prep_0 = time.monotonic()
+            file_entities = bsg_map._by_file.get(file_rel)
+            if not file_entities:
+                file_entities = entities_by_file.get(file_rel, [])
+
+            agent_entities = []
+            for e in file_entities:
+                e_dict = e.to_dict(view="agent") if hasattr(e, "to_dict") else e
+                agent_entities.append({
+                    "id": e_dict.get("id"),
+                    "name": e_dict.get("name"),
+                    "type": e_dict.get("type") or e_dict.get("entity_type"),
+                    "start_line": e_dict.get("start_line"),
+                    "end_line": e_dict.get("end_line"),
+                    "signature": e_dict.get("signature"),
+                    "content_hash": e.content_hash if hasattr(e, "content_hash") else e_dict.get("content_hash", ""),
+                })
+
+            delta_entities = []
+            for e in file_entities:
+                e_dict = e.to_dict(view="storage") if hasattr(e, "to_dict") else e
+                delta_entities.append({
+                    "id": e_dict.get("id"),
+                    "raw_content": e_dict.get("raw_content"),
+                    "syntax_glue": {
+                        "leading_whitespace": e_dict.get("leading_whitespace", ""),
+                        "trailing_whitespace": e_dict.get("trailing_whitespace", ""),
+                    },
+                    "raw_bytes": e_dict.get("raw_bytes"),
+                    "start_byte": e_dict.get("start_byte"),
+                    "end_byte": e_dict.get("end_byte"),
+                    "parent_id": e_dict.get("parent_id"),
+                    "ast_node_type": e_dict.get("ast_node_type"),
+                    "children_order": e_dict.get("children_order"),
+                    "metadata": e_dict.get("metadata"),
+                    "content_hash": e_dict.get("content_hash"),
+                })
+
+            agent_view_data = {"entities": agent_entities}
+            storage_delta_data = {
+                "entities": delta_entities,
+            }
+            relationships_data = rels_by_source_file.get(file_rel, [])
+
+            content_hash = compute_file_hash(root / file_rel) or ""
+            write_batch.append({
+                "file_path": file_rel,
+                "content_hash": content_hash,
+                "agent_view_data": agent_view_data,
+                "storage_delta_data": storage_delta_data,
+                "relationships_data": relationships_data,
+            })
+            t_batch_prep_ms += (time.monotonic() - t_prep_0) * 1000
+
+            # Flush batch when it reaches 50 files
+            if len(write_batch) >= 50:
+                t_write_0 = time.monotonic()
+                db.insert_file_artifacts_batch(run_internal_id, write_batch)
+                t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
+                write_batch = []
+
+        # Flush any remaining files
+        if write_batch:
+            t_write_0 = time.monotonic()
+            db.insert_file_artifacts_batch(run_internal_id, write_batch)
+            t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
+
+        LOGGER.info("batch_performance_breakdown", prep_ms=round(t_batch_prep_ms, 2), write_ms=round(t_batch_write_ms, 2))
+
+        # --- Resolve dangling cross-file references via SQL JOIN ---
+        try:
+            t_join_0 = time.monotonic()
+            resolved_joined = db.resolve_dangling_references(run_internal_id)
+            LOGGER.info("cross_file_relationships_resolved_via_sql_join", count=resolved_joined, time_ms=round((time.monotonic() - t_join_0) * 1000, 2))
+        except Exception as exc:
+            LOGGER.warning("cross_file_relationships_sql_join_failed", error=str(exc))
 
         # --- Persist file tracking ---
-        file_tracking_records = _build_file_tracking(graph, root, indexer)
+        file_tracking_records = _build_file_tracking(graph, root, indexer, run_id=run_id)
         if file_tracking_records:
             db.upsert_file_tracking(file_tracking_records)
 
@@ -256,11 +344,35 @@ def run_build(options: BuildOptions) -> BuildResult:
         # --- Complete run ---
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         db.complete_run(
-            run_id,
+            run_uuid,
             entity_count=entity_count,
             rel_count=rel_count,
             file_count=bsg_file_count,
             duration_ms=elapsed_ms,
+        )
+
+        # --- Finalize Run Artifacts ---
+        metrics = _compute_run_metrics(db, run_internal_id, root)
+        telemetry = {
+            "duration_ms": elapsed_ms,
+            "batch_prep_ms": t_batch_prep_ms,
+            "batch_write_ms": t_batch_write_ms,
+            "files_indexed": bsg_file_count,
+            "entity_count": entity_count,
+            "rel_count": rel_count,
+            "git_commit": git_commit,
+            "git_branch": git_branch,
+        }
+        db.finalize_run_artifacts(
+            run_internal_id,
+            artifacts={
+                "context_overview": metrics["context_overview"],
+                "telemetry_metrics": telemetry,
+                "structural_metrics": metrics["structural_metrics"],
+                "security_audit": None,
+                "artifact_payload": metrics["artifact_payload"],
+                "delta_stats": None,
+            }
         )
 
         LOGGER.info(
@@ -279,7 +391,7 @@ def run_build(options: BuildOptions) -> BuildResult:
             relationship_count=rel_count,
             file_count=bsg_file_count,
             bsg_file_count=bsg_file_count,
-            snapshot_id=snapshot_id,
+            snapshot_id="",
             duration_ms=elapsed_ms,
         )
 
@@ -289,67 +401,115 @@ def run_build(options: BuildOptions) -> BuildResult:
 # ---------------------------------------------------------------------------
 
 
-def _build_context_overview(graph: Any, root: Path) -> dict[str, Any]:
-    """Build context overview JSON from graph."""
-    from collections import Counter
-
-    file_dist: Counter[str] = Counter()
-    type_dist: Counter[str] = Counter()
-
-    for entity in graph.entities.values():
-        file_path = entity.file
-        if file_path:
-            try:
-                rel = str(Path(file_path).relative_to(root))
-            except ValueError:
-                rel = file_path
-            file_dist[rel] += 1
-        type_dist[entity.type.name] += 1
-
-    return {
-        "total_entities": len(graph.entities),
-        "total_relationships": len(graph.relationships),
-        "total_files": len(file_dist),
-        "entity_types": dict(type_dist.most_common()),
-        "file_distribution": [
-            {"file_path": fp, "entity_count": count}
-            for fp, count in file_dist.most_common(100)
-        ],
-    }
-
-
-def _build_context_files(graph: Any, root: Path) -> dict[str, Any]:
-    """Build context files JSON from graph."""
-    from collections import defaultdict
-
-    by_ext: dict[str, list[str]] = defaultdict(list)
-    all_files: set[str] = set()
-
-    for entity in graph.entities.values():
-        file_path = entity.file
-        if not file_path:
-            continue
-        try:
-            rel = str(Path(file_path).relative_to(root))
-        except ValueError:
-            rel = file_path
-        all_files.add(rel)
-        ext = Path(rel).suffix.lower() or "(no extension)"
-        if rel not in by_ext[ext]:
-            by_ext[ext].append(rel)
-
+def _compute_run_metrics(db, run_internal_id: int, root: Path) -> dict:
+    # Fetch entities and relationships from the database
+    with db.connection(read_only=True) as conn:
+        entities_rows = conn.execute(
+            "SELECT entity_id, file_path, entity_name, entity_type, fqn, line_number FROM query_entities WHERE run_id = ?",
+            (run_internal_id,)
+        ).fetchall()
+        
+        relationships_rows = conn.execute(
+            "SELECT source_id, target_id FROM query_relationships WHERE run_id = ?",
+            (run_internal_id,)
+        ).fetchall()
+        
+        files_rows = conn.execute(
+            "SELECT val FROM string_dict WHERE id IN (SELECT file_id FROM file_artifacts WHERE run_id = ?)",
+            (run_internal_id,)
+        ).fetchall()
+        file_paths = [r["val"] for r in files_rows]
+    
+    total_entities = len(entities_rows)
+    total_relationships = len(relationships_rows)
+    total_files = len(file_paths)
+    
+    # Entity types distribution
+    from collections import Counter, defaultdict
+    entity_types = Counter()
+    file_ent_counts = Counter()
+    entity_to_file = {}
+    
+    for ent in entities_rows:
+        entity_types[ent["entity_type"]] += 1
+        file_ent_counts[ent["file_path"]] += 1
+        entity_to_file[ent["entity_id"]] = ent["file_path"]
+        
+    # File categories
+    by_ext = defaultdict(list)
+    for fp in file_paths:
+        ext = Path(fp).suffix.lower() or "(no extension)"
+        by_ext[ext].append(fp)
+        
     categories = [
         {"extension": ext, "files": sorted(files), "count": len(files)}
         for ext, files in sorted(by_ext.items(), key=lambda x: -len(x[1]))
     ]
-
-    return {
-        "total_files": len(all_files),
+    
+    context_overview = {
+        "total_entities": total_entities,
+        "total_relationships": total_relationships,
+        "total_files": total_files,
+        "entity_types": dict(entity_types.most_common()),
+        "file_distribution": [
+            {"file_path": fp, "entity_count": count}
+            for fp, count in file_ent_counts.most_common(100)
+        ],
         "categories": categories,
+    }
+    
+    # top-coupled files
+    coupling = defaultdict(int)
+    for rel in relationships_rows:
+        src_file = entity_to_file.get(rel["source_id"])
+        tgt_file = entity_to_file.get(rel["target_id"])
+        if src_file and tgt_file and src_file != tgt_file:
+            coupling[src_file] += 1
+            coupling[tgt_file] += 1
+            
+    top_coupled = [
+        {"file_path": fp, "coupling": c}
+        for fp, c in sorted(coupling.items(), key=lambda x: x[1], reverse=True)[:50]
+    ]
+    
+    structural_metrics = {
+        "entity_type_distribution": dict(entity_types),
+        "top_coupled_files": top_coupled,
+    }
+    
+    # artifact_payload: top 200 entities (name, type, fqn, file, start_line) + rel count per file
+    # Sort alphabetically by fqn or name
+    sorted_ents = sorted(entities_rows, key=lambda e: e["fqn"] or e["entity_name"])
+    top_entities = []
+    for e in sorted_ents[:200]:
+        top_entities.append({
+            "name": e["entity_name"],
+            "type": e["entity_type"],
+            "fqn": e["fqn"],
+            "file": e["file_path"],
+            "start_line": e["line_number"],
+        })
+        
+    # rel count per file (originating from each file)
+    rel_counts = Counter()
+    for rel in relationships_rows:
+        src_file = entity_to_file.get(rel["source_id"])
+        if src_file:
+            rel_counts[src_file] += 1
+            
+    artifact_payload = {
+        "entities": top_entities,
+        "rel_count_per_file": dict(rel_counts),
+    }
+    
+    return {
+        "context_overview": context_overview,
+        "structural_metrics": structural_metrics,
+        "artifact_payload": artifact_payload,
     }
 
 
-def _build_file_tracking(graph: Any, root: Path, indexer: Any = None) -> list[dict[str, Any]]:
+def _build_file_tracking(graph: Any, root: Path, indexer: Any = None, *, run_id: str = "") -> list[dict[str, Any]]:
     """Build file tracking records from the indexed graph."""
     import os
 
@@ -375,14 +535,15 @@ def _build_file_tracking(graph: Any, root: Path, indexer: Any = None) -> list[di
 
         try:
             stat = full_path.stat()
-            content_hash = _compute_file_hash(full_path)
+            content_hash = compute_file_hash(full_path) or ""
             records.append({
                 "file_path": rel,
                 "content_hash": content_hash,
                 "mtime": stat.st_mtime,
                 "size": stat.st_size,
                 "is_indexed": 1,
-                "last_run_id": None,
+                "last_run_id": run_id or None,
+                "encoding": "utf-8",  # All indexed files are text
             })
         except OSError:
             continue
@@ -397,14 +558,23 @@ def _build_file_tracking(graph: Any, root: Path, indexer: Any = None) -> list[di
                 continue
             try:
                 stat = full_path.stat()
-                content_hash = _compute_file_hash(full_path)
+                content_hash = compute_file_hash(full_path) or ""
+                # Determine encoding for opaque files
+                encoding = "utf-8"
+                try:
+                    content = full_path.read_bytes()
+                    if _is_binary(content):
+                        encoding = "binary"
+                except Exception:
+                    pass  # Default to utf-8 if read fails
                 records.append({
                     "file_path": rel,
                     "content_hash": content_hash,
                     "mtime": stat.st_mtime,
                     "size": stat.st_size,
                     "is_indexed": 0,
-                    "last_run_id": None,
+                    "last_run_id": run_id or None,
+                    "encoding": encoding,
                 })
             except OSError:
                 continue

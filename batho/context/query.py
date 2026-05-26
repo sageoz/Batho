@@ -1,7 +1,7 @@
-"""Query service backed by the unified .batho SQLite database.
+"""Query service backed by the unified .batho SQLite database (v2.0).
 
-All queries hit the graph_entities and graph_relationships tables directly.
-No JSON file loading, no mmap, no in-memory fallback.
+Loads compressed blobs from file_artifacts, decompresses them, and
+filters in-memory. No legacy graph_entities/graph_relationships tables.
 """
 
 from __future__ import annotations
@@ -11,14 +11,15 @@ from pathlib import Path
 from typing import Any
 
 from batho.config import get_config_cached
-from batho.context.storage import get_artifact_registry, query_entities, query_relationships
+from batho.storage.engine import get_database
+from batho.context.bsg_map.relativizer import PathRelativizer
 from batho.utils.logging import get_logger
 
 LOGGER = get_logger(__name__, component="query_service")
 
 
 class QueryService:
-    """SQLite-backed query interface for graph data."""
+    """In-memory query interface over decompressed file artifact blobs."""
 
     def __init__(
         self,
@@ -47,7 +48,11 @@ class QueryService:
         )
 
         self._cache: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
-        self._db = get_artifact_registry(self.ctn_dir)
+        self._db = get_database(self.ctn_dir)
+        self._loaded_run_id: str | None = None
+        self._entities: list[dict[str, Any]] = []
+        self._relationships: list[dict[str, Any]] = []
+        self._relativizer = PathRelativizer(str(self.ctn_dir))
 
     def _cache_get(self, key: tuple[Any, ...]) -> list[dict[str, Any]] | None:
         if not self.cache_enabled:
@@ -67,14 +72,51 @@ class QueryService:
             self._cache.popitem(last=False)
 
     def _resolve_index_id(self) -> str | None:
-        """Resolve the current run_id to query against."""
         if self.index_id:
             return self.index_id
-        # Use the latest completed run
         return self._db.get_latest_run_id()
 
+    def _ensure_loaded(self, run_uuid: str) -> None:
+        """Load all file blobs for the run into memory if not already loaded.
+
+        If run_uuid differs from the previously loaded run (e.g., a new patch
+        completed), the in-memory data AND the query cache are both replaced so
+        callers never see stale results from the previous run.
+        """
+        if self._loaded_run_id == run_uuid:
+            return
+
+        # A different run is now active — discard cached query results that were
+        # keyed against the old run_uuid to prevent stale data from persisting.
+        self._cache.clear()
+
+        run_internal_id = self._db.get_run_internal_id(run_uuid)
+        if run_internal_id is None:
+            self._entities = []
+            self._relationships = []
+            self._loaded_run_id = run_uuid
+            return
+
+        artifacts = self._db.get_file_artifacts(run_internal_id)
+        entities: list[dict[str, Any]] = []
+        relationships: list[dict[str, Any]] = []
+        for artifact in artifacts:
+            graph = artifact.get("graph", {})
+            file_path = artifact.get("file_path", "")
+            for e in graph.get("entities", []):
+                e_copy = dict(e)
+                if "file" not in e_copy:
+                    e_copy["file"] = file_path
+                entities.append(e_copy)
+            for r in graph.get("relationships", []):
+                relationships.append(dict(r))
+
+        self._entities = entities
+        self._relationships = relationships
+        self._loaded_run_id = run_uuid
+
     def rebuild_indexes(self) -> dict[str, int]:
-        """No-op: indexes are maintained automatically by the DB engine."""
+        """No-op: data is loaded from blobs on demand."""
         return {"entities_indexed": 0, "relationships_indexed": 0}
 
     def entities_by_type(
@@ -83,25 +125,28 @@ class QueryService:
         *,
         limit: int = 200,
     ) -> list[dict[str, Any]]:
-        index_id = self._resolve_index_id()
-        if not index_id:
+        run_uuid = self._resolve_index_id()
+        if not run_uuid:
             return []
 
         normalized = entity_type.strip().upper()
         capped_limit = max(1, int(limit))
-        cache_key = ("entities_by_type", index_id, normalized, capped_limit)
+        cache_key = ("entities_by_type", run_uuid, normalized, capped_limit)
         cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
 
-        rows = query_entities(
-            self.ctn_dir,
-            index_id=index_id,
-            entity_type=normalized,
-            limit=capped_limit,
-        )
-        self._cache_set(cache_key, rows)
-        return rows
+        # NOTE: This loads ALL entities into memory before applying the limit.
+        # For large repositories, this causes memory bloat. The cache key
+        # includes the limit, causing different cache entries for different limits.
+        # Consider: (1) true pagination in _ensure_loaded, or (2) streaming filters.
+        self._ensure_loaded(run_uuid)
+        results = [
+            e for e in self._entities
+            if str(e.get("entity_type", e.get("type", ""))).upper() == normalized
+        ][:capped_limit]
+        self._cache_set(cache_key, results)
+        return results
 
     def entities_by_file(
         self,
@@ -109,25 +154,27 @@ class QueryService:
         *,
         limit: int = 200,
     ) -> list[dict[str, Any]]:
-        index_id = self._resolve_index_id()
-        if not index_id:
+        run_uuid = self._resolve_index_id()
+        if not run_uuid:
             return []
 
-        normalized_path = file_path.strip()
         capped_limit = max(1, int(limit))
-        cache_key = ("entities_by_file", index_id, normalized_path, capped_limit)
+        # Relativize the input path before building the cache key so that
+        # callers using absolute or relative forms of the same file share a
+        # single cache entry instead of redundant per-form entries.
+        normalized_query_path = self._relativizer(file_path.strip())
+        cache_key = ("entities_by_file", run_uuid, normalized_query_path, capped_limit)
         cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
 
-        rows = query_entities(
-            self.ctn_dir,
-            index_id=index_id,
-            file_path=normalized_path,
-            limit=capped_limit,
-        )
-        self._cache_set(cache_key, rows)
-        return rows
+        self._ensure_loaded(run_uuid)
+        results = [
+            e for e in self._entities
+            if self._relativizer(e.get("file", e.get("file_path", ""))) == normalized_query_path
+        ][:capped_limit]
+        self._cache_set(cache_key, results)
+        return results
 
     def relationships_by_type(
         self,
@@ -135,22 +182,21 @@ class QueryService:
         *,
         limit: int = 200,
     ) -> list[dict[str, Any]]:
-        index_id = self._resolve_index_id()
-        if not index_id:
+        run_uuid = self._resolve_index_id()
+        if not run_uuid:
             return []
 
         normalized = relationship_type.strip().upper()
         capped_limit = max(1, int(limit))
-        cache_key = ("relationships_by_type", index_id, normalized, capped_limit)
+        cache_key = ("relationships_by_type", run_uuid, normalized, capped_limit)
         cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
 
-        rows = query_relationships(
-            self.ctn_dir,
-            index_id=index_id,
-            relationship_type=normalized,
-            limit=capped_limit,
-        )
-        self._cache_set(cache_key, rows)
-        return rows
+        self._ensure_loaded(run_uuid)
+        results = [
+            r for r in self._relationships
+            if str(r.get("type", r.get("relationship_type", ""))).upper() == normalized
+        ][:capped_limit]
+        self._cache_set(cache_key, results)
+        return results

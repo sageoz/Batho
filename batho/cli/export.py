@@ -30,7 +30,7 @@ def register_export_parser(subparsers: argparse._SubParsersAction) -> None:
         "--view",
         type=str,
         default="storage",
-        choices=["storage", "agent", "overview", "files", "symbols", "dependencies", "delta"],
+        choices=["storage", "agent", "overview", "files", "symbols", "dependencies", "delta", "rel"],
         help=(
             "JSON view to export: "
             "storage (full fidelity), "
@@ -39,7 +39,8 @@ def register_export_parser(subparsers: argparse._SubParsersAction) -> None:
             "files (file-centric), "
             "symbols (flat symbol index), "
             "dependencies (dependency graph), "
-            "delta (diff vs baseline). "
+            "delta (diff vs baseline), "
+            "rel (relationships only). "
             "Default: storage"
         ),
     )
@@ -48,7 +49,7 @@ def register_export_parser(subparsers: argparse._SubParsersAction) -> None:
         type=Path,
         default=None,
         metavar="PATH",
-        help="Output file path (default: stdout)",
+        help="Output file path (default: root/batho_export.json)",
     )
     parser.add_argument(
         "--index-id",
@@ -81,12 +82,7 @@ def register_export_parser(subparsers: argparse._SubParsersAction) -> None:
         choices=["source", "test", "doc", "config", "infra", "all"],
         help="Filter by BSG category. Default: all",
     )
-    parser.add_argument(
-        "--stream",
-        action="store_true",
-        default=False,
-        help="Enable streaming mode for large repositories (memory-efficient)",
-    )
+
     parser.add_argument(
         "--token-budget",
         type=int,
@@ -103,6 +99,13 @@ def register_export_parser(subparsers: argparse._SubParsersAction) -> None:
         metavar="PATH",
         help="Path to a previous export JSON for the delta view",
     )
+    parser.add_argument(
+        "--rel",
+        action="store_true",
+        default=False,
+        dest="include_relationships",
+        help="Include relationship blob in the export output",
+    )
     parser.set_defaults(func=cmd_export)
 
 
@@ -118,9 +121,9 @@ def cmd_export(args: argparse.Namespace) -> int:
         filter_pattern=args.filter_pattern,
         category=args.category,
         index_id=args.index_id,
-        use_streaming=args.stream,
         token_budget=args.token_budget,
         baseline_path=args.baseline_path,
+        include_relationships=args.include_relationships,
     )
 
     result = run_export(options)
@@ -130,17 +133,7 @@ def cmd_export(args: argparse.Namespace) -> int:
             print(f"error: {err}", file=sys.stderr)
         return 1
 
-    # If streaming to stdout, consume the generator
-    if result.stream_generator is not None:
-        try:
-            for chunk in result.stream_generator:
-                sys.stdout.write(chunk)
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-        except BrokenPipeError:
-            pass  # e.g. piped to `head`
-
-    # Print summary to stderr so it doesn't pollute stdout JSON
+    # Print summary to stderr
     summary_parts = [
         f"{result.file_count} files",
         f"{result.entity_count} entities",

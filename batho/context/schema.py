@@ -217,7 +217,7 @@ class Entity(BaseModel):
         parent_id: Optional ID of the containing parent entity
     """
 
-    model_config = {"frozen": True, "extra": "allow"}
+    model_config = {"frozen": True, "extra": "allow", "slots": True}
 
     type: EntityType
     name: str
@@ -241,7 +241,16 @@ class Entity(BaseModel):
     @property
     def id(self) -> str:
         """Generate a unique, deterministic ID for this entity."""
-        return generate_entity_id(self.type.name, self.name, self.file, self.start_line)
+        return generate_entity_id(self.type.name, self.name, self.file)
+    
+    @property
+    def fqn(self) -> str | None:
+        """Fully qualified name of the entity."""
+        if self.signature:
+            return self.signature
+        if self.type in (EntityType.CLASS, EntityType.MODULE, EntityType.NAMESPACE):
+            return self.name
+        return None
 
     def compute_content_hash(self) -> str:
         """Return a SHA256 hash of the raw content bytes."""
@@ -362,21 +371,6 @@ class Entity(BaseModel):
                 raise ValueError(
                     f"Entity {entity_id!r}: malformed hex in raw_bytes field"
                 ) from exc
-        # Ensure backward compatibility: set missing fields to defaults
-        if "raw_content" not in d:
-            d["raw_content"] = None
-        if "content_hash" not in d:
-            d["content_hash"] = ""
-        if "raw_bytes" not in d:
-            d["raw_bytes"] = None
-        if "leading_whitespace" not in d:
-            d["leading_whitespace"] = ""
-        if "trailing_whitespace" not in d:
-            d["trailing_whitespace"] = ""
-        if "ast_node_type" not in d:
-            d["ast_node_type"] = None
-        if "children_order" not in d:
-            d["children_order"] = []
         return cls(**d)
 
     def __str__(self) -> str:
@@ -410,7 +404,7 @@ class Relationship(BaseModel):
         metadata: Additional metadata (line numbers, etc.)
     """
 
-    model_config = {"frozen": True, "extra": "allow"}
+    model_config = {"frozen": True, "extra": "allow", "slots": True}
 
     source_id: str
     target_id: str

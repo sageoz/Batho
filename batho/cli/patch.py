@@ -16,8 +16,10 @@ def register_patch_parser(subparsers: argparse._SubParsersAction) -> None:
         "patch",
         help="Incremental patch of an existing artifact database",
         description=(
-            "Detects changes since the last build/patch and applies incremental "
-            "graph updates, refreshing all DB artifacts."
+            "Detects changes natively using content hashing against the SQLite "
+            "file_tracking table. Unlike previous versions, this does not use Git "
+            "status for change detection, eliminating false positives from "
+            "uncommitted files."
         ),
     )
     parser.add_argument(
@@ -38,30 +40,18 @@ def register_patch_parser(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="Skip files exceeding this size in kilobytes during hash scan",
     )
-    parser.add_argument(
-        "--mode",
-        type=str,
-        choices=["commit", "staged", "modified", "auto"],
-        default="auto",
-        help=(
-            "Change detection mode: commit (committed changes vs snapshot), "
-            "staged (git add), modified (working dir), "
-            "auto (staged+modified, default)"
-        ),
-    )
+
     parser.set_defaults(func=cmd_patch)
 
 
 def cmd_patch(args: argparse.Namespace) -> int:
     """Execute the patch command."""
     from batho.orchestrator.patch import PatchOptions, run_patch
-    from batho.context.incremental import PatchMode
 
     options = PatchOptions(
         root=args.root,
         verbose=args.verbose,
         max_file_size_kb=args.max_file_size_kb,
-        mode=PatchMode(args.mode),
     )
 
     result = run_patch(options)
@@ -88,4 +78,11 @@ def cmd_patch(args: argparse.Namespace) -> int:
         f"{result.deleted} deleted) "
         f"in {result.duration_ms}ms"
     )
+    if (result.nodes_added or result.nodes_removed or result.nodes_modified or result.nodes_renamed):
+        print(
+            f"  Nodes: {result.nodes_added} added, "
+            f"{result.nodes_removed} removed, "
+            f"{result.nodes_modified} modified, "
+            f"{result.nodes_renamed} renamed"
+        )
     return 0

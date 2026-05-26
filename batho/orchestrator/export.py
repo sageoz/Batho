@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Iterator, Literal
 
 from batho.utils.logging import get_logger
+from batho.config import set_active_root
 
 LOGGER = get_logger(__name__, component="orchestrator.export")
 
@@ -37,9 +38,9 @@ class ExportOptions:
     filter_pattern: str | None = None
     category: str = "all"
     index_id: str | None = None
-    use_streaming: bool = False
     token_budget: int | None = None
     baseline_path: Path | None = None
+    include_relationships: bool = False
 
 
 @dataclass
@@ -59,7 +60,7 @@ class ExportResult:
 # ---------------------------------------------------------------------------
 
 VALID_VIEWS = frozenset(
-    ["storage", "agent", "overview", "files", "symbols", "dependencies", "delta"]
+    ["storage", "agent", "overview", "files", "symbols", "dependencies", "delta", "rel"]
 )
 
 VALID_CATEGORIES = frozenset(["source", "test", "doc", "config", "infra", "all"])
@@ -81,41 +82,106 @@ def _find_db_path(root: Path) -> Path | None:
 
 
 def _load_bsg_map_from_db(db_path: Path, run_id: str | None) -> "BSGMap | None":
-    """Load and reconstruct a BSGMap from bsg_entries in the database."""
+    """Load and reconstruct a BSGMap from file artifacts in the database."""
     from batho.storage.engine import BathoDatabase
     from batho.context.bsg_map import BSGMap
-    from batho.context.schema import Entity, EntityType
+    from batho.context.schema import Entity, EntityType, FileSnapshot, Relationship
 
     db = BathoDatabase(db_path, repo_root=db_path.parent)
 
-    # Resolve run_id
+    # Resolve run_id to internal ID
     if run_id is None:
         run_id = db.get_latest_run_id()
     if run_id is None:
         return None
 
-    entries = db.get_bsg_entries_for_run(run_id, view_type="agent")
-    if not entries:
+    run_internal_id = db.get_run_internal_id(run_id)
+    if run_internal_id is None:
+        return None
+
+    # Get file artifacts with BSG data
+    artifacts = db.get_file_artifacts(run_internal_id, include_storage=True)
+    if not artifacts:
         return None
 
     root = db.repo_root
 
     by_file: dict[str, list[Entity]] = {}
-    for entry in entries:
-        file_path = entry["file_path"]
-        try:
-            entities_data: list[dict] = json.loads(entry["bsg_json"])
-        except (json.JSONDecodeError, TypeError):
-            continue
-        entities = [Entity.from_dict(e) for e in entities_data if isinstance(e, dict)]
-        if entities:
-            by_file[file_path] = sorted(entities, key=lambda e: e.start_line)
+    relationships: list[Relationship] = []
+
+    for artifact in artifacts:
+        file_path = artifact["file_path"]
+        abs_file_path = str((root / file_path).resolve())
+        graph_data = artifact.get("graph")
+        if graph_data and isinstance(graph_data, dict):
+            entities_data = graph_data.get("entities", [])
+            if isinstance(entities_data, list):
+                # Set 'file' to abs_file_path for absolute-path-based entity ID computation
+                for e in entities_data:
+                    if isinstance(e, dict):
+                        e["file"] = abs_file_path
+                entities = [Entity.from_dict(e) for e in entities_data if isinstance(e, dict)]
+                if entities:
+                    by_file[file_path] = sorted(entities, key=lambda e: e.start_line)
+
+            rels_data = graph_data.get("relationships", [])
+            if isinstance(rels_data, list):
+                for r in rels_data:
+                    if isinstance(r, dict):
+                        relationships.append(Relationship.from_dict(r))
+
+    # Reconstruct dependencies
+    entity_to_file: dict[str, str] = {}
+    for f_path, ents in by_file.items():
+        for e in ents:
+            entity_to_file[e.id] = f_path
+
+    dependencies: dict[str, set[str]] = {}
+    for rel in relationships:
+        if rel.type.name in ("IMPORTS", "CALLS", "USES"):
+            source_file = entity_to_file.get(rel.source_id)
+            if source_file:
+                target_file = entity_to_file.get(rel.target_id)
+                if not target_file:
+                    target_file = rel.target_id
+
+                if target_file.startswith("/"):
+                    try:
+                        target_file = str(Path(target_file).relative_to(root))
+                    except ValueError:
+                        pass
+
+                if source_file != target_file:
+                    dependencies.setdefault(source_file, set()).add(target_file)
+
+    sorted_deps = {
+        path: sorted(list(deps)) for path, deps in dependencies.items()
+    }
+
+    # Load opaque snapshots from file_tracking for unindexed files
+    opaque_snapshots: list[FileSnapshot] = []
+    try:
+        unindexed_files = db.get_unindexed_files_with_details()
+        for file_info in unindexed_files:
+            snap = FileSnapshot(
+                file_path=file_info["file_path"],
+                file_hash=file_info["content_hash"],
+                file_size=file_info["size"],
+                encoding=file_info["encoding"],
+                entity_ids=[],
+                gap_sections=[],
+            )
+            opaque_snapshots.append(snap)
+    except Exception:
+        # Opaque snapshots are optional, continue if this fails
+        pass
 
     instance = BSGMap(
         _root=str(root),
         _by_file=by_file,
-        _dependencies={},
-        _relationships=[],
+        _dependencies=sorted_deps,
+        _relationships=relationships,
+        _opaque_snapshots={s.file_path: s for s in opaque_snapshots},
     )
     return instance
 
@@ -268,6 +334,47 @@ def _generate_delta_view(
     }
 
 
+def _generate_relationships_view(bsg_map: "BSGMap") -> dict:
+    """Generate a relationships view with dependencies and raw relationship blob."""
+    relationships = []
+    for rel in bsg_map._relationships:
+        if hasattr(rel, "to_dict"):
+            relationships.append(rel.to_dict())
+        else:
+            relationships.append(dict(rel))
+
+    # Build dependencies list
+    deps_list = []
+    for file_path in sorted(bsg_map._dependencies.keys()):
+        targets = bsg_map._dependencies[file_path]
+        if targets:
+            deps_list.append({
+                "file": file_path,
+                "depends_on": sorted(targets),
+                "dependency_count": len(targets),
+            })
+
+    # Build reverse-dependencies
+    rdeps: dict[str, list[str]] = {}
+    for file_path, targets in bsg_map._dependencies.items():
+        for t in targets:
+            rdeps.setdefault(t, []).append(file_path)
+
+    return {
+        "view_type": "rel",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "relationship_count": len(relationships),
+        "relationships": relationships,
+        "file_count": len(bsg_map._by_file),
+        "dependency_edge_count": sum(len(v) for v in bsg_map._dependencies.values()),
+        "dependencies": deps_list,
+        "reverse_dependencies": [
+            {"file": t, "required_by": sorted(sources)}
+            for t, sources in sorted(rdeps.items())
+        ],
+    }
+
+
 def _serialize(data: dict, fmt: str) -> str:
     """Serialize a dict to a JSON string."""
     if fmt == "pretty":
@@ -275,15 +382,10 @@ def _serialize(data: dict, fmt: str) -> str:
     return json.dumps(data, sort_keys=True, ensure_ascii=True)
 
 
-def _write_output(content: str, output_path: Path | None) -> None:
-    """Write string content to a file or stdout."""
-    if output_path is not None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(content, encoding="utf-8")
-    else:
-        sys.stdout.write(content)
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+def _write_output(content: str, output_path: Path) -> None:
+    """Write string content to a file."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(content, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +407,20 @@ def run_export(options: ExportOptions) -> ExportResult:
     """
     t0 = time.monotonic()
     root = options.root.resolve()
+    
+    if not root.exists():
+        return ExportResult(
+            success=False,
+            errors=[f"Repository root does not exist: {root}"],
+        )
+    if not root.is_dir():
+        return ExportResult(
+            success=False,
+            errors=[f"Repository root is not a directory: {root}"],
+        )
+
+    set_active_root(root)
+    output_path = options.output or (root / "batho_export.json")
 
     # --- Validate view ---
     view = options.view.lower()
@@ -367,49 +483,6 @@ def run_export(options: ExportOptions) -> ExportResult:
     file_count = len(bsg_map._by_file)
     entity_count = sum(len(v) for v in bsg_map._by_file.values())
 
-    # --- Streaming mode ---
-    if options.use_streaming:
-        from batho.bridge.bsg_exporter import BSGExporter
-
-        exporter = BSGExporter()
-        try:
-            gen = exporter.export_streaming(bsg_map, view, options.format)
-        except Exception as exc:
-            return ExportResult(success=False, errors=[f"Streaming error: {exc}"])
-
-        if options.output is not None:
-            # Write streamed chunks to file
-            try:
-                options.output.parent.mkdir(parents=True, exist_ok=True)
-                with options.output.open("w", encoding="utf-8") as fh:
-                    for chunk in gen:
-                        fh.write(chunk)
-                    fh.write("\n")
-            except OSError as exc:
-                return ExportResult(
-                    success=False, errors=[f"Write error: {exc}"]
-                )
-            LOGGER.info(
-                "export_stream_complete",
-                view=view,
-                files=file_count,
-                output=str(options.output),
-            )
-            return ExportResult(
-                success=True,
-                entity_count=entity_count,
-                file_count=file_count,
-                output_path=options.output,
-            )
-        else:
-            # Return generator for caller to consume
-            return ExportResult(
-                success=True,
-                entity_count=entity_count,
-                file_count=file_count,
-                stream_generator=gen,
-            )
-
     # --- Batch mode: generate view dict ---
     try:
         data = _generate_view(bsg_map, view, options)
@@ -427,7 +500,7 @@ def run_export(options: ExportOptions) -> ExportResult:
 
     # --- Write output ---
     try:
-        _write_output(content, options.output)
+        _write_output(content, output_path)
     except OSError as exc:
         return ExportResult(success=False, errors=[f"Write error: {exc}"])
 
@@ -438,46 +511,69 @@ def run_export(options: ExportOptions) -> ExportResult:
         files=file_count,
         entities=entity_count,
         duration_ms=elapsed_ms,
-        output=str(options.output) if options.output else "stdout",
+        output=str(output_path),
     )
 
     return ExportResult(
         success=True,
         entity_count=entity_count,
         file_count=file_count,
-        output_path=options.output,
+        output_path=output_path,
     )
 
 
 def _generate_view(bsg_map: "BSGMap", view: str, options: ExportOptions) -> dict:
     """Dispatch to the appropriate view generator."""
-    if view == "storage":
-        return bsg_map.render_storage_view()
+    from typing import Any
 
-    if view == "agent":
+    data: dict[str, Any]
+
+    if view == "storage":
+        data = bsg_map.render_storage_view()
+
+    elif view == "agent":
         view_dict, _stats = bsg_map.render_agent_view(
             token_budget=options.token_budget
         )
-        return view_dict
+        data = view_dict
 
-    if view == "overview":
-        return bsg_map.render_overview_json()
+    elif view == "overview":
+        data = bsg_map.render_overview_json()
 
-    if view == "files":
-        return bsg_map.render_files_json()
+    elif view == "files":
+        data = bsg_map.render_files_json()
 
-    if view == "symbols":
-        return _generate_symbols_view(bsg_map)
+    elif view == "symbols":
+        data = _generate_symbols_view(bsg_map)
 
-    if view == "dependencies":
-        return _generate_dependencies_view(bsg_map)
+    elif view == "dependencies":
+        data = _generate_dependencies_view(bsg_map)
 
-    if view == "delta":
+    elif view == "delta":
         if options.baseline_path is None:
             raise ValueError(
                 "--baseline is required for the delta view. "
                 "Provide the path to a previous export JSON."
             )
-        return _generate_delta_view(bsg_map, options.baseline_path)
+        data = _generate_delta_view(bsg_map, options.baseline_path)
 
-    raise ValueError(f"Unhandled view: {view}")
+    elif view == "rel":
+        data = _generate_relationships_view(bsg_map)
+        # Return early for rel view - --rel flag doesn't modify it
+        return data
+
+    else:
+        raise ValueError(f"Unhandled view: {view}")
+
+    # Inject relationships blob if --rel flag is set (except for 'rel' view itself)
+    if options.include_relationships:
+        relationships = []
+        for rel in bsg_map._relationships:
+            if hasattr(rel, "to_dict"):
+                relationships.append(rel.to_dict())
+            else:
+                relationships.append(dict(rel))
+        data["relationships"] = relationships
+        data["relationship_count"] = len(relationships)
+
+    return data

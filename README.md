@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">B.A.T.H.O</h1>
-
+change
 <p align="center">
   <strong>Bidirectional AST Traversal & Hypergraph Orchestrator</strong><br>
   <b>BATHO</b> indexes your codebase, compresses the result for LLM context windows, and tracks changes over time.

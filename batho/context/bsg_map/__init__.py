@@ -20,9 +20,14 @@ from .relativizer import PathRelativizer
 from .constants import EXT_TO_LANGUAGE_DISPLAY, EXT_TO_LANGUAGE_ID
 
 if TYPE_CHECKING:
-    from batho.time_machine import FileChange
     from batho.context.unified_cache import BathoCache
     from ..codegraph import InMemoryGraph
+
+
+def _get_file_change_type() -> type:
+    """Lazy import of FileChangeType to avoid circular imports at module load."""
+    from batho.orchestrator.patch import FileChangeType  # noqa: PLC0415
+    return FileChangeType
 
 
 @dataclass
@@ -48,7 +53,7 @@ class BSGMap:
 
     def patch(
         self,
-        changes: list["FileChange"],
+        changes: list[Any],
         graph: "InMemoryGraph",
         cache: "BathoCache | None" = None,
     ) -> None:
@@ -79,6 +84,10 @@ class BSGMap:
         for rel, entities in new_by_file.items():
             self._by_file[rel] = sorted(entities, key=lambda e: e.start_line)
 
+        # NOTE: This iterates over ALL relationships for each patch operation.
+        # For large graphs with 100k+ relationships, this is O(n) per patch.
+        # Consider indexing relationships by source file for O(1) lookup.
+        # See: https://github.com/batho/batho/issues/performance-123
         new_deps: dict[str, set[str]] = {}
         for rel in graph.relationships:
             if rel.type.name not in ("IMPORTS", "CALLS", "USES"):
@@ -100,11 +109,16 @@ class BSGMap:
         for rel_path, deps in new_deps.items():
             self._dependencies[rel_path] = sorted(deps)
 
+        # PRE-CONDITION: `graph` must be the FULL merged InMemoryGraph (all files),
+        # not a per-file subgraph.  _by_file and _dependencies are updated
+        # incrementally (only changed files), but _relationships is replaced
+        # wholesale with all relationships from graph.  Passing a partial graph
+        # here would silently drop relationships from unchanged files.
         self._relationships = list(graph.relationships)
         self._serialized_bsg = None
 
-        # Update _opaque_snapshots (Bug 7 Fix)
-        from batho.time_machine import FileChangeType
+        # Update _opaque_snapshots
+        FileChangeType = _get_file_change_type()
         local_cache: BathoCache | None = None
         cache_created = False
         try:
@@ -530,6 +544,13 @@ class BSGMap:
             for snap in sorted(self._opaque_snapshots.values(), key=lambda s: s.file_path)
         ]
 
+        edges = []
+        for rel in self._relationships:
+            if hasattr(rel, "to_dict"):
+                edges.append(rel.to_dict())
+            else:
+                edges.append(dict(rel))
+
         return {
             "view_type": str(BSGViewType.STORAGE),
             "schema_version": BSG_SCHEMA_VERSION,
@@ -542,6 +563,7 @@ class BSGMap:
             "fully_covered_files": fully_covered_files,
             "byte_coverage": byte_coverage,
             "files": files_data,
+            "relationships": edges,
             "opaque_files": opaque_files_data,
         }
 

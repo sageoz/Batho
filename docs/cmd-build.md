@@ -2,7 +2,9 @@
 
 ## Overview
 
-`batho build` performs a **complete, from-scratch index** of a repository. It creates an `artifact_<dirname>.batho` SQLite database containing the full code graph, BSG map, context outputs, baseline snapshot, and file tracking records.
+`batho build` performs a **complete, from-scratch index** of a repository. It creates an `artifact_<dirname>.batho` SQLite database containing the full BSG map stored as **three zstd-compressed blobs per file** (`bsg_agent_view`, `bsg_storage_view`, `bsg_rel_view`), file tracking records, and a searchable entity index.
+
+> **Schema:** Databases are stamped with `SCHEMA_VERSION = batho-db.v6`. Existing databases with a mismatched version are rejected at startup — run `batho build --full` to rebuild.
 
 Run this once on a new repository. For subsequent updates, use [`batho patch`](./cmd-patch.md).
 
@@ -27,7 +29,7 @@ batho build [--root PATH] [--full] [--verbose]
 | `--max-workers` | `int` | CPU count | Maximum parallel workers for the AST parsing phase |
 | `--max-file-size-kb` | `int` | `500` (from config) | Skip files exceeding this size in kilobytes |
 
-> **Note:** Without `--full`, if a database already exists at `<root>/artifact_<dirname>.batho`, the command exits immediately and suggests using `batho patch` or `batho build --full`.
+> **Note:** Without `--full`, if a database already exists at `<root>/artifact_<dirname>.batho`, the command exits immediately and suggests using `batho patch` or `batho build --full`. A v1 database at that path is automatically deleted and rebuilt as v2.
 
 ---
 
@@ -50,27 +52,22 @@ flowchart TD
         BUILD_GRAPH[CodeGraphIndexer.build_graph\nAST parse all files in parallel]
         CHECK_ENTITIES{entity_count == 0?}
         EXIT_NO_ENTITIES["Exit 1: No indexable files found"]:::error
-        PERSIST_GRAPH[Insert entities + relationships\ninto graph_entities / graph_relationships]
     end
 
     subgraph BSG["Phase 3: BSG Map"]
         APPLY_RULES[Apply BSG plugin rules\nbatho.yaml rules section]
-        LOAD_OPAQUE[Load opaque snapshots\nfor unindexed files]
+        LOAD_OPAQUE[Collect opaque file snapshots\nfor unindexed files]
         BUILD_BSG[BSGMap.build from graph\n+ opaque snapshots]
-        PERSIST_BSG[Insert bsg_entries per file\nview_type = agent]
     end
 
-    subgraph CONTEXT["Phase 4: Context Outputs"]
-        BUILD_OVERVIEW[Build overview JSON\nentity types + file distribution]
-        BUILD_FILES[Build files JSON\nby extension + category]
-        PERSIST_CONTEXT[set_context_output\noverview + files]
+    subgraph BLOBS["Phase 4: Compressed Blob Persistence → file_artifacts"]
+        GROUP_FILES[Group entities + relationships\nby relative file path]
+        BUILD_VIEWS[Build three view dicts per file:\nbsg_agent_view · bsg_storage_view · bsg_rel_view]
+        INSERT_BLOBS[insert_file_artifact per file\nzstd-compress each blob level=3\nINSERT into file_artifacts WITHOUT ROWID]
+        UPDATE_QE[update_query_entities\nINSERT into query_entities\nfor fast name/FQN search]
     end
 
-    subgraph SNAPSHOT["Phase 5: Baseline Snapshot"]
-        CREATE_SNAP[create_snapshot\nlabel = baseline]
-    end
-
-    subgraph TRACKING["Phase 6: File Tracking"]
+    subgraph TRACKING["Phase 5: File Tracking"]
         BUILD_TRACKING[Build file_tracking records\ncontent_hash + mtime + size]
         PERSIST_TRACKING[upsert_file_tracking]
     end
@@ -88,22 +85,57 @@ flowchart TD
     INIT_DB --> BUILD_GRAPH
     BUILD_GRAPH --> CHECK_ENTITIES
     CHECK_ENTITIES -->|Yes| EXIT_NO_ENTITIES
-    CHECK_ENTITIES -->|No| PERSIST_GRAPH
-    PERSIST_GRAPH --> APPLY_RULES
+    CHECK_ENTITIES -->|No| APPLY_RULES
     APPLY_RULES --> LOAD_OPAQUE
     LOAD_OPAQUE --> BUILD_BSG
-    BUILD_BSG --> PERSIST_BSG
-    PERSIST_BSG --> BUILD_OVERVIEW
-    BUILD_OVERVIEW --> BUILD_FILES
-    BUILD_FILES --> PERSIST_CONTEXT
-    PERSIST_CONTEXT --> CREATE_SNAP
-    CREATE_SNAP --> BUILD_TRACKING
+    BUILD_BSG --> GROUP_FILES
+    GROUP_FILES --> BUILD_VIEWS
+    BUILD_VIEWS --> INSERT_BLOBS
+    INSERT_BLOBS --> UPDATE_QE
+    UPDATE_QE --> BUILD_TRACKING
     BUILD_TRACKING --> PERSIST_TRACKING
     PERSIST_TRACKING --> COMPLETE
     COMPLETE --> SUCCESS
 
     classDef error fill:#fca5a5,stroke:#dc2626,color:#7f1d1d
     classDef success fill:#bbf7d0,stroke:#16a34a,color:#14532d
+```
+
+---
+
+## SQLite Blob Interaction
+
+How `batho build` writes to each table in the artifact database:
+
+```mermaid
+flowchart TD
+    subgraph PARSE["AST Parse + BSG"]
+        SRC[Source files]
+        PARSER[CodeGraphIndexer\nParse in parallel]
+        BSG[BSGMap.build\nApply plugin rules]
+        SRC --> PARSER --> BSG
+    end
+
+    subgraph SQLITE["artifact_&lt;dirname&gt;.batho"]
+        DB_META[(db_meta\nschema_version=batho-db.v6)]
+        SD[(string_dict\nfile paths · entity types)]
+        IR[(index_runs\nstatus: running → completed)]
+        FA[(file_artifacts\nbsg_agent_view BLOB\nbsg_storage_view BLOB\nbsg_rel_view BLOB\ncontent_hash TEXT)]
+        FT[(file_tracking\nhash · mtime · size)]
+        QE[(query_entities\nname · type · fqn · line)]
+    end
+
+    BSG -->|get_or_create_string_id per file| SD
+    BSG -->|insert_file_artifact\nzstd-compress 3 blobs| FA
+    SD -.->|file_id FK| FA
+    BSG -->|update_query_entities| QE
+    BSG -->|upsert_file_tracking| FT
+    BSG -->|create_run / complete_run| IR
+    BSG -->|write schema_version\ncreated_at · repo_root| DB_META
+
+    style FA fill:#dbeafe,stroke:#2563eb
+    style SD fill:#f0fdf4,stroke:#16a34a
+    style QE fill:#faf5ff,stroke:#7c3aed
 ```
 
 ---

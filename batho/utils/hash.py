@@ -129,33 +129,26 @@ def compute_string_hash(
 
 def compute_file_hash(filepath: Path | str, chunk_size: int = 8192) -> str | None:
     """
-    Compute content-aware signature of file contents.
+    Compute SHA256 hash of file contents.
 
-    For text files: SHA256 hash of contents.
-    For binary files: size_mtime signature.
-    Efficiently handles large files by reading in chunks.
+    Uses chunked reading for efficient handling of large files.
+    Note: Previously returned size_mtime for binary files, but now always
+    returns SHA256 for consistency with build operations.
 
     Args:
         filepath: Path to file
         chunk_size: Size of chunks to read (default: 8KB)
 
     Returns:
-        Signature string, or None if file cannot be read
+        SHA256 hex digest string, or None if file cannot be read
     """
     try:
         path = Path(filepath)
-        stat = path.stat()
-        size = stat.st_size
-        mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+        sha256_hash = hashlib.sha256()
         with open(path, "rb") as f:
-            first_chunk = f.read(min(1024, size))
-            if _is_binary(first_chunk):
-                return f"{size}_{mtime.isoformat()}"
-            else:
-                sha256_hash = hashlib.sha256(first_chunk)
-                for chunk in iter(lambda: f.read(chunk_size), b""):
-                    sha256_hash.update(chunk)
-                return sha256_hash.hexdigest()
+            for chunk in iter(lambda: f.read(chunk_size), b""):
+                sha256_hash.update(chunk)
+        return sha256_hash.hexdigest()
     except (IOError, OSError):
         return None
 
@@ -175,7 +168,7 @@ def compute_file_hash_cached(filepath: str, mtime: float) -> str | None:
     return compute_file_hash(filepath)
 
 
-def generate_entity_id(entity_type: str, name: str, file: str, line: int) -> str:
+def generate_entity_id(entity_type: str, name: str, file: str) -> str:
     """
     Generate deterministic entity ID (16-char truncated hash).
 
@@ -186,12 +179,11 @@ def generate_entity_id(entity_type: str, name: str, file: str, line: int) -> str
         entity_type: Type of entity (e.g., 'FUNCTION', 'CLASS')
         name: Entity name
         file: File path
-        line: Line number
 
     Returns:
         16-character hexadecimal hash string
     """
-    content = f"{entity_type}:{name}:{file}:{line}"
+    content = f"{entity_type}:{name}:{file}"
     return compute_string_hash(content, truncate=16)
 
 

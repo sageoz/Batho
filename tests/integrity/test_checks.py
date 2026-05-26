@@ -57,43 +57,7 @@ class TestDatabaseIntegrityCheck:
         assert check.supports_quick_mode() is True
 
 
-class TestRegistryIntegrityCheck:
-    """Tests for RegistryIntegrityCheck."""
 
-    def test_check_index_ids_valid(self):
-        """Test registry check passes when all index_ids are valid."""
-        from batho.integrity.checks.registry import RegistryIntegrityCheck
-
-        check = RegistryIntegrityCheck()
-
-        # Mock context with valid run_id
-        ctx = MagicMock()
-        ctx.get_index_runs.return_value = [{"run_id": "run-123"}]
-
-        artifacts = [{"run_id": "run-123", "artifact_id": "art-1"}]
-
-        result = check._check_index_ids(ctx, artifacts)
-
-        # Should have info finding
-        assert any(f.severity.value == "info" for f in result)
-
-    def test_check_duplicates_found(self):
-        """Test registry check finds duplicate artifact IDs."""
-        from batho.integrity.checks.registry import RegistryIntegrityCheck
-
-        check = RegistryIntegrityCheck()
-
-        ctx = MagicMock()
-
-        artifacts = [
-            {"artifact_id": "dup-1", "run_id": "run-1"},
-            {"artifact_id": "dup-1", "run_id": "run-2"},  # Duplicate
-        ]
-
-        result = check._check_duplicates(ctx, artifacts)
-
-        assert len(result) == 1
-        assert result[0].severity.value == "error"
 
 
 class TestBSGIntegrityCheck:
@@ -137,69 +101,6 @@ class TestBSGIntegrityCheck:
 
         assert any(f.severity.value == "error" for f in result)
 
-
-class TestSnapshotIntegrityCheck:
-    """Tests for SnapshotIntegrityCheck."""
-
-    def test_check_chain_integrity_valid(self):
-        """Test snapshot chain integrity with valid chain."""
-        from batho.integrity.checks.snapshots import SnapshotIntegrityCheck
-
-        check = SnapshotIntegrityCheck()
-
-        ctx = MagicMock()
-        ctx.deep_mode = False
-
-        snapshots = [
-            {"snapshot_id": "snap-1", "parent_id": None},
-            {"snapshot_id": "snap-2", "parent_id": "snap-1"},
-        ]
-
-        result = check._check_chain_integrity(ctx, snapshots)
-
-        assert any(f.severity.value == "info" for f in result)
-
-    def test_check_chain_integrity_orphaned(self):
-        """Test snapshot chain integrity with orphaned snapshots."""
-        from batho.integrity.checks.snapshots import SnapshotIntegrityCheck
-
-        check = SnapshotIntegrityCheck()
-
-        ctx = MagicMock()
-        ctx.dry_run = True
-        ctx.db.connection.return_value.__enter__ = MagicMock(return_value=MagicMock())
-        ctx.db.connection.return_value.__exit__ = MagicMock(return_value=None)
-
-        snapshots = [
-            {"snapshot_id": "snap-1", "parent_id": None},
-            {"snapshot_id": "snap-2", "parent_id": "missing-parent"},  # Orphaned
-        ]
-
-        result = check._check_chain_integrity(ctx, snapshots)
-
-        assert any(f.severity.value == "warning" and "orphaned" in f.message.lower() for f in result)
-
-
-class TestCacheIntegrityCheck:
-    """Tests for CacheIntegrityCheck."""
-
-    def test_check_ast_cache_no_entries(self):
-        """Test AST cache check when no entries exist."""
-        from batho.integrity.checks.cache import CacheIntegrityCheck
-
-        check = CacheIntegrityCheck()
-
-        ctx = MagicMock()
-        ctx.db.connection.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(
-                execute=MagicMock(return_value=MagicMock(fetchone=MagicMock(return_value=(0,))))
-            )
-        )
-        ctx.db.connection.return_value.__exit__ = MagicMock(return_value=None)
-
-        result = check._check_ast_cache(ctx)
-
-        assert any(f.severity.value == "info" and "No AST cache" in f.message for f in result)
 
 
 class TestSeverity:

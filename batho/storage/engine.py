@@ -1,15 +1,8 @@
 """batho/storage/engine.py — Unified SQLite persistence engine.
 
-Per-directory `artifact_<dirname>.batho` database that replaces the legacy `.ctn` directory.
+Per-directory `artifact_<dirname>.batho` database.
 All graph data, BSG payloads, context outputs, snapshots, and sync metadata
 live in one ACID-compliant SQLite database per project.
-
-Usage:
-    from batho.storage import get_database
-
-    db = get_database(repo_root)
-    with db.connection() as conn:
-        conn.execute("SELECT ...")
 """
 
 from __future__ import annotations
@@ -17,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import importlib.resources
 import json
+import orjson
 import re
 import sqlite3
 import sys
@@ -25,6 +19,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
+import zstandard as zstd
 
 from batho.utils.logging import get_logger
 
@@ -34,15 +29,15 @@ LOGGER = get_logger(__name__, component="storage_engine")
 # Constants
 # ---------------------------------------------------------------------------
 
-BATHO_DB_FILENAME = ".batho"  # Legacy constant, use artifact_filename() instead
+BATHO_DB_FILENAME = ".batho"
 BATHO_CONFIG_DIR = ".batho-config"
-SCHEMA_VERSION = "batho-db.v1"
+SCHEMA_VERSION = "batho-db.v7"
 DEFAULT_PAGE_SIZE = 8192
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 
 # Module-level cache
 _DB_CACHE: dict[str, "BathoDatabase"] = {}
-_DB_CACHE_LOCK = threading.Lock()
+_DB_CACHE_LOCK = threading.RLock()
 
 
 def artifact_filename(root: Path) -> str:
@@ -68,21 +63,157 @@ def _load_schema_sql() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Key Minification and Expansion (v4)
+# ---------------------------------------------------------------------------
+
+def _minify_entity(e: dict[str, Any]) -> dict[str, Any]:
+    mini = {}
+    if "id" in e:
+        mini["id"] = e["id"]
+    
+    key_map = {
+        "entity_type": "ty",
+        "type": "ty",
+        "name": "n",
+        "file": "f",
+        "start_line": "sl",
+        "end_line": "el",
+        "signature": "s",
+        "parent_id": "p",
+        "content_hash": "h",
+        "ast_node_type": "an",
+        "start_byte": "sb",
+        "end_byte": "eb",
+        "raw_content": "rc",
+        "raw_bytes": "rb",
+        "children_order": "co",
+        "metadata": "m",
+    }
+    for k, v in key_map.items():
+        if k in e and e[k] is not None:
+            mini[v] = e[k]
+            
+    if "syntax_glue" in e and e["syntax_glue"]:
+        sg = e["syntax_glue"]
+        mini_sg = {}
+        if "leading_whitespace" in sg:
+            mini_sg["lw"] = sg["leading_whitespace"]
+        if "trailing_whitespace" in sg:
+            mini_sg["tw"] = sg["trailing_whitespace"]
+        mini["sg"] = mini_sg
+        
+    return mini
+
+
+def _expand_entity(mini: dict[str, Any]) -> dict[str, Any]:
+    e = {}
+    if "id" in mini:
+        e["id"] = mini["id"]
+        
+    rev_map = {
+        "ty": "entity_type",
+        "n": "name",
+        "f": "file",
+        "sl": "start_line",
+        "el": "end_line",
+        "s": "signature",
+        "p": "parent_id",
+        "h": "content_hash",
+        "an": "ast_node_type",
+        "sb": "start_byte",
+        "eb": "end_byte",
+        "rc": "raw_content",
+        "rb": "raw_bytes",
+        "co": "children_order",
+        "m": "metadata",
+    }
+    for k, v in rev_map.items():
+        if k in mini:
+            e[v] = mini[k]
+            if v == "entity_type":
+                e["type"] = mini[k]
+            
+    if "sg" in mini and mini["sg"]:
+        sg = mini["sg"]
+        e["syntax_glue"] = {
+            "leading_whitespace": sg.get("lw", ""),
+            "trailing_whitespace": sg.get("tw", ""),
+        }
+        e["leading_whitespace"] = sg.get("lw", "")
+        e["trailing_whitespace"] = sg.get("tw", "")
+        
+    return e
+
+
+def _minify_relationship(r: dict[str, Any]) -> dict[str, Any]:
+    mini = {}
+    if "id" in r:
+        mini["id"] = r["id"]
+    elif "relationship_id" in r:
+        mini["id"] = r["relationship_id"]
+        
+    key_map = {
+        "type": "rt",
+        "relationship_type": "rt",
+        "source_id": "s",
+        "target_id": "t",
+        "metadata": "m",
+    }
+    for k, v in key_map.items():
+        if k in r and r[k] is not None:
+            mini[v] = r[k]
+    return mini
+
+
+def _expand_relationship(mini: dict[str, Any]) -> dict[str, Any]:
+    r = {}
+    if "id" in mini:
+        r["id"] = mini["id"]
+        r["relationship_id"] = mini["id"]
+        
+    rev_map = {
+        "rt": "type",
+        "s": "source_id",
+        "t": "target_id",
+        "m": "metadata",
+    }
+    for k, v in rev_map.items():
+        if k in mini:
+            r[v] = mini[k]
+    if "type" in r:
+        r["relationship_type"] = r["type"]
+    return r
+
+
+def _minify_graph_payload(graph_data: dict[str, Any]) -> dict[str, Any]:
+    mini = {}
+    if "entities" in graph_data:
+        mini["e"] = [_minify_entity(e) for e in graph_data["entities"]]
+    if "relationships" in graph_data:
+        mini["r"] = [_minify_relationship(r) for r in graph_data["relationships"]]
+    return mini
+
+
+def _expand_graph_payload(minified: dict[str, Any]) -> dict[str, Any]:
+    expanded = {}
+    if "e" in minified:
+        expanded["entities"] = [_expand_entity(e) for e in minified["e"]]
+    else:
+        expanded["entities"] = []
+    if "r" in minified:
+        expanded["relationships"] = [_expand_relationship(r) for r in minified["r"]]
+    else:
+        expanded["relationships"] = []
+    return expanded
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 
 def get_database(repo_root: Path | str, *, db_path: Path | str | None = None) -> "BathoDatabase":
-    """Get or create a BathoDatabase instance for a repository.
-
-    Args:
-        repo_root: Path to the repository root.
-        db_path: Optional override for the .batho file location.
-                 If None, defaults to <repo_root>/artifact_<dirname>.batho.
-
-    Returns:
-        A cached BathoDatabase instance.
-    """
+    """Get or create a BathoDatabase instance for a repository."""
     root = Path(repo_root).resolve()
     if db_path is not None:
         resolved_path = Path(db_path).resolve()
@@ -113,11 +244,7 @@ def close_all_databases() -> None:
 
 
 class BathoDatabase:
-    """Unified SQLite persistence engine for a single Batho project.
-
-    Thread-safe. Uses WAL mode for concurrent read/write access.
-    All tables are created on first open via schema.sql.
-    """
+    """Unified SQLite persistence engine for a single Batho project."""
 
     def __init__(self, db_path: Path, *, repo_root: Path | None = None) -> None:
         self._db_path = db_path.resolve()
@@ -126,29 +253,53 @@ class BathoDatabase:
         self._local = threading.local()
         self._closed = False
         self._initialized = False
+        self._string_dict_cache: dict[str, int] = {}
+        self._string_val_cache: dict[int, str] = {}
+        self._cctx = zstd.ZstdCompressor(level=3)
+        self._dctx = zstd.ZstdDecompressor()
+
+        # Guard: Check schema version if file exists (schema mismatch guard)
+        if self._db_path.exists() and self._db_path.stat().st_size > 0:
+            try:
+                conn = sqlite3.connect(str(self._db_path), timeout=5.0)
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT value FROM db_meta WHERE key = 'schema_version'"
+                ).fetchone()
+                conn.close()
+                if row:
+                    val = row["value"]
+                    if val != SCHEMA_VERSION:
+                        raise RuntimeError(
+                            f"Database schema mismatch. Found {val}, expected {SCHEMA_VERSION}. "
+                            "Please rebuild the database using 'batho build --full'."
+                        )
+                else:
+                    raise RuntimeError(
+                        f"Database schema mismatch (missing schema version). "
+                        "Please rebuild the database using 'batho build --full'."
+                    )
+            except sqlite3.OperationalError:
+                raise RuntimeError(
+                    f"Database schema mismatch (db_meta table missing). "
+                    "Please rebuild the database using 'batho build --full'."
+                )
+
         self._initialize()
 
     @property
     def path(self) -> Path:
-        """Absolute path to the .batho database file."""
         return self._db_path
 
     @property
     def repo_root(self) -> Path:
-        """Absolute path to the repository root."""
         return self._repo_root
 
     @property
     def exists(self) -> bool:
-        """Whether the database file currently exists on disk."""
         return self._db_path.exists()
 
-    # ------------------------------------------------------------------
-    # Connection management
-    # ------------------------------------------------------------------
-
     def _get_connection(self) -> sqlite3.Connection:
-        """Return (or create) a per-thread SQLite connection."""
         if self._closed:
             raise RuntimeError("BathoDatabase is closed")
 
@@ -165,13 +316,12 @@ class BathoDatabase:
         return self._local.conn
 
     def _apply_pragmas(self, conn: sqlite3.Connection) -> None:
-        """Apply performance and durability pragmas."""
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA temp_store = MEMORY")
         conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS}")
-        conn.execute(f"PRAGMA cache_size = -8000")  # 8 MiB
+        conn.execute("PRAGMA cache_size = -128000")  # Larger cache
+        conn.execute("PRAGMA mmap_size = 30000000000")  # Enable memory-mapped I/O up to 30GB
 
-        # WAL mode: set once, persists across connections
         current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         if current_mode.lower() != "wal":
             if sys.platform == "win32":
@@ -179,19 +329,10 @@ class BathoDatabase:
             else:
                 conn.execute("PRAGMA journal_mode = WAL")
 
-        conn.execute("PRAGMA synchronous = FULL")
+        conn.execute("PRAGMA synchronous = NORMAL")
 
     @contextmanager
     def connection(self, *, read_only: bool = False) -> Iterator[sqlite3.Connection]:
-        """Acquire a database connection from the per-thread pool.
-
-        Args:
-            read_only: Hint that this connection will only SELECT.
-                       Currently informational; may optimize in future.
-
-        Yields:
-            An open sqlite3.Connection with Row factory.
-        """
         conn = self._get_connection()
         try:
             yield conn
@@ -201,11 +342,6 @@ class BathoDatabase:
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Context manager for an explicit transaction with auto-commit/rollback.
-
-        Yields:
-            An open sqlite3.Connection inside a BEGIN...COMMIT block.
-        """
         conn = self._get_connection()
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -215,19 +351,13 @@ class BathoDatabase:
             conn.rollback()
             raise
 
-    # ------------------------------------------------------------------
-    # Initialization
-    # ------------------------------------------------------------------
-
     def _initialize(self) -> None:
-        """Create schema tables if this is a fresh database."""
         if self._initialized:
             return
 
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Set page size BEFORE any tables are created (must be on empty DB)
             if not self._db_path.exists():
                 conn = sqlite3.connect(str(self._db_path), timeout=5)
                 conn.execute(f"PRAGMA page_size = {DEFAULT_PAGE_SIZE}")
@@ -248,9 +378,11 @@ class BathoDatabase:
                 "INSERT OR IGNORE INTO db_meta(key, value, updated_at) VALUES (?, ?, ?)",
                 ("created_at", now, now),
             )
+            
+            repo_root_str = str(self._repo_root)
             conn.execute(
                 "INSERT OR IGNORE INTO db_meta(key, value, updated_at) VALUES (?, ?, ?)",
-                ("repo_root", str(self._repo_root), now),
+                ("repo_root", repo_root_str, now),
             )
             conn.commit()
             self._initialized = True
@@ -272,7 +404,6 @@ class BathoDatabase:
     # ------------------------------------------------------------------
 
     def get_meta(self, key: str) -> str | None:
-        """Get a value from db_meta."""
         with self.connection(read_only=True) as conn:
             row = conn.execute(
                 "SELECT value FROM db_meta WHERE key = ?", (key,)
@@ -280,7 +411,6 @@ class BathoDatabase:
             return row["value"] if row else None
 
     def set_meta(self, key: str, value: str) -> None:
-        """Set a value in db_meta."""
         now = datetime.now(timezone.utc).isoformat()
         with self.connection() as conn:
             conn.execute(
@@ -290,42 +420,96 @@ class BathoDatabase:
             conn.commit()
 
     # ------------------------------------------------------------------
+    # String dictionary
+    # ------------------------------------------------------------------
+
+    def get_or_create_string_id(self, val: str) -> int:
+        """Get or create the string ID for a value in string_dict."""
+        if val in self._string_dict_cache:
+            return self._string_dict_cache[val]
+
+        with self.connection() as conn:
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO string_dict(val) VALUES (?)",
+                (val,),
+            )
+            if cursor.rowcount == 0:
+                row = conn.execute(
+                    "SELECT id FROM string_dict WHERE val = ?",
+                    (val,),
+                ).fetchone()
+                sid = row["id"]
+            else:
+                sid = cursor.lastrowid
+            conn.commit()
+            self._string_dict_cache[val] = sid
+            self._string_val_cache[sid] = val
+            return sid
+
+    def get_string_val(self, sid: int) -> str | None:
+        """Get the string value for a string ID from string_dict."""
+        if sid in self._string_val_cache:
+            return self._string_val_cache[sid]
+
+        with self.connection(read_only=True) as conn:
+            row = conn.execute(
+                "SELECT val FROM string_dict WHERE id = ?",
+                (sid,),
+            ).fetchone()
+            val = row["val"] if row else None
+            if val is not None:
+                self._string_val_cache[sid] = val
+                self._string_dict_cache[val] = sid
+            return val
+
+    # ------------------------------------------------------------------
     # Index Runs
     # ------------------------------------------------------------------
 
     def create_run(
         self,
-        run_id: str,
+        run_uuid: str,
         *,
         schema_version: str = "",
         root_path: str = "",
         git_commit: str | None = None,
         git_branch: str | None = None,
-        config_hash: str | None = None,
-    ) -> None:
-        """Register a new index run."""
+    ) -> int:
+        """Register a new index run. Returns internal row ID."""
         now = datetime.now(timezone.utc).isoformat()
+        root_path_str = root_path or str(self._repo_root)
+        root_path_id = self.get_or_create_string_id(root_path_str)
+
         with self.connection() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """INSERT INTO index_runs(
-                    run_id, schema_version, started_at, status,
-                    git_commit, git_branch, root_path, config_hash
-                ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?)""",
+                    run_uuid, schema_version, started_at, status,
+                    git_commit, git_branch, root_path_id
+                ) VALUES (?, ?, ?, 'running', ?, ?, ?)""",
                 (
-                    run_id,
+                    run_uuid,
                     schema_version or SCHEMA_VERSION,
                     now,
                     git_commit,
                     git_branch,
-                    root_path or str(self._repo_root),
-                    config_hash,
+                    root_path_id,
                 ),
             )
             conn.commit()
+            return cursor.lastrowid
+
+    def get_run_internal_id(self, run_uuid: str) -> int | None:
+        """Get the internal index_runs.id for a run_uuid."""
+        with self.connection(read_only=True) as conn:
+            row = conn.execute(
+                "SELECT id FROM index_runs WHERE run_uuid = ?",
+                (run_uuid,),
+            ).fetchone()
+            return row["id"] if row else None
 
     def complete_run(
         self,
-        run_id: str,
+        run_uuid: str,
         *,
         entity_count: int = 0,
         rel_count: int = 0,
@@ -343,12 +527,12 @@ class BathoDatabase:
                     rel_count = ?,
                     file_count = ?,
                     duration_ms = ?
-                WHERE run_id = ?""",
-                (now, entity_count, rel_count, file_count, duration_ms, run_id),
+                WHERE run_uuid = ?""",
+                (now, entity_count, rel_count, file_count, duration_ms, run_uuid),
             )
             conn.commit()
 
-    def fail_run(self, run_id: str, *, error_message: str = "") -> None:
+    def fail_run(self, run_uuid: str, *, error_message: str = "") -> None:
         """Mark a run as failed."""
         now = datetime.now(timezone.utc).isoformat()
         with self.connection() as conn:
@@ -357,306 +541,517 @@ class BathoDatabase:
                     status = 'failed',
                     completed_at = ?,
                     error_message = ?
-                WHERE run_id = ?""",
-                (now, error_message, run_id),
+                WHERE run_uuid = ?""",
+                (now, error_message, run_uuid),
             )
             conn.commit()
 
     def get_latest_run_id(self) -> str | None:
-        """Get the run_id of the most recent completed run."""
+        """Get the run_uuid of the most recent completed run."""
         with self.connection(read_only=True) as conn:
             row = conn.execute(
-                """SELECT run_id FROM index_runs
+                """SELECT run_uuid FROM index_runs
                 WHERE status = 'completed'
                 ORDER BY completed_at DESC LIMIT 1"""
             ).fetchone()
-            return row["run_id"] if row else None
+            return row["run_uuid"] if row else None
 
-    def get_run(self, run_id: str) -> dict[str, Any] | None:
+    def get_run(self, run_uuid: str) -> dict[str, Any] | None:
         """Get full run metadata."""
         with self.connection(read_only=True) as conn:
             row = conn.execute(
-                "SELECT * FROM index_runs WHERE run_id = ?", (run_id,)
+                "SELECT * FROM index_runs WHERE run_uuid = ?", (run_uuid,)
             ).fetchone()
             if row is None:
                 return None
-            return dict(row)
+            run_dict = dict(row)
+            if "root_path_id" in run_dict:
+                run_dict["root_path"] = self.get_string_val(run_dict["root_path_id"])
+            return run_dict
 
-    def delete_run(self, run_id: str) -> None:
-        """Delete a run and all cascaded data (entities, rels, BSG, context)."""
+    def delete_run(self, run_uuid: str) -> None:
+        """Delete a run and all cascaded data."""
         with self.connection() as conn:
-            conn.execute("DELETE FROM index_runs WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM index_runs WHERE run_uuid = ?", (run_uuid,))
             conn.commit()
 
+    def get_entity_count(self, run_uuid: str) -> int:
+        run = self.get_run(run_uuid)
+        return run["entity_count"] if run else 0
+
+    def get_relationship_count(self, run_uuid: str) -> int:
+        run = self.get_run(run_uuid)
+        return run["rel_count"] if run else 0
+
     # ------------------------------------------------------------------
-    # Graph Entities (bulk operations)
+    # File Artifacts
     # ------------------------------------------------------------------
 
-    def insert_entities(self, run_id: str, entities: list[dict[str, Any]]) -> int:
-        """Bulk insert graph entities for a run.
+    def insert_file_artifact(
+        self,
+        run_internal_id: int,
+        file_path: str,
+        content_hash: str,
+        agent_view_data: dict[str, Any],
+        storage_delta_data: dict[str, Any],
+        relationships_data: list[dict[str, Any]],
+    ) -> None:
+        """Insert or replace a file artifact, compressing the three views individually."""
+        file_id = self.get_or_create_string_id(file_path)
 
-        Args:
-            run_id: The index run these entities belong to.
-            entities: List of entity dicts with keys matching Entity.to_dict().
+        # Minify payloads
+        minified_agent = _minify_graph_payload(agent_view_data)
+        minified_storage = _minify_graph_payload(storage_delta_data)
+        minified_rels = [_minify_relationship(r) for r in relationships_data]
 
-        Returns:
-            Number of entities inserted.
-        """
-        if not entities:
-            return 0
+        # Serialize and encode
+        agent_bytes = json.dumps(minified_agent, ensure_ascii=True).encode("utf-8")
+        storage_bytes = json.dumps(minified_storage, ensure_ascii=True).encode("utf-8")
+        rels_bytes = json.dumps(minified_rels, ensure_ascii=True).encode("utf-8")
 
-        with self.transaction() as conn:
-            conn.executemany(
-                """INSERT OR REPLACE INTO graph_entities(
-                    run_id, entity_id, entity_type, name, file_path,
-                    start_line, end_line, start_byte, end_byte,
-                    signature, parent_id, content_hash, ast_node_type, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        run_id,
-                        e["id"],
-                        e["type"],
-                        e["name"],
-                        e["file"],
-                        e["start_line"],
-                        e["end_line"],
-                        e.get("start_byte", 0),
-                        e.get("end_byte", 0),
-                        e.get("signature"),
-                        e.get("parent_id"),
-                        e.get("content_hash", ""),
-                        e.get("ast_node_type"),
-                        json.dumps(e.get("metadata", {}), ensure_ascii=True),
-                    )
-                    for e in entities
-                ],
-            )
-        return len(entities)
+        # Compress (level 3)
+        cctx = zstd.ZstdCompressor(level=3)
+        agent_blob = cctx.compress(agent_bytes)
+        storage_blob = cctx.compress(storage_bytes)
+        rels_blob = cctx.compress(rels_bytes)
 
-    def insert_relationships(self, run_id: str, relationships: list[dict[str, Any]]) -> int:
-        """Bulk insert graph relationships for a run.
-
-        Args:
-            run_id: The index run these relationships belong to.
-            relationships: List of relationship dicts with keys matching Relationship.to_dict().
-
-        Returns:
-            Number of relationships inserted.
-        """
-        if not relationships:
-            return 0
-
-        with self.transaction() as conn:
-            conn.executemany(
-                """INSERT OR REPLACE INTO graph_relationships(
-                    run_id, relationship_id, relationship_type,
-                    source_id, target_id, metadata_json
+        with self.connection() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO file_artifacts(
+                    run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
                 ) VALUES (?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        run_id,
-                        r["id"],
-                        r["type"],
-                        r["source_id"],
-                        r["target_id"],
-                        json.dumps(r.get("metadata", {}), ensure_ascii=True),
-                    )
-                    for r in relationships
-                ],
+                (run_internal_id, file_id, agent_blob, storage_blob, rels_blob, content_hash),
             )
-        return len(relationships)
+            conn.commit()
 
-    # ------------------------------------------------------------------
-    # Graph Queries
-    # ------------------------------------------------------------------
-
-    def query_entities(
-        self,
-        run_id: str,
-        *,
-        file_path: str | None = None,
-        entity_type: str | None = None,
-        name: str | None = None,
-        parent_id: str | None = None,
-        limit: int = 1000,
-    ) -> list[dict[str, Any]]:
-        """Query graph entities with optional filters."""
-        conditions = ["run_id = ?"]
-        params: list[Any] = [run_id]
-
-        if file_path is not None:
-            conditions.append("file_path = ?")
-            params.append(file_path)
-        if entity_type is not None:
-            conditions.append("entity_type = ?")
-            params.append(entity_type)
-        if name is not None:
-            conditions.append("name = ?")
-            params.append(name)
-        if parent_id is not None:
-            conditions.append("parent_id = ?")
-            params.append(parent_id)
-
-        params.append(limit)
-        where = " AND ".join(conditions)
-
-        with self.connection(read_only=True) as conn:
-            rows = conn.execute(
-                f"SELECT * FROM graph_entities WHERE {where} LIMIT ?",
-                params,
-            ).fetchall()
-            return [dict(row) for row in rows]
-
-    def query_relationships(
-        self,
-        run_id: str,
-        *,
-        source_id: str | None = None,
-        target_id: str | None = None,
-        relationship_type: str | None = None,
-        limit: int = 1000,
-    ) -> list[dict[str, Any]]:
-        """Query graph relationships with optional filters."""
-        conditions = ["run_id = ?"]
-        params: list[Any] = [run_id]
-
-        if source_id is not None:
-            conditions.append("source_id = ?")
-            params.append(source_id)
-        if target_id is not None:
-            conditions.append("target_id = ?")
-            params.append(target_id)
-        if relationship_type is not None:
-            conditions.append("relationship_type = ?")
-            params.append(relationship_type)
-
-        params.append(limit)
-        where = " AND ".join(conditions)
-
-        with self.connection(read_only=True) as conn:
-            rows = conn.execute(
-                f"SELECT * FROM graph_relationships WHERE {where} LIMIT ?",
-                params,
-            ).fetchall()
-            return [dict(row) for row in rows]
-
-    def get_entity_count(self, run_id: str) -> int:
-        """Get total entity count for a run."""
-        with self.connection(read_only=True) as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) as cnt FROM graph_entities WHERE run_id = ?",
-                (run_id,),
-            ).fetchone()
-            return row["cnt"] if row else 0
-
-    def get_relationship_count(self, run_id: str) -> int:
-        """Get total relationship count for a run."""
-        with self.connection(read_only=True) as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) as cnt FROM graph_relationships WHERE run_id = ?",
-                (run_id,),
-            ).fetchone()
-            return row["cnt"] if row else 0
-
-    # ------------------------------------------------------------------
-    # BSG Entries
-    # ------------------------------------------------------------------
-
-    def insert_bsg_entries(self, run_id: str, entries: list[dict[str, Any]]) -> int:
-        """Bulk insert BSG entries for a run.
-
-        Args:
-            run_id: The index run.
-            entries: List of dicts with keys: file_path, view_type, bsg_json,
-                     token_count, node_count, checksum.
-
-        Returns:
-            Number of entries inserted.
-        """
-        if not entries:
-            return 0
+        # Update query_entities for fast search fallback
+        entities = agent_view_data.get("entities", [])
+        query_rows = []
+        for e in entities:
+            ent_id = e.get("id")
+            ent_name = e.get("name")
+            ent_type = e.get("type") or e.get("entity_type")
+            ent_fqn = e.get("fqn")
+            line = e.get("start_line") or e.get("line") or 1
+            sig = e.get("signature")
+            is_exp = e.get("is_exported") or 0
+            if ent_id and ent_name and ent_type:
+                query_rows.append((
+                    ent_id,
+                    run_internal_id,
+                    ent_name,
+                    ent_type,
+                    ent_fqn,
+                    file_path,
+                    line,
+                    sig,
+                    is_exp,
+                ))
 
         with self.transaction() as conn:
-            conn.executemany(
-                """INSERT OR REPLACE INTO bsg_entries(
-                    run_id, file_path, view_type, bsg_json,
-                    token_count, node_count, checksum
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        run_id,
-                        e["file_path"],
-                        e.get("view_type", "agent"),
-                        e["bsg_json"],
-                        e.get("token_count"),
-                        e.get("node_count", 0),
-                        e["checksum"],
-                    )
-                    for e in entries
-                ],
+            conn.execute(
+                "DELETE FROM query_entities WHERE run_id = ? AND file_path = ?",
+                (run_internal_id, file_path),
             )
-        return len(entries)
+            if query_rows:
+                conn.executemany(
+                    """INSERT OR REPLACE INTO query_entities(
+                        entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    query_rows,
+                )
+            conn.commit()
 
-    def get_bsg_entry(
-        self, run_id: str, file_path: str, view_type: str = "agent"
-    ) -> dict[str, Any] | None:
-        """Get a single BSG entry."""
-        with self.connection(read_only=True) as conn:
-            row = conn.execute(
-                """SELECT * FROM bsg_entries
-                WHERE run_id = ? AND file_path = ? AND view_type = ?""",
-                (run_id, file_path, view_type),
-            ).fetchone()
-            return dict(row) if row else None
+        # Update query_relationships and dangling_references
+        unresolved_ids = {}
+        for e in agent_view_data.get("entities", []):
+            e_type = e.get("type") or e.get("entity_type")
+            if e_type == "UNRESOLVED" or (isinstance(e_type, str) and e_type.upper() == "UNRESOLVED"):
+                unresolved_ids[e.get("id")] = e.get("name")
 
-    def get_bsg_entries_for_run(
-        self, run_id: str, *, view_type: str = "agent"
+        rel_rows = []
+        dangling_rows = []
+        for r in relationships_data:
+            src_id = r.get("source_id")
+            tgt_id = r.get("target_id")
+            r_type = r.get("type") or r.get("relationship_type")
+            meta = json.dumps(r.get("metadata") or {})
+            
+            if not src_id or not tgt_id or not r_type:
+                continue
+                
+            if tgt_id in unresolved_ids:
+                dangling_rows.append((
+                    src_id,
+                    unresolved_ids[tgt_id],
+                    r_type,
+                    run_internal_id
+                ))
+            else:
+                rel_rows.append((
+                    src_id,
+                    tgt_id,
+                    r_type,
+                    run_internal_id,
+                    meta
+                ))
+
+        with self.transaction() as conn:
+            conn.execute(
+                "DELETE FROM query_relationships WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE file_path = ?)",
+                (run_internal_id, file_path),
+            )
+            conn.execute(
+                "DELETE FROM dangling_references WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE file_path = ?)",
+                (run_internal_id, file_path),
+            )
+            if rel_rows:
+                conn.executemany(
+                    """INSERT OR REPLACE INTO query_relationships(
+                        source_id, target_id, relation_type, run_id, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?)""",
+                    rel_rows,
+                )
+            if dangling_rows:
+                conn.executemany(
+                    """INSERT INTO dangling_references(
+                        source_id, unresolved_target_name, relation_type, run_id
+                    ) VALUES (?, ?, ?, ?)""",
+                    dangling_rows,
+                )
+            conn.commit()
+
+    def resolve_dangling_references(self, run_internal_id: int) -> int:
+        """Perform a single lazy cross-file resolution JOIN to convert dangling references to query_relationships."""
+        with self.transaction() as conn:
+            # 1. Match dangling references to actual query_entities by name
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO query_relationships (source_id, target_id, relation_type, run_id)
+                   SELECT d.source_id, e.entity_id, d.relation_type, d.run_id
+                   FROM dangling_references d
+                   JOIN query_entities e ON d.unresolved_target_name = e.entity_name AND d.run_id = e.run_id
+                   WHERE d.run_id = ? AND e.entity_type != 'UNRESOLVED'""",
+                (run_internal_id,)
+            )
+            resolved_count = cursor.rowcount
+            # 2. Cleanup resolved/all dangling references for this run
+            conn.execute(
+                "DELETE FROM dangling_references WHERE run_id = ?",
+                (run_internal_id,)
+            )
+            conn.commit()
+            return resolved_count
+
+    def insert_file_artifacts_batch(
+        self,
+        run_internal_id: int,
+        batch_items: list[dict[str, Any]],
+    ) -> None:
+        """Insert or replace a batch of file artifacts in a single transaction to eliminate commit latency."""
+        if not batch_items:
+            return
+
+        file_artifacts_rows = []
+        query_entities_rows = []
+        query_relationships_rows = []
+        dangling_references_rows = []
+        
+        file_paths_to_delete = []
+
+        cctx = zstd.ZstdCompressor(level=3)
+
+        for item in batch_items:
+            file_path = item["file_path"]
+            content_hash = item["content_hash"]
+            agent_view_data = item["agent_view_data"]
+            storage_delta_data = item["storage_delta_data"]
+            relationships_data = item["relationships_data"]
+
+            file_id = self.get_or_create_string_id(file_path)
+            file_paths_to_delete.append(file_path)
+
+            # Minify payloads
+            minified_agent = _minify_graph_payload(agent_view_data)
+            minified_storage = _minify_graph_payload(storage_delta_data)
+            minified_rels = [_minify_relationship(r) for r in relationships_data]
+
+            # Serialize and encode
+            agent_bytes = json.dumps(minified_agent, ensure_ascii=True).encode("utf-8")
+            storage_bytes = json.dumps(minified_storage, ensure_ascii=True).encode("utf-8")
+            rels_bytes = json.dumps(minified_rels, ensure_ascii=True).encode("utf-8")
+
+            # Compress
+            agent_blob = cctx.compress(agent_bytes)
+            storage_blob = cctx.compress(storage_bytes)
+            rels_blob = cctx.compress(rels_bytes)
+
+            file_artifacts_rows.append((
+                run_internal_id, file_id, agent_blob, storage_blob, rels_blob, content_hash
+            ))
+
+            # Query Entities
+            entities = agent_view_data.get("entities", [])
+            for e in entities:
+                ent_id = e.get("id")
+                ent_name = e.get("name")
+                ent_type = e.get("type") or e.get("entity_type")
+                ent_fqn = e.get("fqn")
+                line = e.get("start_line") or e.get("line") or 1
+                sig = e.get("signature")
+                is_exp = e.get("is_exported") or 0
+                if ent_id and ent_name and ent_type:
+                    query_entities_rows.append((
+                        ent_id, run_internal_id, ent_name, ent_type, ent_fqn, file_path, line, sig, is_exp
+                    ))
+
+            # Unresolved IDs
+            unresolved_ids = {}
+            for e in agent_view_data.get("entities", []):
+                e_type = e.get("type") or e.get("entity_type")
+                if e_type == "UNRESOLVED" or (isinstance(e_type, str) and e_type.upper() == "UNRESOLVED"):
+                    unresolved_ids[e.get("id")] = e.get("name")
+
+            # Relationships
+            for r in relationships_data:
+                src_id = r.get("source_id")
+                tgt_id = r.get("target_id")
+                r_type = r.get("type") or r.get("relationship_type")
+                meta = json.dumps(r.get("metadata") or {})
+                
+                if not src_id or not tgt_id or not r_type:
+                    continue
+                    
+                if tgt_id in unresolved_ids:
+                    dangling_references_rows.append((
+                        src_id, unresolved_ids[tgt_id], r_type, run_internal_id
+                    ))
+                else:
+                    query_relationships_rows.append((
+                        src_id, tgt_id, r_type, run_internal_id, meta
+                    ))
+
+        # Single transaction for all database insertions
+        with self.transaction() as conn:
+            # 1. Insert File Artifacts
+            conn.executemany(
+                """INSERT OR REPLACE INTO file_artifacts(
+                    run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
+                file_artifacts_rows,
+            )
+
+            # 2. Update query_entities
+            for file_path in file_paths_to_delete:
+                conn.execute(
+                    "DELETE FROM query_entities WHERE run_id = ? AND file_path = ?",
+                    (run_internal_id, file_path),
+                )
+            if query_entities_rows:
+                conn.executemany(
+                    """INSERT OR REPLACE INTO query_entities(
+                        entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    query_entities_rows,
+                )
+
+            # 3. Update query_relationships and dangling_references
+            for file_path in file_paths_to_delete:
+                conn.execute(
+                    "DELETE FROM query_relationships WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE file_path = ?)",
+                    (run_internal_id, file_path),
+                )
+                conn.execute(
+                    "DELETE FROM dangling_references WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE file_path = ?)",
+                    (run_internal_id, file_path),
+                )
+            if query_relationships_rows:
+                conn.executemany(
+                    """INSERT OR REPLACE INTO query_relationships(
+                        source_id, target_id, relation_type, run_id, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?)""",
+                    query_relationships_rows,
+                )
+            if dangling_references_rows:
+                conn.executemany(
+                    """INSERT INTO dangling_references(
+                        source_id, unresolved_target_name, relation_type, run_id
+                    ) VALUES (?, ?, ?, ?)""",
+                    dangling_references_rows,
+                )
+            conn.commit()
+
+    def get_file_artifacts(
+        self,
+        run_internal_id: int,
+        include_storage: bool = False,
+        include_relationships: bool = True,
     ) -> list[dict[str, Any]]:
-        """Get all BSG entries for a run."""
+        """Retrieve and decompress file artifacts for a run."""
+        cols = ["file_id", "content_hash", "bsg_agent_view"]
+        if include_storage:
+            cols.append("bsg_storage_view")
+        if include_relationships:
+            cols.append("bsg_rel_view")
+
+        cols_str = ", ".join(cols)
+        query = f"SELECT {cols_str} FROM file_artifacts WHERE run_id = ?"
+
+        dctx = zstd.ZstdDecompressor()
+        results = []
+
         with self.connection(read_only=True) as conn:
-            rows = conn.execute(
-                "SELECT * FROM bsg_entries WHERE run_id = ? AND view_type = ?",
-                (run_id, view_type),
-            ).fetchall()
-            return [dict(row) for row in rows]
+            rows = conn.execute(query, (run_internal_id,)).fetchall()
+            for row in rows:
+                file_path = self.get_string_val(row["file_id"])
+                if not file_path:
+                    continue
+
+                content_hash = row["content_hash"]
+
+                # 1. Load agent view
+                agent_blob = row["bsg_agent_view"]
+                if agent_blob:
+                    agent_decompressed = dctx.decompress(agent_blob)
+                    agent_minified = json.loads(agent_decompressed.decode("utf-8"))
+                    agent_data = _expand_graph_payload(agent_minified)
+                else:
+                    agent_data = {"entities": [], "relationships": []}
+
+                entities_list = agent_data.get("entities", [])
+                entities_by_id = {e["id"]: e for e in entities_list if "id" in e}
+
+                # 2. Load storage view
+                if include_storage:
+                    storage_blob = row["bsg_storage_view"]
+                    if storage_blob:
+                        storage_decompressed = dctx.decompress(storage_blob)
+                        storage_minified = json.loads(storage_decompressed.decode("utf-8"))
+                        storage_data = _expand_graph_payload(storage_minified)
+                        
+                        storage_entities = storage_data.get("entities", [])
+                        for se in storage_entities:
+                            ent_id = se.get("id")
+                            if ent_id in entities_by_id:
+                                ae = entities_by_id[ent_id]
+                                for k, v in se.items():
+                                    if k != "id" and v is not None:
+                                        ae[k] = v
+                                if "syntax_glue" in se and se["syntax_glue"]:
+                                    sg = se["syntax_glue"]
+                                    if "leading_whitespace" in sg:
+                                        ae["leading_whitespace"] = sg["leading_whitespace"]
+                                    if "trailing_whitespace" in sg:
+                                        ae["trailing_whitespace"] = sg["trailing_whitespace"]
+
+                # 3. Load relationships
+                rels_list = []
+                if include_relationships:
+                    rels_blob = row["bsg_rel_view"]
+                    if rels_blob:
+                        rels_decompressed = dctx.decompress(rels_blob)
+                        rels_minified = json.loads(rels_decompressed.decode("utf-8"))
+                        rels_list = [_expand_relationship(r) for r in rels_minified]
+
+                results.append({
+                    "file_path": file_path,
+                    "content_hash": content_hash,
+                    "graph": {
+                        "entities": entities_list,
+                        "relationships": rels_list,
+                    }
+                })
+
+        return results
+
+    # ------------------------------------------------------------------
+    # SQLite Search fallback
+    # ------------------------------------------------------------------
+
+    def search_entities(
+        self,
+        run_uuid: str,
+        query: str,
+        *,
+        kinds: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Search entities in query_entities by name (exact or prefix or FQN match)."""
+        run_internal_id = self.get_run_internal_id(run_uuid)
+        if run_internal_id is None:
+            return []
+
+        conditions = ["run_id = ?"]
+        params: list[Any] = [run_internal_id]
+
+        if "." in query:
+            conditions.append("fqn = ?")
+            params.append(query)
+        else:
+            conditions.append("(entity_name = ? OR entity_name LIKE ?)")
+            params.append(query)
+            params.append(query + "%")
+
+        if kinds:
+            placeholders = ",".join("?" * len(kinds))
+            conditions.append(f"entity_type IN ({placeholders})")
+            params.extend(kinds)
+
+        params.append(limit)
+        where_clause = " AND ".join(conditions)
+
+        sql = f"""
+            SELECT entity_id, entity_name, entity_type, file_path, line_number, signature, fqn
+            FROM query_entities
+            WHERE {where_clause}
+            LIMIT ?
+        """
+
+        with self.connection(read_only=True) as conn:
+            rows = conn.execute(sql, params).fetchall()
+            results = []
+            for r in rows:
+                results.append({
+                    "id": r["entity_id"],
+                    "name": r["entity_name"],
+                    "kind": r["entity_type"],
+                    "file": r["file_path"],
+                    "line": r["line_number"],
+                    "signature": r["signature"],
+                    "fqn": r["fqn"],
+                })
+            return results
 
     # ------------------------------------------------------------------
     # File Tracking
     # ------------------------------------------------------------------
 
     def upsert_file_tracking(self, records: list[dict[str, Any]]) -> int:
-        """Bulk upsert file tracking records.
-
-        Args:
-            records: List of dicts with keys: file_path, content_hash, mtime,
-                     size, is_indexed, last_run_id.
-
-        Returns:
-            Number of records upserted.
-        """
+        """Bulk upsert file tracking records."""
         if not records:
             return 0
 
         now = datetime.now(timezone.utc).isoformat()
+        rows_to_insert = []
+        for r in records:
+            file_id = self.get_or_create_string_id(r["file_path"])
+            rows_to_insert.append((
+                file_id,
+                r["content_hash"],
+                r["mtime"],
+                r["size"],
+                int(r.get("is_indexed", 0)),
+                r.get("last_run_id"),
+                now,
+                r.get("encoding", "utf-8"),
+            ))
+
         with self.transaction() as conn:
             conn.executemany(
                 """INSERT OR REPLACE INTO file_tracking(
-                    file_path, content_hash, mtime, size, is_indexed,
-                    last_run_id, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        r["file_path"],
-                        r["content_hash"],
-                        r["mtime"],
-                        r["size"],
-                        int(r.get("is_indexed", 0)),
-                        r.get("last_run_id"),
-                        now,
-                    )
-                    for r in records
-                ],
+                    file_id, content_hash, mtime, size, is_indexed,
+                    last_run_id, updated_at, encoding
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                rows_to_insert,
             )
         return len(records)
 
@@ -664,15 +1059,31 @@ class BathoDatabase:
         """Get tracking data for a single file."""
         with self.connection(read_only=True) as conn:
             row = conn.execute(
-                "SELECT * FROM file_tracking WHERE file_path = ?", (file_path,)
+                """SELECT ft.*, sd.val as file_path 
+                   FROM file_tracking ft 
+                   JOIN string_dict sd ON ft.file_id = sd.id 
+                   WHERE sd.val = ?""", 
+                (file_path,)
             ).fetchone()
             return dict(row) if row else None
+
+    def get_all_file_tracking(self) -> dict[str, dict[str, Any]]:
+        """Get all file tracking records mapped by file_path."""
+        with self.connection(read_only=True) as conn:
+            rows = conn.execute(
+                """SELECT ft.*, sd.val as file_path 
+                   FROM file_tracking ft
+                   JOIN string_dict sd ON ft.file_id = sd.id"""
+            ).fetchall()
+            return {row["file_path"]: dict(row) for row in rows}
 
     def get_all_file_hashes(self) -> dict[str, str]:
         """Get all file_path -> content_hash mappings."""
         with self.connection(read_only=True) as conn:
             rows = conn.execute(
-                "SELECT file_path, content_hash FROM file_tracking"
+                """SELECT sd.val as file_path, ft.content_hash 
+                   FROM file_tracking ft
+                   JOIN string_dict sd ON ft.file_id = sd.id"""
             ).fetchall()
             return {row["file_path"]: row["content_hash"] for row in rows}
 
@@ -680,7 +1091,10 @@ class BathoDatabase:
         """Get unindexed file_path -> content_hash mappings."""
         with self.connection(read_only=True) as conn:
             rows = conn.execute(
-                "SELECT file_path, content_hash FROM file_tracking WHERE is_indexed = 0"
+                """SELECT sd.val as file_path, ft.content_hash 
+                   FROM file_tracking ft
+                   JOIN string_dict sd ON ft.file_id = sd.id
+                   WHERE ft.is_indexed = 0"""
             ).fetchall()
             return {row["file_path"]: row["content_hash"] for row in rows}
 
@@ -688,352 +1102,272 @@ class BathoDatabase:
         """Remove a file from tracking."""
         with self.connection() as conn:
             conn.execute(
-                "DELETE FROM file_tracking WHERE file_path = ?", (file_path,)
+                """DELETE FROM file_tracking 
+                   WHERE file_id = (SELECT id FROM string_dict WHERE val = ?)""", 
+                (file_path,)
             )
             conn.commit()
 
     # ------------------------------------------------------------------
-    # AST Cache
+    # Run Artifacts (Enterprise Metrics & Context)
     # ------------------------------------------------------------------
 
-    def get_ast_cache(self, file_hash: str) -> dict[str, Any] | None:
-        """Get cached AST data by file content hash."""
-        with self.connection(read_only=True) as conn:
-            row = conn.execute(
-                "SELECT * FROM ast_cache WHERE file_hash = ?", (file_hash,)
-            ).fetchone()
-            if row is None:
+    def finalize_run_artifacts(self, run_internal_id: int, artifacts: dict) -> None:
+        """Insert or update a row in the run_artifacts table, compressing dicts with zstd."""
+        def _compress(val: dict | None) -> bytes | None:
+            if val is None:
                 return None
+            serialized = json.dumps(val, ensure_ascii=True).encode("utf-8")
+            return self._cctx.compress(serialized)
 
-            # Check TTL
-            cached_at = row["cached_at"]
-            ttl_days = row["ttl_days"]
-            try:
-                ts = datetime.fromisoformat(cached_at)
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                if ts + timedelta(days=ttl_days) < datetime.now(timezone.utc):
-                    # Expired — delete and return None
-                    conn.execute(
-                        "DELETE FROM ast_cache WHERE file_hash = ?", (file_hash,)
-                    )
-                    conn.commit()
+        context_overview = _compress(artifacts.get("context_overview"))
+        telemetry_metrics = _compress(artifacts.get("telemetry_metrics"))
+        structural_metrics = _compress(artifacts.get("structural_metrics"))
+        security_audit = _compress(artifacts.get("security_audit"))
+        artifact_payload = _compress(artifacts.get("artifact_payload"))
+        delta_stats = _compress(artifacts.get("delta_stats"))
+        
+        with self.transaction() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO run_artifacts (
+                    run_id, context_overview, telemetry_metrics, structural_metrics,
+                    security_audit, artifact_payload, delta_stats
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_internal_id,
+                    context_overview,
+                    telemetry_metrics,
+                    structural_metrics,
+                    security_audit,
+                    artifact_payload,
+                    delta_stats
+                )
+            )
+            conn.commit()
+
+    def get_run_artifacts(self, run_internal_id: int) -> dict | None:
+        """Retrieve and decompress all 6 columns for a run."""
+        query = """SELECT context_overview, telemetry_metrics, structural_metrics,
+                          security_audit, artifact_payload, delta_stats, schema_version, created_at
+                   FROM run_artifacts WHERE run_id = ?"""
+        with self.connection(read_only=True) as conn:
+            row = conn.execute(query, (run_internal_id,)).fetchone()
+            if not row:
+                return None
+            
+            def _decompress(blob: bytes | None) -> dict | None:
+                if not blob:
                     return None
-            except (ValueError, TypeError):
-                pass
+                decompressed = self._dctx.decompress(blob)
+                return json.loads(decompressed.decode("utf-8"))
+            
+            return {
+                "run_id": run_internal_id,
+                "context_overview": _decompress(row["context_overview"]),
+                "telemetry_metrics": _decompress(row["telemetry_metrics"]),
+                "structural_metrics": _decompress(row["structural_metrics"]),
+                "security_audit": _decompress(row["security_audit"]),
+                "artifact_payload": _decompress(row["artifact_payload"]),
+                "delta_stats": _decompress(row["delta_stats"]),
+                "schema_version": row["schema_version"],
+                "created_at": row["created_at"],
+            }
 
-            return dict(row)
-
-    def set_ast_cache(
-        self,
-        file_hash: str,
-        file_path: str,
-        entities_json: str,
-        relationships_json: str | None,
-        mtime: float,
-        size: int,
-        ttl_days: int = 30,
-    ) -> None:
-        """Cache parsed AST data."""
-        now = datetime.now(timezone.utc).isoformat()
-        with self.connection() as conn:
-            conn.execute(
-                """INSERT OR REPLACE INTO ast_cache(
-                    file_hash, file_path, entities_json, relationships_json,
-                    mtime, size, cached_at, ttl_days
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (file_hash, file_path, entities_json, relationships_json, mtime, size, now, ttl_days),
-            )
-            conn.commit()
-
-    def delete_ast_cache(self, file_hash: str) -> None:
-        """Delete a cached AST entry."""
-        with self.connection() as conn:
-            conn.execute("DELETE FROM ast_cache WHERE file_hash = ?", (file_hash,))
-            conn.commit()
-
-    def clear_expired_ast_cache(self) -> int:
-        """Remove expired AST cache entries. Returns count deleted."""
-        with self.connection() as conn:
-            cursor = conn.execute(
-                """DELETE FROM ast_cache
-                WHERE datetime(cached_at) < datetime('now', '-' || ttl_days || ' days')"""
-            )
-            conn.commit()
-            return cursor.rowcount
-
-    # ------------------------------------------------------------------
-    # File Snapshots
-    # ------------------------------------------------------------------
-
-    def set_file_snapshot(self, snapshot: dict[str, Any]) -> None:
-        """Store a file snapshot for reconstruction."""
-        now = datetime.now(timezone.utc).isoformat()
-        with self.connection() as conn:
-            conn.execute(
-                """INSERT OR REPLACE INTO file_snapshots(
-                    file_path, file_hash, file_size, encoding,
-                    entity_ids_json, gap_sections_json,
-                    shebang, encoding_declaration, file_level_comments,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    snapshot["file_path"],
-                    snapshot["file_hash"],
-                    snapshot["file_size"],
-                    snapshot.get("encoding", "utf-8"),
-                    json.dumps(snapshot.get("entity_ids", []), ensure_ascii=True),
-                    json.dumps(snapshot.get("gap_sections", []), ensure_ascii=True),
-                    snapshot.get("shebang"),
-                    snapshot.get("encoding_declaration"),
-                    json.dumps(snapshot.get("file_level_comments", []), ensure_ascii=True),
-                    now,
-                    now,
-                ),
-            )
-            conn.commit()
-
-    def get_file_snapshot(self, file_path: str) -> dict[str, Any] | None:
-        """Get a stored file snapshot."""
+    def get_agent_entities_for_file(self, run_internal_id: int, file_path: str) -> list[dict[str, Any]]:
+        """Fetch + decompress only bsg_agent_view for one file. Returns list[dict]."""
         with self.connection(read_only=True) as conn:
             row = conn.execute(
-                "SELECT * FROM file_snapshots WHERE file_path = ?", (file_path,)
+                """SELECT bsg_agent_view FROM file_artifacts
+                WHERE run_id = ? AND file_id = (SELECT id FROM string_dict WHERE val = ?)""",
+                (run_internal_id, file_path),
             ).fetchone()
-            return dict(row) if row else None
+            if not row or not row["bsg_agent_view"]:
+                return []
+            dctx = zstd.ZstdDecompressor()
+            decompressed = dctx.decompress(row["bsg_agent_view"])
+            minified = json.loads(decompressed.decode("utf-8"))
+            expanded = _expand_graph_payload(minified)
+            return expanded.get("entities", [])
 
-    def get_all_file_snapshots(self) -> dict[str, dict[str, Any]]:
-        """Get all file snapshots."""
-        with self.connection(read_only=True) as conn:
-            rows = conn.execute("SELECT * FROM file_snapshots").fetchall()
-            return {row["file_path"]: dict(row) for row in rows}
+    def bulk_get_or_create_string_ids(self, strings: list[str]) -> dict[str, int]:
+        """Batch-resolve strings to string_dict IDs in one SELECT + one INSERT."""
+        result: dict[str, int] = {}
+        if not strings:
+            return result
 
-    # ------------------------------------------------------------------
-    # Snapshots (Time Machine)
-    # ------------------------------------------------------------------
+        # Check cache first
+        missing_from_cache = []
+        for s in strings:
+            if s in self._string_dict_cache:
+                result[s] = self._string_dict_cache[s]
+            else:
+                missing_from_cache.append(s)
 
-    def create_snapshot(self, snapshot: dict[str, Any]) -> None:
-        """Insert a new time machine snapshot."""
-        with self.connection() as conn:
-            conn.execute(
-                """INSERT INTO snapshots(
-                    snapshot_id, parent_id, created_at, label,
-                    git_commit, git_branch, root_path,
-                    schema_version, stats_json, checksum
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    snapshot["snapshot_id"],
-                    snapshot.get("parent_id"),
-                    snapshot["created_at"],
-                    snapshot.get("label", ""),
-                    snapshot.get("git_commit"),
-                    snapshot.get("git_branch"),
-                    snapshot["root_path"],
-                    snapshot["schema_version"],
-                    json.dumps(snapshot.get("stats", {}), ensure_ascii=True),
-                    snapshot["checksum"],
-                ),
-            )
-            conn.commit()
+        if not missing_from_cache:
+            return result
 
-    def list_snapshots(self) -> list[dict[str, Any]]:
-        """List all snapshots ordered by creation time (newest first)."""
-        with self.connection(read_only=True) as conn:
-            rows = conn.execute(
-                "SELECT * FROM snapshots ORDER BY created_at DESC"
+        with self.transaction() as conn:
+            placeholders = ",".join("?" * len(missing_from_cache))
+            existing = conn.execute(
+                f"SELECT id, val FROM string_dict WHERE val IN ({placeholders})",
+                missing_from_cache,
             ).fetchall()
-            return [dict(row) for row in rows]
+            for row in existing:
+                result[row["val"]] = row["id"]
+                self._string_dict_cache[row["val"]] = row["id"]
 
-    def get_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
-        """Get a single snapshot by ID."""
-        with self.connection(read_only=True) as conn:
-            row = conn.execute(
-                "SELECT * FROM snapshots WHERE snapshot_id = ?", (snapshot_id,)
-            ).fetchone()
-            return dict(row) if row else None
+            still_missing = [s for s in missing_from_cache if s not in result]
+            if still_missing:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO string_dict(val) VALUES (?)",
+                    [(s,) for s in still_missing],
+                )
+                new_placeholders = ",".join("?" * len(still_missing))
+                new_ids = conn.execute(
+                    f"SELECT id, val FROM string_dict WHERE val IN ({new_placeholders})",
+                    still_missing,
+                ).fetchall()
+                for row in new_ids:
+                    result[row["val"]] = row["id"]
+                    self._string_dict_cache[row["val"]] = row["id"]
 
-    # ------------------------------------------------------------------
-    # Context Outputs
-    # ------------------------------------------------------------------
+        return result
 
-    def set_context_output(
-        self, run_id: str, output_type: str, content: str
-    ) -> None:
-        """Store a context output document."""
-        now = datetime.now(timezone.utc).isoformat()
-        with self.connection() as conn:
-            conn.execute(
-                """INSERT OR REPLACE INTO context_outputs(
-                    run_id, output_type, content, size_bytes, produced_at
-                ) VALUES (?, ?, ?, ?, ?)""",
-                (run_id, output_type, content, len(content.encode("utf-8")), now),
+    def record_file_changelog(self, run_id: int, base_run_id: int, diffs: list[NodeDiff]) -> None:
+        """Group NodeDiffs by file, compress as orjson blob, bulk-insert one row per file."""
+        if not diffs:
+            return
+
+        from collections import defaultdict
+        by_file: dict[str, list] = defaultdict(list)
+        for d in diffs:
+            by_file[d.file_path].append(d)
+
+        file_id_map = self.bulk_get_or_create_string_ids(list(by_file.keys()))
+
+        rows: list[tuple] = []
+        for file_path, file_diffs in by_file.items():
+            file_id = file_id_map[file_path]
+            array = [d.to_dict() for d in file_diffs]
+            entity_index = " ".join({d.entity_id for d in file_diffs})
+            blob = self._cctx.compress(orjson.dumps(array))
+            rows.append((run_id, base_run_id, file_id, entity_index, blob))
+
+        with self.transaction() as conn:
+            conn.executemany(
+                """INSERT OR REPLACE INTO file_changelog
+                    (run_id, base_run_id, file_id, entity_index, node_changes)
+                    VALUES (?, ?, ?, ?, ?)""",
+                rows,
             )
             conn.commit()
 
-    def get_context_output(self, run_id: str, output_type: str) -> str | None:
-        """Get a context output document."""
+    def get_file_node_history(self, entity_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Cross-run query using FTS5 to filter blobs, then decompress matching entries."""
+        sql = """
+            SELECT fc.run_id, fc.base_run_id, fc.node_changes,
+                   r.run_uuid, base_r.run_uuid AS base_run_uuid
+            FROM file_changelog_fts fts
+            JOIN file_changelog fc ON fts.rowid = fc.id
+            JOIN index_runs r ON fc.run_id = r.id
+            JOIN index_runs base_r ON fc.base_run_id = base_r.id
+            WHERE fts.entity_index MATCH ?
+            ORDER BY r.completed_at ASC, fc.run_id ASC
+            LIMIT ?
+        """
+        results = []
         with self.connection(read_only=True) as conn:
-            row = conn.execute(
-                "SELECT content FROM context_outputs WHERE run_id = ? AND output_type = ?",
-                (run_id, output_type),
-            ).fetchone()
-            return row["content"] if row else None
-
-    # ------------------------------------------------------------------
-    # Artifacts (Cloud Sync)
-    # ------------------------------------------------------------------
-
-    def register_artifact(
-        self,
-        artifact_id: str,
-        *,
-        artifact_type: str,
-        logical_path: str,
-        size_bytes: int,
-        schema_version: str,
-        producer: str,
-        checksum: str | None = None,
-        content_id: str | None = None,
-        run_id: str | None = None,
-        sync_status: str = "local_only",
-        retention_class: str = "default",
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        """Register an artifact in the sync registry."""
-        now = datetime.now(timezone.utc).isoformat()
-        with self.connection() as conn:
-            conn.execute(
-                """INSERT OR REPLACE INTO artifacts(
-                    artifact_id, content_id, artifact_type, logical_path,
-                    checksum, size_bytes, schema_version, producer, run_id,
-                    sync_status, retention_class, metadata_json,
-                    created_at, updated_at, deleted
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
-                (
-                    artifact_id,
-                    content_id,
-                    artifact_type,
-                    logical_path,
-                    checksum,
-                    size_bytes,
-                    schema_version,
-                    producer,
-                    run_id,
-                    sync_status,
-                    retention_class,
-                    json.dumps(metadata or {}, ensure_ascii=True),
-                    now,
-                    now,
-                ),
-            )
-            conn.commit()
-
-    def get_pending_artifacts(
-        self, *, artifact_types: list[str] | None = None, limit: int = 100
-    ) -> list[dict[str, Any]]:
-        """Get artifacts pending cloud sync."""
-        if artifact_types:
-            placeholders = ",".join("?" * len(artifact_types))
-            sql = f"""SELECT * FROM artifacts
-                WHERE deleted = 0 AND sync_status = 'pending'
-                AND artifact_type IN ({placeholders})
-                ORDER BY updated_at DESC LIMIT ?"""
-            params = artifact_types + [limit]
-        else:
-            sql = """SELECT * FROM artifacts
-                WHERE deleted = 0 AND sync_status = 'pending'
-                ORDER BY updated_at DESC LIMIT ?"""
-            params = [limit]
-
-        with self.connection(read_only=True) as conn:
-            rows = conn.execute(sql, params).fetchall()
-            return [dict(row) for row in rows]
-
-    def mark_artifact_synced(
-        self, artifact_id: str, *, cloud_content_id: str = ""
-    ) -> None:
-        """Mark an artifact as successfully synced."""
-        now = datetime.now(timezone.utc).isoformat()
-        with self.connection() as conn:
-            conn.execute(
-                """UPDATE artifacts SET
-                    sync_status = 'synced',
-                    cloud_content_id = ?,
-                    last_sync_at = ?,
-                    sync_error = NULL,
-                    updated_at = ?
-                WHERE artifact_id = ?""",
-                (cloud_content_id, now, now, artifact_id),
-            )
-            conn.commit()
-
-    def mark_artifact_failed(
-        self, artifact_id: str, *, error: str = "", retry_count: int = 0
-    ) -> None:
-        """Mark an artifact sync as failed."""
-        now = datetime.now(timezone.utc).isoformat()
-        with self.connection() as conn:
-            conn.execute(
-                """UPDATE artifacts SET
-                    sync_status = 'failed',
-                    sync_error = ?,
-                    retry_count = ?,
-                    updated_at = ?
-                WHERE artifact_id = ?""",
-                (error, retry_count, now, artifact_id),
-            )
-            conn.commit()
-
-    # Convenience aliases for cloud sync uploader compatibility
-    def mark_synced(self, artifact_id: str, *, cloud_content_id: str = "") -> None:
-        """Alias for mark_artifact_synced."""
-        self.mark_artifact_synced(artifact_id, cloud_content_id=cloud_content_id)
-
-    def mark_sync_failed(self, artifact_id: str, *, error: str = "", retry_count: int = 0) -> None:
-        """Alias for mark_artifact_failed."""
-        self.mark_artifact_failed(artifact_id, error=error, retry_count=retry_count)
-
-    def get_failed_artifacts(self, *, max_retries: int = 3) -> list[dict[str, Any]]:
-        """Get artifacts that failed sync and are below retry limit."""
-        with self.connection(read_only=True) as conn:
-            rows = conn.execute(
-                """SELECT * FROM artifacts
-                WHERE deleted = 0 AND sync_status = 'failed'
-                AND retry_count < ?
-                ORDER BY updated_at DESC""",
-                (max_retries,),
-            ).fetchall()
-            return [dict(row) for row in rows]
-
-    def get_sync_summary(self) -> dict[str, Any]:
-        """Get counts by sync_status."""
-        with self.connection(read_only=True) as conn:
-            rows = conn.execute(
-                """SELECT sync_status, COUNT(*) as cnt
-                FROM artifacts WHERE deleted = 0
-                GROUP BY sync_status"""
-            ).fetchall()
-            summary: dict[str, Any] = {"total": 0}
+            rows = conn.execute(sql, (f'"{entity_id}"', limit)).fetchall()
             for row in rows:
-                summary[row["sync_status"]] = row["cnt"]
-                summary["total"] += row["cnt"]
-            return summary
+                blob = row["node_changes"]
+                if not blob:
+                    continue
+                changes = orjson.loads(self._dctx.decompress(blob))
+                for entry in changes:
+                    if entry.get("entity_id") == entity_id:
+                        results.append({
+                            "run_id": row["run_id"],
+                            "base_run_id": row["base_run_id"],
+                            "run_uuid": row["run_uuid"],
+                            "base_run_uuid": row["base_run_uuid"],
+                            "entity_id": entry["entity_id"],
+                            "entity_name": entry["entity_name"],
+                            "entity_type": entry["entity_type"],
+                            "change_kind": entry["change_kind"],
+                            "changed_fields": entry["changed_fields"],
+                            "old_hash": entry["old_hash"],
+                            "new_hash": entry["new_hash"],
+                        })
+        return results
+
+    def get_run_file_changelog(self, run_uuid: str) -> list[dict[str, Any]]:
+        """All node diffs for a specific run: decompress per-file blobs and flatten."""
+        sql = """
+            SELECT fc.run_id, fc.base_run_id, fc.node_changes,
+                   file_dict.val AS file_path,
+                   base_r.run_uuid AS base_run_uuid
+            FROM file_changelog fc
+            JOIN index_runs r ON fc.run_id = r.id
+            JOIN index_runs base_r ON fc.base_run_id = base_r.id
+            JOIN string_dict file_dict ON fc.file_id = file_dict.id
+            WHERE r.run_uuid = ?
+        """
+        results = []
+        with self.connection(read_only=True) as conn:
+            rows = conn.execute(sql, (run_uuid,)).fetchall()
+            for row in rows:
+                blob = row["node_changes"]
+                if not blob:
+                    continue
+                changes = orjson.loads(self._dctx.decompress(blob))
+                for entry in changes:
+                    results.append({
+                        "run_id": row["run_id"],
+                        "base_run_id": row["base_run_id"],
+                        "run_uuid": run_uuid,
+                        "base_run_uuid": row["base_run_uuid"],
+                        "entity_id": entry["entity_id"],
+                        "entity_name": entry["entity_name"],
+                        "file_path": row["file_path"],
+                        "entity_type": entry["entity_type"],
+                        "change_kind": entry["change_kind"],
+                        "changed_fields": entry["changed_fields"],
+                        "old_hash": entry["old_hash"],
+                        "new_hash": entry["new_hash"],
+                    })
+        return results
+
+    def prune_file_changelog(self, max_runs: int) -> None:
+        """Delete file_changelog entries older than the N most recent completed runs.
+        FTS5 sync triggers automatically clean up file_changelog_fts on DELETE.
+        Called at end of run_patch.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                """DELETE FROM file_changelog
+                WHERE run_id NOT IN (
+                    SELECT id FROM index_runs
+                    WHERE status = 'completed'
+                    ORDER BY completed_at DESC
+                    LIMIT ?
+                )""",
+                (max_runs,),
+            )
+            conn.commit()
 
     # ------------------------------------------------------------------
     # Maintenance
     # ------------------------------------------------------------------
 
     def vacuum(self) -> None:
-        """Run incremental auto-vacuum to reclaim space."""
         with self.connection() as conn:
             conn.execute("PRAGMA incremental_vacuum")
 
     def full_vacuum(self) -> None:
-        """Run a full VACUUM (rebuilds the entire file)."""
         with self.connection() as conn:
             conn.execute("VACUUM")
 
     def integrity_check(self) -> list[str]:
-        """Run PRAGMA integrity_check and return issues (empty = healthy)."""
         with self.connection(read_only=True) as conn:
             rows = conn.execute("PRAGMA integrity_check").fetchall()
             results = [row[0] for row in rows]
@@ -1046,20 +1380,20 @@ class BathoDatabase:
         with self.connection(read_only=True) as conn:
             stats: dict[str, Any] = {}
 
-            # File size
             try:
                 stats["file_size_bytes"] = self._db_path.stat().st_size
             except OSError:
                 stats["file_size_bytes"] = 0
 
-            # Table counts
             for table in [
-                "index_runs", "graph_entities", "graph_relationships",
-                "bsg_entries", "file_tracking", "ast_cache",
-                "file_snapshots", "snapshots", "context_outputs", "artifacts",
+                "index_runs", "file_artifacts",
+                "file_tracking", "run_artifacts", "query_entities"
             ]:
-                row = conn.execute(f"SELECT COUNT(*) as cnt FROM {table}").fetchone()
-                stats[f"{table}_count"] = row["cnt"] if row else 0
+                try:
+                    row = conn.execute(f"SELECT COUNT(*) as cnt FROM {table}").fetchone()
+                    stats[f"{table}_count"] = row["cnt"] if row else 0
+                except sqlite3.OperationalError:
+                    stats[f"{table}_count"] = 0
 
             stats["schema_version"] = self.get_meta("schema_version")
             return stats
@@ -1069,7 +1403,6 @@ class BathoDatabase:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        """Close the database connection for this thread."""
         with _DB_CACHE_LOCK:
             with self._lock:
                 self._closed = True

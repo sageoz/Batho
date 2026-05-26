@@ -21,7 +21,7 @@ from batho.bsg.testing import (
     run_plugin_fixture,
     summarize_reports,
 )
-from batho.config import get_config_cached_for_root
+from batho.config import get_config_cached, set_active_root
 
 
 def _resolve_root(args: argparse.Namespace) -> Path:
@@ -123,7 +123,8 @@ def cmd_plugins_trace(args: argparse.Namespace) -> int:
         print(f"root does not exist or is not a directory: {root}")
         return 1
 
-    cfg = get_config_cached_for_root(root)
+    set_active_root(root)
+    cfg = get_config_cached()
     rules_cfg = (cfg.get("bsg", {}) or {}).get("rules", {}) if isinstance(cfg, dict) else {}
 
     if not getattr(args, "apply", False):
@@ -139,12 +140,12 @@ def cmd_plugins_trace(args: argparse.Namespace) -> int:
     # Apply path: reload the cached graph from the .batho database
     try:
         from batho.context.graph_cache import load_cached_graph
-        from batho.context.storage import get_artifact_registry
+        from batho.storage.engine import get_database
     except Exception as exc:  # pragma: no cover - import side-effect
         print(f"cannot load graph cache module: {exc}")
         return 1
 
-    db = get_artifact_registry(root)
+    db = get_database(root)
     current_index_id = db.get_latest_run_id()
     if not current_index_id:
         print("no completed index run found — run 'batho index' first to use --apply")
@@ -181,17 +182,18 @@ def cmd_plugins_verify_bidirectional(args: argparse.Namespace) -> int:
         print(f"root does not exist or is not a directory: {root}")
         return 1
 
-    cfg = get_config_cached_for_root(root)
+    set_active_root(root)
+    cfg = get_config_cached()
     rules_cfg = (cfg.get("bsg", {}) or {}).get("rules", {}) if isinstance(cfg, dict) else {}
 
     try:
         from batho.context.graph_cache import load_cached_graph
-        from batho.context.storage import get_artifact_registry
+        from batho.storage.engine import get_database
     except Exception as exc:  # pragma: no cover
         print(f"cannot load graph cache module: {exc}")
         return 1
 
-    db = get_artifact_registry(root)
+    db = get_database(root)
     current_index_id = db.get_latest_run_id()
     if not current_index_id:
         print("no completed index run found — run 'batho index' first")

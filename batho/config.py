@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.metadata
 import logging
 import os
+import contextvars
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -22,6 +23,18 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from batho.cloud_sync.config import CloudSyncConfig
+
+_active_root: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "_active_root", default=None
+)
+
+def set_active_root(root: Path) -> None:
+    _active_root.set(root.resolve())
+    _get_config_cached_for_root.cache_clear()
+
+def get_active_root() -> Path:
+    return _active_root.get() or Path.cwd()
+
 
 DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_DB_PATH = ".batho"
@@ -108,6 +121,7 @@ class LoggingConfig(BaseModel):
 class PathsConfig(BaseModel):
     db_path: str = Field(default=DEFAULT_DB_PATH)
     config_dir: str = Field(default=DEFAULT_CONFIG_DIR)
+    global_db_path: Optional[str] = Field(default=None)
 
 
 class IndexerConfig(BaseModel):
@@ -177,7 +191,6 @@ class BsgParallelConfig(BaseModel):
 
 class BsgIgnoreConfig(BaseModel):
     enabled: bool = Field(default=True)
-    file: str = Field(default="")  # Deprecated: .bathoignore support removed
 
 
 class BsgCacheConfig(BaseModel):
@@ -203,17 +216,9 @@ class BsgSymbolResolutionConfig(BaseModel):
 
 
 class BsgSerializationConfig(BaseModel):
-    method: str = Field(default="legacy")
+    method: str = Field(default="streaming")
     compression: bool = Field(default=False)
     batch_size: int = Field(default=1000, ge=1)
-
-    @field_validator("method")
-    @classmethod
-    def _validate_method(cls, value: str) -> str:  # noqa: B902
-        normalized = value.strip().lower()
-        if normalized not in {"legacy", "streaming"}:
-            return "legacy"
-        return normalized
 
 
 class BsgParsingConfig(BaseModel):
@@ -387,35 +392,12 @@ def _merge_config(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, A
     return merged
 
 
-def get_log_level() -> int:
-    return get_config_cached()["logging"]["level"]
-
-
-def get_config() -> Dict[str, Any]:
-    """Return validated config as a plain dict with batho.yaml resolved from cwd."""
-    return get_config_with_root(Path.cwd())
-
-
-def get_build_info() -> dict[str, str]:
-    """Expose package version/build info for CLI and metadata."""
-
-    try:
-        version = importlib.metadata.version("batho")
-    except importlib.metadata.PackageNotFoundError:
-        version = _env("BATHO_VERSION", "1.0.0") or "1.0.0"
-    build = _env("BATHO_BUILD", "") or ""
-    return {"version": version, "build": build}
-
-
-@lru_cache(maxsize=None)
 def get_config_cached() -> Dict[str, Any]:
-    """Get config with batho.yaml resolved relative to current working directory."""
-    return get_config_with_root(Path.cwd())
+    return _get_config_cached_for_root(get_active_root())
 
 
 @lru_cache(maxsize=None)
-def get_config_cached_for_root(root_dir: Path) -> Dict[str, Any]:
-    """Get config with batho.yaml resolved relative to target root directory."""
+def _get_config_cached_for_root(root_dir: Path) -> Dict[str, Any]:
     return get_config_with_root(root_dir)
 
 
@@ -495,7 +477,6 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
             },
             "ignore": {
                 "enabled": True,
-                "file": "",  # Deprecated: .bathoignore support removed
             },
             "cache": {
                 "enabled": True,
@@ -513,7 +494,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
                 "cache_symbols": True,
             },
             "serialization": {
-                "method": "legacy",
+                "method": "streaming",
                 "compression": False,
                 "batch_size": 1000,
             },
@@ -558,8 +539,8 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
         },
     }
 
-    # Root config override from ./batho.yaml only
-    cfg_path = Path(DEFAULT_ROOT_CONFIG_FILE)
+    # Root config override from root_dir/batho.yaml only
+    cfg_path = root_dir / DEFAULT_ROOT_CONFIG_FILE
     if cfg_path:
         try:
             file_cfg = _load_config_file(cfg_path)
@@ -755,9 +736,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
         "BATHO_BSG_SYMBOL_RESOLUTION_CACHE_SYMBOLS",
         base_cfg["bsg"]["symbol_resolution"]["cache_symbols"],
     )
-    env_serialization_method = _env("BATHO_BSG_SERIALIZATION_METHOD")
-    if env_serialization_method:
-        base_cfg["bsg"]["serialization"]["method"] = env_serialization_method
+
     base_cfg["bsg"]["serialization"]["compression"] = _env_bool(
         "BATHO_BSG_SERIALIZATION_COMPRESSION",
         base_cfg["bsg"]["serialization"]["compression"],
@@ -894,8 +873,7 @@ def get_config_with_root(root_dir: Path) -> Dict[str, Any]:
 
 
 def reload_config() -> Dict[str, Any]:
-    get_config_cached.cache_clear()
-    get_config_cached_for_root.cache_clear()
+    _get_config_cached_for_root.cache_clear()
     return get_config_cached()
 
 
@@ -1005,7 +983,7 @@ bsg:
     fuzzy_matching: false
     cache_symbols: true
   serialization:
-    method: legacy
+    method: streaming
     compression: false
     batch_size: 1000
   parsing:

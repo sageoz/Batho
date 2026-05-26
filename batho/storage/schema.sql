@@ -1,33 +1,32 @@
 -- ============================================================
--- Batho Unified Database Schema (v1.0)
--- Production-ready, enterprise-grade. 1 project = 1 .batho DB.
+-- Batho Unified Database Schema (v2.0)
+-- Compressed blob storage with global dictionary encoding.
 -- ============================================================
 
--- ============================================================
--- PRAGMAS (applied on every connection open via engine.py)
--- ============================================================
--- PRAGMA journal_mode = WAL;
--- PRAGMA synchronous = FULL;
--- PRAGMA foreign_keys = ON;
--- PRAGMA auto_vacuum = INCREMENTAL;
--- PRAGMA page_size = 8192;
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA foreign_keys = ON;
+PRAGMA auto_vacuum = INCREMENTAL;
+PRAGMA page_size = 4096;
 
--- ============================================================
--- 1. DATABASE METADATA
--- ============================================================
-
+-- 1. METADATA
 CREATE TABLE IF NOT EXISTS db_meta (
     key        TEXT PRIMARY KEY NOT NULL,
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) WITHOUT ROWID;
 
--- ============================================================
--- 2. INDEX RUNS (replaces index.json)
--- ============================================================
+-- 2. DICTIONARY ENCODING
+-- Deduplicates paths, entity types, AST node types globally.
+CREATE TABLE IF NOT EXISTS string_dict (
+    id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    val TEXT UNIQUE NOT NULL
+);
 
+-- 3. INDEX RUNS
 CREATE TABLE IF NOT EXISTS index_runs (
-    run_id         TEXT PRIMARY KEY NOT NULL,
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_uuid       TEXT UNIQUE NOT NULL,
     schema_version TEXT NOT NULL,
     started_at     TEXT NOT NULL,
     completed_at   TEXT,
@@ -35,243 +34,106 @@ CREATE TABLE IF NOT EXISTS index_runs (
                    CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
     git_commit     TEXT,
     git_branch     TEXT,
-    root_path      TEXT NOT NULL,
+    root_path_id   INTEGER NOT NULL REFERENCES string_dict(id),
     entity_count   INTEGER NOT NULL DEFAULT 0,
     rel_count      INTEGER NOT NULL DEFAULT 0,
     file_count     INTEGER NOT NULL DEFAULT 0,
     duration_ms    INTEGER,
-    config_hash    TEXT,
     error_message  TEXT
+);
+
+-- 4. THE GRAPH PAYLOAD (Compressed Blobs)
+CREATE TABLE IF NOT EXISTS file_artifacts (
+    run_id             INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
+    file_id            INTEGER NOT NULL REFERENCES string_dict(id),
+    bsg_agent_view     BLOB,  -- zstd-compressed: lightweight structural nodes
+    bsg_storage_view   BLOB,  -- zstd-compressed: delta (raw_content, syntax_glue)
+    bsg_rel_view       BLOB,  -- zstd-compressed: relationships array
+    content_hash       TEXT NOT NULL,
+    PRIMARY KEY (run_id, file_id)
 ) WITHOUT ROWID;
 
--- ============================================================
--- 3. GRAPH ENTITIES (shredded — one row per entity)
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS graph_entities (
-    run_id         TEXT    NOT NULL,
-    entity_id      TEXT    NOT NULL,
-    entity_type    TEXT    NOT NULL,
-    name           TEXT    NOT NULL,
-    file_path      TEXT    NOT NULL,
-    start_line     INTEGER NOT NULL CHECK (start_line >= 0),
-    end_line       INTEGER NOT NULL CHECK (end_line >= start_line),
-    start_byte     INTEGER NOT NULL DEFAULT 0 CHECK (start_byte >= 0),
-    end_byte       INTEGER NOT NULL DEFAULT 0 CHECK (end_byte >= start_byte),
-    signature      TEXT,
-    parent_id      TEXT,
-    content_hash   TEXT    NOT NULL DEFAULT '',
-    ast_node_type  TEXT,
-    metadata_json  TEXT    NOT NULL DEFAULT '{}',
-    PRIMARY KEY (run_id, entity_id),
-    FOREIGN KEY (run_id) REFERENCES index_runs(run_id) ON DELETE CASCADE
-) WITHOUT ROWID;
-
--- ============================================================
--- 4. GRAPH RELATIONSHIPS (shredded — one row per edge)
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS graph_relationships (
-    run_id            TEXT NOT NULL,
-    relationship_id   TEXT NOT NULL,
-    relationship_type TEXT NOT NULL,
-    source_id         TEXT NOT NULL,
-    target_id         TEXT NOT NULL,
-    metadata_json     TEXT NOT NULL DEFAULT '{}',
-    PRIMARY KEY (run_id, relationship_id),
-    FOREIGN KEY (run_id) REFERENCES index_runs(run_id) ON DELETE CASCADE
-) WITHOUT ROWID;
-
--- ============================================================
--- 5. BSG ENTRIES (one row per file per run)
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS bsg_entries (
-    run_id       TEXT    NOT NULL,
-    file_path    TEXT    NOT NULL,
-    view_type    TEXT    NOT NULL DEFAULT 'agent'
-                 CHECK (view_type IN ('agent', 'storage', 'human')),
-    bsg_json     TEXT    NOT NULL,
-    token_count  INTEGER,
-    node_count   INTEGER NOT NULL DEFAULT 0,
-    checksum     TEXT    NOT NULL,
-    PRIMARY KEY (run_id, file_path, view_type),
-    FOREIGN KEY (run_id) REFERENCES index_runs(run_id) ON DELETE CASCADE
-) WITHOUT ROWID;
-
--- ============================================================
--- 6. FILE TRACKING (incremental change detection)
--- ============================================================
-
+-- 5. FILE TRACKING (Minimal change detection)
 CREATE TABLE IF NOT EXISTS file_tracking (
-    file_path    TEXT    PRIMARY KEY NOT NULL,
-    content_hash TEXT    NOT NULL,
-    mtime        REAL    NOT NULL,
+    file_id      INTEGER PRIMARY KEY REFERENCES string_dict(id),
+    content_hash TEXT NOT NULL,
+    mtime        REAL NOT NULL,
     size         INTEGER NOT NULL CHECK (size >= 0),
     is_indexed   INTEGER NOT NULL DEFAULT 0 CHECK (is_indexed IN (0, 1)),
     last_run_id  TEXT,
-    updated_at   TEXT    NOT NULL
+    updated_at   TEXT NOT NULL,
+    encoding     TEXT DEFAULT 'utf-8'
+);
+
+-- 6. RUN ARTIFACTS (Enterprise Metrics & Context)
+-- Strict 1:1 mapping with index_runs. Replaces external side-files.
+-- All metrics stored as zstd-compressed JSON BLOBs.
+CREATE TABLE IF NOT EXISTS run_artifacts (
+    run_id               INTEGER PRIMARY KEY REFERENCES index_runs(id) ON DELETE CASCADE,
+    context_overview     BLOB,   -- zstd JSON: langs, file categories, entity distribution
+    telemetry_metrics    BLOB,   -- zstd JSON: duration phases, cache stats, file/entity counts
+    structural_metrics   BLOB,   -- zstd JSON: entity type dist, fan-in/fan-out, LOC
+    security_audit       BLOB,   -- zstd JSON: BSG interceptor hits (NULL until wired)
+    artifact_payload     BLOB,   -- zstd JSON: pre-minified entity+rel summary for LLM injection
+    delta_stats          BLOB,   -- zstd JSON: churn/node diffs (NULL for build runs)
+    schema_version       TEXT NOT NULL DEFAULT 'run-artifacts.v1',
+    created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) WITHOUT ROWID;
 
--- ============================================================
--- 7. AST CACHE (parsed entity/relationship cache by content hash)
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS ast_cache (
-    file_hash          TEXT    PRIMARY KEY NOT NULL,
-    file_path          TEXT    NOT NULL,
-    entities_json      TEXT    NOT NULL,
-    relationships_json TEXT,
-    mtime              REAL    NOT NULL,
-    size               INTEGER NOT NULL CHECK (size >= 0),
-    cached_at          TEXT    NOT NULL,
-    ttl_days           INTEGER NOT NULL DEFAULT 30 CHECK (ttl_days > 0)
+-- 7. QUERY ENTITIES (SQLite-index-first search)
+CREATE TABLE IF NOT EXISTS query_entities (
+    entity_id       TEXT NOT NULL,
+    run_id          INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
+    entity_name     TEXT NOT NULL,
+    entity_type     TEXT NOT NULL,
+    fqn             TEXT,
+    file_path       TEXT NOT NULL,
+    line_number     INTEGER NOT NULL,
+    signature       TEXT,
+    is_exported     INTEGER DEFAULT 0,
+    PRIMARY KEY (entity_id, run_id)
 ) WITHOUT ROWID;
 
--- ============================================================
--- 8. FILE SNAPSHOTS (reconstruction metadata)
--- ============================================================
+-- Indexes for fast search
+CREATE INDEX IF NOT EXISTS idx_entities_name ON query_entities(entity_name);
+CREATE INDEX IF NOT EXISTS idx_entities_name_prefix ON query_entities(entity_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_entities_type ON query_entities(entity_type);
+CREATE INDEX IF NOT EXISTS idx_entities_fqn ON query_entities(fqn);
+CREATE INDEX IF NOT EXISTS idx_entities_run ON query_entities(run_id);
 
-CREATE TABLE IF NOT EXISTS file_snapshots (
-    file_path             TEXT    PRIMARY KEY NOT NULL,
-    file_hash             TEXT    NOT NULL,
-    file_size             INTEGER NOT NULL CHECK (file_size >= 0),
-    encoding              TEXT    NOT NULL DEFAULT 'utf-8',
-    entity_ids_json       TEXT    NOT NULL DEFAULT '[]',
-    gap_sections_json     TEXT    NOT NULL DEFAULT '[]',
-    shebang               TEXT,
-    encoding_declaration  TEXT,
-    file_level_comments   TEXT    NOT NULL DEFAULT '[]',
-    created_at            TEXT    NOT NULL,
-    updated_at            TEXT    NOT NULL
+-- 7.2 QUERY RELATIONSHIPS (Relational edges)
+CREATE TABLE IF NOT EXISTS query_relationships (
+    source_id       TEXT NOT NULL,
+    target_id       TEXT NOT NULL,
+    relation_type   TEXT NOT NULL,
+    run_id          INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
+    metadata_json   TEXT DEFAULT '{}',
+    PRIMARY KEY (source_id, target_id, relation_type, run_id)
 ) WITHOUT ROWID;
 
--- ============================================================
--- 9. SNAPSHOTS (time machine — base snapshots)
--- ============================================================
+CREATE INDEX IF NOT EXISTS idx_relationships_source ON query_relationships(source_id, run_id);
+CREATE INDEX IF NOT EXISTS idx_relationships_target ON query_relationships(target_id, run_id);
 
-CREATE TABLE IF NOT EXISTS snapshots (
-    snapshot_id    TEXT PRIMARY KEY NOT NULL,
-    parent_id      TEXT,
-    created_at     TEXT NOT NULL,
-    label          TEXT NOT NULL DEFAULT '',
-    git_commit     TEXT,
-    git_branch     TEXT,
-    root_path      TEXT NOT NULL,
-    schema_version TEXT NOT NULL,
-    stats_json     TEXT NOT NULL DEFAULT '{}',
-    checksum       TEXT NOT NULL,
-    FOREIGN KEY (parent_id) REFERENCES snapshots(snapshot_id)
-) WITHOUT ROWID;
+-- 7.3 DANGLING REFERENCES (Temporary storage for unresolved edges during parsing)
+CREATE TABLE IF NOT EXISTS dangling_references (
+    source_id               TEXT NOT NULL,
+    unresolved_target_name  TEXT NOT NULL,
+    relation_type           TEXT NOT NULL,
+    run_id                  INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE
+);
 
--- ============================================================
--- 10. SNAPSHOT PATCHES (RFC 6902 JSON Patch diffs)
--- ============================================================
 
-CREATE TABLE IF NOT EXISTS snapshot_patches (
-    patch_id        TEXT PRIMARY KEY NOT NULL,
-    base_snapshot   TEXT NOT NULL,
-    target_snapshot TEXT NOT NULL,
-    created_at      TEXT NOT NULL,
-    patch_format    TEXT NOT NULL DEFAULT 'rfc6902'
-                    CHECK (patch_format IN ('rfc6902', 'custom_diff')),
-    operations      TEXT NOT NULL,
-    op_count        INTEGER NOT NULL DEFAULT 0,
-    size_bytes      INTEGER NOT NULL DEFAULT 0,
-    checksum        TEXT NOT NULL,
-    FOREIGN KEY (base_snapshot) REFERENCES snapshots(snapshot_id),
-    FOREIGN KEY (target_snapshot) REFERENCES snapshots(snapshot_id)
-) WITHOUT ROWID;
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_dangling_run_name
+    ON dangling_references(run_id, unresolved_target_name);
 
--- ============================================================
--- 11. PATCH OPERATIONS (time machine — incremental file patches)
--- ============================================================
+CREATE INDEX IF NOT EXISTS idx_runs_latest
+    ON index_runs(status, completed_at DESC)
+    WHERE status = 'completed';
 
-CREATE TABLE IF NOT EXISTS patch_operations (
-    operation_id     TEXT PRIMARY KEY NOT NULL,
-    base_snapshot_id TEXT,
-    new_snapshot_id  TEXT,
-    operation_type   TEXT NOT NULL
-                     CHECK (operation_type IN ('incremental_patch', 'diff_patch', 'cherry_pick', 'full_reindex')),
-    timestamp        TEXT NOT NULL,
-    changes_json     TEXT NOT NULL,
-    change_count     INTEGER NOT NULL DEFAULT 0,
-    checksum         TEXT NOT NULL,
-    metrics_json     TEXT NOT NULL DEFAULT '{}',
-    FOREIGN KEY (base_snapshot_id) REFERENCES snapshots(snapshot_id),
-    FOREIGN KEY (new_snapshot_id) REFERENCES snapshots(snapshot_id)
-) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_file_artifacts_run
+    ON file_artifacts(run_id);
 
--- ============================================================
--- 12. CONTEXT OUTPUTS (generated markdown/text context documents)
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS context_outputs (
-    run_id       TEXT NOT NULL,
-    output_type  TEXT NOT NULL,
-    content      TEXT NOT NULL,
-    size_bytes   INTEGER NOT NULL DEFAULT 0,
-    produced_at  TEXT NOT NULL,
-    PRIMARY KEY (run_id, output_type),
-    FOREIGN KEY (run_id) REFERENCES index_runs(run_id) ON DELETE CASCADE
-) WITHOUT ROWID;
-
--- ============================================================
--- 13. ARTIFACT REGISTRY (cloud sync metadata & artifact tracking)
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS artifacts (
-    artifact_id      TEXT    PRIMARY KEY NOT NULL,
-    content_id       TEXT,
-    artifact_type    TEXT    NOT NULL,
-    logical_path     TEXT    NOT NULL,
-    checksum         TEXT,
-    size_bytes       INTEGER NOT NULL CHECK (size_bytes >= 0),
-    schema_version   TEXT    NOT NULL,
-    producer         TEXT    NOT NULL,
-    run_id           TEXT,
-    sync_status      TEXT    NOT NULL DEFAULT 'local_only'
-                     CHECK (sync_status IN ('pending', 'synced', 'failed', 'conflict', 'local_only')),
-    cloud_content_id TEXT,
-    last_sync_at     TEXT,
-    sync_error       TEXT,
-    retry_count      INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
-    retention_class  TEXT    NOT NULL DEFAULT 'default',
-    metadata_json    TEXT    NOT NULL DEFAULT '{}',
-    created_at       TEXT    NOT NULL,
-    updated_at       TEXT    NOT NULL,
-    deleted          INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1))
-) WITHOUT ROWID;
-
--- ============================================================
--- 14. INDEXES
--- ============================================================
-
--- === Graph Entity Indexes ===
-CREATE INDEX IF NOT EXISTS idx_entities_by_file
-    ON graph_entities(run_id, file_path);
-
-CREATE INDEX IF NOT EXISTS idx_entities_by_type_name
-    ON graph_entities(run_id, entity_type, name);
-
-CREATE INDEX IF NOT EXISTS idx_entities_by_parent
-    ON graph_entities(run_id, parent_id)
-    WHERE parent_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_entities_by_line
-    ON graph_entities(run_id, file_path, start_line, end_line);
-
--- === Graph Relationship Indexes ===
-CREATE INDEX IF NOT EXISTS idx_rels_by_source
-    ON graph_relationships(run_id, source_id);
-
-CREATE INDEX IF NOT EXISTS idx_rels_by_target
-    ON graph_relationships(run_id, target_id);
-
-CREATE INDEX IF NOT EXISTS idx_rels_by_type
-    ON graph_relationships(run_id, relationship_type);
-
--- === File Tracking Indexes ===
 CREATE INDEX IF NOT EXISTS idx_file_tracking_hash
     ON file_tracking(content_hash);
 
@@ -279,39 +141,50 @@ CREATE INDEX IF NOT EXISTS idx_file_tracking_unindexed
     ON file_tracking(is_indexed)
     WHERE is_indexed = 0;
 
--- === AST Cache Indexes ===
-CREATE INDEX IF NOT EXISTS idx_ast_cache_path
-    ON ast_cache(file_path);
 
-CREATE INDEX IF NOT EXISTS idx_ast_cache_expiry
-    ON ast_cache(cached_at);
 
--- === BSG Entry Indexes ===
-CREATE INDEX IF NOT EXISTS idx_bsg_by_file
-    ON bsg_entries(run_id, file_path);
+-- 8. FILE CHANGELOG
+CREATE TABLE IF NOT EXISTS file_changelog (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
+    base_run_id     INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
+    file_id         INTEGER NOT NULL REFERENCES string_dict(id),
+    entity_index    TEXT,       -- space-separated entity IDs for FTS5 tokenization
+    node_changes    BLOB,       -- zstd-compressed orjson bytes (array of NodeDiff dicts)
+    UNIQUE (run_id, file_id)
+);
 
--- === Snapshot Indexes ===
-CREATE INDEX IF NOT EXISTS idx_snapshots_created
-    ON snapshots(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_file_changelog_file
+    ON file_changelog(file_id, run_id);
 
-CREATE INDEX IF NOT EXISTS idx_snapshots_parent
-    ON snapshots(parent_id)
-    WHERE parent_id IS NOT NULL;
+-- FTS5 external content table: inverted index only, no text duplication on disk
+CREATE VIRTUAL TABLE IF NOT EXISTS file_changelog_fts USING fts5(
+    entity_index,
+    content='file_changelog',
+    content_rowid='id'
+);
 
--- === Artifact Registry Indexes ===
-CREATE INDEX IF NOT EXISTS idx_artifacts_sync_pending
-    ON artifacts(sync_status, updated_at DESC)
-    WHERE deleted = 0 AND sync_status = 'pending';
+-- Sync triggers: keep FTS index in sync with file_changelog automatically
+CREATE TRIGGER IF NOT EXISTS trg_file_changelog_ai
+    AFTER INSERT ON file_changelog
+BEGIN
+    INSERT INTO file_changelog_fts(rowid, entity_index)
+    VALUES (new.id, new.entity_index);
+END;
 
-CREATE INDEX IF NOT EXISTS idx_artifacts_by_type
-    ON artifacts(artifact_type, updated_at DESC)
-    WHERE deleted = 0;
+CREATE TRIGGER IF NOT EXISTS trg_file_changelog_ad
+    AFTER DELETE ON file_changelog
+BEGIN
+    INSERT INTO file_changelog_fts(file_changelog_fts, rowid, entity_index)
+    VALUES ('delete', old.id, old.entity_index);
+END;
 
-CREATE INDEX IF NOT EXISTS idx_artifacts_retention
-    ON artifacts(retention_class, created_at)
-    WHERE deleted = 0;
+CREATE TRIGGER IF NOT EXISTS trg_file_changelog_au
+    AFTER UPDATE ON file_changelog
+BEGIN
+    INSERT INTO file_changelog_fts(file_changelog_fts, rowid, entity_index)
+    VALUES ('delete', old.id, old.entity_index);
+    INSERT INTO file_changelog_fts(rowid, entity_index)
+    VALUES (new.id, new.entity_index);
+END;
 
--- === Index Run Indexes ===
-CREATE INDEX IF NOT EXISTS idx_runs_latest
-    ON index_runs(status, completed_at DESC)
-    WHERE status = 'completed';

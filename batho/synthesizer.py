@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from batho.context.storage import persist_json
+
 from batho.utils.logging import get_logger
 
 logger = get_logger(__name__, component="synthesizer")
@@ -67,16 +67,12 @@ def _save_ledger(path: Path, payload: dict[str, Any]) -> None:
     payload["schema_version"] = _LEDGER_SCHEMA_VERSION
     payload["updated_at"] = _now_iso()
 
-    ctn_dir = path.parent
-    persist_json(
-        ctn_dir,
-        path,
-        payload,
-        artifact_type="evolution_ledger_json",
-        producer="synthesizer",
-        metadata={"entry_count": len(payload.get("entries") or [])},
-        schema_version=_LEDGER_SCHEMA_VERSION,
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8"
     )
+    tmp_path.replace(path)
 
 
 def _normalize_changed_files(changed_files: Iterable[str] | None) -> list[str]:

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from batho.config import get_config_cached_for_root
+from batho.config import get_config_cached, set_active_root
 from batho.context.unified_cache import BathoCache
 from batho.utils.logging import get_logger
 
@@ -120,8 +120,9 @@ def migrate_cache(
     assume_indexed: bool = False,
 ) -> dict[str, Any]:
     root = root.resolve()
-    cfg = get_config_cached_for_root(root)
-    ctn_dir = root / cfg["paths"]["ctn_dir"]
+    set_active_root(root)
+    cfg = get_config_cached()
+    ctn_dir = root / cfg["paths"]["config_dir"]
     old_ast = old_ast_path or (ctn_dir / "local" / "cache" / "ast_cache.db")
     old_file_hash = (
         old_file_hash_path

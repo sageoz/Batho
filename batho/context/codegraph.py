@@ -552,7 +552,7 @@ class CodeGraphIndexer:
     """
 
     def __init__(
-        self, cache_path: str = ".batho", root: str | None = None
+        self, cache_path: str | None = None, root: str | None = None
     ) -> None:
         self.logger = get_logger(__name__, operation="index")
         root_path = Path(root).resolve() if root else None
@@ -602,6 +602,7 @@ class CodeGraphIndexer:
         metrics_callback: Callable[[str, Dict[str, Any]], None] | None = None,
         index_id: str | None = None,
         ast_cache_enabled: bool | None = None,
+        file_list: list[str] | None = None,
     ) -> InMemoryGraph:
         """
         Walk *root* recursively, index every matching source file, and return
@@ -610,6 +611,9 @@ class CodeGraphIndexer:
         When *extractor* is None (default), the language is inferred from the
         file extension via the registry — a mixed-language repo is fully indexed
         in a single pass.
+
+        When *file_list* is provided, only those specific files are indexed
+        (skipping the directory walk). This is used by incremental patch operations.
 
         Args:
             root: Root directory to walk.
@@ -622,6 +626,8 @@ class CodeGraphIndexer:
             metrics_callback: Optional callback for metrics collection.
             index_id: Optional index ID to stamp on entities.
             ast_cache_enabled: Optional override for AST cache usage in this run.
+            file_list: Optional list of specific file paths to index. When provided,
+                      directory walk is skipped and only these files are processed.
 
         Returns:
             Populated InMemoryGraph.
@@ -706,10 +712,19 @@ class CodeGraphIndexer:
             # --- Collect files to process ---
             candidates: list[tuple[Path, str]] = []  # (path, rel_str)
             self._unindexed_files = []
-            for dirpath, dirnames, filenames in walk_ignored_filtered(root_path, spec=ignore_spec):
-                for filename in filenames:
-                    file_path = dirpath / filename
+
+            if file_list:
+                # Use specific file list (incremental patch mode)
+                for file_path_str in file_list:
+                    file_path = Path(file_path_str).resolve()
                     if not file_path.is_file():
+                        continue
+                    # Check ignore patterns
+                    try:
+                        rel_path = str(file_path.relative_to(root_path))
+                    except ValueError:
+                        rel_path = str(file_path)
+                    if ignore_spec and ignore_spec.match_file(rel_path):
                         continue
 
                     suffix = file_path.suffix.lower()
@@ -721,11 +736,7 @@ class CodeGraphIndexer:
                     else:
                         file_extractor = _registry_get_extractor(suffix)
                         if file_extractor is None:
-                            try:
-                                rel = str(file_path.relative_to(root_path))
-                            except ValueError:
-                                rel = str(file_path)
-                            self._unindexed_files.append((str(file_path), rel))
+                            self._unindexed_files.append((str(file_path), rel_path))
                             continue
                         if ext_set is not None and suffix not in ext_set:
                             continue
@@ -733,8 +744,37 @@ class CodeGraphIndexer:
 
                     if max_files_cap and len(candidates) >= max_files_cap:
                         break
-                if max_files_cap and len(candidates) >= max_files_cap:
-                    break
+            else:
+                # Walk directory tree (full build mode)
+                for dirpath, dirnames, filenames in walk_ignored_filtered(root_path, spec=ignore_spec):
+                    for filename in filenames:
+                        file_path = dirpath / filename
+                        if not file_path.is_file():
+                            continue
+
+                        suffix = file_path.suffix.lower()
+
+                        if extractor is not None:
+                            if ext_set is not None and suffix not in ext_set:
+                                continue
+                            candidates.append((file_path, str(file_path)))
+                        else:
+                            file_extractor = _registry_get_extractor(suffix)
+                            if file_extractor is None:
+                                try:
+                                    rel = str(file_path.relative_to(root_path))
+                                except ValueError:
+                                    rel = str(file_path)
+                                self._unindexed_files.append((str(file_path), rel))
+                                continue
+                            if ext_set is not None and suffix not in ext_set:
+                                continue
+                            candidates.append((file_path, str(file_path)))
+
+                        if max_files_cap and len(candidates) >= max_files_cap:
+                            break
+                    if max_files_cap and len(candidates) >= max_files_cap:
+                        break
 
             if verbose:
                 self.logger.info(

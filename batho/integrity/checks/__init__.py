@@ -65,7 +65,6 @@ class IntegrityCheck(Protocol):
 
 # Import concrete check implementations for registration
 from .database import DatabaseIntegrityCheck
-from .registry import RegistryIntegrityCheck
 from .index import IndexIntegrityCheck
 from .bsg import BSGIntegrityCheck
 from .views import ViewIntegrityCheck
@@ -77,7 +76,6 @@ __all__ = [
     "CheckResult",
     "IntegrityCheck",
     "DatabaseIntegrityCheck",
-    "RegistryIntegrityCheck",
     "IndexIntegrityCheck",
     "BSGIntegrityCheck",
     "ViewIntegrityCheck",
