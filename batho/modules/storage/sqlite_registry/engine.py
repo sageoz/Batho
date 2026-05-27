@@ -216,6 +216,7 @@ def resolve_db_path_from_config(root: Path) -> Path | None:
     """Resolve db_path from config, returns None for {root} (use default behavior)."""
     try:
         from batho.core.config import _get_config_cached_for_root
+        from batho.utils.path_sanitizer import sanitize_path, PathSecurityError
         cfg = _get_config_cached_for_root(root)
         db_path = cfg.get("paths", {}).get("db_path", "{root}")
         
@@ -223,13 +224,21 @@ def resolve_db_path_from_config(root: Path) -> Path | None:
         if db_path == "{root}" or not db_path:
             return None
         
-        # Resolve relative to root
-        resolved = (root / db_path).resolve()
+        # Sanitize path to prevent escaping root
+        try:
+            resolved = sanitize_path(db_path, root, allow_absolute=True)
+        except PathSecurityError as e:
+            LOGGER.warning("unsafe_db_path_in_config", db_path=db_path, error=str(e))
+            return None
         
         # If it is an existing directory, or has an empty suffix (e.g. '.batho'),
         # treat it as a directory and place the artifact filename inside it.
         if resolved.is_dir() or not resolved.suffix:
-            return resolved / artifact_filename(root)
+            resolved = resolved / artifact_filename(root)
+            try:
+                resolved = sanitize_path(resolved, root, allow_absolute=True)
+            except PathSecurityError:
+                return None
             
         return resolved
     except Exception:
@@ -348,11 +357,7 @@ class BathoDatabase:
             self._local = threading.local()
             self._string_dict_cache.clear()
             self._string_val_cache.clear()
-            for conn in self._all_connections:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
+            # Clear connections without calling conn.close() to prevent dropping advisory locks in the parent process.
             self._all_connections = []
             self._pid = current_pid
 
@@ -404,7 +409,12 @@ class BathoDatabase:
             else:
                 conn.execute("PRAGMA journal_mode = WAL")
 
-        conn.execute("PRAGMA synchronous = NORMAL")
+        # Determine final journal mode to set synchronous safely
+        final_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        if final_mode.lower() == "wal":
+            conn.execute("PRAGMA synchronous = NORMAL")
+        else:
+            conn.execute("PRAGMA synchronous = FULL")
 
     @contextmanager
     def connection(self, *, read_only: bool = False) -> Iterator[sqlite3.Connection]:

@@ -159,52 +159,100 @@ class FileLock:
         logger.debug("stale_lock_dead_process", pid=pid)
         return True
 
+    def _lock_file_descriptor(self, fd: int) -> bool:
+        if os.name == "posix":
+            import fcntl
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True
+            except OSError:
+                return False
+        elif os.name == "nt":
+            import msvcrt
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                return True
+            except OSError:
+                return False
+        return True
+
+    def _unlock_file_descriptor(self, fd: int) -> None:
+        if os.name == "posix":
+            import fcntl
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        elif os.name == "nt":
+            import msvcrt
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+
     def _cleanup_stale_lock(self) -> bool:
         """
         Clean up stale lock file if present.
 
-        Re-reads the lock file immediately before unlinking and refuses to
-        delete it if its (pid, timestamp) payload changed between the
-        staleness check and the unlink. This prevents two processes from
-        both deciding a lock is stale and racing to delete each other's
-        freshly-created lock.
-
-        Returns:
-            True if stale lock was cleaned up, False otherwise
+        Uses advisory locking to prevent race conditions during cleanup.
         """
-        lock_info = self._read_lock_info()
-        if lock_info is None:
+        try:
+            fd = os.open(self.lock_path, os.O_RDWR)
+        except FileNotFoundError:
             return False
-
-        pid, timestamp = lock_info
-        if not self._is_lock_stale(pid, timestamp):
-            return False
-
-        # Re-read just before unlink: if anything changed, abort cleanup.
-        verify_info = self._read_lock_info()
-        if verify_info is None or verify_info != (pid, timestamp):
-            logger.debug(
-                "stale_lock_changed_during_cleanup",
-                lock_path=str(self.lock_path),
-            )
+        except OSError:
             return False
 
         try:
-            self.lock_path.unlink()
-            logger.info(
-                "cleaned_stale_lock", lock_path=str(self.lock_path), pid=pid
-            )
-            return True
-        except FileNotFoundError:
-            # Another process beat us to it — that's fine.
-            return True
-        except (PermissionError, OSError) as e:
-            logger.warning(
-                "failed_to_clean_stale_lock",
-                lock_path=str(self.lock_path),
-                error=str(e),
-            )
-            return False
+            if not self._lock_file_descriptor(fd):
+                return False
+
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                content_bytes = os.read(fd, 100)
+                content = content_bytes.decode("utf-8").strip()
+            except OSError:
+                return False
+
+            if not content:
+                return False
+
+            parts = content.split(":")
+            if len(parts) != 2:
+                return False
+
+            try:
+                pid = int(parts[0])
+                timestamp = float(parts[1])
+            except ValueError:
+                return False
+
+            if not self._is_lock_stale(pid, timestamp):
+                return False
+
+            try:
+                self.lock_path.unlink()
+                logger.info(
+                    "cleaned_stale_lock", lock_path=str(self.lock_path), pid=pid
+                )
+                return True
+            except FileNotFoundError:
+                return True
+            except OSError as e:
+                logger.warning(
+                    "failed_to_clean_stale_lock",
+                    lock_path=str(self.lock_path),
+                    error=str(e),
+                )
+                return False
+        finally:
+            self._unlock_file_descriptor(fd)
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
     def acquire(self) -> bool:
         """

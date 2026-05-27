@@ -6,9 +6,11 @@ File tracking delegates to BathoDatabase for persistence.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 import hashlib
 import json
+import threading
 import time
 from typing import Any
 
@@ -60,10 +62,12 @@ class BathoCache:
         self.logger = logger
 
         # In-memory stores (session-local, not persisted)
-        self._ast: dict[
+        self._lock = threading.Lock()
+        self._max_ast_size = 2000
+        self._ast: OrderedDict[
             tuple[str, str, str],
             tuple[list[Entity], list[Relationship], float | None],
-        ] = {}
+        ] = OrderedDict()
         self._snapshots: dict[str, FileSnapshot] = {}
 
     # ------------------------------------------------------------------
@@ -71,6 +75,7 @@ class BathoCache:
     # ------------------------------------------------------------------
 
     def _purge_expired(self) -> None:
+        # Note: caller should hold self._lock
         now = time.time()
         expired = []
         for key, value in self._ast.items():
@@ -104,13 +109,15 @@ class BathoCache:
     def get_ast(
         self, file_path: str, file_hash: str, variant: str | None = None
     ) -> tuple[list[Entity], list[Relationship]] | None:
-        self._purge_expired()
-        entry = self._ast.get(self._ast_key(file_path, file_hash, variant))
-        if entry is None:
+        with self._lock:
+            self._purge_expired()
+            key = self._ast_key(file_path, file_hash, variant)
+            if key in self._ast:
+                self._ast.move_to_end(key)
+                entry = self._ast[key]
+                if len(entry) >= 2:
+                    return entry[0], entry[1]
             return None
-        if len(entry) >= 2:
-            return entry[0], entry[1]
-        return None
 
     def set_ast(
         self,
@@ -126,16 +133,24 @@ class BathoCache:
         expires_at = None
         if ttl_days > 0:
             expires_at = time.time() + (ttl_days * 86400)
-        self._ast[self._ast_key(file_path, file_hash, variant)] = (
-            entities,
-            relationships,
-            expires_at,
-        )
+        
+        key = self._ast_key(file_path, file_hash, variant)
+        with self._lock:
+            if key in self._ast:
+                self._ast.pop(key)
+            self._ast[key] = (
+                entities,
+                relationships,
+                expires_at,
+            )
+            while len(self._ast) > self._max_ast_size:
+                self._ast.popitem(last=False)
 
     def delete_ast(
         self, file_path: str, file_hash: str, variant: str | None = None
     ) -> None:
-        self._ast.pop(self._ast_key(file_path, file_hash, variant), None)
+        with self._lock:
+            self._ast.pop(self._ast_key(file_path, file_hash, variant), None)
 
     def delete_ast_by_path(self, file_path: str) -> int:
         """Delete AST entries for a file path across all cache variants."""
@@ -147,20 +162,23 @@ class BathoCache:
             except OSError:
                 pass
 
-        keys_to_delete = [
-            key for key in self._ast.keys() if key[0] in normalized_paths
-        ]
-        for key in keys_to_delete:
-            self._ast.pop(key, None)
-        return len(keys_to_delete)
+        with self._lock:
+            keys_to_delete = [
+                key for key in self._ast.keys() if key[0] in normalized_paths
+            ]
+            for key in keys_to_delete:
+                self._ast.pop(key, None)
+            return len(keys_to_delete)
 
     def clear_ast_cache(self, older_than_days: int | None = None) -> int:
-        count = len(self._ast)
-        self._ast.clear()
-        return count
+        with self._lock:
+            count = len(self._ast)
+            self._ast.clear()
+            return count
 
     def invalidate_cache(self, pattern: str | None = None) -> None:
-        self._ast.clear()
+        with self._lock:
+            self._ast.clear()
         self.logger.info("cache_invalidated", pattern=pattern or "*", deleted_count=0)
 
     # ------------------------------------------------------------------

@@ -77,42 +77,13 @@ class QueryService:
         return self._db.get_latest_run_id()
 
     def _ensure_loaded(self, run_uuid: str) -> None:
-        """Load all file blobs for the run into memory if not already loaded.
-
-        If run_uuid differs from the previously loaded run (e.g., a new patch
-        completed), the in-memory data AND the query cache are both replaced so
-        callers never see stale results from the previous run.
-        """
+        """Discard cached query results if run_uuid changes."""
         if self._loaded_run_id == run_uuid:
             return
 
-        # A different run is now active — discard cached query results that were
-        # keyed against the old run_uuid to prevent stale data from persisting.
         self._cache.clear()
-
-        run_internal_id = self._db.get_run_internal_id(run_uuid)
-        if run_internal_id is None:
-            self._entities = []
-            self._relationships = []
-            self._loaded_run_id = run_uuid
-            return
-
-        artifacts = self._db.get_file_artifacts(run_internal_id)
-        entities: list[dict[str, Any]] = []
-        relationships: list[dict[str, Any]] = []
-        for artifact in artifacts:
-            graph = artifact.get("graph", {})
-            file_path = artifact.get("file_path", "")
-            for e in graph.get("entities", []):
-                e_copy = dict(e)
-                if "file" not in e_copy:
-                    e_copy["file"] = file_path
-                entities.append(e_copy)
-            for r in graph.get("relationships", []):
-                relationships.append(dict(r))
-
-        self._entities = entities
-        self._relationships = relationships
+        self._entities = []
+        self._relationships = []
         self._loaded_run_id = run_uuid
 
     def entities_by_type(
@@ -132,15 +103,34 @@ class QueryService:
         if cached is not None:
             return cached
 
-        # NOTE: This loads ALL entities into memory before applying the limit.
-        # For large repositories, this causes memory bloat. The cache key
-        # includes the limit, causing different cache entries for different limits.
-        # Consider: (1) true pagination in _ensure_loaded, or (2) streaming filters.
         self._ensure_loaded(run_uuid)
-        results = [
-            e for e in self._entities
-            if str(e.get("entity_type", e.get("type", ""))).upper() == normalized
-        ][:capped_limit]
+        run_internal_id = self._db.get_run_internal_id(run_uuid)
+        if run_internal_id is None:
+            return []
+
+        # Find file paths containing this entity type
+        with self._db.connection(read_only=True) as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT file_path FROM query_entities
+                   WHERE run_id = ? AND UPPER(entity_type) = ?""",
+                (run_internal_id, normalized)
+            ).fetchall()
+            file_paths = [r["file_path"] for r in rows]
+
+        results = []
+        for file_path in file_paths:
+            entities = self._db.get_agent_entities_for_file(run_internal_id, file_path)
+            for e in entities:
+                if str(e.get("entity_type", e.get("type", ""))).upper() == normalized:
+                    e_copy = dict(e)
+                    if "file" not in e_copy:
+                        e_copy["file"] = file_path
+                    results.append(e_copy)
+                    if len(results) >= capped_limit:
+                        break
+            if len(results) >= capped_limit:
+                break
+
         self._cache_set(cache_key, results)
         return results
 
@@ -155,9 +145,6 @@ class QueryService:
             return []
 
         capped_limit = max(1, int(limit))
-        # Relativize the input path before building the cache key so that
-        # callers using absolute or relative forms of the same file share a
-        # single cache entry instead of redundant per-form entries.
         normalized_query_path = self._relativizer(file_path.strip())
         cache_key = ("entities_by_file", run_uuid, normalized_query_path, capped_limit)
         cached = self._cache_get(cache_key)
@@ -165,10 +152,34 @@ class QueryService:
             return cached
 
         self._ensure_loaded(run_uuid)
-        results = [
-            e for e in self._entities
-            if self._relativizer(e.get("file", e.get("file_path", ""))) == normalized_query_path
-        ][:capped_limit]
+        run_internal_id = self._db.get_run_internal_id(run_uuid)
+        if run_internal_id is None:
+            return []
+
+        # Find exact file_path in database by resolving path relativization
+        with self._db.connection(read_only=True) as conn:
+            rows = conn.execute(
+                """SELECT sd.val AS file_path FROM file_artifacts fa
+                   JOIN string_dict sd ON fa.file_id = sd.id
+                   WHERE fa.run_id = ?""",
+                (run_internal_id,)
+            ).fetchall()
+            db_file_path = None
+            for r in rows:
+                if self._relativizer(r["file_path"]) == normalized_query_path:
+                    db_file_path = r["file_path"]
+                    break
+
+        results = []
+        if db_file_path:
+            entities = self._db.get_agent_entities_for_file(run_internal_id, db_file_path)
+            for e in entities:
+                e_copy = dict(e)
+                if "file" not in e_copy:
+                    e_copy["file"] = db_file_path
+                results.append(e_copy)
+            results = results[:capped_limit]
+
         self._cache_set(cache_key, results)
         return results
 
@@ -190,9 +201,35 @@ class QueryService:
             return cached
 
         self._ensure_loaded(run_uuid)
-        results = [
-            r for r in self._relationships
-            if str(r.get("type", r.get("relationship_type", ""))).upper() == normalized
-        ][:capped_limit]
+        run_internal_id = self._db.get_run_internal_id(run_uuid)
+        if run_internal_id is None:
+            return []
+
+        import json
+        with self._db.connection(read_only=True) as conn:
+            rows = conn.execute(
+                """SELECT source_id, target_id, relation_type, metadata_json
+                   FROM query_relationships
+                   WHERE run_id = ? AND UPPER(relation_type) = ?
+                   LIMIT ?""",
+                (run_internal_id, normalized, capped_limit)
+            ).fetchall()
+            
+            results = []
+            for r in rows:
+                meta = {}
+                if r["metadata_json"]:
+                    try:
+                        meta = json.loads(r["metadata_json"])
+                    except Exception:
+                        pass
+                results.append({
+                    "type": r["relation_type"],
+                    "relationship_type": r["relation_type"],
+                    "source_id": r["source_id"],
+                    "target_id": r["target_id"],
+                    "metadata": meta,
+                })
+
         self._cache_set(cache_key, results)
         return results
