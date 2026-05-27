@@ -12,20 +12,20 @@ from pathlib import Path
 
 def register_fix_parser(subparsers: argparse._SubParsersAction) -> None:
     """Register the `fix` subcommand."""
-    from batho.integrity.cli import register_fix_parser as reg
+    from batho.modules.integrity.cli import register_fix_parser as reg
     parser = reg(subparsers)
     parser.set_defaults(func=cmd_fix)
 
 
 def cmd_fix(args: argparse.Namespace) -> int:
     """Execute the fix command."""
-    from batho.integrity.engine import FixEngine
-    from batho.integrity.report import ReportGenerator
+    from batho.modules.integrity.engine import FixEngine
+    from batho.modules.integrity.report import ReportGenerator
 
     root = args.root.resolve()
 
     # Check database exists
-    from batho.storage.engine import resolve_db_path
+    from batho.modules.storage.sqlite_registry.engine import resolve_db_path
     db_path = resolve_db_path(root)
     if not db_path.exists():
         # Try alternate naming

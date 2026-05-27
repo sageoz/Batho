@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from batho.config import SCHEMA_VERSIONS
+from batho.core.config import SCHEMA_VERSIONS
 from batho.utils.logging import get_logger
 
 logger = get_logger(__name__, component="patch_errors")
@@ -23,7 +23,7 @@ logger = get_logger(__name__, component="patch_errors")
 def _is_audit_enabled() -> bool:
     """Check if audit logging is enabled via config (lazy evaluation)."""
     try:
-        from batho.config import get_config_cached
+        from batho.core.config import get_config_cached
 
         return get_config_cached().get("flags", {}).get("audit_log_enabled", True)
     except Exception:

@@ -60,7 +60,7 @@ def register_diff_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def cmd_diff(args: argparse.Namespace) -> int:
     """Execute the diff subcommand."""
-    from batho.storage.engine import get_database, resolve_db_path
+    from batho.modules.storage.sqlite_registry.engine import get_database, resolve_db_path
     
     if args.since and not args.entity:
         print("error: --since can only be used with --entity", file=sys.stderr)

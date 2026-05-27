@@ -14,10 +14,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from batho.config import get_config_cached, set_active_root
+from batho.core.config import get_config_cached, set_active_root
 from batho.utils.hash import _is_binary, compute_file_hash
 from batho.utils.logging import get_logger
-from batho.context.incremental import get_head_commit, get_current_branch, is_git_repo
+from batho.modules.graph.incremental import get_head_commit, get_current_branch, is_git_repo
 
 LOGGER = get_logger(__name__, component="orchestrator.build")
 
@@ -76,7 +76,7 @@ def run_build(options: BuildOptions) -> BuildResult:
     If the database already exists and force_full is False, returns early
     with success=True and a warning indicating patch should be used.
     """
-    from batho.storage.engine import resolve_db_path
+    from batho.modules.storage.sqlite_registry.engine import resolve_db_path
     t0 = time.monotonic()
     root = options.root.resolve()
     
@@ -135,7 +135,7 @@ def run_build(options: BuildOptions) -> BuildResult:
         bsg_cfg["parallel"] = parallel_cfg
 
     # --- Initialize database ---
-    from batho.storage.engine import BathoDatabase
+    from batho.modules.storage.sqlite_registry.engine import BathoDatabase
 
     db = BathoDatabase(db_path, repo_root=root)
     run_uuid = _generate_run_id()
@@ -152,7 +152,7 @@ def run_build(options: BuildOptions) -> BuildResult:
     )
     run_id = run_uuid
     LOGGER.info("build_started", root=str(root), run_id=run_id)
-    from batho.context.codegraph import CodeGraphIndexer
+    from batho.modules.graph.builder.codegraph import CodeGraphIndexer
 
     with CodeGraphIndexer(cache_path=str(db_path), root=str(root)) as indexer:
         graph = indexer.build_graph(
@@ -188,7 +188,7 @@ def run_build(options: BuildOptions) -> BuildResult:
         bsg_summary = None
         if rules_cfg:
             try:
-                from batho.bsg.rules import apply_rule_plugins
+                from batho.modules.compression.rules import apply_rule_plugins
 
                 bsg_summary = apply_rule_plugins(
                     graph=graph,
@@ -200,7 +200,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                 LOGGER.warning("build_rules_failed", error=str(exc))
 
         # --- Load opaque snapshots for files the extractor engine could not parse ---
-        from batho.context.schema import FileSnapshot
+        from batho.core.schemas import FileSnapshot
 
         opaque_snapshots: list[FileSnapshot] = []
         try:
@@ -215,8 +215,8 @@ def run_build(options: BuildOptions) -> BuildResult:
             LOGGER.warning("build_opaque_snapshots_failed", error=str(exc))
 
         # --- Build BSG map ---
-        from batho.context.bsg_map import BSGMap
-        from batho.storage.engine import _minify_graph_payload
+        from batho.modules.compression.bsg_map import BSGMap
+        from batho.modules.storage.sqlite_registry.engine import _minify_graph_payload
 
         bsg_map = BSGMap.build(graph, str(root), opaque_snapshots=opaque_snapshots)
         bsg_file_count = len(bsg_map._by_file)

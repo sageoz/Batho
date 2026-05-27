@@ -30,7 +30,7 @@ DEFAULT_PATTERNS_FILE = "default-ignore-patterns.yaml"
 
 def get_default_patterns_path() -> Path:
     """Get the path to the default ignore patterns YAML file."""
-    return Path(__file__).parent.parent / "config" / DEFAULT_PATTERNS_FILE
+    return Path(__file__).parent.parent / "core" / "config" / DEFAULT_PATTERNS_FILE
 
 
 def load_default_patterns_from_yaml(

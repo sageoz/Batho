@@ -7,13 +7,13 @@ building dependency graphs, and generating contextual information for LLMs.
 
 __version__ = "1.1.0"
 
-from batho.config import get_config_cached, reload_config
-from batho.context.bsg_map import BSGMap
+from batho.core.config import get_config_cached, reload_config
+from batho.modules.compression.bsg_map import BSGMap
 
 # Import and re-export public APIs from submodules
-from batho.context.codegraph import CodeGraphIndexer, InMemoryGraph
+from batho.modules.graph.builder.codegraph import CodeGraphIndexer, InMemoryGraph
 
-from batho.context.query import QueryService
+from batho.modules.query.engine.query import QueryService
 from batho.utils.logging import get_logger
 
 __all__ = [

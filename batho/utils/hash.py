@@ -187,20 +187,25 @@ def generate_entity_id(entity_type: str, name: str, file: str) -> str:
     return compute_string_hash(content, truncate=16)
 
 
-def generate_relationship_id(source_id: str, target_id: str, rel_type: str) -> str:
+def generate_relationship_id(source_id: str, target_id: str, rel_type: str, line_number: int | None = None) -> str:
     """
     Generate deterministic relationship ID (16-char truncated hash).
 
     The ID is derived from relationship attributes to ensure consistency
-    across multiple runs on the same code.
+    across multiple runs on the same code. Includes line_number to differentiate
+    multiple references to the same target from the same source.
 
     Args:
         source_id: Source entity ID
         target_id: Target entity ID
         rel_type: Relationship type (e.g., 'CALLS', 'IMPORTS')
+        line_number: Optional line number to include for uniqueness
 
     Returns:
         16-character hexadecimal hash string
     """
-    content = f"{source_id}:{target_id}:{rel_type}"
+    if line_number is not None:
+        content = f"{source_id}:{target_id}:{rel_type}:{line_number}"
+    else:
+        content = f"{source_id}:{target_id}:{rel_type}"
     return compute_string_hash(content, truncate=16)

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Iterator, Literal
 
 from batho.utils.logging import get_logger
-from batho.config import set_active_root
+from batho.core.config import set_active_root
 
 LOGGER = get_logger(__name__, component="orchestrator.export")
 
@@ -73,7 +73,7 @@ VALID_CATEGORIES = frozenset(["source", "test", "doc", "config", "infra", "all"]
 
 def _find_db_path(root: Path) -> Path | None:
     """Locate the database for the given root using config or fallback."""
-    from batho.storage.engine import resolve_db_path
+    from batho.modules.storage.sqlite_registry.engine import resolve_db_path
 
     db_path = resolve_db_path(root)
     if db_path.exists():
@@ -83,9 +83,9 @@ def _find_db_path(root: Path) -> Path | None:
 
 def _load_bsg_map_from_db(db_path: Path, run_id: str | None) -> "BSGMap | None":
     """Load and reconstruct a BSGMap from file artifacts in the database."""
-    from batho.storage.engine import BathoDatabase
-    from batho.context.bsg_map import BSGMap
-    from batho.context.schema import Entity, EntityType, FileSnapshot, Relationship
+    from batho.modules.storage.sqlite_registry.engine import BathoDatabase
+    from batho.modules.compression.bsg_map import BSGMap
+    from batho.core.schemas import Entity, EntityType, FileSnapshot, Relationship
 
     db = BathoDatabase(db_path, repo_root=db_path.parent)
 
@@ -192,7 +192,7 @@ def _apply_filters(
     category: str,
 ) -> "BSGMap":
     """Return a filtered BSGMap based on glob pattern and category."""
-    from batho.context.bsg_map import BSGMap
+    from batho.modules.compression.bsg_map import BSGMap
 
     if pattern is None and category == "all":
         return bsg_map
@@ -305,7 +305,7 @@ def _generate_delta_view(
     baseline_path: Path,
 ) -> dict:
     """Load a baseline export JSON and compute the delta."""
-    from batho.context.bsg_map import BSGMap
+    from batho.modules.compression.bsg_map import BSGMap
 
     try:
         raw = baseline_path.read_text(encoding="utf-8")

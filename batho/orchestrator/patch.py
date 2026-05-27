@@ -12,11 +12,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from batho.config import get_config_cached, set_active_root
+from batho.core.config import get_config_cached, set_active_root
 from batho.utils.logging import get_logger
 
-from batho.context.bsg_map import BSGMap
-from batho.context.codegraph import InMemoryGraph
+from batho.modules.compression.bsg_map import BSGMap
+from batho.modules.graph.builder.codegraph import InMemoryGraph
 from batho.utils.hash import compute_file_hash
 
 LOGGER = get_logger(__name__, component="orchestrator.patch")
@@ -84,7 +84,7 @@ def _hash_scan_changes(
     known_tracking maps relative path -> {"content_hash": str, "mtime": float, "size": int}.
     Files whose mtime AND size match the tracked values are skipped without hashing.
     """
-    from batho.context.incremental import _collect_candidate_files
+    from batho.modules.graph.incremental import _collect_candidate_files
 
     max_bytes = (max_file_size_kb * 1024) if max_file_size_kb else None
     changes: list[FileChange] = []
@@ -129,7 +129,7 @@ def _hash_scan_changes(
 
 def run_patch(options: PatchOptions) -> PatchResult:
     """Incremental patch of an existing .batho database."""
-    from batho.storage.engine import resolve_db_path, get_database
+    from batho.modules.storage.sqlite_registry.engine import resolve_db_path, get_database
 
     t0 = time.monotonic()
     root = options.root.resolve()
@@ -181,11 +181,11 @@ def run_patch(options: PatchOptions) -> PatchResult:
 
         # --- Create new run ---
         run_uuid = _generate_run_id()
-        from batho.context.incremental import get_head_commit, is_git_repo
+        from batho.modules.graph.incremental import get_head_commit, is_git_repo
         git_commit = get_head_commit(root) if is_git_repo(root) else None
         git_branch: str | None = None
         try:
-            from batho.context.incremental import get_current_branch
+            from batho.modules.graph.incremental import get_current_branch
             git_branch = get_current_branch(root) if is_git_repo(root) else None
         except (ImportError, Exception):
             pass
@@ -274,8 +274,8 @@ def run_patch(options: PatchOptions) -> PatchResult:
             cache_cfg["path"] = str(db_path)
             bsg_cfg["cache"] = cache_cfg
 
-            from batho.context.codegraph import CodeGraphIndexer
-            from batho.storage.engine import _minify_graph_payload
+            from batho.modules.graph.builder.codegraph import CodeGraphIndexer
+            from batho.modules.storage.sqlite_registry.engine import _minify_graph_payload
             from collections import defaultdict
 
             with CodeGraphIndexer(cache_path=str(db_path), root=str(root)) as indexer:
@@ -371,7 +371,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     # Fetch base-run entities for this file and diff
                     if base_run_internal_id is not None:
                         old_entities = db.get_agent_entities_for_file(base_run_internal_id, file_rel) or []
-                        from batho.context.node_diff import diff_file_nodes
+                        from batho.modules.graph.diff_engine.node_diff import diff_file_nodes
                         node_diffs = diff_file_nodes(old_entities, agent_entities, file_rel)
                         if node_diffs:
                             db.record_file_changelog(run_internal_id, base_run_internal_id, node_diffs)
@@ -398,7 +398,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
             if base_run_internal_id is not None:
                 old_entities = db.get_agent_entities_for_file(base_run_internal_id, change.path) or []
                 if old_entities:
-                    from batho.context.node_diff import diff_file_nodes
+                    from batho.modules.graph.diff_engine.node_diff import diff_file_nodes
                     node_diffs = diff_file_nodes(old_entities, [], change.path)
                     if node_diffs:
                         db.record_file_changelog(run_internal_id, base_run_internal_id, node_diffs)

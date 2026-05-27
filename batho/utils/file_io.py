@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 from typing import Any, Union
 
-from batho.config import get_config_cached
+from batho.core.config import get_config_cached
 from batho.utils.encoding import normalize_to_utf8
 from batho.utils.hash import _is_binary, compute_bytes_hash
 from batho.utils.logging import get_logger

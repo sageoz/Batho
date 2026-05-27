@@ -12,8 +12,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
-from batho.config import set_active_root
-from batho.storage.engine import get_database, resolve_db_path
+from batho.core.config import set_active_root
+from batho.modules.storage.sqlite_registry.engine import get_database, resolve_db_path
 from batho.utils.logging import get_logger
 
 LOGGER = get_logger(__name__, component="orchestrator.gc")
