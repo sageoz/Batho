@@ -7,6 +7,7 @@ File tracking delegates to BathoDatabase for persistence.
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import Any
 
 from batho.core.schemas import Entity, FileSnapshot, Relationship
@@ -40,15 +41,32 @@ class BathoCache:
         self.logger = logger
 
         # In-memory stores (session-local, not persisted)
-        self._ast: dict[str, tuple[list[Entity], list[Relationship]]] = {}
+        self._ast: dict[str, tuple[list[Entity], list[Relationship], float | None]] = {}
         self._snapshots: dict[str, FileSnapshot] = {}
 
     # ------------------------------------------------------------------
     # AST cache methods (in-memory)
     # ------------------------------------------------------------------
 
+    def _purge_expired(self) -> None:
+        now = time.time()
+        expired = []
+        for key, value in self._ast.items():
+            if len(value) < 3:
+                continue
+            if value[2] is not None and value[2] <= now:
+                expired.append(key)
+        for key in expired:
+            self._ast.pop(key, None)
+
     def get_ast(self, file_hash: str) -> tuple[list[Entity], list[Relationship]] | None:
-        return self._ast.get(file_hash)
+        self._purge_expired()
+        entry = self._ast.get(file_hash)
+        if entry is None:
+            return None
+        if len(entry) >= 2:
+            return entry[0], entry[1]
+        return None
 
     def set_ast(
         self,
@@ -60,7 +78,10 @@ class BathoCache:
         size: int,
         ttl_days: int = 30,
     ) -> None:
-        self._ast[file_hash] = (entities, relationships)
+        expires_at = None
+        if ttl_days > 0:
+            expires_at = time.time() + (ttl_days * 86400)
+        self._ast[file_hash] = (entities, relationships, expires_at)
 
     def delete_ast(self, file_hash: str) -> None:
         self._ast.pop(file_hash, None)
@@ -184,6 +205,7 @@ class BathoCache:
     # ------------------------------------------------------------------
 
     def get_stats(self) -> dict[str, Any]:
+        self._purge_expired()
         db_stats = self._db.get_stats() if self._db is not None else {}
         return {
             "ast_entry_count": len(self._ast),

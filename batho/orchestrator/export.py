@@ -81,13 +81,15 @@ def _find_db_path(root: Path) -> Path | None:
     return None
 
 
-def _load_bsg_map_from_db(db_path: Path, run_id: str | None) -> "BSGMap | None":
+def _load_bsg_map_from_db(
+    db_path: Path, run_id: str | None, root: Path
+) -> "BSGMap | None":
     """Load and reconstruct a BSGMap from file artifacts in the database."""
     from batho.modules.storage.sqlite_registry.engine import BathoDatabase
     from batho.modules.compression.bsg_map import BSGMap
     from batho.core.schemas import Entity, EntityType, FileSnapshot, Relationship
 
-    db = BathoDatabase(db_path, repo_root=db_path.parent)
+    db = BathoDatabase(db_path, repo_root=root)
 
     # Resolve run_id to internal ID
     if run_id is None:
@@ -462,7 +464,7 @@ def run_export(options: ExportOptions) -> ExportResult:
 
     # --- Load BSGMap ---
     try:
-        bsg_map = _load_bsg_map_from_db(db_path, options.index_id)
+        bsg_map = _load_bsg_map_from_db(db_path, options.index_id, root)
     except Exception as exc:
         LOGGER.error("export_load_failed", error=str(exc))
         return ExportResult(success=False, errors=[f"Failed to load BSG data: {exc}"])

@@ -121,18 +121,12 @@ class FileLock:
         Returns:
             True if lock is stale, False otherwise
         """
-        # Check if process is still alive
-        if not self._is_process_alive(pid):
-            logger.debug("stale_lock_dead_process", pid=pid)
-            return True
+        # If the owning process is alive, the lock is not stale regardless of age.
+        if self._is_process_alive(pid):
+            return False
 
-        # Check if lock is too old (more than 5 minutes)
-        age = time.time() - timestamp
-        if age > 300:  # 5 minutes
-            logger.debug("stale_lock_too_old", pid=pid, age_seconds=age)
-            return True
-
-        return False
+        logger.debug("stale_lock_dead_process", pid=pid)
+        return True
 
     def _cleanup_stale_lock(self) -> bool:
         """

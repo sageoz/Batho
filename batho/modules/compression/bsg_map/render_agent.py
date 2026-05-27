@@ -25,11 +25,12 @@ def render_compressed(
     tokens_used = 0
     truncated_files = 0
 
-    for file_path, entities in bsg._by_file.items():
+    file_items = list(bsg._by_file.items())
+    for idx, (file_path, entities) in enumerate(file_items):
         file_header = f"{file_path}:"
         header_cost = _text_tokens(file_header)
         if tokens_used + header_cost > budget:
-            truncated_files += len([f for f in bsg._by_file if f >= file_path])
+            truncated_files += len(file_items) - idx
             break
 
         lines.append(file_header)
@@ -39,10 +40,12 @@ def render_compressed(
             entry = f"  {entity.name} ({entity.type})"
             cost = _text_tokens(entry)
             if tokens_used + cost > budget:
-                truncated_files += 1
+                truncated_files += len(file_items) - idx
                 break
             lines.append(entry)
             tokens_used += cost
+        if truncated_files:
+            break
 
     if truncated_files:
         if fail_on_overflow:
