@@ -40,20 +40,23 @@ class BathoCache:
     cross-process persistence. AST and snapshot data is session-local.
     """
 
-    def __init__(self, cache_path: str | None = None) -> None:
+    def __init__(self, cache_path: str | None = None, repo_root: Path | str | None = None) -> None:
         self._db = None
+        self._repo_root = Path(repo_root).resolve() if repo_root else None
         if cache_path:
             path = Path(cache_path).resolve()
             if path.suffix == ".batho":
-                repo_root = path.parent
+                db_repo_root = path.parent
                 db_path: Path | None = path
             elif path.is_file():
-                repo_root = path.parent
+                db_repo_root = path.parent
                 db_path = path
             else:
-                repo_root = path
+                db_repo_root = path
                 db_path = None
-            self._db = get_database(repo_root, db_path=db_path)
+            self._db = get_database(db_repo_root, db_path=db_path)
+            if not self._repo_root and self._db is not None:
+                self._repo_root = self._db.repo_root
         self.logger = logger
 
         # In-memory stores (session-local, not persisted)
@@ -80,8 +83,14 @@ class BathoCache:
 
     def _normalize_ast_path(self, file_path: str) -> str:
         path = Path(file_path)
-        if not path.is_absolute() and self._db is not None:
-            path = self._db.repo_root / path
+        repo_root = None
+        if self._db is not None:
+            repo_root = self._db.repo_root
+        elif getattr(self, "_repo_root", None) is not None:
+            repo_root = self._repo_root
+
+        if not path.is_absolute() and repo_root is not None:
+            path = repo_root / path
         try:
             return str(path.resolve())
         except OSError:

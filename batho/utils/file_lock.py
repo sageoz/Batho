@@ -121,8 +121,23 @@ class FileLock:
         Returns:
             True if lock is stale, False otherwise
         """
-        # If the owning process is alive, the lock is not stale regardless of age.
         if self._is_process_alive(pid):
+            if _PSUTIL_AVAILABLE and psutil is not None:
+                try:
+                    proc = psutil.Process(pid)
+                    # If process was created after the lock, it's a recycled PID
+                    if proc.create_time() > timestamp:
+                        logger.debug("stale_lock_pid_reused", pid=pid)
+                        return True
+                except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
+                    return True
+
+            # Fallback age threshold check to prevent deadlocks from PID reuse when psutil is not available
+            # or if the process has been running/hung for an unreasonably long time (e.g. 10 minutes)
+            if time.time() - timestamp > 600.0:
+                logger.debug("stale_lock_timeout", pid=pid, age=time.time() - timestamp)
+                return True
+
             return False
 
         logger.debug("stale_lock_dead_process", pid=pid)

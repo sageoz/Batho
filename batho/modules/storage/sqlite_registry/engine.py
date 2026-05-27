@@ -274,45 +274,61 @@ class BathoDatabase:
     """Unified SQLite persistence engine for a single Batho project."""
 
     def __init__(self, db_path: Path, *, repo_root: Path | None = None) -> None:
+        import os
         self._db_path = db_path.resolve()
         self._repo_root = (repo_root or db_path.parent).resolve()
         self._lock = threading.RLock()
         self._local = threading.local()
+        self._pid = os.getpid()
         self._closed = False
         self._initialized = False
+        self._all_connections: list[sqlite3.Connection] = []
         self._string_dict_cache: dict[str, int] = {}
         self._string_val_cache: dict[int, str] = {}
         self._cctx = zstd.ZstdCompressor(level=3)
         self._dctx = zstd.ZstdDecompressor()
 
-        # Guard: Check schema version if file exists (schema mismatch guard)
-        if self._db_path.exists() and self._db_path.stat().st_size > 0:
-            try:
-                conn = sqlite3.connect(str(self._db_path), timeout=5.0)
-                conn.row_factory = sqlite3.Row
-                row = conn.execute(
-                    "SELECT value FROM db_meta WHERE key = 'schema_version'"
-                ).fetchone()
-                conn.close()
-                if row:
-                    val = row["value"]
-                    if val != SCHEMA_VERSION:
+        try:
+            # Guard: Check schema version if file exists (schema mismatch guard)
+            if self._db_path.exists() and self._db_path.stat().st_size > 0:
+                conn = None
+                try:
+                    conn = sqlite3.connect(str(self._db_path), timeout=5.0)
+                    conn.row_factory = sqlite3.Row
+                    row = conn.execute(
+                        "SELECT value FROM db_meta WHERE key = 'schema_version'"
+                    ).fetchone()
+                    if row:
+                        val = row["value"]
+                        if val != SCHEMA_VERSION:
+                            raise RuntimeError(
+                                f"Database schema mismatch. Found {val}, expected {SCHEMA_VERSION}. "
+                                "Please rebuild the database using 'batho build --full'."
+                            )
+                    else:
                         raise RuntimeError(
-                            f"Database schema mismatch. Found {val}, expected {SCHEMA_VERSION}. "
+                            f"Database schema mismatch (missing schema version). "
                             "Please rebuild the database using 'batho build --full'."
                         )
-                else:
+                except sqlite3.OperationalError:
                     raise RuntimeError(
-                        f"Database schema mismatch (missing schema version). "
+                        f"Database schema mismatch (db_meta table missing). "
                         "Please rebuild the database using 'batho build --full'."
                     )
-            except sqlite3.OperationalError:
-                raise RuntimeError(
-                    f"Database schema mismatch (db_meta table missing). "
-                    "Please rebuild the database using 'batho build --full'."
-                )
+                finally:
+                    if conn is not None:
+                        conn.close()
 
-        self._initialize()
+            self._initialize()
+        except Exception:
+            # Close any connections opened during failed initialization to prevent leaks
+            for c in self._all_connections:
+                try:
+                    c.close()
+                except Exception:
+                    pass
+            self._all_connections.clear()
+            raise
 
     @property
     def path(self) -> Path:
@@ -326,9 +342,21 @@ class BathoDatabase:
     def exists(self) -> bool:
         return self._db_path.exists()
 
+    def _check_pid(self) -> None:
+        import os
+        current_pid = os.getpid()
+        if getattr(self, "_pid", None) != current_pid:
+            self._local = threading.local()
+            self._string_dict_cache.clear()
+            self._string_val_cache.clear()
+            self._all_connections = []
+            self._pid = current_pid
+
     def _get_connection(self) -> sqlite3.Connection:
         if self._closed:
             raise RuntimeError("BathoDatabase is closed")
+
+        self._check_pid()
 
         if not hasattr(self._local, "conn") or self._local.conn is None:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -340,6 +368,8 @@ class BathoDatabase:
             conn.row_factory = sqlite3.Row
             self._apply_pragmas(conn)
             self._local.conn = conn
+            with self._lock:
+                self._all_connections.append(conn)
         return self._local.conn
 
     def _apply_pragmas(self, conn: sqlite3.Connection) -> None:
@@ -360,23 +390,31 @@ class BathoDatabase:
 
     @contextmanager
     def connection(self, *, read_only: bool = False) -> Iterator[sqlite3.Connection]:
-        conn = self._get_connection()
+        if not read_only:
+            self._lock.acquire()
         try:
+            conn = self._get_connection()
             yield conn
+            if not read_only:
+                conn.commit()
         except Exception:
             conn.rollback()
             raise
+        finally:
+            if not read_only:
+                self._lock.release()
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        conn = self._get_connection()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+        with self._lock:
+            conn = self._get_connection()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
     def _initialize(self) -> None:
         if self._initialized:
@@ -458,42 +496,45 @@ class BathoDatabase:
 
     def get_or_create_string_id(self, val: str) -> int:
         """Get or create the string ID for a value in string_dict."""
-        if val in self._string_dict_cache:
-            return self._string_dict_cache[val]
+        self._check_pid()
+        with self._lock:
+            if val in self._string_dict_cache:
+                return self._string_dict_cache[val]
 
-        with self.connection() as conn:
-            cursor = conn.execute(
-                "INSERT OR IGNORE INTO string_dict(val) VALUES (?)",
-                (val,),
-            )
-            if cursor.rowcount == 0:
-                row = conn.execute(
-                    "SELECT id FROM string_dict WHERE val = ?",
+            with self.connection() as conn:
+                cursor = conn.execute(
+                    "INSERT OR IGNORE INTO string_dict(val) VALUES (?)",
                     (val,),
-                ).fetchone()
-                sid = row["id"]
-            else:
-                sid = cursor.lastrowid
-            conn.commit()
-            self._string_dict_cache[val] = sid
-            self._string_val_cache[sid] = val
-            return sid
+                )
+                if cursor.rowcount == 0:
+                    row = conn.execute(
+                        "SELECT id FROM string_dict WHERE val = ?",
+                        (val,),
+                    ).fetchone()
+                    sid = row["id"]
+                else:
+                    sid = cursor.lastrowid
+                self._string_dict_cache[val] = sid
+                self._string_val_cache[sid] = val
+                return sid
 
     def get_string_val(self, sid: int) -> str | None:
         """Get the string value for a string ID from string_dict."""
-        if sid in self._string_val_cache:
-            return self._string_val_cache[sid]
+        self._check_pid()
+        with self._lock:
+            if sid in self._string_val_cache:
+                return self._string_val_cache[sid]
 
-        with self.connection(read_only=True) as conn:
-            row = conn.execute(
-                "SELECT val FROM string_dict WHERE id = ?",
-                (sid,),
-            ).fetchone()
-            val = row["val"] if row else None
-            if val is not None:
-                self._string_val_cache[sid] = val
-                self._string_dict_cache[val] = sid
-            return val
+            with self.connection(read_only=True) as conn:
+                row = conn.execute(
+                    "SELECT val FROM string_dict WHERE id = ?",
+                    (sid,),
+                ).fetchone()
+                val = row["val"] if row else None
+                if val is not None:
+                    self._string_val_cache[sid] = val
+                    self._string_dict_cache[val] = sid
+                return val
 
     # ------------------------------------------------------------------
     # Index Runs
@@ -648,15 +689,6 @@ class BathoDatabase:
         storage_blob = cctx.compress(storage_bytes)
         rels_blob = cctx.compress(rels_bytes)
 
-        with self.connection() as conn:
-            conn.execute(
-                """INSERT OR REPLACE INTO file_artifacts(
-                    run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
-                ) VALUES (?, ?, ?, ?, ?, ?)""",
-                (run_internal_id, file_id, agent_blob, storage_blob, rels_blob, content_hash),
-            )
-            conn.commit()
-
         # Update query_entities for fast search fallback
         entities = agent_view_data.get("entities", [])
         query_rows = []
@@ -680,20 +712,6 @@ class BathoDatabase:
                     sig,
                     is_exp,
                 ))
-
-        with self.transaction() as conn:
-            conn.execute(
-                "DELETE FROM query_entities WHERE run_id = ? AND file_path = ?",
-                (run_internal_id, file_path),
-            )
-            if query_rows:
-                conn.executemany(
-                    """INSERT OR REPLACE INTO query_entities(
-                        entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    query_rows,
-                )
-            conn.commit()
 
         # Update query_relationships and dangling_references
         unresolved_ids = {}
@@ -729,7 +747,27 @@ class BathoDatabase:
                     meta
                 ))
 
+        # Execute everything inside a single transaction to guarantee atomicity and speed up commits
         with self.transaction() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO file_artifacts(
+                    run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (run_internal_id, file_id, agent_blob, storage_blob, rels_blob, content_hash),
+            )
+
+            conn.execute(
+                "DELETE FROM query_entities WHERE run_id = ? AND file_path = ?",
+                (run_internal_id, file_path),
+            )
+            if query_rows:
+                conn.executemany(
+                    """INSERT OR REPLACE INTO query_entities(
+                        entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    query_rows,
+                )
+
             conn.execute(
                 "DELETE FROM query_relationships WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE file_path = ?)",
                 (run_internal_id, file_path),
@@ -752,18 +790,18 @@ class BathoDatabase:
                     ) VALUES (?, ?, ?, ?)""",
                     dangling_rows,
                 )
-            conn.commit()
 
     def resolve_dangling_references(self, run_internal_id: int) -> int:
         """Perform a single lazy cross-file resolution JOIN to convert dangling references to query_relationships."""
         with self.transaction() as conn:
             # 1. Match dangling references to actual query_entities by name
+            # Correct parentheses to prevent operator precedence bug (ignore run_id checks)
             cursor = conn.execute(
                 """INSERT OR IGNORE INTO query_relationships (source_id, target_id, relation_type, run_id)
                    SELECT d.source_id, e.entity_id, d.relation_type, d.run_id
                    FROM dangling_references d
-                   JOIN query_entities e ON (d.unresolved_target_name = e.entity_name OR d.unresolved_target_name = e.entity_id)
-                   AND d.run_id = e.run_id
+                   JOIN query_entities e ON ((d.unresolved_target_name = e.entity_name AND d.run_id = e.run_id)
+                                         OR (d.unresolved_target_name = e.entity_id AND d.run_id = e.run_id))
                    WHERE d.run_id = ? AND e.entity_type != 'UNRESOLVED'""",
                 (run_internal_id,)
             )
@@ -845,8 +883,13 @@ class BathoDatabase:
                 if e_type == "UNRESOLVED" or (isinstance(e_type, str) and e_type.upper() == "UNRESOLVED"):
                     unresolved_ids[e.get("id")] = e.get("name")
 
-            # Build set of entity IDs in current batch for validation
-            entity_ids_in_batch = {e[0] for e in query_entities_rows}
+            # Build set of all entity IDs in the entire batch upfront to prevent file order contamination
+            entity_ids_in_batch = set()
+            for b_item in batch_items:
+                for e in b_item["agent_view_data"].get("entities", []):
+                    ent_id = e.get("id")
+                    if ent_id:
+                        entity_ids_in_batch.add(ent_id)
 
             # Pseudo-target prefixes that are valid external references
             PSEDUO_TARGET_PREFIXES = ("external:", "file:", "anchor:", "unresolved:", "symbol:")
@@ -1266,47 +1309,49 @@ class BathoDatabase:
 
     def bulk_get_or_create_string_ids(self, strings: list[str]) -> dict[str, int]:
         """Batch-resolve strings to string_dict IDs in one SELECT + one INSERT."""
-        result: dict[str, int] = {}
-        if not strings:
-            return result
+        self._check_pid()
+        with self._lock:
+            result: dict[str, int] = {}
+            if not strings:
+                return result
 
-        # Check cache first
-        missing_from_cache = []
-        for s in strings:
-            if s in self._string_dict_cache:
-                result[s] = self._string_dict_cache[s]
-            else:
-                missing_from_cache.append(s)
+            # Check cache first
+            missing_from_cache = []
+            for s in strings:
+                if s in self._string_dict_cache:
+                    result[s] = self._string_dict_cache[s]
+                else:
+                    missing_from_cache.append(s)
 
-        if not missing_from_cache:
-            return result
+            if not missing_from_cache:
+                return result
 
-        with self.transaction() as conn:
-            placeholders = ",".join("?" * len(missing_from_cache))
-            existing = conn.execute(
-                f"SELECT id, val FROM string_dict WHERE val IN ({placeholders})",
-                missing_from_cache,
-            ).fetchall()
-            for row in existing:
-                result[row["val"]] = row["id"]
-                self._string_dict_cache[row["val"]] = row["id"]
-
-            still_missing = [s for s in missing_from_cache if s not in result]
-            if still_missing:
-                conn.executemany(
-                    "INSERT OR IGNORE INTO string_dict(val) VALUES (?)",
-                    [(s,) for s in still_missing],
-                )
-                new_placeholders = ",".join("?" * len(still_missing))
-                new_ids = conn.execute(
-                    f"SELECT id, val FROM string_dict WHERE val IN ({new_placeholders})",
-                    still_missing,
+            with self.transaction() as conn:
+                placeholders = ",".join("?" * len(missing_from_cache))
+                existing = conn.execute(
+                    f"SELECT id, val FROM string_dict WHERE val IN ({placeholders})",
+                    missing_from_cache,
                 ).fetchall()
-                for row in new_ids:
+                for row in existing:
                     result[row["val"]] = row["id"]
                     self._string_dict_cache[row["val"]] = row["id"]
 
-        return result
+                still_missing = [s for s in missing_from_cache if s not in result]
+                if still_missing:
+                    conn.executemany(
+                        "INSERT OR IGNORE INTO string_dict(val) VALUES (?)",
+                        [(s,) for s in still_missing],
+                    )
+                    new_placeholders = ",".join("?" * len(still_missing))
+                    new_ids = conn.execute(
+                        f"SELECT id, val FROM string_dict WHERE val IN ({new_placeholders})",
+                        still_missing,
+                    ).fetchall()
+                    for row in new_ids:
+                        result[row["val"]] = row["id"]
+                        self._string_dict_cache[row["val"]] = row["id"]
+
+            return result
 
     def record_file_changelog(self, run_id: int, base_run_id: int, diffs: list[NodeDiff]) -> None:
         """Group NodeDiffs by file, compress as orjson blob, bulk-insert one row per file."""
@@ -1545,8 +1590,13 @@ class BathoDatabase:
         with _DB_CACHE_LOCK:
             with self._lock:
                 self._closed = True
-                if hasattr(self._local, "conn") and self._local.conn is not None:
-                    self._local.conn.close()
+                for conn in self._all_connections:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                self._all_connections.clear()
+                if hasattr(self._local, "conn"):
                     self._local.conn = None
 
     def __repr__(self) -> str:

@@ -57,7 +57,10 @@ class SQLiteRepairer:
             # clear cache key for this path
             key = str(db_path.resolve())
             if key in _DB_CACHE:
-                _DB_CACHE[key]._closed = True
+                try:
+                    _DB_CACHE[key].close()
+                except Exception:
+                    pass
                 del _DB_CACHE[key]
 
             # 2. Open source connection

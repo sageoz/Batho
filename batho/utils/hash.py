@@ -154,18 +154,36 @@ def compute_file_hash(filepath: Path | str, chunk_size: int = 8192) -> str | Non
 
 
 @functools.lru_cache(maxsize=1024)
+def _compute_file_hash_cached_impl(
+    filepath: str, mtime: float, size: int, mtime_ns: int | None
+) -> str | None:
+    return compute_file_hash(filepath)
+
+
 def compute_file_hash_cached(filepath: str, mtime: float) -> str | None:
     """
-    Cached version of compute_file_hash - use mtime to invalidate cache on file change.
+    Cached version of compute_file_hash - use mtime, size, and mtime_ns to invalidate cache on file change.
+    Verifies that the file exists and is not deleted to prevent returning stale cached results.
 
     Args:
         filepath: Path to file (as string for cacheability)
-        mtime: File modification time - changing this invalidates the cache
+        mtime: File modification time
 
     Returns:
         Hexadecimal hash string, or None if file cannot be read
     """
-    return compute_file_hash(filepath)
+    try:
+        path = Path(filepath)
+        if not path.is_file():
+            return None
+        stat = path.stat()
+        size = stat.st_size
+        mtime_ns = getattr(stat, "st_mtime_ns", None)
+    except OSError:
+        return None
+    return _compute_file_hash_cached_impl(
+        str(path.resolve()), stat.st_mtime, size, mtime_ns
+    )
 
 
 def generate_entity_id(entity_type: str, name: str, file: str) -> str:

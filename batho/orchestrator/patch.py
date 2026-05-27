@@ -185,10 +185,11 @@ def run_patch(options: PatchOptions) -> PatchResult:
         LOGGER.error("patch_failed_no_db", root=str(root))
         return PatchResult(success=False, warnings=[msg])
 
-    db = get_database(root)
+    db = None
     run_uuid = ""
     base_run_uuid = ""
     try:
+        db = get_database(root)
         base_run_uuid = db.get_latest_run_id() or ""
         if not base_run_uuid:
             msg = f"No completed run found. Run: batho build --root {root}"
@@ -247,78 +248,80 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 )
         if base_run_internal_id is not None:
             with db.transaction() as conn:
+                # Use temporary tables to prevent exceeding SQLITE_MAX_VARIABLE_NUMBER (default 999)
+                conn.execute("CREATE TEMP TABLE IF NOT EXISTS temp_changed_file_paths (file_path TEXT PRIMARY KEY)")
+                conn.execute("DELETE FROM temp_changed_file_paths")
+                conn.executemany("INSERT OR IGNORE INTO temp_changed_file_paths (file_path) VALUES (?)", [(p,) for p in changed_file_paths])
+
                 changed_ids_rows = conn.execute(
-                    f"SELECT id FROM string_dict WHERE val IN ({','.join('?' * len(changed_file_paths))})",
-                    list(changed_file_paths),
+                    """SELECT id FROM string_dict
+                       WHERE val IN (SELECT file_path FROM temp_changed_file_paths)"""
                 ).fetchall()
                 changed_file_ids = {row["id"] for row in changed_ids_rows}
 
+                conn.execute("CREATE TEMP TABLE IF NOT EXISTS temp_changed_file_ids (file_id INTEGER PRIMARY KEY)")
+                conn.execute("DELETE FROM temp_changed_file_ids")
                 if changed_file_ids:
-                    placeholders = ",".join("?" * len(changed_file_ids))
-                    conn.execute(
-                        f"""INSERT INTO file_artifacts(run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash)
-                            SELECT ?, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
-                            FROM file_artifacts
-                            WHERE run_id = ? AND file_id NOT IN ({placeholders})""",
-                        [run_internal_id, base_run_internal_id] + list(changed_file_ids),
-                    )
-                    # Copy query_entities for unchanged files
-                    path_placeholders = ",".join("?" * len(changed_file_paths))
-                    conn.execute(
-                        f"""INSERT INTO query_entities (entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported)
-                            SELECT entity_id, ?, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
-                            FROM query_entities
-                            WHERE run_id = ? AND file_path NOT IN ({path_placeholders})""",
-                        [run_internal_id, base_run_internal_id] + list(changed_file_paths),
-                    )
-                    # Copy query_relationships for unchanged files
-                    conn.execute(
-                        f"""INSERT INTO query_relationships (source_id, target_id, relation_type, run_id, metadata_json)
-                            SELECT source_id, target_id, relation_type, ?, metadata_json
-                            FROM query_relationships
-                            WHERE run_id = ? AND source_id IN (
-                                SELECT entity_id FROM query_entities
-                                WHERE run_id = ? AND file_path NOT IN ({path_placeholders})
-                            )""",
-                        [run_internal_id, base_run_internal_id, base_run_internal_id] + list(changed_file_paths),
-                    )
-                    # Copy dangling_references for unchanged files
-                    conn.execute(
-                        f"""INSERT INTO dangling_references (source_id, unresolved_target_name, relation_type, run_id)
-                            SELECT source_id, unresolved_target_name, relation_type, ?
-                            FROM dangling_references
-                            WHERE run_id = ? AND source_id IN (
-                                SELECT entity_id FROM query_entities
-                                WHERE run_id = ? AND file_path NOT IN ({path_placeholders})
-                            )""",
-                        [run_internal_id, base_run_internal_id, base_run_internal_id] + list(changed_file_paths),
-                    )
-                else:
-                    conn.execute(
-                        """INSERT INTO file_artifacts(run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash)
-                           SELECT ?, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
-                           FROM file_artifacts WHERE run_id = ?""",
-                        (run_internal_id, base_run_internal_id),
-                    )
-                    # Copy all query_entities from base run
-                    conn.execute(
-                        """INSERT INTO query_entities (entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported)
-                           SELECT entity_id, ?, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
-                           FROM query_entities WHERE run_id = ?""",
-                        (run_internal_id, base_run_internal_id),
-                    )
-                    conn.execute(
-                        """INSERT INTO query_relationships (source_id, target_id, relation_type, run_id, metadata_json)
-                           SELECT source_id, target_id, relation_type, ?, metadata_json
-                           FROM query_relationships WHERE run_id = ?""",
-                        (run_internal_id, base_run_internal_id),
-                    )
-                    conn.execute(
-                        """INSERT INTO dangling_references (source_id, unresolved_target_name, relation_type, run_id)
-                           SELECT source_id, unresolved_target_name, relation_type, ?
-                           FROM dangling_references WHERE run_id = ?""",
-                        (run_internal_id, base_run_internal_id),
-                    )
+                    conn.executemany("INSERT OR IGNORE INTO temp_changed_file_ids (file_id) VALUES (?)", [(fid,) for fid in changed_file_ids])
+
+                # 1. Copy file_artifacts for unchanged files
+                conn.execute(
+                    f"""INSERT INTO file_artifacts(run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash)
+                        SELECT ?, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
+                        FROM file_artifacts
+                        WHERE run_id = ? AND file_id NOT IN (SELECT file_id FROM temp_changed_file_ids)""",
+                    [run_internal_id, base_run_internal_id],
+                )
+                # 2. Copy query_entities for unchanged files
+                conn.execute(
+                    f"""INSERT INTO query_entities (entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported)
+                        SELECT entity_id, ?, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
+                        FROM query_entities
+                        WHERE run_id = ? AND file_path NOT IN (SELECT file_path FROM temp_changed_file_paths)""",
+                    [run_internal_id, base_run_internal_id],
+                )
+                # 3. Copy query_relationships for unchanged files
+                # - Direct copy for relationships where both source and target are in unchanged files
+                conn.execute(
+                    f"""INSERT INTO query_relationships (source_id, target_id, relation_type, run_id, metadata_json)
+                        SELECT r.source_id, r.target_id, r.relation_type, ?, r.metadata_json
+                        FROM query_relationships r
+                        WHERE r.run_id = ?
+                          AND r.source_id IN (
+                              SELECT entity_id FROM query_entities
+                              WHERE run_id = ? AND file_path NOT IN (SELECT file_path FROM temp_changed_file_paths)
+                          )
+                          AND r.target_id NOT IN (
+                              SELECT entity_id FROM query_entities
+                              WHERE run_id = ? AND file_path IN (SELECT file_path FROM temp_changed_file_paths)
+                          )""",
+                    [run_internal_id, base_run_internal_id, base_run_internal_id, base_run_internal_id],
+                )
+                # - Convert relationships pointing to changed target files to dangling_references so they can be re-resolved
+                conn.execute(
+                    f"""INSERT INTO dangling_references (source_id, unresolved_target_name, relation_type, run_id)
+                        SELECT r.source_id, COALESCE(e.entity_name, r.target_id), r.relation_type, ?
+                        FROM query_relationships r
+                        LEFT JOIN query_entities e ON r.target_id = e.entity_id AND r.run_id = e.run_id
+                        WHERE r.run_id = ?
+                          AND r.source_id IN (
+                              SELECT entity_id FROM query_entities
+                              WHERE run_id = ? AND file_path NOT IN (SELECT file_path FROM temp_changed_file_paths)
+                          )
+                          AND e.file_path IN (SELECT file_path FROM temp_changed_file_paths)""",
+                    [run_internal_id, base_run_internal_id, base_run_internal_id],
+                )
+                # 4. Copy dangling_references for unchanged files
+                conn.execute(
+                    f"""INSERT INTO dangling_references (source_id, unresolved_target_name, relation_type, run_id)
+                        SELECT source_id, unresolved_target_name, relation_type, ?
+                        FROM dangling_references
+                        WHERE run_id = ? AND source_id IN (
+                            SELECT entity_id FROM query_entities
+                            WHERE run_id = ? AND file_path NOT IN (SELECT file_path FROM temp_changed_file_paths)
+                        )""",
+                    [run_internal_id, base_run_internal_id, base_run_internal_id],
+                )
 
         # --- Re-parse changed (non-deleted) files ---
         added_or_modified = [c for c in changes if c.change_type != FileChangeType.DELETED]
@@ -345,6 +348,12 @@ def run_patch(options: PatchOptions) -> PatchResult:
             from collections import defaultdict
 
             with CodeGraphIndexer(cache_path=str(db_path), root=str(root)) as indexer:
+                # Invalidate AST cache for changed/deleted files in unified cache
+                for change in changes:
+                    try:
+                        indexer._cache.delete_ast_by_path(change.path)
+                    except Exception:
+                        pass
                 write_batch = []
                 for change in added_or_modified:
                     full_path = root / change.path
@@ -608,7 +617,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
     except Exception as e:
         # Mark run as failed on any unhandled exception
         LOGGER.error("patch_unhandled_exception", error=str(e))
-        if run_uuid:
+        if run_uuid and db is not None:
             try:
                 db.fail_run(run_uuid, error_message=str(e))
             except Exception:

@@ -164,6 +164,7 @@ def sanitize_diff_path(diff_path: str, base_dir: Union[str, Path]) -> Path:
 def is_safe_filename(filename: str) -> bool:
     """
     Check if a filename is safe (no directory traversal, no null bytes, etc.).
+    Decodes URL-encoded characters and normalizes Unicode to NFKC form to prevent bypasses.
 
     Args:
         filename: The filename to check
@@ -171,12 +172,22 @@ def is_safe_filename(filename: str) -> bool:
     Returns:
         True if filename is safe, False otherwise
     """
+    import unicodedata
+    from urllib.parse import unquote
+
+    # Decode percent encoding and normalize to NFKC to resolve U+FF0F (fullwidth slash),
+    # U+FF3C (fullwidth backslash), %2F, and other alternative representations.
+    try:
+        normalized = unicodedata.normalize("NFKC", unquote(filename))
+    except Exception:
+        return False
+
     # Check for null bytes
-    if "\0" in filename:
+    if "\0" in normalized:
         return False
 
     # Check for path traversal
-    if ".." in filename or "/" in filename or "\\" in filename:
+    if ".." in normalized or "/" in normalized or "\\" in normalized:
         return False
 
     # Check for reserved names (Windows)
@@ -204,12 +215,12 @@ def is_safe_filename(filename: str) -> bool:
         "LPT8",
         "LPT9",
     }
-    if filename.upper() in reserved_names:
+    if normalized.upper() in reserved_names:
         return False
 
     # Check for dangerous characters
     dangerous_chars = set('<>:"|?*')
-    if any(char in dangerous_chars for char in filename):
+    if any(char in dangerous_chars for char in normalized):
         return False
 
     return True

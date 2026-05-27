@@ -69,17 +69,19 @@ class BlobRepairer:
         if run_id is None or not column:
             return RepairResult(issue=issue, success=False, error="Missing run_id or column in identifier")
 
-        # Allowlist columns to prevent SQL injection
-        allowed_columns = {
-            "context_overview",
-            "telemetry_metrics",
-            "structural_metrics",
-            "security_audit",
-            "artifact_payload",
-            "delta_stats",
-        }
-        if column not in allowed_columns:
-            return RepairResult(issue=issue, success=False, error=f"Invalid column name: {column}")
+        # Allowlist columns dynamically from the database schema to prevent SQL injection
+        try:
+            with self.db.connection() as conn:
+                cursor = conn.execute("PRAGMA table_info(run_artifacts)")
+                columns_info = cursor.fetchall()
+                allowed_columns = {row["name"] for row in columns_info}
+        except Exception as e:
+            return RepairResult(issue=issue, success=False, error=f"Failed to query database schema: {e}")
+
+        # Exclude key/non-blob columns that must not be set to NULL
+        forbidden_columns = {"run_id", "schema_version", "created_at"}
+        if column not in allowed_columns or column in forbidden_columns:
+            return RepairResult(issue=issue, success=False, error=f"Invalid or forbidden column name: {column}")
 
         try:
             with self.db.connection() as conn:

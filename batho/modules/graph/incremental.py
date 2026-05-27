@@ -14,13 +14,39 @@ from pathlib import Path
 def _run_git(
     repo_root: Path, args: list[str]
 ) -> subprocess.CompletedProcess[str] | None:
+    import os
+    import shutil
+
+    # Construct a safe platform-specific PATH to mitigate command injection/path exploitation
+    if os.name == "nt":
+        prog_files = os.environ.get("ProgramFiles", "C:\\Program Files")
+        prog_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+        system_root = os.environ.get("SystemRoot", "C:\\Windows")
+        safe_path = ";".join([
+            f"{system_root}\\System32",
+            system_root,
+            f"{system_root}\\System32\\Wbem",
+            f"{prog_files}\\Git\\cmd",
+            f"{prog_files}\\Git\\bin",
+            f"{prog_files_x86}\\Git\\cmd",
+            f"{prog_files_x86}\\Git\\bin",
+        ])
+    else:
+        safe_path = "/usr/bin:/usr/local/bin:/usr/sbin:/sbin:/bin"
+
+    git_bin = shutil.which("git", path=safe_path) or "git"
+
+    env = os.environ.copy()
+    env["PATH"] = safe_path
+
     try:
         return subprocess.run(
-            ["git", *args],
+            [git_bin, *args],
             cwd=str(repo_root),
             capture_output=True,
             text=True,
             check=True,
+            env=env,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
         return None

@@ -561,7 +561,7 @@ class CodeGraphIndexer:
     ) -> None:
         self.logger = get_logger(__name__, operation="index")
         root_path = Path(root).resolve() if root else None
-        self._cache = BathoCache(cache_path=cache_path)
+        self._cache = BathoCache(cache_path=cache_path, repo_root=root_path)
         self._root: Path | None = root_path
         self.build_stats: dict[str, Any] = {}  # populated after build_graph(); distinct from stats() method
         self._last_reconstruction: Any = None  # set after reconstruct_file
