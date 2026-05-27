@@ -19,7 +19,10 @@ import orjson
 from pathlib import Path
 from typing import Any
 
-from batho.modules.storage.cache.unified_cache import BathoCache
+from batho.modules.storage.cache.unified_cache import (
+    BathoCache,
+    build_ast_cache_variant,
+)
 from batho.modules.extraction.extractor import ASTExtractor
 from batho.core.schemas import Entity, EntityType, FileSnapshot, Relationship
 from batho.utils.file_io import read_file_bytes
@@ -29,6 +32,14 @@ from batho.utils.logging import configure_logging, get_logger
 logger = get_logger(__name__, component="pipeline")
 _WORKER_LOGGING_INITIALIZED = False
 _WORKER_CACHE: BathoCache | None = None
+
+
+def _cache_variant_key(bsg_cfg: dict[str, Any], include_gaps: bool) -> str:
+    parsing_cfg = bsg_cfg.get("parsing", {}) if isinstance(bsg_cfg, dict) else {}
+    return build_ast_cache_variant(
+        include_gaps=include_gaps,
+        parsing_config=parsing_cfg,
+    )
 
 
 def _create_file_snapshot(
@@ -57,6 +68,36 @@ def _create_file_snapshot(
         ],
     )
     cache.set_file_snapshot(_snap)
+
+
+def _update_cached_entity_file(
+    entities: list[Entity],
+    filepath: str,
+) -> list[Entity]:
+    """Update Entity.file to current filepath and recompute IDs on cache hit.
+
+    When a file is renamed or copied, the cached entities retain the old file path,
+    causing stale Entity.id (derived from file). This function updates the file
+    path so IDs are recomputed correctly.
+
+    Args:
+        entities: Entities deserialized from cache (may have stale file path).
+        filepath: Current file path (from current disk location).
+
+    Returns:
+        List of entities with updated file path and recomputed IDs.
+    """
+    if not entities:
+        return entities
+
+    updated_entities = []
+    for entity in entities:
+        if entity.file != filepath:
+            updated_entities.append(entity._evolve(file=filepath))
+        else:
+            updated_entities.append(entity)
+
+    return updated_entities
 
 
 def _enrich_cached_entities(
@@ -275,6 +316,7 @@ def process_file_worker(
     ttl_days: int,
     max_file_size_kb: int,
     bsg_cache_cfg: dict[str, Any],
+    cache_variant: str,
     index_id: str | None = None,
     include_gaps: bool = False,
 ) -> tuple[str, bytes, bytes, bool] | None:
@@ -306,9 +348,13 @@ def process_file_worker(
 
         # Check AST cache for existing entities and relationships
         if cache_enabled and cache is not None:
-            cached_result = cache.get_ast(content_hash)
+            cached_result = cache.get_ast(filepath, content_hash, cache_variant)
             if cached_result is not None:
                 cached_entities, cached_relationships = cached_result
+
+                # Update entity file path to current location (handles renames/copies)
+                # This also recomputes Entity.id since it's derived from file
+                cached_entities = _update_cached_entity_file(cached_entities, filepath)
 
                 # Enrich cached entities with raw contents sliced from file bytes
                 cached_entities = _enrich_cached_entities(
@@ -386,13 +432,14 @@ def process_file_worker(
         # Skip caching empty results to avoid re-parsing files that legitimately have no entities
         if cache_enabled and entities and cache is not None:
             cache.set_ast(
-                content_hash,
                 filepath,
+                content_hash,
                 entities,
                 relationships or [],
                 current_mtime,
                 size,
                 ttl_days,
+                variant=cache_variant,
             )
 
             # Create file snapshot when include_gaps is enabled
@@ -535,6 +582,7 @@ def build_graph_parallel(
     cache_enabled = bsg_cache_cfg.get("enabled", True)
     cache_path = bsg_cache_cfg.get("path") or None
     ttl_days = bsg_cache_cfg.get("ttl_days", 30)
+    cache_variant = _cache_variant_key(bsg_cfg, include_gaps)
 
     if not parallel_enabled:
         # Fallback to sequential processing
@@ -599,6 +647,7 @@ def build_graph_parallel(
                 ttl_days,
                 configured_max_file_size_kb,
                 bsg_cache_cfg,
+                cache_variant,
                 index_id,
                 include_gaps,
             )
@@ -678,6 +727,7 @@ def build_graph_sequential(
     cache_enabled = bsg_cache_cfg.get("enabled", True)
     cache_path = bsg_cache_cfg.get("path") or None
     ttl_days = bsg_cache_cfg.get("ttl_days", 30)
+    cache_variant = _cache_variant_key(bsg_cfg, include_gaps)
 
     results = []
     errors = 0
@@ -706,6 +756,7 @@ def build_graph_sequential(
             ttl_days,
             configured_max_file_size_kb,
             bsg_cache_cfg,
+            cache_variant,
             index_id=index_id,
             include_gaps=include_gaps,
         )

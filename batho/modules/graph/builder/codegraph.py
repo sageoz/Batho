@@ -39,7 +39,10 @@ from batho.utils.ignore import is_ignored, load_ignore_spec
 from batho.utils.logging import get_logger
 from batho.utils.memory_monitor import force_garbage_collection, memory_monitor
 
-from batho.modules.storage.cache.unified_cache import BathoCache
+from batho.modules.storage.cache.unified_cache import (
+    BathoCache,
+    build_ast_cache_variant,
+)
 from batho.modules.extraction.extractor import ASTExtractor
 from batho.modules.extraction.pipeline import build_graph_parallel
 from batho.core.schemas import Entity, EntityType, GraphConsistencyError, Relationship, RelationshipType
@@ -604,6 +607,7 @@ class CodeGraphIndexer:
         metrics_callback: Callable[[str, Dict[str, Any]], None] | None = None,
         index_id: str | None = None,
         ast_cache_enabled: bool | None = None,
+        include_gaps: bool | None = None,
         file_list: list[str] | None = None,
     ) -> InMemoryGraph:
         """
@@ -628,8 +632,9 @@ class CodeGraphIndexer:
             metrics_callback: Optional callback for metrics collection.
             index_id: Optional index ID to stamp on entities.
             ast_cache_enabled: Optional override for AST cache usage in this run.
+            include_gaps: Optional override for gap entities and file snapshots.
             file_list: Optional list of specific file paths to index. When provided,
-                      directory walk is skipped and only these files are processed.
+                       directory walk is skipped and only these files are processed.
 
         Returns:
             Populated InMemoryGraph.
@@ -698,7 +703,10 @@ class CodeGraphIndexer:
             bsg_cache_cfg = bsg_cfg.get("cache", {})
             # Extract bidirectional gap configuration
             bidirectional_cfg = bsg_cfg.get("bidirectional", {})
-            include_gaps = bool(bidirectional_cfg.get("include_gaps", False))
+            include_gaps_cfg = bool(bidirectional_cfg.get("include_gaps", False))
+            include_gaps_flag = (
+                include_gaps_cfg if include_gaps is None else bool(include_gaps)
+            )
             # Set parsing config for all extractors
             from batho.modules.extraction.submodules.parser_factory.registry import set_parsing_config
 
@@ -834,11 +842,34 @@ class CodeGraphIndexer:
                 else:
                     self.logger.error("file_processing_failed", **error_context)
 
-            graph = InMemoryGraph()
             files_parsed = 0
             files_skipped = 0
             files_cached = 0
             start_ts = os.times().elapsed if hasattr(os, "times") else 0.0
+            graph = InMemoryGraph()
+
+            def _materialize_graph(
+                results: list[tuple[str, list[Entity], list[Relationship], bool]]
+            ) -> tuple[InMemoryGraph, int, int, int, int]:
+                built_graph = InMemoryGraph()
+                parsed = 0
+                cached = 0
+                skipped = 0
+                local_errors = 0
+                for filepath, entities, relationships, cached_hit in results:
+                    try:
+                        for entity in entities:
+                            built_graph.add_entity(entity)
+                        for rel in relationships:
+                            built_graph.add_relationship(rel)
+                        parsed += 1
+                        if cached_hit:
+                            cached += 1
+                    except Exception as graph_error:
+                        _handle_file_error(filepath, graph_error, "graph_update")
+                        local_errors += 1
+                        skipped += 1
+                return built_graph, parsed, cached, skipped, local_errors
 
             # Process files using multiprocessing pipeline
             try:
@@ -848,24 +879,13 @@ class CodeGraphIndexer:
                     bsg_cfg,
                     extractor,
                     index_id=index_id,
-                    include_gaps=include_gaps,
+                    include_gaps=include_gaps_flag,
                 )
-                errors += parallel_errors
-
-                # Add results to graph
-                for filepath, entities, relationships, cached_hit in results:
-                    try:
-                        for entity in entities:
-                            graph.add_entity(entity)
-                        for rel in relationships:
-                            graph.add_relationship(rel)
-                        files_parsed += 1
-                        if cached_hit:
-                            files_cached += 1
-                    except Exception as graph_error:
-                        _handle_file_error(filepath, graph_error, "graph_update")
-                        errors += 1
-                        files_skipped += 1
+                errors = parallel_errors
+                graph, files_parsed, files_cached, files_skipped, graph_errors = (
+                    _materialize_graph(results)
+                )
+                errors += graph_errors
             except Exception as pool_error:
                 self.logger.error("parallel_processing_failed", error=str(pool_error))
                 raise
@@ -894,6 +914,27 @@ class CodeGraphIndexer:
                         self._cache.invalidate_cache()
                     except Exception as exc:
                         self.logger.warning("stale_cache_invalidate_failed", error=str(exc))
+                bsg_cfg_no_cache = dict(bsg_cfg)
+                cache_cfg = dict(bsg_cfg_no_cache.get("cache", {}))
+                cache_cfg["enabled"] = False
+                bsg_cfg_no_cache["cache"] = cache_cfg
+                try:
+                    results, parallel_errors = build_graph_parallel(
+                        candidates,
+                        configured_max_file_size_kb,
+                        bsg_cfg_no_cache,
+                        extractor,
+                        index_id=index_id,
+                        include_gaps=include_gaps_flag,
+                    )
+                    errors = parallel_errors
+                    graph, files_parsed, files_cached, files_skipped, graph_errors = (
+                        _materialize_graph(results)
+                    )
+                    errors += graph_errors
+                except Exception as pool_error:
+                    self.logger.error("parallel_processing_failed", error=str(pool_error))
+                    raise
 
             symbol_index = SymbolIndex.build(graph) if symbol_resolution_enabled else None
 
@@ -983,7 +1024,7 @@ class CodeGraphIndexer:
                 "rules_applied": int(rule_stats.get("rules_applied", 0)),
                 "entities_rule_tagged": int(rule_stats.get("entities_updated", 0)),
                 "rules": rule_stats,
-                "include_gaps": include_gaps,
+                "include_gaps": include_gaps_flag,
             }
 
             self.logger.info(
@@ -1097,13 +1138,17 @@ class CodeGraphIndexer:
                 content_hash = compute_bytes_hash(content)
                 ttl_days = bsg_cache_cfg.get("ttl_days", 30)
                 self._cache.set_ast(
-                    content_hash,
                     filepath,
+                    content_hash,
                     entities,
                     rels,
                     mtime,
                     size,
                     ttl_days,
+                    variant=build_ast_cache_variant(
+                        include_gaps=include_gaps,
+                        parsing_config=get_config_cached().get("bsg", {}).get("parsing", {}),
+                    ),
                 )
             except OSError:
                 pass

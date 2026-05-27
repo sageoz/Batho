@@ -848,6 +848,9 @@ class BathoDatabase:
             # Build set of entity IDs in current batch for validation
             entity_ids_in_batch = {e[0] for e in query_entities_rows}
 
+            # Pseudo-target prefixes that are valid external references
+            PSEDUO_TARGET_PREFIXES = ("external:", "file:", "anchor:", "unresolved:", "symbol:")
+
             # Relationships
             for r in relationships_data:
                 src_id = r.get("source_id")
@@ -858,7 +861,15 @@ class BathoDatabase:
                 if not src_id or not tgt_id or not r_type:
                     continue
 
-                if tgt_id in unresolved_ids:
+                # Check if target is a pseudo-target (external reference)
+                is_pseudo_target = any(tgt_id.startswith(prefix) for prefix in PSEDUO_TARGET_PREFIXES)
+
+                if is_pseudo_target:
+                    # Insert pseudo-target relationships directly (they're valid external refs)
+                    query_relationships_rows.append((
+                        src_id, tgt_id, r_type, run_internal_id, meta
+                    ))
+                elif tgt_id in unresolved_ids:
                     dangling_references_rows.append((
                         src_id, unresolved_ids[tgt_id], r_type, run_internal_id
                     ))

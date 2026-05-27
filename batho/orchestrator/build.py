@@ -162,6 +162,7 @@ def run_build(options: BuildOptions) -> BuildResult:
             verbose=options.verbose,
             index_id=run_id,
             ast_cache_enabled=True,
+            include_gaps=True,
         )
 
         entity_count = len(graph.entities)

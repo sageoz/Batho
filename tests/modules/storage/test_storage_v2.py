@@ -370,8 +370,8 @@ class TestInMemoryCache:
         from batho.modules.storage.cache.unified_cache import BathoCache
 
         cache = BathoCache(str(tmp_path))
-        cache._ast["hash1"] = (["entity_mock"], ["rel_mock"])
-        result = cache.get_ast("hash1")
+        cache.set_ast("/test/file.py", "hash1", ["entity_mock"], ["rel_mock"], 0.0, 100)
+        result = cache.get_ast("/test/file.py", "hash1")
         assert result is not None
         assert result[0] == ["entity_mock"]
 
@@ -379,17 +379,17 @@ class TestInMemoryCache:
         from batho.modules.storage.cache.unified_cache import BathoCache
 
         cache = BathoCache(str(tmp_path))
-        assert cache.get_ast("nonexistent") is None
+        assert cache.get_ast("/test/nonexistent.py", "nonexistent") is None
 
     def test_clear_ast_cache(self, tmp_path):
         from batho.modules.storage.cache.unified_cache import BathoCache
 
         cache = BathoCache(str(tmp_path))
-        cache._ast["h1"] = ([], [])
-        cache._ast["h2"] = ([], [])
+        cache.set_ast("/test/file1.py", "h1", [], [], 0.0, 100)
+        cache.set_ast("/test/file2.py", "h2", [], [], 0.0, 100)
         count = cache.clear_ast_cache()
         assert count == 2
-        assert cache.get_ast("h1") is None
+        assert cache.get_ast("/test/file1.py", "h1") is None
 
     def test_snapshot_round_trip(self, tmp_path):
         from batho.modules.storage.cache.unified_cache import BathoCache

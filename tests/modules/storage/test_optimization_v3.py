@@ -124,6 +124,7 @@ def process_data(a, b):
             ttl_days=30,
             max_file_size_kb=500,
             bsg_cache_cfg={},
+            cache_variant="",
         )
 
         # Assert GC is restored properly

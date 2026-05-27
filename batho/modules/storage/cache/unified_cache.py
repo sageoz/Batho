@@ -7,6 +7,8 @@ File tracking delegates to BathoDatabase for persistence.
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+import json
 import time
 from typing import Any
 
@@ -15,6 +17,20 @@ from batho.modules.storage.sqlite_registry.engine import get_database
 from batho.utils.logging import get_logger
 
 logger = get_logger(__name__, component="cache")
+
+
+def build_ast_cache_variant(
+    *,
+    include_gaps: bool,
+    parsing_config: dict[str, Any] | None = None,
+) -> str:
+    """Return a stable variant key for AST cache entries."""
+    payload = {
+        "include_gaps": bool(include_gaps),
+        "parsing": parsing_config or {},
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:12]
 
 
 class BathoCache:
@@ -41,7 +57,10 @@ class BathoCache:
         self.logger = logger
 
         # In-memory stores (session-local, not persisted)
-        self._ast: dict[str, tuple[list[Entity], list[Relationship], float | None]] = {}
+        self._ast: dict[
+            tuple[str, str, str],
+            tuple[list[Entity], list[Relationship], float | None],
+        ] = {}
         self._snapshots: dict[str, FileSnapshot] = {}
 
     # ------------------------------------------------------------------
@@ -59,9 +78,25 @@ class BathoCache:
         for key in expired:
             self._ast.pop(key, None)
 
-    def get_ast(self, file_hash: str) -> tuple[list[Entity], list[Relationship]] | None:
+    def _normalize_ast_path(self, file_path: str) -> str:
+        path = Path(file_path)
+        if not path.is_absolute() and self._db is not None:
+            path = self._db.repo_root / path
+        try:
+            return str(path.resolve())
+        except OSError:
+            return str(path)
+
+    def _ast_key(
+        self, file_path: str, file_hash: str, variant: str | None = None
+    ) -> tuple[str, str, str]:
+        return (self._normalize_ast_path(file_path), file_hash, variant or "")
+
+    def get_ast(
+        self, file_path: str, file_hash: str, variant: str | None = None
+    ) -> tuple[list[Entity], list[Relationship]] | None:
         self._purge_expired()
-        entry = self._ast.get(file_hash)
+        entry = self._ast.get(self._ast_key(file_path, file_hash, variant))
         if entry is None:
             return None
         if len(entry) >= 2:
@@ -70,38 +105,45 @@ class BathoCache:
 
     def set_ast(
         self,
-        file_hash: str,
         file_path: str,
+        file_hash: str,
         entities: list[Entity],
         relationships: list[Relationship],
         mtime: float,
         size: int,
         ttl_days: int = 30,
+        variant: str | None = None,
     ) -> None:
         expires_at = None
         if ttl_days > 0:
             expires_at = time.time() + (ttl_days * 86400)
-        self._ast[file_hash] = (entities, relationships, expires_at)
+        self._ast[self._ast_key(file_path, file_hash, variant)] = (
+            entities,
+            relationships,
+            expires_at,
+        )
 
-    def delete_ast(self, file_hash: str) -> None:
-        self._ast.pop(file_hash, None)
+    def delete_ast(
+        self, file_path: str, file_hash: str, variant: str | None = None
+    ) -> None:
+        self._ast.pop(self._ast_key(file_path, file_hash, variant), None)
 
     def delete_ast_by_path(self, file_path: str) -> int:
-        """Delete AST entries by file path (exact match).
-        
-        In v2.0, AST cache is keyed by content hash. This method looks up
-        the file's content hash from the database, then deletes the AST
-        entry by that hash.
-        
-        Returns:
-            1 if an entry was deleted, 0 otherwise.
-        """
-        # Look up content hash for the file path
-        content_hash = self.get_file_hash(file_path)
-        if content_hash:
-            self.delete_ast(content_hash)
-            return 1
-        return 0
+        """Delete AST entries for a file path across all cache variants."""
+        normalized_paths = {file_path, self._normalize_ast_path(file_path)}
+        if self._db is not None:
+            try:
+                if not Path(file_path).is_absolute():
+                    normalized_paths.add(str((self._db.repo_root / file_path).resolve()))
+            except OSError:
+                pass
+
+        keys_to_delete = [
+            key for key in self._ast.keys() if key[0] in normalized_paths
+        ]
+        for key in keys_to_delete:
+            self._ast.pop(key, None)
+        return len(keys_to_delete)
 
     def clear_ast_cache(self, older_than_days: int | None = None) -> int:
         count = len(self._ast)
@@ -218,3 +260,5 @@ class BathoCache:
     def close(self) -> None:
         self._ast.clear()
         self._snapshots.clear()
+        # Note: Do NOT close self._db here - it's shared via _DB_CACHE in engine.py
+        # and may be used by other components (e.g., patch operations after build)

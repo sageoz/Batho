@@ -78,11 +78,19 @@ def _hash_scan_changes(
     root: Path,
     known_tracking: dict[str, dict],
     max_file_size_kb: int | None = None,
+    strict_hashing: bool = True,
 ) -> list[FileChange]:
     """Fallback: scan filesystem for added/modified/deleted files.
 
     known_tracking maps relative path -> {"content_hash": str, "mtime": float, "size": int}.
-    Files whose mtime AND size match the tracked values are skipped without hashing.
+    
+    Args:
+        root: Root directory to scan.
+        known_tracking: Dictionary of tracked files with their metadata.
+        max_file_size_kb: Maximum file size to consider.
+        strict_hashing: If True, always compute content hash regardless of mtime/size.
+                       If False, skip hashing when mtime/size unchanged (faster but
+                       may miss content changes with preserved timestamps.
     """
     from batho.modules.graph.incremental import _collect_candidate_files
 
@@ -112,26 +120,35 @@ def _hash_scan_changes(
             continue
 
         old_hash = tracked["content_hash"]
-        tracked_mtime_ns = tracked.get("mtime_ns")
-        if tracked_mtime_ns is None:
-            tracked_mtime = tracked.get("mtime")
-            if tracked_mtime is not None:
-                tracked_mtime_ns = int(tracked_mtime * 1e9)
-        tracked_ino = tracked.get("inode")
 
-        # Cheap pre-filter: skip hashing when mtime/size (and inode when known) are unchanged.
-        if tracked_mtime_ns is not None and tracked_ino is not None:
-            if (
-                st.st_mtime_ns == tracked_mtime_ns
-                and st.st_ino == tracked_ino
-                and st.st_size == tracked.get("size")
-            ):
-                continue
-        else:
-            if st.st_mtime == tracked.get("mtime") and st.st_size == tracked.get("size"):
-                continue
+        # Strict hashing: always compute hash to catch content changes with preserved timestamps
+        # Non-strict: skip hashing when mtime/size unchanged for performance
+        if not strict_hashing:
+            tracked_mtime_ns = tracked.get("mtime_ns")
+            if tracked_mtime_ns is None:
+                tracked_mtime = tracked.get("mtime")
+                if tracked_mtime is not None:
+                    tracked_mtime_ns = int(tracked_mtime * 1e9)
+            tracked_ino = tracked.get("inode")
 
-        new_hash = compute_file_hash(abs_path)
+            # Cheap pre-filter: skip hashing when mtime/size (and inode when known) are unchanged.
+            if tracked_mtime_ns is not None and tracked_ino is not None:
+                if (
+                    st.st_mtime_ns == tracked_mtime_ns
+                    and st.st_ino == tracked_ino
+                    and st.st_size == tracked.get("size")
+                ):
+                    continue
+            else:
+                if st.st_mtime == tracked.get("mtime") and st.st_size == tracked.get("size"):
+                    continue
+
+        # Compute hash, catching errors (e.g., file modified concurrently)
+        try:
+            new_hash = compute_file_hash(abs_path)
+        except OSError:
+            continue
+
         if old_hash != new_hash:
             changes.append(FileChange(rel, FileChangeType.MODIFIED, old_hash=old_hash, new_hash=new_hash))
 
