@@ -208,9 +208,9 @@ class TestPruneFileChangelog:
  
         with tmp_db.connection(read_only=True) as conn:
             count = conn.execute("SELECT COUNT(*) FROM file_changelog").fetchone()[0]
-        # Since base_id is pruned, diffs1 (referencing base_id) is cascade-deleted.
-        # Only diffs2 remains (from run2_id to run1_id).
-        assert count == 1
+            # Since base_id is pruned, diffs1's base_run_id is set to NULL, but the row is not deleted.
+            # Both diffs1 and diffs2 remain.
+            assert count == 2
  
     def test_prune_deletes_old_entries(self, tmp_db: BathoDatabase):
         run0_uuid, run0_id = _make_run(tmp_db)
@@ -223,7 +223,7 @@ class TestPruneFileChangelog:
             run1_id, run0_id,
             [NodeDiff("e1", "func", "FUNCTION", "f.py", "added", {}, None, "hash")]
         )
-        # run2 diff against run1 (run1 is deleted, so this will be cascade-deleted)
+        # run2 diff against run1 (run1 is deleted, so run2's base_run_id will be set to NULL, but it is kept)
         tmp_db.record_file_changelog(
             run2_id, run1_id,
             [NodeDiff("e2", "func", "FUNCTION", "f.py", "added", {}, None, "hash")]
@@ -241,7 +241,7 @@ class TestPruneFileChangelog:
                 "SELECT DISTINCT run_id FROM file_changelog"
             ).fetchall()]
         assert run1_id not in run_ids
-        assert run2_id not in run_ids
+        assert run2_id in run_ids
         assert run3_id in run_ids
 
 

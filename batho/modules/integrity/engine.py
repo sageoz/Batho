@@ -71,6 +71,19 @@ class FixContext:
 
         try:
             with self.db.connection() as conn:
+                conn.execute(
+                    """CREATE TABLE IF NOT EXISTS fix_audit_log (
+                        log_id          TEXT PRIMARY KEY NOT NULL,
+                        run_id          TEXT NOT NULL,
+                        timestamp       TEXT NOT NULL,
+                        action          TEXT NOT NULL,
+                        check_name      TEXT,
+                        severity        TEXT,
+                        message         TEXT,
+                        details_json    TEXT NOT NULL DEFAULT '{}',
+                        success         INTEGER NOT NULL DEFAULT 1
+                    ) WITHOUT ROWID"""
+                )
                 for entry in self.audit_log:
                     conn.execute(
                         """INSERT INTO fix_audit_log (
@@ -181,24 +194,6 @@ class FixEngine:
             self._db = get_database(self.root)
         return self._db
 
-    def _ensure_audit_table(self) -> None:
-        """Ensure the fix_audit_log table exists."""
-        with self.db.connection() as conn:
-            conn.execute(
-                """CREATE TABLE IF NOT EXISTS fix_audit_log (
-                    log_id          TEXT PRIMARY KEY NOT NULL,
-                    run_id          TEXT NOT NULL,
-                    timestamp       TEXT NOT NULL,
-                    action          TEXT NOT NULL,
-                    check_name      TEXT,
-                    severity        TEXT,
-                    message         TEXT,
-                    details_json    TEXT NOT NULL DEFAULT '{}',
-                    success         INTEGER NOT NULL DEFAULT 1
-                ) WITHOUT ROWID"""
-            )
-            conn.commit()
-
     def run(self) -> FixResult:
         """Execute integrity verification and repair pipeline."""
         started_at = datetime.now(timezone.utc).isoformat()
@@ -219,8 +214,6 @@ class FixEngine:
         db_path = resolve_db_path(self.root)
         if not db_path.exists():
             raise FileNotFoundError(f"No artifact database found in {self.root}")
-
-        self._ensure_audit_table()
 
         ctx = FixContext(
             root=self.root,

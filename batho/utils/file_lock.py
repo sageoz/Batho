@@ -102,7 +102,23 @@ class FileLock:
                 return None
 
             pid_str, timestamp_str = parts
-            return int(pid_str), float(timestamp_str)
+            pid = int(pid_str)
+            timestamp = float(timestamp_str)
+
+            # Reject hostile/garbage payloads:
+            #   - non-positive or unreasonably large PIDs
+            #   - NaN / inf timestamps
+            #   - timestamps in the far future or far past (>1 day skew)
+            import math
+
+            if pid <= 0 or pid > 2**31:
+                return None
+            if not math.isfinite(timestamp):
+                return None
+            if abs(timestamp - time.time()) > 86400.0:
+                return None
+
+            return pid, timestamp
 
         except (OSError, ValueError) as e:
             logger.debug(
@@ -147,6 +163,12 @@ class FileLock:
         """
         Clean up stale lock file if present.
 
+        Re-reads the lock file immediately before unlinking and refuses to
+        delete it if its (pid, timestamp) payload changed between the
+        staleness check and the unlink. This prevents two processes from
+        both deciding a lock is stale and racing to delete each other's
+        freshly-created lock.
+
         Returns:
             True if stale lock was cleaned up, False otherwise
         """
@@ -155,22 +177,34 @@ class FileLock:
             return False
 
         pid, timestamp = lock_info
-        if self._is_lock_stale(pid, timestamp):
-            try:
-                self.lock_path.unlink()
-                logger.info(
-                    "cleaned_stale_lock", lock_path=str(self.lock_path), pid=pid
-                )
-                return True
-            except (PermissionError, OSError) as e:
-                logger.warning(
-                    "failed_to_clean_stale_lock",
-                    lock_path=str(self.lock_path),
-                    error=str(e),
-                )
-                return False
+        if not self._is_lock_stale(pid, timestamp):
+            return False
 
-        return False
+        # Re-read just before unlink: if anything changed, abort cleanup.
+        verify_info = self._read_lock_info()
+        if verify_info is None or verify_info != (pid, timestamp):
+            logger.debug(
+                "stale_lock_changed_during_cleanup",
+                lock_path=str(self.lock_path),
+            )
+            return False
+
+        try:
+            self.lock_path.unlink()
+            logger.info(
+                "cleaned_stale_lock", lock_path=str(self.lock_path), pid=pid
+            )
+            return True
+        except FileNotFoundError:
+            # Another process beat us to it — that's fine.
+            return True
+        except (PermissionError, OSError) as e:
+            logger.warning(
+                "failed_to_clean_stale_lock",
+                lock_path=str(self.lock_path),
+                error=str(e),
+            )
+            return False
 
     def acquire(self) -> bool:
         """
@@ -183,17 +217,8 @@ class FileLock:
             return True  # Already locked by this instance
 
         start_time = time.time()
-        cleanup_attempted = False
 
         while time.time() - start_time < self.timeout:
-            # Only attempt cleanup once per acquisition attempt to avoid infinite recursion
-            if not cleanup_attempted:
-                was_cleaned = self._cleanup_stale_lock()
-                cleanup_attempted = True
-                if was_cleaned:
-                    # Give a brief moment after cleanup before attempting acquisition
-                    time.sleep(0.01)
-
             try:
                 # Try to create lock file atomically
                 pid = os.getpid()
@@ -220,15 +245,14 @@ class FileLock:
                     )
                     raise FileLockError(f"Failed to create lock file: {e}")
 
-                # Lock exists, check if it's stale before waiting
-                lock_info = self._read_lock_info()
-                if lock_info:
-                    pid, timestamp = lock_info
-                    if self._is_lock_stale(pid, timestamp):
-                        # Try to clean up the stale lock immediately
-                        if self._cleanup_stale_lock():
-                            time.sleep(0.01)  # Brief delay before retry
-                            continue  # Retry immediately after cleanup
+                # Lock exists — try to clean up if it is stale. ``_cleanup_stale_lock``
+                # is self-verifying: it re-reads the payload immediately before
+                # ``unlink()`` and aborts if the contents changed, which prevents
+                # racing processes from each deleting the other's fresh lock.
+                if self._cleanup_stale_lock():
+                    # Brief delay so the OS settles before re-trying the open
+                    time.sleep(0.01)
+                    continue
 
                 # Lock exists and is not stale, wait and retry
                 logger.debug("lock_busy", lock_path=str(self.lock_path))

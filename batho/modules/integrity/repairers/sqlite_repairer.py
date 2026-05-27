@@ -53,15 +53,17 @@ class SQLiteRepairer:
 
         try:
             # 1. Close current database connections cached in the module
-            from batho.modules.storage.sqlite_registry.engine import _DB_CACHE
-            # clear cache key for this path
-            key = str(db_path.resolve())
-            if key in _DB_CACHE:
-                try:
-                    _DB_CACHE[key].close()
-                except Exception:
-                    pass
-                del _DB_CACHE[key]
+            from batho.modules.storage.sqlite_registry.engine import _DB_CACHE, _DB_CACHE_LOCK
+            # clear cache keys matching this path
+            resolved_db_path_str = str(db_path.resolve())
+            with _DB_CACHE_LOCK:
+                keys_to_remove = [k for k in _DB_CACHE if k == resolved_db_path_str or k.startswith(resolved_db_path_str + "@")]
+                for key in keys_to_remove:
+                    try:
+                        _DB_CACHE[key].close()
+                    except Exception:
+                        pass
+                    _DB_CACHE.pop(key, None)
 
             # 2. Open source connection
             src_conn = sqlite3.connect(str(db_path))

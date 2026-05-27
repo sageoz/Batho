@@ -142,8 +142,6 @@ def sanitize_diff_path(diff_path: str, base_dir: Union[str, Path]) -> Path:
     # Check for other dangerous patterns
     dangerous_patterns = [
         "\0",  # Null bytes
-        "//",  # Double slashes (could indicate bypass attempts)
-        "~",  # Home directory expansion
     ]
 
     for pattern in dangerous_patterns:

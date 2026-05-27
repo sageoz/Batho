@@ -253,7 +253,7 @@ def get_database(repo_root: Path | str, *, db_path: Path | str | None = None) ->
     else:
         resolved_path = resolve_db_path(root)
 
-    key = str(resolved_path)
+    key = f"{resolved_path}@{root}"
     with _DB_CACHE_LOCK:
         existing = _DB_CACHE.get(key)
         if existing is not None and not getattr(existing, "_closed", False):
@@ -285,8 +285,7 @@ class BathoDatabase:
         self._all_connections: list[sqlite3.Connection] = []
         self._string_dict_cache: dict[str, int] = {}
         self._string_val_cache: dict[int, str] = {}
-        self._cctx = zstd.ZstdCompressor(level=3)
-        self._dctx = zstd.ZstdDecompressor()
+        self._zstd_level = 3
 
         try:
             # Guard: Check schema version if file exists (schema mismatch guard)
@@ -349,8 +348,27 @@ class BathoDatabase:
             self._local = threading.local()
             self._string_dict_cache.clear()
             self._string_val_cache.clear()
+            for conn in self._all_connections:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
             self._all_connections = []
             self._pid = current_pid
+
+    @property
+    def _cctx(self) -> zstd.ZstdCompressor:
+        self._check_pid()
+        if not hasattr(self._local, "cctx"):
+            self._local.cctx = zstd.ZstdCompressor(level=self._zstd_level)
+        return self._local.cctx
+
+    @property
+    def _dctx(self) -> zstd.ZstdDecompressor:
+        self._check_pid()
+        if not hasattr(self._local, "dctx"):
+            self._local.dctx = zstd.ZstdDecompressor()
+        return self._local.dctx
 
     def _get_connection(self) -> sqlite3.Connection:
         if self._closed:
@@ -392,13 +410,15 @@ class BathoDatabase:
     def connection(self, *, read_only: bool = False) -> Iterator[sqlite3.Connection]:
         if not read_only:
             self._lock.acquire()
+        conn = None
         try:
             conn = self._get_connection()
             yield conn
             if not read_only:
                 conn.commit()
         except Exception:
-            conn.rollback()
+            if conn is not None:
+                conn.rollback()
             raise
         finally:
             if not read_only:
@@ -792,25 +812,123 @@ class BathoDatabase:
                 )
 
     def resolve_dangling_references(self, run_internal_id: int) -> int:
-        """Perform a single lazy cross-file resolution JOIN to convert dangling references to query_relationships."""
+        """Perform symbol resolution to convert dangling references to query_relationships."""
+        from collections import defaultdict
+        import re
+        
         with self.transaction() as conn:
-            # 1. Match dangling references to actual query_entities by name
-            # Correct parentheses to prevent operator precedence bug (ignore run_id checks)
-            cursor = conn.execute(
-                """INSERT OR IGNORE INTO query_relationships (source_id, target_id, relation_type, run_id)
-                   SELECT d.source_id, e.entity_id, d.relation_type, d.run_id
+            dangling = conn.execute(
+                """SELECT d.source_id, d.unresolved_target_name, d.relation_type,
+                          (SELECT file_path FROM query_entities WHERE entity_id = d.source_id AND run_id = d.run_id) AS source_file
                    FROM dangling_references d
-                   JOIN query_entities e ON ((d.unresolved_target_name = e.entity_name AND d.run_id = e.run_id)
-                                         OR (d.unresolved_target_name = e.entity_id AND d.run_id = e.run_id))
-                   WHERE d.run_id = ? AND e.entity_type != 'UNRESOLVED'""",
+                   WHERE d.run_id = ?""",
                 (run_internal_id,)
-            )
-            resolved_count = cursor.rowcount
-            # 2. Cleanup resolved/all dangling references for this run
-            conn.execute(
-                "DELETE FROM dangling_references WHERE run_id = ?",
+            ).fetchall()
+
+            if not dangling:
+                conn.execute("DELETE FROM dangling_references WHERE run_id = ?", (run_internal_id,))
+                return 0
+
+            entities = conn.execute(
+                """SELECT entity_id, entity_name, file_path 
+                   FROM query_entities 
+                   WHERE run_id = ? AND entity_type != 'UNRESOLVED'""",
                 (run_internal_id,)
-            )
+            ).fetchall()
+
+            entities_by_name = defaultdict(list)
+            entities_by_id = defaultdict(list)
+            files_by_id = {}
+            names_by_id = {}
+            for e in entities:
+                eid = e["entity_id"]
+                ename = e["entity_name"]
+                efile = e["file_path"]
+                files_by_id[eid] = efile
+                names_by_id[eid] = ename
+                entities_by_name[ename].append(eid)
+                entities_by_id[eid].append(eid)
+                if "." in ename:
+                    entities_by_name[ename.split(".")[-1]].append(eid)
+
+            def lookup_candidates(ref_text: str) -> list[str]:
+                normalized = ref_text.strip().strip(",;")
+                normalized = re.sub(r"\s+as\s+\w+$", "", normalized).strip()
+                if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {'"', "'", "`"}:
+                    normalized = normalized[1:-1].strip()
+                normalized = normalized.replace("::", ".").strip()
+                if not normalized:
+                    return []
+                
+                ordered = [normalized]
+                if "/" in normalized:
+                    tail = normalized.rsplit("/", 1)[-1]
+                    ordered.append(tail)
+                    if "." in tail:
+                        ordered.append(tail.rsplit(".", 1)[0])
+                if "." in normalized:
+                    ordered.append(normalized.rsplit(".", 1)[-1])
+                if ":" in normalized and not normalized.startswith(("http://", "https://")):
+                    ordered.append(normalized.rsplit(":", 1)[-1])
+                return ordered
+
+            def shared_dir_depth(source: str, target: str) -> int:
+                source_parts = Path(source).parts[:-1]
+                target_parts = Path(target).parts[:-1]
+                depth = 0
+                for source_part, target_part in zip(source_parts, target_parts):
+                    if source_part != target_part:
+                        break
+                    depth += 1
+                return depth
+
+            def choose_best(candidate_ids: list[str], source_file: str | None) -> str | None:
+                if not candidate_ids:
+                    return None
+                if len(candidate_ids) == 1:
+                    return candidate_ids[0]
+
+                def score(entity_id: str) -> tuple[int, int, str]:
+                    target_file = files_by_id.get(entity_id, "")
+                    val_score = 0
+                    if source_file and target_file:
+                        if source_file == target_file:
+                            val_score += 1000
+                        val_score += shared_dir_depth(source_file, target_file) * 10
+                    name_len = len(names_by_id.get(entity_id, ""))
+                    return (val_score, -name_len, entity_id)
+
+                return max(candidate_ids, key=score)
+
+            rels_to_insert = []
+            for d in dangling:
+                src_id = d["source_id"]
+                ref_name = d["unresolved_target_name"]
+                rel_type = d["relation_type"]
+                src_file = d["source_file"]
+
+                target_ids = entities_by_id.get(ref_name)
+                if not target_ids:
+                    for cand in lookup_candidates(ref_name):
+                        target_ids = entities_by_name.get(cand)
+                        if target_ids:
+                            break
+
+                target_id = choose_best(target_ids, src_file) if target_ids else None
+                if target_id:
+                    rels_to_insert.append((src_id, target_id, rel_type, run_internal_id, "{}"))
+
+            resolved_count = 0
+            if rels_to_insert:
+                for rel in rels_to_insert:
+                    cursor = conn.execute(
+                        """INSERT OR IGNORE INTO query_relationships (source_id, target_id, relation_type, run_id, metadata_json)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        rel
+                    )
+                    resolved_count += cursor.rowcount
+
+            conn.execute("DELETE FROM dangling_references WHERE run_id = ?", (run_internal_id,))
             conn.commit()
             return resolved_count
 
@@ -822,6 +940,17 @@ class BathoDatabase:
         """Insert or replace a batch of file artifacts in a single transaction to eliminate commit latency."""
         if not batch_items:
             return
+
+        # Build set of all entity IDs in the entire batch upfront to prevent O(N^2) loop complexity
+        entity_ids_in_batch = set()
+        for b_item in batch_items:
+            for e in b_item["agent_view_data"].get("entities", []):
+                ent_id = e.get("id")
+                if ent_id:
+                    entity_ids_in_batch.add(ent_id)
+
+        # Pseudo-target prefixes that are valid external references
+        PSEDUO_TARGET_PREFIXES = ("external:", "file:", "anchor:", "unresolved:", "symbol:")
 
         file_artifacts_rows = []
         query_entities_rows = []
@@ -883,17 +1012,6 @@ class BathoDatabase:
                 if e_type == "UNRESOLVED" or (isinstance(e_type, str) and e_type.upper() == "UNRESOLVED"):
                     unresolved_ids[e.get("id")] = e.get("name")
 
-            # Build set of all entity IDs in the entire batch upfront to prevent file order contamination
-            entity_ids_in_batch = set()
-            for b_item in batch_items:
-                for e in b_item["agent_view_data"].get("entities", []):
-                    ent_id = e.get("id")
-                    if ent_id:
-                        entity_ids_in_batch.add(ent_id)
-
-            # Pseudo-target prefixes that are valid external references
-            PSEDUO_TARGET_PREFIXES = ("external:", "file:", "anchor:", "unresolved:", "symbol:")
-
             # Relationships
             for r in relationships_data:
                 src_id = r.get("source_id")
@@ -952,16 +1070,12 @@ class BathoDatabase:
             # 3. Update query_relationships and dangling_references
             for file_path in file_paths_to_delete:
                 conn.execute(
-                    "DELETE FROM query_relationships WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE file_path = ?)",
-                    (run_internal_id, file_path),
+                    "DELETE FROM query_relationships WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE run_id = ? AND file_path = ?)",
+                    (run_internal_id, run_internal_id, file_path),
                 )
                 conn.execute(
-                    "DELETE FROM query_relationships WHERE run_id = ? AND target_id IN (SELECT entity_id FROM query_entities WHERE file_path = ?)",
-                    (run_internal_id, file_path),
-                )
-                conn.execute(
-                    "DELETE FROM dangling_references WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE file_path = ?)",
-                    (run_internal_id, file_path),
+                    "DELETE FROM dangling_references WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE run_id = ? AND file_path = ?)",
+                    (run_internal_id, run_internal_id, file_path),
                 )
             if query_relationships_rows:
                 conn.executemany(
@@ -1235,8 +1349,12 @@ class BathoDatabase:
                 return None
             if val is None:
                 return None
-            serialized = json.dumps(val, ensure_ascii=True).encode("utf-8")
-            return self._cctx.compress(serialized)
+            try:
+                serialized = json.dumps(val, ensure_ascii=True, default=str).encode("utf-8")
+                return self._cctx.compress(serialized)
+            except Exception as e:
+                LOGGER.error("finalize_run_artifacts_compression_failed", key=key, error=str(e))
+                return None
 
         context_overview = _compress("context_overview", artifacts.get("context_overview"))
         telemetry_metrics = _compress("telemetry_metrics", artifacts.get("telemetry_metrics"))
@@ -1248,9 +1366,9 @@ class BathoDatabase:
         with self.transaction() as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO run_artifacts (
-                    run_id, context_overview, telemetry_metrics, structural_metrics,
-                    security_audit, artifact_payload, delta_stats
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                     run_id, context_overview, telemetry_metrics, structural_metrics,
+                     security_audit, artifact_payload, delta_stats
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_internal_id,
                     context_overview,
@@ -1266,8 +1384,8 @@ class BathoDatabase:
     def get_run_artifacts(self, run_internal_id: int) -> dict | None:
         """Retrieve and decompress all 6 columns for a run."""
         query = """SELECT context_overview, telemetry_metrics, structural_metrics,
-                          security_audit, artifact_payload, delta_stats, schema_version, created_at
-                   FROM run_artifacts WHERE run_id = ?"""
+                           security_audit, artifact_payload, delta_stats, schema_version, created_at
+                    FROM run_artifacts WHERE run_id = ?"""
         with self.connection(read_only=True) as conn:
             row = conn.execute(query, (run_internal_id,)).fetchone()
             if not row:
@@ -1276,8 +1394,12 @@ class BathoDatabase:
             def _decompress(blob: bytes | None) -> dict | None:
                 if not blob:
                     return None
-                decompressed = self._dctx.decompress(blob)
-                return json.loads(decompressed.decode("utf-8"))
+                try:
+                    decompressed = self._dctx.decompress(blob)
+                    return json.loads(decompressed.decode("utf-8"))
+                except Exception as e:
+                    LOGGER.error("get_run_artifacts_decompression_failed", error=str(e))
+                    return None
             
             return {
                 "run_id": run_internal_id,
@@ -1382,7 +1504,13 @@ class BathoDatabase:
             )
             conn.commit()
 
-    def get_file_node_history(self, entity_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    def get_file_node_history(
+        self,
+        entity_id: str,
+        *,
+        limit: int = 50,
+        since_completed_at: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Cross-run query using FTS5 to filter blobs, then decompress matching entries."""
         sql = """
             SELECT fc.run_id, fc.base_run_id, fc.node_changes,
@@ -1390,14 +1518,22 @@ class BathoDatabase:
             FROM file_changelog_fts fts
             JOIN file_changelog fc ON fts.rowid = fc.id
             JOIN index_runs r ON fc.run_id = r.id
-            JOIN index_runs base_r ON fc.base_run_id = base_r.id
+            LEFT JOIN index_runs base_r ON fc.base_run_id = base_r.id
             WHERE fts.entity_index MATCH ?
+        """
+        params = [f'"{entity_id}"']
+        if since_completed_at:
+            sql += " AND r.completed_at >= ?"
+            params.append(since_completed_at)
+        sql += """
             ORDER BY r.completed_at ASC, fc.run_id ASC
             LIMIT ?
         """
+        params.append(limit)
+
         results = []
         with self.connection(read_only=True) as conn:
-            rows = conn.execute(sql, (f'"{entity_id}"', limit)).fetchall()
+            rows = conn.execute(sql, tuple(params)).fetchall()
             for row in rows:
                 blob = row["node_changes"]
                 if not blob:
@@ -1428,7 +1564,7 @@ class BathoDatabase:
                    base_r.run_uuid AS base_run_uuid
             FROM file_changelog fc
             JOIN index_runs r ON fc.run_id = r.id
-            JOIN index_runs base_r ON fc.base_run_id = base_r.id
+            LEFT JOIN index_runs base_r ON fc.base_run_id = base_r.id
             JOIN string_dict file_dict ON fc.file_id = file_dict.id
             WHERE r.run_uuid = ?
         """
@@ -1502,7 +1638,7 @@ class BathoDatabase:
             FROM file_changelog fc
             JOIN string_dict file_dict ON fc.file_id = file_dict.id
             JOIN index_runs r ON fc.run_id = r.id
-            JOIN index_runs base_r ON fc.base_run_id = base_r.id
+            LEFT JOIN index_runs base_r ON fc.base_run_id = base_r.id
             WHERE file_dict.val = ?
         """
         params = [rel_path]
@@ -1545,10 +1681,16 @@ class BathoDatabase:
 
     def vacuum(self) -> None:
         with self.connection() as conn:
-            conn.execute("PRAGMA incremental_vacuum")
+            auto_vacuum = conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+            if auto_vacuum == 2:  # INCREMENTAL
+                conn.execute("PRAGMA incremental_vacuum")
+            else:
+                conn.commit()
+                conn.execute("VACUUM")
 
     def full_vacuum(self) -> None:
         with self.connection() as conn:
+            conn.commit()
             conn.execute("VACUUM")
 
     def integrity_check(self) -> list[str]:
@@ -1598,6 +1740,8 @@ class BathoDatabase:
                 self._all_connections.clear()
                 if hasattr(self._local, "conn"):
                     self._local.conn = None
+                key = f"{self._db_path}@{self._repo_root}"
+                _DB_CACHE.pop(key, None)
 
     def __repr__(self) -> str:
         return f"BathoDatabase(path={self._db_path!s})"

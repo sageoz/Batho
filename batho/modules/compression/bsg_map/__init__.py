@@ -242,6 +242,9 @@ class BSGMap:
         """
         Reconstruct a BSGMap from serialized data.
         """
+        if not isinstance(data, dict):
+            raise TypeError("BSGMap.from_dict requires a dictionary input")
+
         by_file: dict[str, list[Entity]] = {}
         dependencies: dict[str, list[str]] = {}
         serialized_bsg: dict[str, Any] | None = None

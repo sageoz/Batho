@@ -308,11 +308,23 @@ def _generate_delta_view(
     """Load a baseline export JSON and compute the delta."""
     from batho.modules.compression.bsg_map import BSGMap
 
+    # Enforce a 50 MB limit on baseline files to prevent memory exhaustion
+    MAX_BASELINE_SIZE = 50 * 1024 * 1024
+    try:
+        file_size = baseline_path.stat().st_size
+        if file_size > MAX_BASELINE_SIZE:
+            raise ValueError(f"Baseline file size exceeds limit of 50 MB ({file_size} bytes)")
+    except OSError as exc:
+        raise ValueError(f"Cannot access baseline file {baseline_path}: {exc}") from exc
+
     try:
         raw = baseline_path.read_text(encoding="utf-8")
-        baseline_data: dict = json.loads(raw)
+        baseline_data = json.loads(raw)
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"Cannot load baseline from {baseline_path}: {exc}") from exc
+
+    if not isinstance(baseline_data, dict):
+        raise ValueError("Baseline JSON must be a dictionary object")
 
     baseline_map = BSGMap.from_dict(baseline_data)
     raw_delta = bsg_map.render_delta(previous=baseline_map)

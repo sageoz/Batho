@@ -149,7 +149,7 @@ CREATE INDEX IF NOT EXISTS idx_file_tracking_unindexed
 CREATE TABLE IF NOT EXISTS file_changelog (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id          INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
-    base_run_id     INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
+    base_run_id     INTEGER REFERENCES index_runs(id) ON DELETE SET NULL,
     file_id         INTEGER NOT NULL REFERENCES string_dict(id),
     entity_index    TEXT,       -- space-separated entity IDs for FTS5 tokenization
     node_changes    BLOB,       -- zstd-compressed orjson bytes (array of NodeDiff dicts)

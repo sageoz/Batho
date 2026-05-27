@@ -263,7 +263,9 @@ def walk_ignored_filtered(
     if spec is None:
         spec = load_ignore_spec(root)
 
-    for current_path, dirnames, filenames in root.walk():
+    import os
+    for dirpath_str, dirnames, filenames in os.walk(str(root)):
+        current_path = Path(dirpath_str)
         # Filter out ignored directories to prevent descending into them
         dirnames[:] = [
             d

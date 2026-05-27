@@ -143,6 +143,7 @@ def write_atomically(
         True if write succeeded, False otherwise.
     """
     path = Path(path)
+    tmp_path = None
 
     try:
         # Ensure parent directory exists
@@ -164,11 +165,16 @@ def write_atomically(
             bytes_content = str(content).encode(encoding)
 
         # Write to temporary file
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
-        tmp_path.write_bytes(bytes_content)
+        import tempfile
+        fd, tmp_path_str = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+        tmp_path = Path(tmp_path_str)
+        
+        with os.fdopen(fd, 'wb') as f:
+            f.write(bytes_content)
 
         # Atomic rename
         tmp_path.replace(path)
+        tmp_path = None
 
         LOGGER.debug("file_written_atomically", path=str(path))
         return True
@@ -176,18 +182,16 @@ def write_atomically(
     except (OSError, json.JSONDecodeError, TypeError) as exc:
         LOGGER.warning("atomic_write_failed", path=str(path), error=str(exc))
         # Clean up temp file if it exists
-        try:
-            tmp_path = path.with_suffix(path.suffix + ".tmp")
-            if tmp_path.exists():
-                tmp_path.unlink()
-        except OSError as cleanup_exc:
-            # Log cleanup failure at debug level - file write already failed
-            LOGGER.debug(
-                "temp_file_cleanup_failed",
-                temp_path=str(tmp_path),
-                error=str(cleanup_exc),
-            )
-            pass  # Continue - original error is more important
+        if tmp_path is not None:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError as cleanup_exc:
+                LOGGER.debug(
+                    "temp_file_cleanup_failed",
+                    temp_path=str(tmp_path),
+                    error=str(cleanup_exc),
+                )
         return False
 
 

@@ -40,30 +40,22 @@ def read_text_with_fallback(
         >>> text = read_text_with_fallback("/path/to/file.txt", errors="strict")
     """
     encodings = encodings or FALLBACK_ENCODINGS
+    data_bytes = Path(filepath).read_bytes()
 
     last_exc: UnicodeDecodeError | None = None
     for encoding in encodings:
         try:
-            with open(filepath, "r", encoding=encoding, errors="strict") as f:
-                data = f.read()
+            decoded = data_bytes.decode(encoding, errors="strict")
             if errors == "strict":
-                return data
-            # Re-open with requested error handling for final output.
-            with open(filepath, "r", encoding=encoding, errors=errors) as f:
-                return f.read()
+                return decoded
+            return data_bytes.decode(encoding, errors=errors)
         except UnicodeDecodeError as exc:
             last_exc = exc
             continue
 
     if last_exc is not None:
         raise last_exc
-    raise UnicodeDecodeError(
-        "utf-8",
-        b"",
-        0,
-        1,
-        f"Failed to decode {filepath} with encodings: {encodings}",
-    )
+    raise UnicodeDecodeError("unknown", b"", 0, 0, f"Failed to decode {filepath} with encodings: {encodings}")
 
 
 def decode_bytes_with_fallback(

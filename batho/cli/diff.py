@@ -158,15 +158,7 @@ def _handle_entity_diff(db: Any, entity_id: str, since_run_uuid: str | None, out
             return 1
         since_completed_at = since_run.get("completed_at")
         
-    history = db.get_file_node_history(entity_id)
-    
-    if since_completed_at:
-        filtered_history = []
-        for entry in history:
-            entry_run = db.get_run(entry["run_uuid"])
-            if entry_run and entry_run.get("completed_at") and entry_run.get("completed_at") >= since_completed_at:
-                filtered_history.append(entry)
-        history = filtered_history
+    history = db.get_file_node_history(entity_id, since_completed_at=since_completed_at)
         
     if output_json:
         print(json.dumps(history, indent=2))

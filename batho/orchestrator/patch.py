@@ -78,19 +78,25 @@ def _hash_scan_changes(
     root: Path,
     known_tracking: dict[str, dict],
     max_file_size_kb: int | None = None,
+    *,
     strict_hashing: bool = True,
 ) -> list[FileChange]:
-    """Fallback: scan filesystem for added/modified/deleted files.
+    """Scan filesystem for added/modified/deleted files.
 
-    known_tracking maps relative path -> {"content_hash": str, "mtime": float, "size": int}.
-    
+    ``known_tracking`` maps relative path -> {"content_hash": str, "mtime": float,
+    "mtime_ns": int, "inode": int, "size": int}.
+
     Args:
         root: Root directory to scan.
         known_tracking: Dictionary of tracked files with their metadata.
         max_file_size_kb: Maximum file size to consider.
-        strict_hashing: If True, always compute content hash regardless of mtime/size.
-                       If False, skip hashing when mtime/size unchanged (faster but
-                       may miss content changes with preserved timestamps.
+        strict_hashing: If True (default and recommended), always compute the
+            content hash so timestamp-preserving edits are caught. If False,
+            allow a fast-path that skips hashing when *all three* of
+            ``mtime_ns``, ``inode``, and ``size`` match the tracked record.
+            Float-second ``st_mtime`` is intentionally NOT accepted as a
+            fast-path comparator because JSON/SQLite round-trips can drop
+            sub-second precision and produce false negatives.
     """
     from batho.modules.graph.incremental import _collect_candidate_files
 
@@ -122,26 +128,28 @@ def _hash_scan_changes(
         old_hash = tracked["content_hash"]
 
         # Strict hashing: always compute hash to catch content changes with preserved timestamps
-        # Non-strict: skip hashing when mtime/size unchanged for performance
+        # Non-strict: skip hashing ONLY when mtime_ns AND inode AND size all match.
+        # We refuse to fall back to float-second mtime: it loses precision after
+        # JSON/SQLite round-trips and produces false negatives (silent stale index).
         if not strict_hashing:
             tracked_mtime_ns = tracked.get("mtime_ns")
-            if tracked_mtime_ns is None:
-                tracked_mtime = tracked.get("mtime")
-                if tracked_mtime is not None:
-                    tracked_mtime_ns = int(tracked_mtime * 1e9)
             tracked_ino = tracked.get("inode")
+            tracked_size = tracked.get("size")
+            st_mtime_ns = getattr(st, "st_mtime_ns", None)
+            st_ino = getattr(st, "st_ino", None)
 
-            # Cheap pre-filter: skip hashing when mtime/size (and inode when known) are unchanged.
-            if tracked_mtime_ns is not None and tracked_ino is not None:
-                if (
-                    st.st_mtime_ns == tracked_mtime_ns
-                    and st.st_ino == tracked_ino
-                    and st.st_size == tracked.get("size")
-                ):
-                    continue
-            else:
-                if st.st_mtime == tracked.get("mtime") and st.st_size == tracked.get("size"):
-                    continue
+            if (
+                tracked_mtime_ns is not None
+                and tracked_ino is not None
+                and tracked_size is not None
+                and st_mtime_ns is not None
+                and st_ino is not None
+                and st_mtime_ns == tracked_mtime_ns
+                and st_ino == tracked_ino
+                and st.st_size == tracked_size
+            ):
+                continue
+            # Otherwise fall through and hash — never trust float-second mtime alone.
 
         # Compute hash, catching errors (e.g., file modified concurrently)
         try:
@@ -202,7 +210,15 @@ def run_patch(options: PatchOptions) -> PatchResult:
 
         # --- Detect changes natively (Batho's Local Git Model) ---
         known_tracking = db.get_all_file_tracking()
-        changes = _hash_scan_changes(root, known_tracking, max_file_size_kb)
+        # Strict hashing is the safe default; users can opt in to the
+        # mtime_ns/inode/size fast-path via config (indexer.strict_hashing=false).
+        strict_hashing = bool(cfg.get("indexer", {}).get("strict_hashing", True))
+        changes = _hash_scan_changes(
+            root,
+            known_tracking,
+            max_file_size_kb,
+            strict_hashing=strict_hashing,
+        )
 
         if not changes:
             LOGGER.info("patch_no_changes", root=str(root))
