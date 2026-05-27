@@ -1,5 +1,9 @@
 # Batho Fleet Intelligence
 
+> [!WARNING]
+> **Proposed Design Specification**
+> Fleet Intelligence is a proposed feature design and is not currently implemented in the `batho` package. The REST API endpoints, MCP tools, and `batho bridge`/`batho fleet` CLI commands described in this document are not yet operational.
+
 Batho Fleet Intelligence enables multi-repository discovery, symbol routing, and cross-repository impact analysis using a centralized global registry.
 
 ## Architecture

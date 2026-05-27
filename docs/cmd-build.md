@@ -4,7 +4,7 @@
 
 `batho build` performs a **complete, from-scratch index** of a repository. It creates an `artifact_<dirname>.batho` SQLite database containing the full BSG map stored as **three zstd-compressed blobs per file** (`bsg_agent_view`, `bsg_storage_view`, `bsg_rel_view`), file tracking records, and a searchable entity index.
 
-> **Schema:** Databases are stamped with `SCHEMA_VERSION = batho-db.v6`. Existing databases with a mismatched version are rejected at startup — run `batho build --full` to rebuild.
+> **Schema:** Databases are stamped with `SCHEMA_VERSION = batho-db.v7`. Existing databases with a mismatched version are rejected at startup — run `batho build --full` to rebuild.
 
 Run this once on a new repository. For subsequent updates, use [`batho patch`](./cmd-patch.md).
 
@@ -117,7 +117,7 @@ flowchart TD
     end
 
     subgraph SQLITE["artifact_&lt;dirname&gt;.batho"]
-        DB_META[(db_meta\nschema_version=batho-db.v6)]
+        DB_META[(db_meta\nschema_version=batho-db.v7)]
         SD[(string_dict\nfile paths · entity types)]
         IR[(index_runs\nstatus: running → completed)]
         FA[(file_artifacts\nbsg_agent_view BLOB\nbsg_storage_view BLOB\nbsg_rel_view BLOB\ncontent_hash TEXT)]
@@ -169,7 +169,7 @@ To force a full rebuild, run: batho build --root /path/to/repo --full
 
 | Error | Cause | Resolution |
 |-------|-------|-----------|
-| `No indexable files found` | Root has no parseable source files | Verify `--root` path; check `.batho-ignore` / `default-ignore-patterns.yaml` |
+| `No indexable files found` | Root has no parseable source files | Verify `--root` path; check `.gitignore` / `default-ignore-patterns.yaml` |
 | `Database already exists` | DB present without `--full` | Use `batho patch` or add `--full` |
 | Config load warnings | `batho.yaml` missing or malformed | Run from repo root or verify config format |
 

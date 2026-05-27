@@ -27,14 +27,15 @@ The filename is computed by `artifact_filename(root)` in `batho/storage/engine.p
 
 ---
 
-## Schema Version: `batho-db.v6`
+## Schema Version: `batho-db.v7`
 
-The current schema is `batho-db.v6` (`SCHEMA_VERSION` constant in `batho/storage/engine.py`). It supersedes all earlier schemas. **No backward compatibility** — databases with a mismatched schema version are rejected at startup with a prompt to run `batho build`.
+The current schema is `batho-db.v7` (`SCHEMA_VERSION` constant in `batho/storage/engine.py`). It supersedes all earlier schemas. **No backward compatibility** — databases with a mismatched schema version are rejected at startup with a prompt to run `batho build`.
 
 Key evolution:
 - **v2** — introduced compressed blob storage replacing flat entity tables
 - **v5** — adds `file_changelog` for granular file-level node evolution tracking, fixes `entity_id` to be FQN-deterministic (no line number in hash)
-- **v6** — current; integrates query_relationships and dangling_references tables, supports FTS5 indexing on file_changelog
+- **v6** — integrates query_relationships and dangling_references tables, supports FTS5 indexing on file_changelog
+- **v7** — current; implements direct run-level metadata aggregation and structural/security telemetry in `run_artifacts`
 
 ---
 
@@ -50,7 +51,7 @@ artifact_<dirname>.batho
 ├── index_runs          — Index run lifecycle log
 ├── file_artifacts      — Compressed graph + BSG blobs (one row per file per run)
 ├── file_tracking       — File change detection (hash + mtime + size)
-├── artifacts           — Cloud sync registry
+├── run_artifacts       — Run-level metrics, context overview, telemetry, and security audit BLOBs
 ├── query_entities      — SQLite-index-first entity query cache (exact/prefix name search)
 ├── query_relationships — Relational edges between entities
 ├── dangling_references — Temporary storage for unresolved edges during parsing
@@ -86,7 +87,7 @@ Key entries written by `batho build`:
 
 | Key | Example Value |
 |-----|---------------|
-| `schema_version` | `batho-db.v6` |
+| `schema_version` | `batho-db.v7` |
 | `created_at` | `2026-05-24T01:02:00Z` |
 | `repo_root` | `/Users/alice/project` |
 
@@ -111,7 +112,7 @@ One row per `batho build` or `batho patch` invocation.
 |--------|------|-------------|
 | `id` | INTEGER PK | Internal integer ID (used as FK in `file_artifacts`) |
 | `run_uuid` | TEXT UNIQUE | Human-readable ID, e.g. `build_1779564746_934a68b7` |
-| `schema_version` | TEXT | Always `batho-db.v6` |
+| `schema_version` | TEXT | Always `batho-db.v7` |
 | `status` | TEXT | `running` → `completed` or `failed` |
 | `started_at` | TEXT | ISO-8601 |
 | `completed_at` | TEXT | ISO-8601 (null until finished) |
@@ -187,19 +188,20 @@ Used by `batho patch` native change detection to identify added, modified, and d
 
 ---
 
-### `artifacts`
-Cloud sync registry. Tracks all registered artifacts (context JSON files, BSG exports, etc.) for optional cloud sync.
+### `run_artifacts`
+Store run-level metrics, context overviews, structural summaries, and security audits. Has a strict 1:1 relationship with `index_runs`.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `artifact_id` | TEXT PK | SHA-256 of `type:path:checksum:schema` |
-| `artifact_type` | TEXT | e.g. `context_json`, `graph_json` |
-| `logical_path` | TEXT | Filename (e.g. `context_overview.json`) |
-| `sync_status` | TEXT | `local_only`, `pending`, `synced`, `failed`, `conflict` |
-| `checksum` | TEXT | SHA-256 of artifact content |
-| `producer` | TEXT | Module that created this record |
-| `run_id` | TEXT | Associated `run_uuid` |
-| `deleted` | INTEGER | Soft-delete flag (`0`/`1`) |
+| `run_id` | INTEGER PK | FK → `index_runs.id` (CASCADE DELETE) |
+| `context_overview` | BLOB | zstd-compressed JSON: languages, file categories, entity distribution |
+| `telemetry_metrics` | BLOB | zstd-compressed JSON: duration phases, cache stats, file/entity counts |
+| `structural_metrics` | BLOB | zstd-compressed JSON: entity type distribution, fan-in/fan-out, LOC |
+| `security_audit` | BLOB | zstd-compressed JSON: BSG interceptor hits |
+| `artifact_payload` | BLOB | zstd-compressed JSON: pre-minified entity+rel summary for LLM injection |
+| `delta_stats` | BLOB | zstd-compressed JSON: churn/node diffs (NULL for build runs) |
+| `schema_version` | TEXT | Version of the run artifacts schema (default: `run-artifacts.v1`) |
+| `created_at` | TEXT | ISO-8601 creation timestamp |
 
 ---
 
@@ -301,7 +303,7 @@ flowchart LR
         DR[(dangling_references)]
         NC[(file_changelog)]
         FTS[(file_changelog_fts)]
-        ART[(artifacts)]
+        ART[(run_artifacts)]
     end
 
     BUILD -->|create_run| RUNS
@@ -365,7 +367,7 @@ batho build --root .
 9. Calls `upsert_file_tracking()` for all indexed files
 10. Calls `complete_run()` → sets `status=completed`, entity/rel/file counts, duration
 
-**Writes to:** `index_runs`, `file_artifacts`, `file_tracking`, `query_entities`, `string_dict`, `db_meta`, `artifacts`
+**Writes to:** `index_runs`, `file_artifacts`, `file_tracking`, `query_entities`, `string_dict`, `db_meta`, `run_artifacts`
 
 ---
 
@@ -425,7 +427,7 @@ Runs a suite of integrity checks against the live database:
 | `ViewIntegrityCheck` | View configuration consistency |
 
 **Reads from:** all tables  
-**Writes to:** `index_runs` (marks stuck runs as `failed`), `artifacts` (deduplication)
+**Writes to:** `index_runs` (marks stuck runs as `failed`), `run_artifacts` (telemetry/audit updates)
 
 ---
 
@@ -492,10 +494,10 @@ With zstd compression + three-blob split + string_dict normalization, typical si
 
 ## Schema Version Guard
 
-On every `BathoDatabase.__init__`, the engine reads `db_meta.schema_version` and compares it to `SCHEMA_VERSION` (`batho-db.v6`). On mismatch the database is **rejected immediately** with a human-readable error:
+On every `BathoDatabase.__init__`, the engine reads `db_meta.schema_version` and compares it to `SCHEMA_VERSION` (`batho-db.v7`). On mismatch the database is **rejected immediately** with a human-readable error:
 
 ```
-Schema version mismatch: database is 'batho-db.v5', engine expects 'batho-db.v6'.
+Schema version mismatch: database is 'batho-db.v5', engine expects 'batho-db.v7'.
 Please run: batho build --root . --full
 ```
 

@@ -29,4 +29,3 @@ artifact_*.batho
 artifact_*.batho-wal
 artifact_*.batho-shm
 .batho-config/
-docs/

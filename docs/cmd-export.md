@@ -14,25 +14,23 @@ Supports optional glob and category filtering, compact or pretty-printed output,
 batho export [--root PATH] [--view VIEW] [--output PATH]
              [--index-id ID] [--filter GLOB] [--format json|pretty]
              [--category source|test|doc|config|infra|all]
-             [--stream] [--token-budget N] [--baseline PATH]
+             [--token-budget N] [--baseline PATH] [--rel]
 ```
 
 ---
 
 ## Flags & Options
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
 | `--root` | `Path` | `.` (cwd) | Repository root containing the `.batho` database |
 | `--view` | `enum` | `storage` | JSON view to export (see View Reference below) |
-| `--output` | `Path` | stdout | Write JSON output to file instead of stdout |
+| `--output` | `Path` | `<root>/batho_export.json` | Output file path |
 | `--index-id` | `str` | latest | Specific run ID to export; defaults to the latest completed run |
 | `--filter` | `GLOB` | none | Glob pattern to include only matching file paths (e.g. `src/**/*.py`) |
 | `--format` | `json\|pretty` | `json` | Compact JSON or indented pretty-print |
 | `--category` | `enum` | `all` | Filter by file category (see Category Reference below) |
-| `--stream` | flag | `false` | Streaming mode — memory-efficient for large repositories |
 | `--token-budget` | `int` | no limit | Maximum token budget for `agent` view output |
 | `--baseline` | `Path` | — | Path to a previous export JSON; **required** for `--view delta` |
+| `--rel` | flag | `false` | Include relationships in the exported payload |
 
 ### View Reference
 
@@ -96,28 +94,18 @@ flowchart TD
         FILTERED_MAP[Filtered BSGMap ready]
     end
 
-    subgraph RENDER["Phase 5: View Rendering"]
-        STREAM_MODE{--stream\nenabled?}
-
-        subgraph STREAMING["Streaming Path"]
-            BSG_EXPORTER[BSGExporter.export_streaming\nGenerator of JSON chunks]
-            STREAM_OUTPUT{--output\nprovided?}
-            STREAM_FILE[Write chunks to file]
-            STREAM_STDOUT[Return generator\nfor stdout consumption]
-        end
-
-        subgraph BATCH["Batch Path"]
-            DISPATCH{view}
-            RENDER_STORAGE[bsg_map.render_storage_view]
-            RENDER_AGENT[bsg_map.render_agent_view\ntoken_budget applied]
-            RENDER_OVERVIEW[bsg_map.render_overview_json]
-            RENDER_FILES[bsg_map.render_files_json]
-            RENDER_SYMBOLS[_generate_symbols_view\nflat entity list]
-            RENDER_DEPS[_generate_dependencies_view\nforward + reverse edges]
-            RENDER_DELTA[_generate_delta_view\nload baseline JSON\nBSGMap.render_delta]
-            SERIALIZE[_serialize\njson or pretty format]
-            WRITE[_write_output\nfile or stdout]
-        end
+    subgraph BATCH["Phase 5: Rendering Path"]
+        DISPATCH{view}
+        RENDER_STORAGE[bsg_map.render_storage_view]
+        RENDER_AGENT[bsg_map.render_agent_view\ntoken_budget applied]
+        RENDER_OVERVIEW[bsg_map.render_overview_json]
+        RENDER_FILES[bsg_map.render_files_json]
+        RENDER_SYMBOLS[_generate_symbols_view\nflat entity list]
+        RENDER_DEPS[_generate_dependencies_view\nforward + reverse edges]
+        RENDER_DELTA[_generate_delta_view\nload baseline JSON\nBSGMap.render_delta]
+        RENDER_REL[_generate_relationships_view\nrelationships only]
+        SERIALIZE[_serialize\njson or pretty format]
+        WRITE[_write_output\nwrite to file]
     end
 
     SUMMARY["stderr: Exported view: N files, M entities"]
@@ -145,14 +133,7 @@ flowchart TD
     APPLY_CAT -->|Yes| CAT_FILTER
     APPLY_CAT -->|No| FILTERED_MAP
     CAT_FILTER --> FILTERED_MAP
-    FILTERED_MAP --> STREAM_MODE
-    STREAM_MODE -->|Yes| BSG_EXPORTER
-    BSG_EXPORTER --> STREAM_OUTPUT
-    STREAM_OUTPUT -->|Yes| STREAM_FILE
-    STREAM_OUTPUT -->|No| STREAM_STDOUT
-    STREAM_FILE --> SUMMARY
-    STREAM_STDOUT --> SUMMARY
-    STREAM_MODE -->|No| DISPATCH
+    FILTERED_MAP --> DISPATCH
     DISPATCH -->|storage| RENDER_STORAGE
     DISPATCH -->|agent| RENDER_AGENT
     DISPATCH -->|overview| RENDER_OVERVIEW
@@ -160,6 +141,7 @@ flowchart TD
     DISPATCH -->|symbols| RENDER_SYMBOLS
     DISPATCH -->|dependencies| RENDER_DEPS
     DISPATCH -->|delta| RENDER_DELTA
+    DISPATCH -->|rel| RENDER_REL
     RENDER_STORAGE --> SERIALIZE
     RENDER_AGENT --> SERIALIZE
     RENDER_OVERVIEW --> SERIALIZE
@@ -167,8 +149,10 @@ flowchart TD
     RENDER_SYMBOLS --> SERIALIZE
     RENDER_DEPS --> SERIALIZE
     RENDER_DELTA --> SERIALIZE
+    RENDER_REL --> SERIALIZE
     SERIALIZE --> WRITE
     WRITE --> SUMMARY
+    SUMMARY --> DONE
     SUMMARY --> DONE
 
     classDef error fill:#fca5a5,stroke:#dc2626,color:#7f1d1d
@@ -185,7 +169,7 @@ flowchart TD
 Exported [agent]: 87 files, 1423 entities → output.json
 ```
 
-### stdout (compact JSON, no `--output`)
+### Output File (compact JSON in `<root>/batho_export.json` or custom path)
 
 ```json
 {"view_type":"agent","generated_at":"2024-05-23T17:00:00Z","files":[...]}
@@ -217,17 +201,14 @@ Exported [agent]: 87 files, 1423 entities → output.json
 ## Examples
 
 ```bash
-# Export full storage view to stdout
+# Export full storage view to default file batho_export.json
 batho export
 
-# Export LLM-optimized agent view to file
+# Export LLM-optimized agent view to custom file
 batho export --view agent --output context.json
 
 # Export with token budget for agent view (e.g. 32k tokens)
 batho export --view agent --token-budget 32000 --output context.json
-
-# Pretty-printed overview stats
-batho export --view overview --format pretty
 
 # Flat symbol index for all Python source files
 batho export --view symbols --filter "**/*.py" --category source
@@ -238,8 +219,8 @@ batho export --view dependencies --output deps.json
 # Delta diff against a previous export
 batho export --view delta --baseline previous-export.json --output delta.json
 
-# Stream a large repo agent view (memory-efficient)
-batho export --view agent --stream --output context.json
+# Export with relationships list included
+batho export --view agent --rel --output context.json
 
 # Export a specific historical run
 batho export --view storage --index-id build_1716499100_abc12345
