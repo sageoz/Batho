@@ -31,7 +31,7 @@ LOGGER = get_logger(__name__, component="storage_engine")
 
 # It aligns with config DEFAULT_DB_PATH from batho.core.config.models
 # New code should use config values via get_config_cached()
-SCHEMA_VERSION = "batho-db.v7"
+SCHEMA_VERSION = "batho-db.v1"
 DEFAULT_PAGE_SIZE = 8192
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 
@@ -762,7 +762,8 @@ class BathoDatabase:
                 """INSERT OR IGNORE INTO query_relationships (source_id, target_id, relation_type, run_id)
                    SELECT d.source_id, e.entity_id, d.relation_type, d.run_id
                    FROM dangling_references d
-                   JOIN query_entities e ON d.unresolved_target_name = e.entity_name AND d.run_id = e.run_id
+                   JOIN query_entities e ON (d.unresolved_target_name = e.entity_name OR d.unresolved_target_name = e.entity_id)
+                   AND d.run_id = e.run_id
                    WHERE d.run_id = ? AND e.entity_type != 'UNRESOLVED'""",
                 (run_internal_id,)
             )
@@ -857,14 +858,13 @@ class BathoDatabase:
                 if not src_id or not tgt_id or not r_type:
                     continue
 
-                # Skip relationships where target doesn't exist in current batch
-                # and isn't already an unresolved reference
-                if tgt_id not in entity_ids_in_batch and tgt_id not in unresolved_ids:
-                    continue
-
                 if tgt_id in unresolved_ids:
                     dangling_references_rows.append((
                         src_id, unresolved_ids[tgt_id], r_type, run_internal_id
+                    ))
+                elif tgt_id not in entity_ids_in_batch:
+                    dangling_references_rows.append((
+                        src_id, tgt_id, r_type, run_internal_id
                     ))
                 else:
                     query_relationships_rows.append((
@@ -1083,6 +1083,8 @@ class BathoDatabase:
                 file_id,
                 r["content_hash"],
                 r["mtime"],
+                r.get("mtime_ns"),
+                r.get("inode"),
                 r["size"],
                 int(r.get("is_indexed", 0)),
                 r.get("last_run_id"),
@@ -1093,9 +1095,9 @@ class BathoDatabase:
         with self.transaction() as conn:
             conn.executemany(
                 """INSERT OR REPLACE INTO file_tracking(
-                    file_id, content_hash, mtime, size, is_indexed,
+                    file_id, content_hash, mtime, mtime_ns, inode, size, is_indexed,
                     last_run_id, updated_at, encoding
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 rows_to_insert,
             )
         return len(records)

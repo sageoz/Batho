@@ -28,8 +28,8 @@ def test_run_artifacts_table_exists(tmp_path):
 
 
 def test_schema_version_bumped():
-    """SCHEMA_VERSION == 'batho-db.v7'."""
-    assert SCHEMA_VERSION == "batho-db.v7"
+    """SCHEMA_VERSION == 'batho-db.v1'."""
+    assert SCHEMA_VERSION == "batho-db.v1"
 
 
 def test_finalize_run_artifacts_insert(tmp_path):

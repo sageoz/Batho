@@ -3,7 +3,6 @@
 </p>
 
 <h1 align="center">B.A.T.H.O</h1>
-change
 <p align="center">
   <strong>Bidirectional AST Traversal & Hypergraph Orchestrator</strong><br>
   <b>BATHO</b> indexes your codebase, compresses the result for LLM context windows, and tracks changes over time.
@@ -17,7 +16,7 @@ change
 </p>
 
 <br>
-#changes
+
 ## 📚 Official Documentation
 
 For complete documentation, guides, and API reference, visit **[batho.sageoz.org](https://batho.sageoz.org)**.
@@ -47,18 +46,15 @@ batho fix --deep
 ## ✨ Key Features
 
 - **40+ language AST parsing** — Python, TypeScript, Rust, Go, Java, and more
-- **Interactive Web Dashboard (v1)** — Hypergraph visualization, file browser, search, metrics
 - **10x context compression** — Fit entire codebases into LLM context windows
 - **Time Machine snapshots** — Track codebase evolution with incremental patching
-- **Git Hooks Enterprise** — YAML-driven client-side hook automation
-- **MCP Hub** — Multi-workspace context server with cross-repo search
-- **BSG Plugin System v1** — 20+ foundation and interceptor plugins
-- **Symbol Resolution** — Cross-file symbol resolution with fuzzy matching
-- **Artifact Bridge** — REST API + MCP server for IDE integrations
-- **Cloud Sync** — Artifact upload to cloud endpoint with retry logic
-- **Storage Management** — SQLite registry with retention policies
-- **Query Engine** — Fast queries on persisted graph indexes
-- **Zero code execution** — Safe to run in CI, pre-commit, or on untrusted repos
+- **BSG Plugin System v2** — 9 built-in security & quality interceptor plugins
+- **Symbol Resolution** — Cross-file symbol resolution with FQN-based matching
+- **SQLite Artifact Database** — Schema v7 with three-blob design (agent/storage/rel views)
+- **Query Engine** — Fast SQLite-index-first entity and relationship queries
+- **File Changelog** — Node-level diff history with FTS5 full-text search
+- **Integrity Verification** — Multi-stage fix command with auto-repair capabilities
+- **Zero code execution** — Safe to run in CI or on untrusted repos
 
 ## 🛠️ CLI Commands & Usage
 
@@ -132,13 +128,13 @@ batho gc vacuum
 
 1. **Unified Configuration** — All config is now in a single `batho.yaml` file
    - Old: Multiple config files scattered across the codebase
-   - New: Single `batho.yaml` with all settings (core, hooks, BSG, storage, cloud sync)
+   - New: Single `batho.yaml` with all settings (indexer, bsg, rules, storage)
    - Action: Copy `batho.yaml.example` to `batho.yaml` and customize
 
-2. **Git Hooks Config** — Hook definitions moved to `.batho/hooks.yaml`
-   - Old: Hooks defined in batho.yaml
-   - New: Hooks defined in `.batho/hooks.yaml` (source of truth)
-   - Action: Move hook definitions to `.batho/hooks.yaml`
+2. **Artifact Database Schema** — v7 with three-blob design
+   - Old: Flat entity tables
+   - New: Compressed blobs (bsg_agent_view, bsg_storage_view, bsg_rel_view)
+   - Action: Run `batho build --root . --full` to rebuild
 
 3. **Config Schema** — Environment variable format changed
    - Old: `BATHO_LOG_LEVEL=INFO`
@@ -148,8 +144,9 @@ batho gc vacuum
 **New Defaults:**
 
 - Symbol resolution is now **enabled by default** (can be disabled in config)
-- Storage registry is **enabled by default** (SQLite backend)
-- BSG plugins are **disabled by default** (enable via `rules.enabled: true`)
+- Storage is **enabled by default** (SQLite backend with schema v7)
+- BSG plugins are **enabled by default** (9 built-in security/quality interceptors)
+- Parallel processing is **enabled by default** (16 workers)
 
 **Recommended Migration Steps:**
 
@@ -162,7 +159,6 @@ cp batho.yaml.example batho.yaml
 
 # 3. Migrate custom settings to new schema
 # - Check batho.yaml.example for new structure
-# - Move hook definitions to .batho/hooks.yaml
 
 # 4. Test configuration
 batho build --root . --verbose
@@ -212,14 +208,25 @@ For complete documentation including:
 - Configuration options
 - Architecture and deployment
 - BSG plugin system
-- Git hooks automation
-- MCP Hub setup
 - Storage management
-- Cloud sync
+- Artifact database schema
 
 Visit **[batho.sageoz.org](https://batho.sageoz.org)**
 
-## 💻 Installation
+## �️ Roadmap & Backlog
+
+### Backlog (Future Releases)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Fleet Intelligence** | Multi-repo discovery, symbol routing, cross-repo impact analysis | 0% — Not started |
+| **MCP Hub** | Model Context Protocol server for AI agent integration | Not started |
+| **Cloud Sync** | Remote artifact storage and synchronization | Not started |
+| **Call-chain Analysis** | Analyze function call graphs and dependencies | Not started |
+
+---
+
+## �� Installation
 
 ```bash
 pip install batho

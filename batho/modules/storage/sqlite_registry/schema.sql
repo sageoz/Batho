@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS file_tracking (
     file_id      INTEGER PRIMARY KEY REFERENCES string_dict(id),
     content_hash TEXT NOT NULL,
     mtime        REAL NOT NULL,
+    mtime_ns     INTEGER,
+    inode        INTEGER,
     size         INTEGER NOT NULL CHECK (size >= 0),
     is_indexed   INTEGER NOT NULL DEFAULT 0 CHECK (is_indexed IN (0, 1)),
     last_run_id  TEXT,
@@ -187,4 +189,3 @@ BEGIN
     INSERT INTO file_changelog_fts(rowid, entity_index)
     VALUES (new.id, new.entity_index);
 END;
-

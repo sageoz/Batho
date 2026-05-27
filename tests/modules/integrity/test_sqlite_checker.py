@@ -15,7 +15,12 @@ def test_sqlite_checker_passed():
     conn = MagicMock()
     # Mock schema version, foreign_keys
     conn.execute.return_value.fetchone.side_effect = [
-        ("batho-db.v7",),  # schema version
+        ("batho-db.v1",),  # schema version
+        (1,),  # foreign keys
+    ]
+    # Mock db_meta query for schema_version check
+    conn.execute.return_value.fetchone.side_effect = [
+        ("batho-db.v1",),  # db_meta schema_version
         (1,),  # foreign keys
     ]
     # Mock integrity_check, foreign_key_check
@@ -37,7 +42,12 @@ def test_sqlite_checker_corrupt():
     db = MagicMock()
     conn = MagicMock()
     conn.execute.return_value.fetchone.side_effect = [
-        ("batho-db.v7",),  # schema version
+        ("batho-db.v1",),  # schema version
+        (1,),  # foreign keys
+    ]
+    # Mock db_meta query for schema_version check
+    conn.execute.return_value.fetchone.side_effect = [
+        ("batho-db.v1",),  # db_meta schema_version
         (1,),  # foreign keys
     ]
     conn.execute.return_value.fetchall.side_effect = [

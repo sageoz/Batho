@@ -112,9 +112,24 @@ def _hash_scan_changes(
             continue
 
         old_hash = tracked["content_hash"]
-        # Cheap pre-filter: skip hashing when mtime and size are unchanged.
-        if st.st_mtime == tracked.get("mtime") and st.st_size == tracked.get("size"):
-            continue
+        tracked_mtime_ns = tracked.get("mtime_ns")
+        if tracked_mtime_ns is None:
+            tracked_mtime = tracked.get("mtime")
+            if tracked_mtime is not None:
+                tracked_mtime_ns = int(tracked_mtime * 1e9)
+        tracked_ino = tracked.get("inode")
+
+        # Cheap pre-filter: skip hashing when mtime/size (and inode when known) are unchanged.
+        if tracked_mtime_ns is not None and tracked_ino is not None:
+            if (
+                st.st_mtime_ns == tracked_mtime_ns
+                and st.st_ino == tracked_ino
+                and st.st_size == tracked.get("size")
+            ):
+                continue
+        else:
+            if st.st_mtime == tracked.get("mtime") and st.st_size == tracked.get("size"):
+                continue
 
         new_hash = compute_file_hash(abs_path)
         if old_hash != new_hash:
@@ -239,6 +254,28 @@ def run_patch(options: PatchOptions) -> PatchResult:
                             WHERE run_id = ? AND file_path NOT IN ({path_placeholders})""",
                         [run_internal_id, base_run_internal_id] + list(changed_file_paths),
                     )
+                    # Copy query_relationships for unchanged files
+                    conn.execute(
+                        f"""INSERT INTO query_relationships (source_id, target_id, relation_type, run_id, metadata_json)
+                            SELECT source_id, target_id, relation_type, ?, metadata_json
+                            FROM query_relationships
+                            WHERE run_id = ? AND source_id IN (
+                                SELECT entity_id FROM query_entities
+                                WHERE run_id = ? AND file_path NOT IN ({path_placeholders})
+                            )""",
+                        [run_internal_id, base_run_internal_id, base_run_internal_id] + list(changed_file_paths),
+                    )
+                    # Copy dangling_references for unchanged files
+                    conn.execute(
+                        f"""INSERT INTO dangling_references (source_id, unresolved_target_name, relation_type, run_id)
+                            SELECT source_id, unresolved_target_name, relation_type, ?
+                            FROM dangling_references
+                            WHERE run_id = ? AND source_id IN (
+                                SELECT entity_id FROM query_entities
+                                WHERE run_id = ? AND file_path NOT IN ({path_placeholders})
+                            )""",
+                        [run_internal_id, base_run_internal_id, base_run_internal_id] + list(changed_file_paths),
+                    )
                 else:
                     conn.execute(
                         """INSERT INTO file_artifacts(run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash)
@@ -251,6 +288,18 @@ def run_patch(options: PatchOptions) -> PatchResult:
                         """INSERT INTO query_entities (entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported)
                            SELECT entity_id, ?, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
                            FROM query_entities WHERE run_id = ?""",
+                        (run_internal_id, base_run_internal_id),
+                    )
+                    conn.execute(
+                        """INSERT INTO query_relationships (source_id, target_id, relation_type, run_id, metadata_json)
+                           SELECT source_id, target_id, relation_type, ?, metadata_json
+                           FROM query_relationships WHERE run_id = ?""",
+                        (run_internal_id, base_run_internal_id),
+                    )
+                    conn.execute(
+                        """INSERT INTO dangling_references (source_id, unresolved_target_name, relation_type, run_id)
+                           SELECT source_id, unresolved_target_name, relation_type, ?
+                           FROM dangling_references WHERE run_id = ?""",
                         (run_internal_id, base_run_internal_id),
                     )
 
@@ -416,6 +465,8 @@ def run_patch(options: PatchOptions) -> PatchResult:
                         "file_path": change.path,
                         "content_hash": content_hash,
                         "mtime": stat.st_mtime,
+                        "mtime_ns": getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1e9)),
+                        "inode": getattr(stat, "st_ino", None),
                         "size": stat.st_size,
                         "is_indexed": 1,
                         "last_run_id": run_uuid,
@@ -438,11 +489,21 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 (run_internal_id,),
             ).fetchone()
             file_count = row["cnt"] if row else 0
+            entity_row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM query_entities WHERE run_id = ?",
+                (run_internal_id,),
+            ).fetchone()
+            rel_row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM query_relationships WHERE run_id = ?",
+                (run_internal_id,),
+            ).fetchone()
+            total_entities = entity_row["cnt"] if entity_row else 0
+            total_rels = rel_row["cnt"] if rel_row else 0
 
         db.complete_run(
             run_uuid,
-            entity_count=new_entity_count,
-            rel_count=new_rel_count,
+            entity_count=total_entities,
+            rel_count=total_rels,
             file_count=file_count,
             duration_ms=elapsed_ms,
         )

@@ -89,11 +89,7 @@ class MemoryMonitor:
                 # gc.get_objects() is extremely expensive and can cause memory pressure
                 # Instead, we'll estimate based on available information or skip counting
                 try:
-                    # Try to get a rough estimate without full object enumeration
-                    gc_counts = [
-                        len(gc.get_objects(i)) for i in range(3)
-                    ]  # Sample small generations
-                    gc_objects = sum(gc_counts) if gc_counts else 0
+                    gc_objects = sum(gc.get_count())
                 except Exception:
                     # Final fallback - use a reasonable estimate or 0
                     gc_objects = 0

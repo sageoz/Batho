@@ -11,7 +11,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
-import psutil
+try:
+    import psutil  # type: ignore
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None  # type: ignore[assignment]
+    _PSUTIL_AVAILABLE = False
 
 from batho.utils.logging import get_logger
 
@@ -50,10 +55,32 @@ class FileLock:
 
     def _is_process_alive(self, pid: int) -> bool:
         """Check if a process with given PID is still alive."""
-        try:
-            return psutil.pid_exists(pid)
-        except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
-            return False
+        if _PSUTIL_AVAILABLE and psutil is not None:
+            try:
+                return psutil.pid_exists(pid)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
+                return False
+
+        if os.name == "posix":
+            try:
+                os.kill(pid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                return True
+        if os.name == "nt":
+            try:
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                process = kernel32.OpenProcess(0x00100000, 0, pid)  # SYNCHRONIZE
+                if process != 0:
+                    kernel32.CloseHandle(process)
+                    return True
+                return False
+            except Exception:
+                return True
+        return True
 
     def _read_lock_info(self) -> Optional[tuple[int, float]]:
         """
