@@ -174,9 +174,8 @@ def _load_bsg_map_from_db(
                 gap_sections=[],
             )
             opaque_snapshots.append(snap)
-    except Exception:
-        # Opaque snapshots are optional, continue if this fails
-        pass
+    except Exception as exc:
+        LOGGER.warning("export_opaque_snapshots_skipped", error=str(exc))
 
     instance = BSGMap(
         _root=str(root),

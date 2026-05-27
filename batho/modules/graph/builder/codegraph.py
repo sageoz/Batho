@@ -679,7 +679,7 @@ class CodeGraphIndexer:
             configured_max_workers = (
                 max_workers if max_workers > 0 else cfg["indexer"].get("max_workers", 0)
             )
-            max_files_cap: Optional[int] = cfg["indexer"].get("max_files")
+            max_indexed_files_cap: Optional[int] = cfg["indexer"].get("max_indexed_files")
             fail_on_warning = cfg["indexer"].get("fail_on_warning", False)
             strict_mode = cfg["indexer"].get("strict", False)
             ext_set: set[str] | None = (
@@ -745,7 +745,7 @@ class CodeGraphIndexer:
                             continue
                         candidates.append((file_path, str(file_path)))
 
-                    if max_files_cap and len(candidates) >= max_files_cap:
+                    if max_indexed_files_cap and len(candidates) >= max_indexed_files_cap:
                         break
             else:
                 # Walk directory tree (full build mode)
@@ -774,9 +774,9 @@ class CodeGraphIndexer:
                                 continue
                             candidates.append((file_path, str(file_path)))
 
-                        if max_files_cap and len(candidates) >= max_files_cap:
+                        if max_indexed_files_cap and len(candidates) >= max_indexed_files_cap:
                             break
-                    if max_files_cap and len(candidates) >= max_files_cap:
+                    if max_indexed_files_cap and len(candidates) >= max_indexed_files_cap:
                         break
 
             if verbose:

@@ -15,7 +15,6 @@ indexer:
   max_file_size_kb: 500
   max_indexed_files: 200000
   max_workers: 0
-  max_files: null
   ignore_patterns: []
   ignore_files: null
   fail_on_warning: false

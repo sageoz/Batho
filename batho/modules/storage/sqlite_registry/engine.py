@@ -1145,6 +1145,17 @@ class BathoDatabase:
             ).fetchall()
             return {row["file_path"]: row["content_hash"] for row in rows}
 
+    def get_unindexed_files_with_details(self) -> list[dict[str, Any]]:
+        """Get unindexed files with full tracking details."""
+        with self.connection(read_only=True) as conn:
+            rows = conn.execute(
+                """SELECT sd.val as file_path, ft.content_hash, ft.size, ft.encoding
+                   FROM file_tracking ft
+                   JOIN string_dict sd ON ft.file_id = sd.id
+                   WHERE ft.is_indexed = 0"""
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def delete_file_tracking(self, file_path: str) -> None:
         """Remove a file from tracking."""
         with self.connection() as conn:

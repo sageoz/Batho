@@ -138,8 +138,8 @@ batho gc vacuum
 
 3. **Config Schema** — Environment variable format changed
    - Old: `BATHO_LOG_LEVEL=INFO`
-   - New: `BATHO_LOGGING_LEVEL=INFO` (nested config)
-   - Action: Update environment variables to match new schema
+   - New: Uses nested config with `BATHO_LOG_LEVEL=INFO` (no change)
+   - Action: No action needed
 
 **New Defaults:**
 

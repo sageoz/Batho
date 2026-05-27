@@ -94,7 +94,6 @@ class IndexerConfig(BaseModel):
     max_file_size_kb: int = Field(default=DEFAULT_MAX_FILE_SIZE_KB, ge=1)
     max_indexed_files: int = Field(default=DEFAULT_MAX_INDEXED_FILES, ge=1)
     max_workers: int = Field(default=DEFAULT_INDEX_WORKERS, ge=0)
-    max_files: int | None = Field(default=None, ge=1)
     ignore_patterns: list[str] = Field(default_factory=list)
     ignore_files: list[str] | None = Field(default=None)
     default_patterns_file: str | None = Field(default=None)

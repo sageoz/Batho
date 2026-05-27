@@ -17,7 +17,6 @@ indexer:
   max_file_size_kb: 500     # Skip files exceeding this size
   max_indexed_files: 200000 # Hard cap on total files indexed
   max_workers: 0            # 0 = auto (CPU count)
-  max_files: null           # Optional per-run file cap
   ignore_patterns: []       # Extra gitignore-style patterns
   ignore_files: null        # null = use built-in defaults
   default_patterns_file: null  # Path to custom patterns YAML (null = built-in)
