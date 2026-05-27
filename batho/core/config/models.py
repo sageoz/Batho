@@ -18,7 +18,7 @@ SCHEMA_VERSIONS: dict[str, str] = {
     "ignore_patterns": "ignore-patterns.v1",
 }
 
-DEFAULT_LOG_LEVEL = "INFO"
+DEFAULT_LOG_LEVEL = "ERROR"
 DEFAULT_DB_PATH = "{root}"
 DEFAULT_MAX_FILE_SIZE_KB = 500
 DEFAULT_MAX_INDEXED_FILES = 200_000

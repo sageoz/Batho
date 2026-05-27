@@ -13,6 +13,16 @@ from pydantic import ValidationError
 
 from .models import Config, DEFAULT_DB_PATH
 
+logger = None
+
+
+def _get_logger():
+    global logger
+    if logger is None:
+        from batho.utils.logging import get_logger
+        logger = get_logger(__name__)
+    return logger
+
 
 _active_root: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
     "_active_root", default=None
@@ -362,9 +372,11 @@ def get_config_with_root(root_dir: Path) -> dict[str, Any]:
     try:
         cfg = Config.model_validate(base_cfg)
     except ValidationError as exc:
-        import sys
-        print(f"Warning: Configuration validation failed for {cfg_path.name}. Falling back to default settings.", file=sys.stderr)
-        print(f"Validation error details:\n{exc}", file=sys.stderr)
+        _get_logger().warning(
+            "config_validation_failed",
+            config_file=cfg_path.name,
+            error=str(exc),
+        )
         cfg = Config()
 
     cfg_dict = cfg.model_dump()

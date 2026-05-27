@@ -5,6 +5,9 @@ from __future__ import annotations
 import argparse
 import sys
 
+from batho.core.config.loader import get_config_cached
+from batho.utils.logging import configure_logging_from_dict
+
 
 def _build_parser() -> argparse.ArgumentParser:
     """Construct the top-level argument parser with all subcommands."""
@@ -34,6 +37,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     """CLI main entry point."""
+    configure_logging_from_dict(get_config_cached()["logging"])
     parser = _build_parser()
     args = parser.parse_args()
 
