@@ -24,8 +24,6 @@ __all__ = [
     "QueryService",
     # BSG rendering
     "BSGMap",
-    # Incremental
-
     # Config
     "get_config_cached",
     "reload_config",

@@ -72,10 +72,10 @@ VALID_CATEGORIES = frozenset(["source", "test", "doc", "config", "infra", "all"]
 
 
 def _find_db_path(root: Path) -> Path | None:
-    """Locate the artifact_<dirname>.batho database for the given root."""
-    from batho.storage.engine import artifact_filename
+    """Locate the database for the given root using config or fallback."""
+    from batho.storage.engine import resolve_db_path
 
-    db_path = root / artifact_filename(root)
+    db_path = resolve_db_path(root)
     if db_path.exists():
         return db_path
     return None

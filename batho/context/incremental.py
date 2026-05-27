@@ -52,6 +52,7 @@ def get_current_branch(repo_root: Path) -> str | None:
 def _collect_candidate_files(root: Path) -> list[Path]:
     """Collect all non-ignored files under root."""
     from batho.utils.ignore import walk_ignored_filtered
+
     candidates = []
     for dirpath, dirnames, filenames in walk_ignored_filtered(root):
         for filename in filenames:

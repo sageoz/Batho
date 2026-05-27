@@ -253,61 +253,6 @@ class FileReconstructor:
             warnings=warnings,
         )
 
-    def verify_integrity(
-        self,
-        file_path: str,
-        entities: list[Entity],
-        original_content: str,
-    ) -> dict[str, Any]:
-        """
-        Verify that entities can faithfully reproduce the original content.
-
-        This is a convenience wrapper around ``reconstruct_file`` that
-        catches ``IntegrityError`` and returns a report dict instead of
-        raising — useful for bulk verification.
-
-        Args:
-            file_path: Path to the file (for error reporting).
-            entities: Entities to verify.
-            original_content: The original file content as a string.
-
-        Returns:
-            A dict with keys:
-            - ``coverage_match``: True if entity byte ranges span the file.
-            - ``hash_match``: True if reconstructed hash matches original.
-            - ``reconstructed_hash``: SHA256 of concatenated raw_content.
-            - ``original_hash``: SHA256 of original_content.
-            - ``verified``: True only if both coverage and hash match.
-            - ``errors``: Any error messages encountered.
-        """
-        original_bytes = original_content.encode("utf-8")
-        original_hash = compute_bytes_hash(original_bytes)
-        errors: list[str] = []
-        hash_match = False
-        reconstructed_hash = ""
-
-        try:
-            result = self.reconstruct_file(
-                file_path=file_path,
-                entities=entities,
-                original_hash=original_hash,
-            )
-            hash_match = result.hash_match
-            reconstructed_hash = result.reconstructed_hash
-        except (ReconstructionError, IntegrityError) as exc:
-            errors.append(str(exc))
-
-        selected = self._select_covering_entities(entities)
-        coverage_match = self._check_coverage(selected, len(original_bytes))
-
-        return {
-            "coverage_match": coverage_match,
-            "hash_match": hash_match,
-            "reconstructed_hash": reconstructed_hash,
-            "original_hash": original_hash,
-            "verified": coverage_match and hash_match,
-            "errors": errors,
-        }
 
     def reconstruct_from_snapshot(
         self,

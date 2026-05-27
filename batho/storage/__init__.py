@@ -6,6 +6,6 @@ context outputs, snapshots, and sync metadata live in one ACID-compliant
 SQLite database per project.
 """
 
-from batho.storage.engine import BathoDatabase, get_database
+from batho.storage.engine import BathoDatabase, get_database, resolve_db_path
 
-__all__ = ["BathoDatabase", "get_database"]
+__all__ = ["BathoDatabase", "get_database", "resolve_db_path"]

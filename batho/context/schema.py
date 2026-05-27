@@ -135,6 +135,8 @@ class EntityType(Enum):
     PROPERTY = auto()
     ENTRY_POINT = auto()
     UNRESOLVED = auto()  # Unresolvable reference tracked as first-class node
+    INFRASTRUCTURE_CONFIG = auto()
+    ENVIRONMENT_VARIABLE = auto()
     # Markup / Config types
     SETTING = auto()  # Key-value pairs (JSON, YAML, TOML)
     SECTION = auto()  # Named sections/objects

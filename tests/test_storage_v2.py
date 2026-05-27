@@ -7,6 +7,13 @@ import json
 from pathlib import Path
 
 import pytest
+from batho.storage.engine import _DB_CACHE, _DB_CACHE_LOCK
+
+def close_all_databases():
+    with _DB_CACHE_LOCK:
+        for db in list(_DB_CACHE.values()):
+            db.close()
+        _DB_CACHE.clear()
 
 
 class TestSchemaV4:
@@ -407,7 +414,7 @@ class TestGetDatabase:
     """Verify get_database creates and caches correctly."""
 
     def test_creates_database(self, tmp_path):
-        from batho.storage.engine import get_database, close_all_databases
+        from batho.storage.engine import get_database
 
         db = get_database(tmp_path)
         assert db is not None
@@ -415,7 +422,7 @@ class TestGetDatabase:
         close_all_databases()
 
     def test_returns_same_instance(self, tmp_path):
-        from batho.storage.engine import get_database, close_all_databases
+        from batho.storage.engine import get_database
 
         db1 = get_database(tmp_path)
         db2 = get_database(tmp_path)
@@ -423,7 +430,7 @@ class TestGetDatabase:
         close_all_databases()
 
     def test_stats(self, tmp_path):
-        from batho.storage.engine import get_database, close_all_databases
+        from batho.storage.engine import get_database
 
         db = get_database(tmp_path)
         stats = db.get_stats()

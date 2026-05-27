@@ -115,10 +115,6 @@ class QueryService:
         self._relationships = relationships
         self._loaded_run_id = run_uuid
 
-    def rebuild_indexes(self) -> dict[str, int]:
-        """No-op: data is loaded from blobs on demand."""
-        return {"entities_indexed": 0, "relationships_indexed": 0}
-
     def entities_by_type(
         self,
         entity_type: str,

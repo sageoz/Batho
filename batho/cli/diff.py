@@ -60,14 +60,14 @@ def register_diff_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def cmd_diff(args: argparse.Namespace) -> int:
     """Execute the diff subcommand."""
-    from batho.storage.engine import get_database, artifact_filename
+    from batho.storage.engine import get_database, resolve_db_path
     
     if args.since and not args.entity:
         print("error: --since can only be used with --entity", file=sys.stderr)
         return 1
         
     root = Path(args.root or ".").resolve()
-    db_path = root / artifact_filename(root)
+    db_path = resolve_db_path(root)
     
     if not db_path.exists():
         print(f"No artifact database found at {root}. Run: batho build --root {root}", file=sys.stderr)
@@ -208,39 +208,7 @@ def _handle_entity_diff(db: Any, entity_id: str, since_run_uuid: str | None, out
 
 def _handle_file_diff(db: Any, rel_path: str, output_json: bool) -> int:
     """Fetch and display changes in a file across runs."""
-    sql = """
-        SELECT fc.run_id, fc.base_run_id, fc.node_changes,
-               r.run_uuid, base_r.run_uuid AS base_run_uuid
-        FROM file_changelog fc
-        JOIN string_dict file_dict ON fc.file_id = file_dict.id
-        JOIN index_runs r ON fc.run_id = r.id
-        JOIN index_runs base_r ON fc.base_run_id = base_r.id
-        WHERE file_dict.val = ?
-        ORDER BY r.completed_at ASC, fc.run_id ASC
-    """
-
-    results = []
-    with db.connection(read_only=True) as conn:
-        rows = conn.execute(sql, (rel_path,)).fetchall()
-        for row in rows:
-            blob = row["node_changes"]
-            if not blob:
-                continue
-            changes = orjson.loads(db._dctx.decompress(blob))
-            for entry in changes:
-                results.append({
-                    "run_id": row["run_id"],
-                    "base_run_id": row["base_run_id"],
-                    "run_uuid": row["run_uuid"],
-                    "base_run_uuid": row["base_run_uuid"],
-                    "entity_id": entry["entity_id"],
-                    "entity_name": entry["entity_name"],
-                    "entity_type": entry["entity_type"],
-                    "change_kind": entry["change_kind"],
-                    "changed_fields": entry["changed_fields"],
-                    "old_hash": entry["old_hash"],
-                    "new_hash": entry["new_hash"],
-                })
+    results = db.get_file_changelog_raw(rel_path)
             
     if output_json:
         print(json.dumps(results, indent=2))

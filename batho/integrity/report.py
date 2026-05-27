@@ -5,13 +5,12 @@ from __future__ import annotations
 import csv
 import io
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from .checks import CheckResult, Severity
+from .models import CheckReport, CheckStatus, Issue, RepairResult, Severity
 from .engine import FixResult, FixSummary
-from .repair import RepairRecord
 
 
 @dataclass
@@ -24,8 +23,8 @@ class FixReport:
     db_path: str
     mode: str
     summary: FixSummary
-    check_results: list[CheckResult]
-    repairs: list[RepairRecord]
+    check_results: list[CheckReport]
+    repairs: list[RepairResult]
     findings_by_severity: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -88,22 +87,31 @@ class ReportGenerator:
                 "duration_ms": report.summary.duration_ms,
                 "exit_code": report.summary.exit_code,
             },
-            "checks": [
+            "phases": [
                 {
-                    "name": cr.check_name,
+                    "phase": cr.phase,
                     "status": cr.status.value,
                     "duration_ms": cr.duration_ms,
                     "metrics": cr.metrics,
-                    "findings": [
+                    "issues": [
                         {
-                            "severity": f.severity.value,
-                            "message": f.message,
-                            "details": f.details,
-                            "auto_fixed": f.auto_fixed,
-                            "fix_attempted": f.fix_attempted,
-                            "fix_error": f.fix_error,
+                            "type": issue.type,
+                            "severity": issue.severity.value,
+                            "table": issue.table,
+                            "identifier": issue.identifier,
+                            "description": issue.description,
+                            "repair_strategy": issue.repair_strategy,
                         }
-                        for f in cr.findings
+                        for issue in cr.issues
+                    ],
+                    "repairs": [
+                        {
+                            "type": rep.issue.type,
+                            "success": rep.success,
+                            "error": rep.error,
+                            "rows_affected": rep.rows_affected,
+                        }
+                        for rep in cr.repairs
                     ],
                 }
                 for cr in report.check_results
@@ -121,18 +129,28 @@ class ReportGenerator:
             ["timestamp", "check_name", "severity", "message", "auto_fixed", "details"]
         )
 
-        # Findings
+        # Findings / Issues
         for check_result in report.check_results:
-            for finding in check_result.findings:
-                if finding.severity != Severity.INFO:  # Skip info-level in CSV
+            for issue in check_result.issues:
+                if issue.severity != Severity.INFO:  # Skip info-level in CSV
+                    repair_res = next((r for r in check_result.repairs if r.issue == issue), None)
+                    auto_fixed = "yes" if (repair_res and repair_res.success) else "no"
+                    details = {
+                        "table": issue.table,
+                        "identifier": issue.identifier,
+                        "repair_strategy": issue.repair_strategy,
+                    }
+                    if repair_res and repair_res.error:
+                        details["error"] = repair_res.error
+
                     writer.writerow(
                         [
                             report.completed_at,
-                            finding.check_name,
-                            finding.severity.value,
-                            finding.message,
-                            "yes" if finding.auto_fixed else "no",
-                            json.dumps(finding.details),
+                            issue.type,
+                            issue.severity.value,
+                            issue.description,
+                            auto_fixed,
+                            json.dumps(details),
                         ]
                     )
 
@@ -153,7 +171,7 @@ class ReportGenerator:
         # Summary
         lines.append(f"✅ Checks Passed:   {report.summary.checks_passed}/{report.summary.total_checks}")
         if report.summary.checks_fixed > 0:
-            lines.append(f"🔧 Auto-Fixed:     {report.summary.checks_fixed} issues")
+            lines.append(f"🔧 Auto-Fixed:     {report.summary.checks_fixed} phases")
         if report.summary.checks_failed > 0:
             lines.append(f"❌ Checks Failed:   {report.summary.checks_failed}")
         if report.summary.total_findings > 0:
@@ -175,30 +193,33 @@ class ReportGenerator:
             lines.append("🔧 Repairs Made")
             lines.append("─" * 50)
             for check_result in report.check_results:
-                for finding in check_result.findings:
-                    if finding.auto_fixed:
-                        status = "✅" if finding.fix_error is None else "⚠️"
-                        lines.append(f"  {status} {finding.message}")
+                for rep in check_result.repairs:
+                    status = "✅" if rep.success else "⚠️"
+                    err_msg = f" (Error: {rep.error})" if rep.error else ""
+                    lines.append(f"  {status} [{check_result.phase}] Fixed {rep.issue.type}: {rep.issue.description}{err_msg}")
             lines.append("")
 
         # Failed/unfixed issues
-        failed_findings = [
-            f
-            for cr in report.check_results
-            for f in cr.findings
-            if f.severity in (Severity.CRITICAL, Severity.ERROR) and not f.auto_fixed
-        ]
+        failed_issues = []
+        for cr in report.check_results:
+            for issue in cr.issues:
+                if issue.severity in (Severity.CRITICAL, Severity.ERROR):
+                    repair_res = next((r for r in cr.repairs if r.issue == issue), None)
+                    if not repair_res or not repair_res.success:
+                        failed_issues.append((cr.phase, issue, repair_res))
 
-        if failed_findings:
+        if failed_issues:
             lines.append("❌ Unresolved Issues")
             lines.append("─" * 50)
-            for finding in failed_findings[:10]:  # Show first 10
-                emoji = "🔴" if finding.severity == Severity.CRITICAL else "🟠"
-                lines.append(f"  {emoji} [{finding.check_name}] {finding.message}")
-                if finding.fix_error:
-                    lines.append(f"      Fix error: {finding.fix_error}")
-            if len(failed_findings) > 10:
-                lines.append(f"  ... and {len(failed_findings) - 10} more")
+            for phase, issue, repair_res in failed_issues[:10]:  # Show first 10
+                emoji = "🔴" if issue.severity == Severity.CRITICAL else "orange"
+                # Use standard bullet emojis
+                emoji_symbol = "🔴" if emoji == "🔴" else "🟠"
+                lines.append(f"  {emoji_symbol} [{phase}] {issue.description}")
+                if repair_res and repair_res.error:
+                    lines.append(f"      Fix error: {repair_res.error}")
+            if len(failed_issues) > 10:
+                lines.append(f"  ... and {len(failed_issues) - 10} more")
             lines.append("")
 
         # Footer

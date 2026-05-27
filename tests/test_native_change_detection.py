@@ -21,8 +21,14 @@ from unittest.mock import patch, MagicMock
 
 from batho.orchestrator.build import BuildOptions, run_build
 from batho.orchestrator.patch import PatchOptions, run_patch, FileChangeType
-from batho.storage.engine import BathoDatabase, get_database, close_all_databases, artifact_filename
+from batho.storage.engine import BathoDatabase, get_database, artifact_filename, _DB_CACHE, _DB_CACHE_LOCK
 from batho.utils.hash import compute_file_hash
+
+def close_all_databases():
+    with _DB_CACHE_LOCK:
+        for db in list(_DB_CACHE.values()):
+            db.close()
+        _DB_CACHE.clear()
 
 
 @pytest.fixture

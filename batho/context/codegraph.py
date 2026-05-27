@@ -52,9 +52,6 @@ from .symbol_index import SymbolIndex
 # Ignore pattern support — re-export from centralized utility
 # ---------------------------------------------------------------------------
 
-# Re-export for backward compatibility within this module
-_load_ignore_spec = load_ignore_spec
-_is_ignored = is_ignored
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +87,8 @@ class InMemoryGraph:
         # Secondary indexes for O(k) lookups
         self._by_file: dict[str, set[str]] = defaultdict(set)
         self._by_type: dict[EntityType, set[str]] = defaultdict(set)
-        self._rels_by_endpoint: dict[str, list[int]] = defaultdict(list)
+        self._rels_by_endpoint: dict[str, list[Relationship]] = defaultdict(list)
+        self._stale_relations_count: int = 0
 
         # Build indexes from initial data
         if entities:
@@ -98,9 +96,9 @@ class InMemoryGraph:
                 self._by_file[entity.file].add(eid)
                 self._by_type[entity.type].add(eid)
         if relationships:
-            for idx, rel in enumerate(relationships):
-                self._rels_by_endpoint[rel.source_id].append(idx)
-                self._rels_by_endpoint[rel.target_id].append(idx)
+            for rel in relationships:
+                self._rels_by_endpoint[rel.source_id].append(rel)
+                self._rels_by_endpoint[rel.target_id].append(rel)
 
     def add_entity(self, entity: Entity) -> None:
         self.entities[entity.id] = entity
@@ -111,12 +109,11 @@ class InMemoryGraph:
         if relationship.id in self._rel_ids:
             return
         self._rel_ids.add(relationship.id)
-        idx = len(self.relationships)
         self.relationships.append(relationship)
 
         # Update secondary index
-        self._rels_by_endpoint[relationship.source_id].append(idx)
-        self._rels_by_endpoint[relationship.target_id].append(idx)
+        self._rels_by_endpoint[relationship.source_id].append(relationship)
+        self._rels_by_endpoint[relationship.target_id].append(relationship)
 
         # Incremental update instead of full invalidation
         if self._adj_out is not None:
@@ -137,12 +134,11 @@ class InMemoryGraph:
             if relationship.id in self._rel_ids:
                 continue
             self._rel_ids.add(relationship.id)
-            idx = len(self.relationships)
             self.relationships.append(relationship)
 
             # Update secondary index
-            self._rels_by_endpoint[relationship.source_id].append(idx)
-            self._rels_by_endpoint[relationship.target_id].append(idx)
+            self._rels_by_endpoint[relationship.source_id].append(relationship)
+            self._rels_by_endpoint[relationship.target_id].append(relationship)
 
             # Incremental update instead of full invalidation
             if self._adj_out is not None:
@@ -188,11 +184,6 @@ class InMemoryGraph:
             self._by_file[entity.file].discard(entity_id)
             self._by_type[entity.type].discard(entity_id)
 
-    def _remove_relationship_indexes(self, rel_idx: int) -> None:
-        """Mark relationship index as removed (index will be rebuilt on demand)."""
-        # We keep the index entries but mark for rebuild on next access
-        # This is a trade-off: deletion is fast, but index may have stale entries
-        pass  # Full index rebuild happens when _rels_by_endpoint is used
 
     def root_entities(self) -> list[Entity]:
         return [e for e in self.entities.values() if e.parent_id is None]
@@ -325,18 +316,17 @@ class IncrementalGraphUpdater:
         """
         # Use _by_file index for O(k) lookup instead of O(N) scan
         entities_to_remove = list(graph._by_file.get(file_path, set()))
-
-        # Collect all relationship indices to remove using _rels_by_endpoint index
-        rel_indices_to_remove: set[int] = set()
+ 
+        # Collect all relationships to remove using _rels_by_endpoint index
+        rel_ids_to_remove: set[str] = set()
         for eid in entities_to_remove:
-            rel_indices_to_remove.update(graph._rels_by_endpoint.get(eid, []))
-
+            for rel in graph._rels_by_endpoint.get(eid, []):
+                if rel.id in graph._rel_ids:
+                    rel_ids_to_remove.add(rel.id)
+ 
         # Build new relationships list (filtering out removed ones)
-        relationships_to_keep = []
-        for idx, rel in enumerate(graph.relationships):
-            if idx not in rel_indices_to_remove:
-                relationships_to_keep.append(rel)
-
+        relationships_to_keep = [r for r in graph.relationships if r.id not in rel_ids_to_remove]
+ 
         # Apply all changes atomically
         try:
             # Remove entities and update secondary indexes
@@ -347,17 +337,26 @@ class IncrementalGraphUpdater:
                     # Update secondary indexes
                     graph._by_file[entity.file].discard(eid)
                     graph._by_type[entity.type].discard(eid)
-
+ 
             # Update relationships
             graph.relationships = relationships_to_keep
             graph._rel_ids = {r.id for r in relationships_to_keep}
-
-            # Rebuild relationship index (simpler than incremental update for batch removal)
-            graph._rels_by_endpoint.clear()
-            for idx, rel in enumerate(graph.relationships):
-                graph._rels_by_endpoint[rel.source_id].append(idx)
-                graph._rels_by_endpoint[rel.target_id].append(idx)
-
+ 
+            # Lazy/batch eviction of relationship endpoints
+            for eid in entities_to_remove:
+                graph._rels_by_endpoint.pop(eid, None)
+ 
+            graph._stale_relations_count += len(rel_ids_to_remove)
+ 
+            # Rebuild relationship index if threshold exceeded (e.g. 20% of total relationships or 1000)
+            threshold = max(1000, len(graph.relationships) // 5)
+            if graph._stale_relations_count > threshold:
+                graph._rels_by_endpoint.clear()
+                for rel in graph.relationships:
+                    graph._rels_by_endpoint[rel.source_id].append(rel)
+                    graph._rels_by_endpoint[rel.target_id].append(rel)
+                graph._stale_relations_count = 0
+ 
             # Incremental adjacency cache update (if cache exists)
             if graph._adj_out is not None:
                 for eid in entities_to_remove:
@@ -375,21 +374,21 @@ class IncrementalGraphUpdater:
                     for tgt, sources in list(graph._adj_in.items()):
                         if eid in sources:
                             sources.remove(eid)
-
+ 
             self.logger.debug(
                 "removed_entities_for_file",
                 file_path=file_path,
                 entity_count=len(entities_to_remove),
-                relationship_count=len(rel_indices_to_remove),
+                relationship_count=len(rel_ids_to_remove),
             )
-
+ 
         except (KeyError, ValueError, RuntimeError) as e:
             self.logger.error(
                 "remove_entities_recoverable_error",
                 file_path=file_path,
                 error=str(e),
                 entities_targeted=len(entities_to_remove),
-                relationships_targeted=len(rel_indices_to_remove),
+                relationships_targeted=len(rel_ids_to_remove),
             )
             raise GraphConsistencyError(f"Failed to remove entities for {file_path}: {e}") from e
         except Exception as e:
@@ -543,10 +542,13 @@ class CodeGraphIndexer:
 
     Usage::
 
-        indexer = CodeGraphIndexer(cache_path=".batho")
+        # cache_path should be derived from config: get_config_cached()["paths"]["db_path"]
+        # max_workers should be derived from config: get_config_cached()["indexer"]["max_workers"]
+        # max_file_size_kb should be derived from config: get_config_cached()["indexer"]["max_file_size_kb"]
+        indexer = CodeGraphIndexer(cache_path="/path/to/cache")
         graph = indexer.build_graph(
             root="/path/to/repo",
-            max_workers=8,
+            max_workers=0,  # 0 = auto (cpu_count * 2)
             max_file_size_kb=500,
         )
     """
@@ -693,6 +695,7 @@ class CodeGraphIndexer:
                 cache_cfg = dict(bsg_cfg.get("cache", {}))
                 cache_cfg["enabled"] = bool(ast_cache_enabled)
                 bsg_cfg["cache"] = cache_cfg
+            bsg_cache_cfg = bsg_cfg.get("cache", {})
             # Extract bidirectional gap configuration
             bidirectional_cfg = bsg_cfg.get("bidirectional", {})
             include_gaps = bool(bidirectional_cfg.get("include_gaps", False))
@@ -702,7 +705,7 @@ class CodeGraphIndexer:
             bsg_parsing_cfg = bsg_cfg.get("parsing", {})
             set_parsing_config(bsg_parsing_cfg)
 
-            ignore_spec = _load_ignore_spec(
+            ignore_spec = load_ignore_spec(
                 root_path,
                 extra_patterns=cfg["indexer"].get("ignore_patterns"),
                 ignore_files=cfg["indexer"].get("ignore_files"),
@@ -867,15 +870,6 @@ class CodeGraphIndexer:
                 self.logger.error("parallel_processing_failed", error=str(pool_error))
                 raise
 
-            # Cache cleanup: remove expired entries if cache is enabled
-            bsg_cache_cfg = bsg_cfg.get("cache", {})
-            if bsg_cache_cfg.get("enabled"):
-                try:
-                    self._cache.cleanup_expired_cache()
-                    max_size_mb = bsg_cache_cfg.get("max_size_mb", 1024)
-                    self._cache.enforce_max_size(max_size_mb)
-                except Exception as exc:
-                    self.logger.warning("cache_cleanup_failed", error=str(exc))
 
             bsg_symbol_cfg = bsg_cfg.get("symbol_resolution", {})
             symbol_resolution_enabled = bsg_symbol_cfg.get("enabled", True)

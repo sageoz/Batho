@@ -82,17 +82,6 @@ class BathoCache:
             return 1
         return 0
 
-    def delete_ast_by_pattern(self, pattern: str) -> int:
-        """Delete AST entries matching a glob pattern.
-        
-        In v2.0, AST cache is keyed by content hash, not file path.
-        This method returns 0 since pattern matching is not supported.
-        Use clear_ast_cache() to clear all entries.
-        """
-        # NOTE: Pattern-based deletion not supported in v2.0 in-memory cache.
-        # Consider implementing file tracking -> hash -> cache lookup if needed.
-        return 0
-
     def clear_ast_cache(self, older_than_days: int | None = None) -> int:
         count = len(self._ast)
         self._ast.clear()
@@ -101,12 +90,6 @@ class BathoCache:
     def invalidate_cache(self, pattern: str | None = None) -> None:
         self._ast.clear()
         self.logger.info("cache_invalidated", pattern=pattern or "*", deleted_count=0)
-
-    def cleanup_expired_cache(self) -> int:
-        return 0
-
-    def enforce_max_size(self, max_size_mb: int) -> int:
-        return 0
 
     # ------------------------------------------------------------------
     # File tracking methods (delegates to BathoDatabase)
@@ -205,9 +188,6 @@ class BathoCache:
             "db_path": str(self._db.path) if self._db is not None else "",
         }
 
-    def vacuum(self) -> None:
-        if self._db is not None:
-            self._db.vacuum()
 
     def close(self) -> None:
         self._ast.clear()

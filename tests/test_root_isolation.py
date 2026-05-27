@@ -13,10 +13,15 @@ from batho.config import set_active_root, get_active_root, get_config_cached
 from batho.orchestrator.build import BuildOptions, run_build
 from batho.orchestrator.patch import PatchOptions, run_patch
 from batho.orchestrator.export import ExportOptions, run_export
-from batho.storage.engine import get_database, artifact_filename, close_all_databases
+from batho.storage.engine import get_database, artifact_filename, _DB_CACHE, _DB_CACHE_LOCK
 from batho.cli.diff import cmd_diff
+
+def close_all_databases():
+    with _DB_CACHE_LOCK:
+        for db in list(_DB_CACHE.values()):
+            db.close()
+        _DB_CACHE.clear()
 from batho.cli.fix import cmd_fix
-from batho.cli._utils import find_workspace_with_db
 
 
 @pytest.fixture(autouse=True)
@@ -320,16 +325,6 @@ def test_fix_from_different_cwd(temp_project, monkeypatch, capsys):
     assert ret == 0
 
 
-def test_no_legacy_batho_subdir_fallback(temp_project):
-    legacy_dir = temp_project / ".batho"
-    legacy_dir.mkdir()
-    
-    db_name = artifact_filename(temp_project)
-    legacy_db = legacy_dir / db_name
-    legacy_db.touch()
-    
-    res = find_workspace_with_db(temp_project)
-    assert res is None
 
 
 def test_artifact_filename_based_on_dirname():

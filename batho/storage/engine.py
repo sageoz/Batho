@@ -29,7 +29,8 @@ LOGGER = get_logger(__name__, component="storage_engine")
 # Constants
 # ---------------------------------------------------------------------------
 
-BATHO_DB_FILENAME = ".batho"
+# It aligns with config DEFAULT_DB_PATH from batho.config.models
+# New code should use config values via get_config_cached()
 SCHEMA_VERSION = "batho-db.v7"
 DEFAULT_PAGE_SIZE = 8192
 DEFAULT_BUSY_TIMEOUT_MS = 5000
@@ -211,13 +212,46 @@ def _expand_graph_payload(minified: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def resolve_db_path_from_config(root: Path) -> Path | None:
+    """Resolve db_path from config, returns None for {root} (use default behavior)."""
+    try:
+        from batho.config import _get_config_cached_for_root
+        cfg = _get_config_cached_for_root(root)
+        db_path = cfg.get("paths", {}).get("db_path", "{root}")
+        
+        # {root} means use default behavior (artifact file in repo root)
+        if db_path == "{root}" or not db_path:
+            return None
+        
+        # Resolve relative to root
+        resolved = (root / db_path).resolve()
+        
+        # If it is an existing directory, or has an empty suffix (e.g. '.batho'),
+        # treat it as a directory and place the artifact filename inside it.
+        if resolved.is_dir() or not resolved.suffix:
+            return resolved / artifact_filename(root)
+            
+        return resolved
+    except Exception:
+        return None
+
+
+def resolve_db_path(root: Path | str) -> Path:
+    """Resolve the database path for the repository root using config or default behavior."""
+    root_path = Path(root).resolve()
+    config_path = resolve_db_path_from_config(root_path)
+    if config_path is not None:
+        return config_path
+    return root_path / artifact_filename(root_path)
+
+
 def get_database(repo_root: Path | str, *, db_path: Path | str | None = None) -> "BathoDatabase":
     """Get or create a BathoDatabase instance for a repository."""
     root = Path(repo_root).resolve()
     if db_path is not None:
         resolved_path = Path(db_path).resolve()
     else:
-        resolved_path = root / artifact_filename(root)
+        resolved_path = resolve_db_path(root)
 
     key = str(resolved_path)
     with _DB_CACHE_LOCK:
@@ -229,12 +263,6 @@ def get_database(repo_root: Path | str, *, db_path: Path | str | None = None) ->
         return db
 
 
-def close_all_databases() -> None:
-    """Close all cached database instances. Call on shutdown."""
-    with _DB_CACHE_LOCK:
-        for db in _DB_CACHE.values():
-            db.close()
-        _DB_CACHE.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +383,12 @@ class BathoDatabase:
             return
 
         try:
+            # Check if any parent component of resolved path exists as a file
+            if self._db_path.parent.exists() and not self._db_path.parent.is_dir():
+                raise RuntimeError(
+                    f"Database path conflict: '{self._db_path.parent}' exists as a file but is expected to be a directory. "
+                    "Please delete or rename this file to allow database creation."
+                )
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
             if not self._db_path.exists():
@@ -1111,20 +1145,26 @@ class BathoDatabase:
     # Run Artifacts (Enterprise Metrics & Context)
     # ------------------------------------------------------------------
 
-    def finalize_run_artifacts(self, run_internal_id: int, artifacts: dict) -> None:
+    def finalize_run_artifacts(self, run_internal_id: int, artifacts: dict, blob_config: dict | None = None) -> None:
         """Insert or update a row in the run_artifacts table, compressing dicts with zstd."""
-        def _compress(val: dict | None) -> bytes | None:
+        run_cfg = None
+        if blob_config is not None:
+            run_cfg = blob_config.get("run_artifacts")
+
+        def _compress(key: str, val: dict | None) -> bytes | None:
+            if run_cfg is not None and not run_cfg.get(key, True):
+                return None
             if val is None:
                 return None
             serialized = json.dumps(val, ensure_ascii=True).encode("utf-8")
             return self._cctx.compress(serialized)
 
-        context_overview = _compress(artifacts.get("context_overview"))
-        telemetry_metrics = _compress(artifacts.get("telemetry_metrics"))
-        structural_metrics = _compress(artifacts.get("structural_metrics"))
-        security_audit = _compress(artifacts.get("security_audit"))
-        artifact_payload = _compress(artifacts.get("artifact_payload"))
-        delta_stats = _compress(artifacts.get("delta_stats"))
+        context_overview = _compress("context_overview", artifacts.get("context_overview"))
+        telemetry_metrics = _compress("telemetry_metrics", artifacts.get("telemetry_metrics"))
+        structural_metrics = _compress("structural_metrics", artifacts.get("structural_metrics"))
+        security_audit = _compress("security_audit", artifacts.get("security_audit"))
+        artifact_payload = _compress("artifact_payload", artifacts.get("artifact_payload"))
+        delta_stats = _compress("delta_stats", artifacts.get("delta_stats"))
         
         with self.transaction() as conn:
             conn.execute(
@@ -1337,14 +1377,16 @@ class BathoDatabase:
         return results
 
     def prune_file_changelog(self, max_runs: int) -> None:
-        """Delete file_changelog entries older than the N most recent completed runs.
+        """Delete file_changelog and index_runs entries older than the N most recent completed runs.
+        SQLite CASCADE triggers automatically clean up all associated file_artifacts,
+        run_artifacts, and query_entities when a run is deleted.
         FTS5 sync triggers automatically clean up file_changelog_fts on DELETE.
         Called at end of run_patch.
         """
         with self.transaction() as conn:
             conn.execute(
-                """DELETE FROM file_changelog
-                WHERE run_id NOT IN (
+                """DELETE FROM index_runs
+                WHERE status = 'completed' AND id NOT IN (
                     SELECT id FROM index_runs
                     WHERE status = 'completed'
                     ORDER BY completed_at DESC
@@ -1353,6 +1395,68 @@ class BathoDatabase:
                 (max_runs,),
             )
             conn.commit()
+        self.vacuum()
+
+    def delete_file_artifacts_for_run(self, run_internal_id: int) -> None:
+        """Delete file artifacts for a run."""
+        with self.connection() as conn:
+            conn.execute("DELETE FROM file_artifacts WHERE run_id = ?", (run_internal_id,))
+            conn.commit()
+
+    def delete_run_artifacts_for_run(self, run_internal_id: int) -> None:
+        """Delete run artifacts for a run."""
+        with self.connection() as conn:
+            conn.execute("DELETE FROM run_artifacts WHERE run_id = ?", (run_internal_id,))
+            conn.commit()
+            
+    def delete_patches_for_run(self, run_uuid: str) -> None:
+        """No-op: patches are not stored in database in v2.0."""
+        pass
+
+    def get_file_changelog_raw(self, rel_path: str, since: str | None = None) -> list[dict]:
+        """Raw SQL bypass for diff performance. Returns decompressed node_changes."""
+        sql = """
+            SELECT fc.run_id, fc.base_run_id, fc.node_changes,
+                   r.run_uuid, base_r.run_uuid AS base_run_uuid
+            FROM file_changelog fc
+            JOIN string_dict file_dict ON fc.file_id = file_dict.id
+            JOIN index_runs r ON fc.run_id = r.id
+            JOIN index_runs base_r ON fc.base_run_id = base_r.id
+            WHERE file_dict.val = ?
+        """
+        params = [rel_path]
+        if since:
+            sql += """ AND r.completed_at >= (
+                SELECT completed_at FROM index_runs WHERE run_uuid = ?
+            )"""
+            params.append(since)
+            
+        sql += " ORDER BY r.completed_at ASC, fc.run_id ASC"
+        
+        results = []
+        with self.connection(read_only=True) as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+            for row in rows:
+                blob = row["node_changes"]
+                if not blob:
+                    continue
+                decompressed = self._dctx.decompress(blob)
+                changes = orjson.loads(decompressed)
+                for entry in changes:
+                    results.append({
+                        "run_id": row["run_id"],
+                        "base_run_id": row["base_run_id"],
+                        "run_uuid": row["run_uuid"],
+                        "base_run_uuid": row["base_run_uuid"],
+                        "entity_id": entry["entity_id"],
+                        "entity_name": entry["entity_name"],
+                        "entity_type": entry["entity_type"],
+                        "change_kind": entry["change_kind"],
+                        "changed_fields": entry["changed_fields"],
+                        "old_hash": entry["old_hash"],
+                        "new_hash": entry["new_hash"],
+                    })
+        return results
 
     # ------------------------------------------------------------------
     # Maintenance

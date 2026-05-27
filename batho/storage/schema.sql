@@ -7,7 +7,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
 PRAGMA auto_vacuum = INCREMENTAL;
-PRAGMA page_size = 4096;
+PRAGMA page_size = 8192;
 
 -- 1. METADATA
 CREATE TABLE IF NOT EXISTS db_meta (

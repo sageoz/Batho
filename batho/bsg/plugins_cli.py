@@ -281,7 +281,7 @@ def register_cli_subcommands(plugins_sub: argparse._SubParsersAction[Any]) -> No
     trace_parser.add_argument(
         "--profile",
         action="store_true",
-        help="Collect per-rule timing and persist .batho-config/metrics/bsg_perf.json",
+        help="Collect per-rule timing metrics in memory",
     )
     trace_parser.set_defaults(func=cmd_plugins_trace)
 
@@ -293,7 +293,7 @@ def register_cli_subcommands(plugins_sub: argparse._SubParsersAction[Any]) -> No
     verify_bidir_parser.add_argument(
         "--profile",
         action="store_true",
-        help="Collect per-rule timing and persist .batho-config/metrics/bsg_perf.json",
+        help="Collect per-rule timing metrics in memory",
     )
     verify_bidir_parser.add_argument(
         "--trace",

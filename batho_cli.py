@@ -20,12 +20,14 @@ def _build_parser() -> argparse.ArgumentParser:
     from batho.cli.fix import register_fix_parser
     from batho.cli.export import register_export_parser
     from batho.cli.diff import register_diff_parser
+    from batho.cli.gc import register_gc_parser
 
     register_build_parser(subparsers)
     register_patch_parser(subparsers)
     register_export_parser(subparsers)
     register_fix_parser(subparsers)
     register_diff_parser(subparsers)
+    register_gc_parser(subparsers)
 
     return parser
 

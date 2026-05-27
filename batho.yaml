@@ -9,7 +9,7 @@ logging:
   format: "%(message)s"
 
 paths:
-  db_path: .batho
+  db_path: {root}
 
 indexer:
   max_file_size_kb: 500
@@ -42,7 +42,7 @@ artifact_blobs:
     context_overview: true
     telemetry_metrics: true
     structural_metrics: true
-    security_audit: false
+    security_audit: true
     artifact_payload: true
     delta_stats: true
 

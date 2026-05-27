@@ -7,7 +7,6 @@ from .loader import (
     reload_config,
     set_active_root,
     get_active_root,
-    get_default_batho_yaml_content,
     _active_root,
     _get_config_cached_for_root,
 )
@@ -19,7 +18,6 @@ __all__ = [
     "reload_config",
     "set_active_root",
     "get_active_root",
-    "get_default_batho_yaml_content",
     "_active_root",
     "_get_config_cached_for_root",
     "Config",

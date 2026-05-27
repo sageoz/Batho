@@ -6,26 +6,26 @@ and repairing artifact database corruption.
 
 from __future__ import annotations
 
-from .engine import FixEngine, FixContext, FixResult
-from .checks import (
-    CheckResult,
-    CheckStatus,
-    Finding,
-    IntegrityCheck,
+from .engine import FixEngine, FixContext, FixResult, FixSummary
+from .models import (
     Severity,
+    CheckStatus,
+    Issue,
+    RepairResult,
+    CheckReport,
 )
-from .report import FixReport
-from .repair import RepairRecord
+from .report import ReportGenerator, FixReport
 
 __all__ = [
     "FixEngine",
     "FixContext",
     "FixResult",
-    "CheckResult",
-    "CheckStatus",
-    "Finding",
-    "IntegrityCheck",
+    "FixSummary",
     "Severity",
+    "CheckStatus",
+    "Issue",
+    "RepairResult",
+    "CheckReport",
+    "ReportGenerator",
     "FixReport",
-    "RepairRecord",
 ]

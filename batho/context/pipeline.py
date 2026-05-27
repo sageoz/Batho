@@ -258,52 +258,6 @@ def _initialize_worker(log_config: dict[str, Any] | None, cache_path: str | None
             logger.warning("worker_cache_init_failed", cache_path=cache_path, error=str(exc))
 
 
-def _warmup_worker_cache(cache_path: str, file_hashes: list[tuple[str, str]]) -> int:
-    """
-    Pre-warm the worker cache with frequently accessed files.
-    
-    Args:
-        cache_path: Path to the cache database
-        file_hashes: List of (file_path, content_hash) tuples to pre-load
-        
-    Returns:
-        Number of entries successfully warmed up
-    """
-    global _WORKER_CACHE
-    
-    if _WORKER_CACHE is None:
-        try:
-            _WORKER_CACHE = BathoCache(cache_path=cache_path)
-        except Exception:
-            return 0
-    
-    warmed = 0
-    for file_path, content_hash in file_hashes:
-        try:
-            result = _WORKER_CACHE.get_ast(content_hash)
-            if result is not None:
-                warmed += 1
-        except Exception:
-            pass
-    return warmed
-
-
-def _get_worker_cache_stats() -> dict[str, Any]:
-    """Get statistics about the worker cache for monitoring."""
-    global _WORKER_CACHE
-    
-    if _WORKER_CACHE is None:
-        return {"initialized": False}
-    
-    try:
-        from batho.context.unified_cache import BathoCache
-        # Access internal stats if available
-        return {
-            "initialized": True,
-            "cache_path": str(_WORKER_CACHE._path),
-        }
-    except Exception:
-        return {"initialized": True, "error": "stats_unavailable"}
 
 
 # ---------------------------------------------------------------------------

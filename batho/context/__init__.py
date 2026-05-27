@@ -5,7 +5,6 @@ Provides multi-language deterministic code extraction via Tree-sitter.
 """
 
 from .bsg_map import BSGMap
-from .cache import ASTCache
 from .codegraph import CodeGraphIndexer
 from .extractor import ASTExtractor
 from .query import QueryService
@@ -15,7 +14,6 @@ from .unified_cache import BathoCache
 
 
 __all__ = [
-    "ASTCache",
     "BathoCache",
     "CodeGraphIndexer",
     "BSGMap",

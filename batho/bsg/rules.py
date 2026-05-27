@@ -36,10 +36,7 @@ _LOGGER = get_logger(__name__, component="bsg_rules")
 _SCHEMA_VERSION = "bsg-plugin.v2"
 _CACHE_SCHEMA_VERSION = "bsg-rules-cache.v2"
 _CACHE_FILENAME = "rules_cache.bin"
-_INTERCEPTION_SCHEMA_VERSION = "interception-stats.v1"
-_INTERCEPTION_FILENAME = "interception_stats.json"
 _PERF_SCHEMA_VERSION = "bsg-perf.v1"
-_PERF_FILENAME = "bsg_perf.json"
 
 _PLUGIN_ALIASES: dict[str, str] = {
     "bsg_core": "bsg_graph_foundation",
@@ -531,25 +528,8 @@ def _rules_cache_path(root_path: Path) -> Path:
     return cache_dir / _CACHE_FILENAME
 
 
-def _interception_stats_path(root_path: Path) -> Path:
-    metrics_dir = root_path / ".batho-config" / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-    return metrics_dir / _INTERCEPTION_FILENAME
 
 
-def _perf_stats_path(root_path: Path) -> Path:
-    metrics_dir = root_path / ".batho-config" / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-    return metrics_dir / _PERF_FILENAME
-
-
-def _write_perf_stats(path: Path, payload: dict[str, Any]) -> None:
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    tmp_path.replace(path)
 
 
 def _read_cache(cache_path: Path) -> dict[str, Any] | None:
@@ -584,76 +564,8 @@ def _plugin_display_name(plugin_id: str) -> str:
     return " ".join(word.capitalize() for word in words)
 
 
-def _load_interception_stats(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {
-            "schema_version": _INTERCEPTION_SCHEMA_VERSION,
-            "plugins": {},
-        }
-
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {
-            "schema_version": _INTERCEPTION_SCHEMA_VERSION,
-            "plugins": {},
-        }
-
-    if not isinstance(payload, dict):
-        return {
-            "schema_version": _INTERCEPTION_SCHEMA_VERSION,
-            "plugins": {},
-        }
-
-    plugins = payload.get("plugins")
-    if not isinstance(plugins, dict):
-        payload["plugins"] = {}
-
-    payload["schema_version"] = _INTERCEPTION_SCHEMA_VERSION
-    return payload
 
 
-def _write_interception_stats(path: Path, payload: dict[str, Any]) -> None:
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    tmp_path.replace(path)
-
-
-def _record_interceptions(
-    root_path: Path,
-    plugin_hits: dict[str, int],
-) -> tuple[dict[str, int], str]:
-    stats_path = _interception_stats_path(root_path)
-    payload = _load_interception_stats(stats_path)
-    plugins = payload.get("plugins")
-    if not isinstance(plugins, dict):
-        plugins = {}
-        payload["plugins"] = plugins
-
-    totals: dict[str, int] = {}
-    for plugin_id, hit_count in sorted(plugin_hits.items()):
-        if hit_count <= 0:
-            continue
-
-        existing = plugins.get(plugin_id)
-        if not isinstance(existing, dict):
-            existing = {
-                "plugin_id": plugin_id,
-                "name": _plugin_display_name(plugin_id),
-                "interceptions": 0,
-            }
-
-        existing["plugin_id"] = plugin_id
-        existing["name"] = str(existing.get("name") or _plugin_display_name(plugin_id))
-        existing["interceptions"] = int(existing.get("interceptions", 0)) + hit_count
-        plugins[plugin_id] = existing
-        totals[plugin_id] = int(existing["interceptions"])
-
-    _write_interception_stats(stats_path, payload)
-    return totals, stats_path.as_posix()
 
 
 def _discover_packaged_plugins() -> dict[str, Path]:
@@ -2324,14 +2236,29 @@ def _apply_semantic_usn_tags(graph: InMemoryGraph, root_path: Path) -> int:
         )
         merged = sorted(existing | inferred)
 
+        new_type = entity.type
+        merged_lower = [t.lower() for t in merged]
+        if "infrastructureconfig" in merged_lower:
+            new_type = EntityType.INFRASTRUCTURE_CONFIG
+        elif "environmentvariable" in merged_lower:
+            new_type = EntityType.ENVIRONMENT_VARIABLE
+
         if (
             isinstance(existing_raw, list)
             and sorted({str(item) for item in existing_raw}) == merged
+            and new_type == entity.type
         ):
             continue
 
         metadata["bsg.usn"] = merged
-        graph.entities[entity_id] = entity.model_copy(update={"metadata": metadata})
+        updated_entity = entity.model_copy(update={"metadata": metadata, "type": new_type})
+        graph.entities[entity_id] = updated_entity
+        
+        # Keep graph._by_type index in sync!
+        if new_type != entity.type:
+            graph._by_type[entity.type].discard(entity_id)
+            graph._by_type[new_type].add(entity_id)
+            
         updated += 1
 
     return updated
@@ -2463,16 +2390,8 @@ def _derive_semantic_relations(graph: InMemoryGraph) -> list[Relationship]:
                     "db_inside_loop_scope",
                 )
 
-    infra_entities = [
-        entity_id
-        for entity_id, tags in tags_by_entity.items()
-        if "infrastructureconfig" in tags
-    ]
-    env_entities = [
-        entity_id
-        for entity_id, tags in tags_by_entity.items()
-        if "environmentvariable" in tags
-    ]
+    infra_entities = list(graph._by_type.get(EntityType.INFRASTRUCTURE_CONFIG, set()))
+    env_entities = list(graph._by_type.get(EntityType.ENVIRONMENT_VARIABLE, set()))
 
     infra_token_index: dict[str, set[str]] = defaultdict(set)
     infra_tokens_by_id: dict[str, set[str]] = {}
@@ -2983,8 +2902,7 @@ def apply_rule_plugins(
         root_path: Repository root; used for relative path matching and artifacts.
         rules_config: The `rules` block from batho.yaml (or equivalent dict).
         logger: Optional structured logger.
-        profile: When True, collect per-rule match/apply timing and persist
-            `.batho-config/metrics/bsg_perf.json` with the aggregate report.
+        profile: When True, collect per-rule match/apply timing metrics in memory.
         trace: When True, the returned summary includes a `trace_log` entry per
             entity/rule with match outcomes and actions.
         bidirectional_only: When True, only run bidirectional flow plugins.
@@ -3309,19 +3227,21 @@ def apply_rule_plugins(
         plugin_hits[rule.plugin] = int(plugin_hits.get(rule.plugin, 0)) + hit_count
 
     interception_totals: dict[str, int] = {}
-    interception_stats_path = _interception_stats_path(root_path).as_posix()
-    if plugin_hits:
-        try:
-            interception_totals, interception_stats_path = _record_interceptions(
-                root_path=root_path,
-                plugin_hits=plugin_hits,
-            )
-        except Exception as exc:
-            log.warning(
-                "bsg_interception_stats_write_failed",
-                error=str(exc),
-                stats_path=interception_stats_path,
-            )
+    for plugin_id, hit_count in sorted(plugin_hits.items()):
+        if hit_count > 0:
+            interception_totals[plugin_id] = hit_count
+
+    security_audit = {
+        "schema_version": "interception-stats.v1",
+        "plugins": {
+            plugin_id: {
+                "plugin_id": plugin_id,
+                "name": _plugin_display_name(plugin_id),
+                "interceptions": hit_count,
+            }
+            for plugin_id, hit_count in interception_totals.items()
+        }
+    }
 
     overall_elapsed_ns = time.perf_counter_ns() - overall_start_ns
 
@@ -3343,7 +3263,8 @@ def apply_rule_plugins(
         "interception_totals": {
             name: count for name, count in sorted(interception_totals.items())
         },
-        "interception_stats_path": interception_stats_path,
+        "interception_stats_path": None,
+        "security_audit": security_audit,
     }
 
     if profile:
@@ -3370,16 +3291,7 @@ def apply_rule_plugins(
             "rule_count": len(rules),
             "rules": dict(sorted(rule_perf.items())),
         }
-        perf_path = _perf_stats_path(root_path)
-        try:
-            _write_perf_stats(perf_path, perf_payload)
-            summary["perf_stats_path"] = perf_path.as_posix()
-        except Exception as exc:
-            log.warning(
-                "bsg_perf_stats_write_failed",
-                error=str(exc),
-                stats_path=perf_path.as_posix(),
-            )
+        summary["perf_stats_path"] = None
         summary["rule_perf"] = perf_payload
 
     if trace:

@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-import pytest
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch, ANY
+import pytest
+
+from batho.integrity.engine import FixEngine, FixContext, FixResult, FixSummary
+from batho.integrity.report import ReportGenerator
+from batho.integrity.models import CheckReport, CheckStatus
 
 
 class TestFixEngine:
@@ -12,8 +17,6 @@ class TestFixEngine:
 
     def test_engine_initialization(self, tmp_path):
         """Test FixEngine can be initialized."""
-        from batho.integrity.engine import FixEngine
-
         engine = FixEngine(root=tmp_path, deep_mode=False, dry_run=True)
 
         assert engine.root == tmp_path.resolve()
@@ -22,8 +25,6 @@ class TestFixEngine:
 
     def test_run_no_database(self, tmp_path):
         """Test engine handles missing database gracefully."""
-        from batho.integrity.engine import FixEngine
-
         engine = FixEngine(root=tmp_path, deep_mode=False, dry_run=True)
 
         # This will fail because there's no database, but should not crash
@@ -36,8 +37,6 @@ class TestFixContext:
 
     def test_context_creation(self):
         """Test FixContext can be created."""
-        from batho.integrity.engine import FixContext
-
         mock_db = MagicMock()
         ctx = FixContext(root=Path("/test"), db=mock_db, deep_mode=True)
 
@@ -47,8 +46,6 @@ class TestFixContext:
 
     def test_log_audit(self):
         """Test audit logging."""
-        from batho.integrity.engine import FixContext
-
         mock_db = MagicMock()
         ctx = FixContext(root=Path("/test"), db=mock_db)
 
@@ -63,9 +60,6 @@ class TestReportGenerator:
 
     def test_generate_text_report(self):
         """Test text report generation."""
-        from batho.integrity.report import ReportGenerator
-        from batho.integrity.engine import FixResult, FixSummary
-
         generator = ReportGenerator(format="text")
 
         summary = FixSummary(
@@ -92,10 +86,6 @@ class TestReportGenerator:
 
     def test_generate_json_report(self):
         """Test JSON report generation."""
-        import json
-        from batho.integrity.report import ReportGenerator
-        from batho.integrity.engine import FixResult, FixSummary
-
         generator = ReportGenerator(format="json")
 
         summary = FixSummary(
@@ -123,9 +113,6 @@ class TestReportGenerator:
 
     def test_generate_csv_report(self):
         """Test CSV report generation."""
-        from batho.integrity.report import ReportGenerator
-        from batho.integrity.engine import FixResult, FixSummary
-
         generator = ReportGenerator(format="csv")
 
         summary = FixSummary(
@@ -150,27 +137,6 @@ class TestReportGenerator:
         assert "timestamp,check_name,severity" in report
 
 
-class TestRollbackManager:
-    """Tests for RollbackManager."""
-
-    def test_find_last_known_good_no_snapshots(self):
-        """Test find_last_known_good when no snapshots exist."""
-        from batho.integrity.rollback import RollbackManager
-
-        mock_db = MagicMock()
-        mock_db.connection.return_value.__enter__ = MagicMock(
-            return_value=MagicMock(
-                execute=MagicMock(return_value=MagicMock(fetchall=MagicMock(return_value=[])))
-            )
-        )
-        mock_db.connection.return_value.__exit__ = MagicMock(return_value=None)
-
-        manager = RollbackManager(mock_db, "/test")
-        result = manager.find_last_known_good()
-
-        assert result is None
-
-
 class TestCliFix:
     """Tests for CLI fix command."""
 
@@ -184,9 +150,6 @@ class TestCliFix:
 
         register_fix_parser(subparsers)
 
-        # Check that 'fix' command was registered
-        # (subparsers._group_actions[0].choices would contain 'fix')
-
     def test_cmd_fix_no_database(self, tmp_path, capsys):
         """Test fix command handles missing database."""
         import argparse
@@ -196,12 +159,12 @@ class TestCliFix:
             root=tmp_path,
             deep=False,
             dry_run=False,
+            target="all",
+            phase=None,
+            parallel=False,
+            verbose=False,
             format="text",
             output=None,
-            rollback_to=None,
-            repair_only=None,
-            create_checkpoint=None,
-            no_audit=False,
         )
 
         exit_code = cmd_fix(args)

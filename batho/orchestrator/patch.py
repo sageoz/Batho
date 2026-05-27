@@ -129,7 +129,7 @@ def _hash_scan_changes(
 
 def run_patch(options: PatchOptions) -> PatchResult:
     """Incremental patch of an existing .batho database."""
-    from batho.storage.engine import artifact_filename, get_database
+    from batho.storage.engine import resolve_db_path, get_database
 
     t0 = time.monotonic()
     root = options.root.resolve()
@@ -146,7 +146,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
         )
 
     set_active_root(root)
-    db_path = root / artifact_filename(root)
+    db_path = resolve_db_path(root)
 
     if not db_path.exists():
         msg = f"No artifact database found at {root}. Run: batho build --root {root}"
@@ -285,6 +285,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     if not full_path.exists():
                         continue
                     try:
+                        # max_workers=1 for single-file parsing (no benefit from parallelism)
                         single_graph = indexer.build_graph(
                             root=str(root),
                             file_list=[str(full_path)],
@@ -478,16 +479,22 @@ def run_patch(options: PatchOptions) -> PatchResult:
             "base_run_uuid": base_run_uuid or None,
         }
         
+        artifact_blobs_cfg = cfg.get("artifact_blobs", {})
+
         db.finalize_run_artifacts(
             run_internal_id,
             artifacts={
                 "context_overview": metrics["context_overview"],
                 "telemetry_metrics": telemetry,
                 "structural_metrics": metrics["structural_metrics"],
-                "security_audit": None,
+                "security_audit": {
+                    "schema_version": "interception-stats.v1",
+                    "plugins": {},
+                },
                 "artifact_payload": metrics["artifact_payload"],
                 "delta_stats": delta_stats,
-            }
+            },
+            blob_config=artifact_blobs_cfg
         )
 
         LOGGER.info(

@@ -339,6 +339,37 @@ def test_build_security_audit_is_null(tmp_path):
     assert arts["security_audit"] is None
 
 
+def test_build_security_audit_populated_when_enabled(tmp_path):
+    """security_audit column is populated when enabled in batho.yaml."""
+    py_file = tmp_path / "app.py"
+    py_file.write_text("def run():\n    pass\n", encoding="utf-8")
+    
+    # Write a custom batho.yaml to enable security_audit
+    config_yaml = """
+artifact_blobs:
+  run_artifacts:
+    security_audit: true
+"""
+    (tmp_path / "batho.yaml").write_text(config_yaml, encoding="utf-8")
+    
+    opts = BuildOptions(root=tmp_path)
+    res = run_build(opts)
+    
+    from batho.storage.engine import artifact_filename
+    db_path = tmp_path / artifact_filename(tmp_path)
+    db = BathoDatabase(db_path, repo_root=tmp_path)
+    run_id = db.get_run_internal_id(res.run_id)
+    arts = db.get_run_artifacts(run_id)
+    db.close()
+    
+    assert arts["security_audit"] is not None
+    assert arts["security_audit"]["schema_version"] == "interception-stats.v1"
+    assert isinstance(arts["security_audit"]["plugins"], dict)
+    
+    # Verify no .batho-config/metrics/ files exist
+    assert not (tmp_path / ".batho-config").exists() or not (tmp_path / ".batho-config" / "metrics").exists()
+
+
 def test_no_context_json_sidefiles(tmp_path):
     """.batho-config/context_overview.json and context_files.json do NOT exist."""
     py_file = tmp_path / "app.py"

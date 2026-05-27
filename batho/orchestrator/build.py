@@ -76,7 +76,7 @@ def run_build(options: BuildOptions) -> BuildResult:
     If the database already exists and force_full is False, returns early
     with success=True and a warning indicating patch should be used.
     """
-    from batho.storage.engine import artifact_filename
+    from batho.storage.engine import resolve_db_path
     t0 = time.monotonic()
     root = options.root.resolve()
     
@@ -92,7 +92,7 @@ def run_build(options: BuildOptions) -> BuildResult:
         )
 
     set_active_root(root)
-    db_path = root / artifact_filename(root)
+    db_path = resolve_db_path(root)
 
     # --- Guard: existing database ---
     if db_path.exists() and not options.force_full:
@@ -185,11 +185,12 @@ def run_build(options: BuildOptions) -> BuildResult:
 
         # --- Apply BSG plugin rules ---
         rules_cfg = cfg.get("rules", {})
+        bsg_summary = None
         if rules_cfg:
             try:
                 from batho.bsg.rules import apply_rule_plugins
 
-                apply_rule_plugins(
+                bsg_summary = apply_rule_plugins(
                     graph=graph,
                     root_path=root,
                     rules_config=rules_cfg,
@@ -363,16 +364,28 @@ def run_build(options: BuildOptions) -> BuildResult:
             "git_commit": git_commit,
             "git_branch": git_branch,
         }
+        security_audit_val = None
+        if bsg_summary:
+            security_audit_val = bsg_summary.get("security_audit")
+        if security_audit_val is None:
+            security_audit_val = {
+                "schema_version": "interception-stats.v1",
+                "plugins": {},
+            }
+
+        artifact_blobs_cfg = cfg.get("artifact_blobs", {})
+
         db.finalize_run_artifacts(
             run_internal_id,
             artifacts={
                 "context_overview": metrics["context_overview"],
                 "telemetry_metrics": telemetry,
                 "structural_metrics": metrics["structural_metrics"],
-                "security_audit": None,
+                "security_audit": security_audit_val,
                 "artifact_payload": metrics["artifact_payload"],
                 "delta_stats": None,
-            }
+            },
+            blob_config=artifact_blobs_cfg
         )
 
         LOGGER.info(
