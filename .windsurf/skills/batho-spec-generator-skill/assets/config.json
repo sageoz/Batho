@@ -1,0 +1,51 @@
+{
+  "analysis": {
+    "min_entity_length": 2,
+    "max_entities": 50,
+    "component_keywords": {
+      "cli": ["cli", "command", "argument", "parser", "formatter", "help"],
+      "core": ["core", "schema", "contract", "exception", "config", "utility"],
+      "compression": ["compress", "compressor", "encoder", "decoder", "archive", "zip", "gzip"],
+      "extraction": ["extract", "extractor", "parser", "file", "content", "unzip"],
+      "graph": ["graph", "node", "edge", "traversal", "dependency", "codegraph"],
+      "integrity": ["checksum", "hash", "integrity", "validation", "verification", "sha"],
+      "storage": ["storage", "backend", "cache", "persistence", "database", "save"],
+      "orchestrator": ["orchestrator", "build", "export", "patch", "workflow", "coordinate"]
+    }
+  },
+  "task_generation": {
+    "max_tasks": 50,
+    "min_tasks": 3,
+    "default_priority": "Medium",
+    "default_effort": "Medium"
+  },
+  "output": {
+    "include_mermaid": true,
+    "include_toc": true,
+    "include_risk_assessment": true,
+    "output_format": "standard",
+    "default_project_name": "Batho Feature",
+    "default_output_file": ".specs/feature"
+  },
+  "component_order": [
+    "Core",
+    "CLI",
+    "Modules/Compression",
+    "Modules/Extraction",
+    "Modules/Graph",
+    "Modules/Integrity",
+    "Modules/Storage",
+    "Orchestrator"
+  ],
+  "priority_mapping": {
+    "has_dependencies": "High",
+    "core": "High",
+    "cli": "Medium",
+    "modules/compression": "Medium",
+    "modules/extraction": "Medium",
+    "modules/graph": "Medium",
+    "modules/integrity": "Medium",
+    "modules/storage": "Medium",
+    "orchestrator": "High"
+  },
+  "_note": "This configuration file controls the behavior of the batho-spec-generator-skill. Modify values to customize Batho task generation and output formats."}

@@ -1,4 +1,4 @@
-"""Smoke tests for Batho Storage v2.0 architecture."""
+"""Smoke tests for Batho Storage v1 architecture."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ def close_all_databases():
         _DB_CACHE.clear()
 
 
-class TestSchemaV4:
-    """Verify the v4 schema creates the correct 6-table structure and split view columns."""
+class TestSchemaV1:
+    """Verify the v1 schema creates the correct 6-table structure and split view columns."""
 
     def test_tables_created(self, tmp_path):
         import sqlite3

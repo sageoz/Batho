@@ -1,4 +1,4 @@
-"""Unified artifact storage backed by the .batho SQLite database (v2.0).
+"""Unified artifact storage backed by the .batho SQLite database (v1).
 
 Public API:
 - get_database  → BathoDatabase instance

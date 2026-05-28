@@ -1,5 +1,5 @@
 -- ============================================================
--- Batho Unified Database Schema (v2.0)
+-- Batho Unified Database Schema (v1)
 -- Compressed blob storage with global dictionary encoding.
 -- ============================================================
 
