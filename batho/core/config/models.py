@@ -76,6 +76,7 @@ class LoggingConfig(BaseModel):
 
 class PathsConfig(BaseModel):
     db_path: str = Field(default=DEFAULT_DB_PATH)
+    cache_dir: str = Field(default=".batho/cache")
 
     @field_validator("db_path", mode="before")
     @classmethod
@@ -101,12 +102,24 @@ class IndexerConfig(BaseModel):
     strict: bool = Field(default=False)
 
 
-class PatchConfig(BaseModel):
-    timeout_seconds: int = Field(default=300)
-    max_changes: int = Field(default=10_000)
-    history_days: int = Field(default=90)
-    max_count: int = Field(default=1_000)
-    cleanup_on_startup: bool = Field(default=False)
+class GraphCycleDetectionConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    fatal: bool = Field(default=False)
+
+
+class GraphOrphanPruningConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    keep_entry_points: bool = Field(default=True)
+    keep_exports: bool = Field(default=True)
+
+
+class GraphConfig(BaseModel):
+    cycle_detection: GraphCycleDetectionConfig = Field(
+        default_factory=GraphCycleDetectionConfig
+    )
+    orphan_pruning: GraphOrphanPruningConfig = Field(
+        default_factory=GraphOrphanPruningConfig
+    )
 
 
 class FlagsConfig(BaseModel):
@@ -163,19 +176,10 @@ class BsgParallelConfig(BaseModel):
     chunk_size: int = Field(default=50, ge=1)
 
 
-class BsgIgnoreConfig(BaseModel):
-    enabled: bool = Field(default=True)
-
-
 class BsgCacheConfig(BaseModel):
     enabled: bool = Field(default=True)
     max_size_mb: int = Field(default=1024, ge=1)
     ttl_days: int = Field(default=30, ge=1)
-
-
-class BsgIncrementalConfig(BaseModel):
-    enabled: bool = Field(default=True)
-    auto_detect_git: bool = Field(default=True)
 
 
 class BsgSymbolResolutionConfig(BaseModel):
@@ -187,60 +191,9 @@ class BsgSymbolResolutionConfig(BaseModel):
     unresolved_tracking: bool = Field(default=True)
 
 
-class BsgSerializationConfig(BaseModel):
-    method: str = Field(default="streaming")
-    compression: bool = Field(default=False)
-    batch_size: int = Field(default=1000, ge=1)
-
-
 class BsgParsingConfig(BaseModel):
     error_recovery: bool = Field(default=True)
-    partial_parsing: bool = Field(default=False)
-    max_file_size_mb: int = Field(default=10, ge=1)
     skip_comments: bool = Field(default=False)
-
-
-class BsgQueryConfig(BaseModel):
-    enabled: bool = Field(default=True)
-    index_on_write: bool = Field(default=True)
-    cache_enabled: bool = Field(default=True)
-    cache_size: int = Field(default=256, ge=1)
-    default_limit: int = Field(default=200, ge=1)
-    query_timeout_ms: int = Field(default=5000, ge=1)
-
-
-class BsgStorageRetentionConfig(BaseModel):
-    enabled: bool = Field(default=True)
-    snapshot_ttl_days: int = Field(default=90, ge=1)
-    patch_ttl_days: int = Field(default=90, ge=1)
-    metrics_ttl_days: int = Field(default=30, ge=1)
-    context_ttl_days: int = Field(default=90, ge=1)
-    max_snapshots: int = Field(default=500, ge=1)
-    max_patches: int = Field(default=5000, ge=1)
-
-
-class BsgStorageConfig(BaseModel):
-    enabled: bool = Field(default=True)
-    content_scope: str = Field(default="durable")
-    track_content_ids: bool = Field(default=True)
-    busy_timeout_ms: int = Field(default=5000, ge=100)
-    page_size: int = Field(default=8192)
-    auto_vacuum: str = Field(default="incremental")
-    retention: BsgStorageRetentionConfig = Field(
-        default_factory=BsgStorageRetentionConfig
-    )
-
-    @field_validator("content_scope")
-    @classmethod
-    def _validate_scope(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        return normalized if normalized in {"durable", "all"} else "durable"
-
-    @field_validator("auto_vacuum")
-    @classmethod
-    def _validate_auto_vacuum(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        return normalized if normalized in {"none", "full", "incremental"} else "incremental"
 
 
 class BsgBidirectionalConfig(BaseModel):
@@ -252,21 +205,46 @@ class BsgBidirectionalConfig(BaseModel):
 
 class BsgConfig(BaseModel):
     parallel: BsgParallelConfig = Field(default_factory=BsgParallelConfig)
-    ignore: BsgIgnoreConfig = Field(default_factory=BsgIgnoreConfig)
     cache: BsgCacheConfig = Field(default_factory=BsgCacheConfig)
-    incremental: BsgIncrementalConfig = Field(default_factory=BsgIncrementalConfig)
     symbol_resolution: BsgSymbolResolutionConfig = Field(
         default_factory=BsgSymbolResolutionConfig
     )
-    serialization: BsgSerializationConfig = Field(
-        default_factory=BsgSerializationConfig
-    )
     parsing: BsgParsingConfig = Field(default_factory=BsgParsingConfig)
-    query: BsgQueryConfig = Field(default_factory=BsgQueryConfig)
-    storage: BsgStorageConfig = Field(default_factory=BsgStorageConfig)
     bidirectional: BsgBidirectionalConfig = Field(
         default_factory=BsgBidirectionalConfig
     )
+
+
+class PersistenceConfig(BaseModel):
+    batch_size: int = Field(default=500, ge=1)
+    batch_bytes_threshold: int = Field(default=15_728_640, ge=1)  # 15 MB
+
+
+class DependencyIntrospectionConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    mode: str = Field(default="shallow")   # "shallow" | "deep"
+    venv_auto_detect: bool = Field(default=True)
+    timeout_seconds: int = Field(default=5)
+    full_scan: bool = Field(default=False)  # True = introspect all declared deps; False = popular-packages DB filter
+    popular_packages_db_path: str | None = Field(default=None)  # Override bundled YAML; null = use default
+
+class DependencyStdlibConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    languages: list[str] = Field(default_factory=lambda: ["python", "javascript", "go", "rust"])
+
+class DependencyCacheConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    ttl_days: int = Field(default=90)
+    # cache_dir is inherited from paths.cache_dir (unified cache directory)
+
+class DependencyConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    introspection: DependencyIntrospectionConfig = Field(
+        default_factory=DependencyIntrospectionConfig
+    )
+    stdlib: DependencyStdlibConfig = Field(default_factory=DependencyStdlibConfig)
+    cache: DependencyCacheConfig = Field(default_factory=DependencyCacheConfig)
+    max_deps_per_manifest: int = Field(default=500, ge=1)
 
 
 class Config(BaseModel):
@@ -274,12 +252,14 @@ class Config(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     indexer: IndexerConfig = Field(default_factory=IndexerConfig)
-    patch: PatchConfig = Field(default_factory=PatchConfig)
+    graph: GraphConfig = Field(default_factory=GraphConfig)
     flags: FlagsConfig = Field(default_factory=FlagsConfig)
     rules: RulesConfig = Field(default_factory=RulesConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     artifact_blobs: ArtifactBlobsConfig = Field(default_factory=ArtifactBlobsConfig)
+    persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
     bsg: BsgConfig = Field(default_factory=BsgConfig)
+    dependency: DependencyConfig = Field(default_factory=DependencyConfig)
 
     @field_validator("logging")
     @classmethod

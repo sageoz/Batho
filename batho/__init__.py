@@ -13,15 +13,12 @@ from batho.modules.compression.bsg_map import BSGMap
 # Import and re-export public APIs from submodules
 from batho.modules.graph.builder.codegraph import CodeGraphIndexer, InMemoryGraph
 
-from batho.modules.query.engine.query import QueryService
 from batho.utils.logging import get_logger
 
 __all__ = [
     # Core indexing
     "CodeGraphIndexer",
     "InMemoryGraph",
-    # Query service
-    "QueryService",
     # BSG rendering
     "BSGMap",
     # Config

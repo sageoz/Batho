@@ -18,7 +18,7 @@ import re
 from typing import Any
 
 from batho.modules.extraction.extractor import MarkupConfigExtractor
-from batho.core.schemas import Entity, EntityType, Relationship, RelationshipType
+from batho.core.schemas import Entity, EntityType, Relationship, RelationshipType, SymbolRole
 
 # Precompiled regex patterns for performance
 _BLOCK_PATTERN = re.compile(
@@ -49,6 +49,9 @@ class HCLExtractor(MarkupConfigExtractor):
 
         try:
             content = source.decode("utf-8")
+
+            def _byte_offset(idx: int) -> int:
+                return len(content[:idx].encode("utf-8"))
 
             # Track line positions
             lines = content.split("\n")
@@ -250,6 +253,9 @@ class HCLExtractor(MarkupConfigExtractor):
         try:
             content = source.decode("utf-8")
 
+            def _byte_offset(idx: int) -> int:
+                return len(content[:idx].encode("utf-8"))
+
             # Build entity lookup
             sections = {e.name: e for e in entities if e.type == EntityType.SECTION}
             settings = {e.name: e for e in entities if e.type == EntityType.SETTING}
@@ -266,6 +272,8 @@ class HCLExtractor(MarkupConfigExtractor):
                             target_id=section.id,
                             rel_type=RelationshipType.CONTAINS,
                             line=section.start_line,
+                            definition_start_byte=section.start_byte,
+                            definition_end_byte=section.end_byte,
                         )
                     )
 
@@ -284,6 +292,8 @@ class HCLExtractor(MarkupConfigExtractor):
                                 target_id=setting.id,
                                 rel_type=RelationshipType.CONTAINS,
                                 line=setting.start_line,
+                                definition_start_byte=setting.start_byte,
+                                definition_end_byte=setting.end_byte,
                             )
                         )
                     elif doc and parent_name != "root":
@@ -294,6 +304,8 @@ class HCLExtractor(MarkupConfigExtractor):
                                 target_id=setting.id,
                                 rel_type=RelationshipType.CONTAINS,
                                 line=setting.start_line,
+                                definition_start_byte=setting.start_byte,
+                                definition_end_byte=setting.end_byte,
                             )
                         )
 
@@ -303,6 +315,8 @@ class HCLExtractor(MarkupConfigExtractor):
                 ref_type = match.group(1)
                 ref_name = match.group(2)
                 line_no = content[: match.start()].count("\n") + 1
+                ref_start = _byte_offset(match.start())
+                ref_end = _byte_offset(match.end())
 
                 if doc:
                     relationships.append(
@@ -311,6 +325,9 @@ class HCLExtractor(MarkupConfigExtractor):
                             target_id=f"resource:{ref_type}.{ref_name}",
                             rel_type=RelationshipType.REFERENCES,
                             line=line_no,
+                            reference_start_byte=ref_start,
+                            reference_end_byte=ref_end,
+                            roles=SymbolRole.ReadAccess,
                         )
                     )
 
@@ -318,6 +335,8 @@ class HCLExtractor(MarkupConfigExtractor):
             for match in _VAR_REF_PATTERN.finditer(content):
                 var_name = match.group(1)
                 line_no = content[: match.start()].count("\n") + 1
+                ref_start = _byte_offset(match.start())
+                ref_end = _byte_offset(match.end())
 
                 if doc:
                     relationships.append(
@@ -326,6 +345,9 @@ class HCLExtractor(MarkupConfigExtractor):
                             target_id=f"variable:{var_name}",
                             rel_type=RelationshipType.USES,
                             line=line_no,
+                            reference_start_byte=ref_start,
+                            reference_end_byte=ref_end,
+                            roles=SymbolRole.ReadAccess,
                         )
                     )
 
@@ -333,6 +355,8 @@ class HCLExtractor(MarkupConfigExtractor):
             for match in _MODULE_REF_PATTERN.finditer(content):
                 module_ref = match.group(0)
                 line_no = content[: match.start()].count("\n") + 1
+                ref_start = _byte_offset(match.start())
+                ref_end = _byte_offset(match.end())
 
                 if doc:
                     relationships.append(
@@ -341,6 +365,9 @@ class HCLExtractor(MarkupConfigExtractor):
                             target_id=module_ref,
                             rel_type=RelationshipType.REFERENCES,
                             line=line_no,
+                            reference_start_byte=ref_start,
+                            reference_end_byte=ref_end,
+                            roles=SymbolRole.ReadAccess,
                         )
                     )
 

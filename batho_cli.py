@@ -37,6 +37,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     """CLI main entry point."""
+    import gc
+    gc.set_threshold(50000, 50, 50)
     configure_logging_from_dict(get_config_cached()["logging"])
     parser = _build_parser()
     args = parser.parse_args()

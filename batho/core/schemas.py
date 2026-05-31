@@ -7,16 +7,14 @@ leak out of this layer.
 
 from __future__ import annotations
 
-from enum import Enum, auto
-from typing import Any, Dict
+from enum import Enum, auto, IntFlag
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Tuple, Optional
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
-from batho.utils.hash import (
-    compute_bytes_hash,
-    generate_entity_id,
-    generate_relationship_id,
-)
+from batho.utils.hash import compute_bytes_hash
 
 # --------------------------------------------------------------------------
 # Exceptions
@@ -111,6 +109,247 @@ class GraphConsistencyError(Exception):
 EntityMetadata = Dict[str, Any]
 
 
+class PackageManager(str, Enum):
+    PIP = "pip"
+    NPM = "npm"
+    CARGO = "cargo"
+    GO = "go"
+    GRADLE = "gradle"
+    MAVEN = "maven"
+    UNKNOWN = "unknown"
+
+class PackageMetadata(BaseModel):
+    model_config = {"frozen": True, "extra": "allow", "slots": True}
+
+    manager: PackageManager
+    name: str
+    version: str
+    source: str | None = None
+
+    def __str__(self) -> str:
+        return f"{self.manager.value} {self.name} {self.version}"
+
+    def to_dict(self) -> dict:
+        return {
+            "manager": self.manager.value,
+            "name": self.name,
+            "version": self.version,
+            "source": self.source
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PackageMetadata":
+        return cls(
+            manager=PackageManager(data["manager"]),
+            name=data["name"],
+            version=data["version"],
+            source=data.get("source")
+        )
+
+def detect_package_from_config(root_path: Path) -> PackageMetadata | None:
+    """Helper function to detect package metadata from configuration files."""
+    from batho.modules.dependency.manifest_parser import ManifestParser
+    return ManifestParser.detect_project_metadata(root_path)
+
+class SymbolRole(IntFlag):
+    """Semantic roles for symbol occurrences, based on SCIP specification."""
+    Definition = 1
+    Import = 2
+    WriteAccess = 4
+    ReadAccess = 8
+    Generated = 16
+    Declaration = 32
+    Dynamic = 64
+    Heuristic = 128
+
+    def is_definition(self) -> bool:
+        return bool(self & SymbolRole.Definition)
+
+    def is_reference(self) -> bool:
+        return bool(self & (SymbolRole.ReadAccess | SymbolRole.WriteAccess))
+
+    def is_import(self) -> bool:
+        return bool(self & SymbolRole.Import)
+
+    def __str__(self) -> str:
+        roles = []
+        if self & SymbolRole.Definition:
+            roles.append("Definition")
+        if self & SymbolRole.Import:
+            roles.append("Import")
+        if self & SymbolRole.WriteAccess:
+            roles.append("WriteAccess")
+        if self & SymbolRole.ReadAccess:
+            roles.append("ReadAccess")
+        if self & SymbolRole.Generated:
+            roles.append("Generated")
+        if self & SymbolRole.Declaration:
+            roles.append("Declaration")
+        if self & SymbolRole.Dynamic:
+            roles.append("Dynamic")
+        if self & SymbolRole.Heuristic:
+            roles.append("Heuristic")
+        return ", ".join(roles) if roles else "None"
+
+class DescriptorSuffix(Enum):
+    """Descriptor suffixes for hierarchical symbol encoding."""
+    NAMESPACE = "/"
+    TYPE = "#"
+    TERM = "."
+    METHOD = "()."
+
+    @property
+    def value(self) -> str:
+        return self._value_
+
+def build_descriptor(name: str, suffix: DescriptorSuffix) -> str:
+    """
+    Build a hierarchical descriptor component.
+
+    Args:
+        name: Symbol name (must be valid identifier)
+        suffix: Descriptor suffix type
+
+    Returns:
+        Descriptor string (e.g., "Database#", "connect().")
+
+    Raises:
+        ValueError: If name is not a valid identifier
+    """
+    if not name:
+        raise ValueError("Identifier name cannot be empty")
+    if not re.match(r'^[a-zA-Z_\$][a-zA-Z0-9_\$\[\]]*$', name):
+        raise ValueError(f"Invalid identifier: {name}")
+    return f"{name}{suffix.value}"
+
+def generate_hierarchical_id(
+    package: Optional[PackageMetadata],
+    descriptors: List[Tuple[str, DescriptorSuffix]],
+    commit_hash: Optional[str] = None,
+) -> str:
+    """
+    Generate a hierarchical symbol ID.
+
+    Args:
+        package: Optional package metadata
+        descriptors: List of (name, suffix) tuples
+        commit_hash: Optional commit hash (stored in metadata/ignored for ID generation)
+
+    Returns:
+        Hierarchical ID string
+    """
+    if not descriptors:
+        raise ValueError("Descriptor chain cannot be empty")
+
+    if package:
+        prefix = f"batho {package.manager.value} {package.name} {package.version} "
+    else:
+        prefix = "batho local project 0.0.0 "
+
+    descriptor_str = "".join([
+        build_descriptor(name, suffix) for name, suffix in descriptors
+    ])
+
+    return prefix + descriptor_str
+
+def parse_hierarchical_id(id: str) -> Tuple[Optional[PackageMetadata], List[Tuple[str, DescriptorSuffix]]]:
+    """
+    Parse a hierarchical ID back into components.
+
+    Args:
+        id: Hierarchical ID string
+
+    Returns:
+        Tuple of (package metadata, descriptor chain)
+    """
+    parts = id.split(" ", 4)
+    if len(parts) < 5 or parts[0] != "batho":
+        raise ValueError(f"Invalid hierarchical ID format: {id}")
+
+    manager, name, version, descriptor_str = parts[1], parts[2], parts[3], parts[4]
+
+    try:
+        package = PackageMetadata(
+            manager=PackageManager(manager),
+            name=name,
+            version=version
+        )
+    except ValueError:
+        package = None
+
+    descriptors = []
+    pattern = re.compile(r'([a-zA-Z_\$][a-zA-Z0-9_\$\[\]]*)(\(\)\.|\/|#|\.)')
+    matches = list(pattern.finditer(descriptor_str))
+
+    reconstructed = "".join(m.group(0) for m in matches)
+    if reconstructed != descriptor_str:
+        raise ValueError(f"Malformed descriptor chain: {descriptor_str}")
+
+    for m in matches:
+        d_name = m.group(1)
+        suffix_str = m.group(2)
+        suffix = next(s for s in DescriptorSuffix if s.value == suffix_str)
+        descriptors.append((d_name, suffix))
+
+    return package, descriptors
+
+
+def _escape_id_component(value: str) -> str:
+    return value.replace("|", "%7C")
+
+
+def build_entity_id(
+    *,
+    entity_type: str,
+    name: str,
+    file: str,
+    start_byte: int | None = None,
+    end_byte: int | None = None,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> str:
+    """Build a deterministic, non-hash entity ID."""
+    parts = [
+        "ent",
+        _escape_id_component(entity_type),
+        _escape_id_component(file),
+        str(start_byte) if start_byte is not None else "",
+        str(end_byte) if end_byte is not None else "",
+        str(start_line) if start_line is not None else "",
+        str(end_line) if end_line is not None else "",
+        _escape_id_component(name),
+    ]
+    return "|".join(parts)
+
+
+def build_relationship_id(
+    source_id: str,
+    target_id: str,
+    rel_type: str,
+    *,
+    reference_start_byte: int | None = None,
+    reference_end_byte: int | None = None,
+    definition_start_byte: int | None = None,
+    definition_end_byte: int | None = None,
+    line_number: int | None = None,
+    roles: "SymbolRole | int | None" = None,
+) -> str:
+    """Build a deterministic, non-hash relationship ID."""
+    role_val = int(roles) if roles is not None else 0
+    parts = [
+        "rel",
+        _escape_id_component(source_id),
+        _escape_id_component(rel_type),
+        _escape_id_component(target_id),
+        str(reference_start_byte) if reference_start_byte is not None else "",
+        str(reference_end_byte) if reference_end_byte is not None else "",
+        str(definition_start_byte) if definition_start_byte is not None else "",
+        str(definition_end_byte) if definition_end_byte is not None else "",
+        str(line_number) if line_number is not None else "",
+        str(role_val),
+    ]
+    return "|".join(parts)
+
 # --------------------------------------------------------------------------
 # Enums
 # --------------------------------------------------------------------------
@@ -134,7 +373,8 @@ class EntityType(Enum):
     VARIABLE = auto()
     PROPERTY = auto()
     ENTRY_POINT = auto()
-    UNRESOLVED = auto()  # Unresolvable reference tracked as first-class node
+    UNRESOLVED = auto()  # Deprecated in favor of EXTERNAL_SYMBOL
+    EXTERNAL_SYMBOL = auto()  # Strict SCIP external reference node
     INFRASTRUCTURE_CONFIG = auto()
     ENVIRONMENT_VARIABLE = auto()
     # Markup / Config types
@@ -238,12 +478,26 @@ class Entity(BaseModel):
     trailing_whitespace: str = ""
     ast_node_type: str | None = None
     children_order: list[str] = Field(default_factory=list)
+    enclosing_start_byte: int | None = None
+    enclosing_end_byte: int | None = None
+    is_documentation: bool = False
+    id_override: str | None = None
 
     @computed_field  # type: ignore[misc]
     @property
     def id(self) -> str:
         """Generate a unique, deterministic ID for this entity."""
-        return generate_entity_id(self.type.name, self.name, self.file)
+        if self.id_override is not None:
+            return self.id_override
+        return build_entity_id(
+            entity_type=self.type.name,
+            name=self.name,
+            file=self.file,
+            start_byte=self.start_byte,
+            end_byte=self.end_byte,
+            start_line=self.start_line,
+            end_line=self.end_line,
+        )
     
     @property
     def fqn(self) -> str | None:
@@ -253,6 +507,11 @@ class Entity(BaseModel):
         if self.type in (EntityType.CLASS, EntityType.MODULE, EntityType.NAMESPACE):
             return self.name
         return None
+
+    @property
+    def is_contextual_stub(self) -> bool:
+        """Check if this entity is a contextual stub for unresolved cross-file references."""
+        return self.type == EntityType.UNRESOLVED and self.id.startswith("unresolved:")
 
     def compute_content_hash(self) -> str:
         """Return a SHA256 hash of the raw content bytes."""
@@ -318,6 +577,7 @@ class Entity(BaseModel):
         """
         payload: dict[str, Any] = {
             "id": self.id,
+            "id_override": self.id_override,
             "type": self.type.name,
             "name": self.name,
             "file": self.file,
@@ -329,6 +589,9 @@ class Entity(BaseModel):
             "metadata": self.metadata,
             "parent_id": self.parent_id,
             "ast_node_type": self.ast_node_type,
+            "enclosing_start_byte": self.enclosing_start_byte,
+            "enclosing_end_byte": self.enclosing_end_byte,
+            "is_documentation": self.is_documentation,
             # Persist children_order in agent view so it survives the SQLite cache.
             # Raw content is intentionally excluded from agent view to keep the
             # cache lightweight — it is dynamically regenerated on cache hits.
@@ -339,7 +602,7 @@ class Entity(BaseModel):
                 {
                     "raw_content": self.raw_content,
                     "content_hash": self.content_hash,
-                    "raw_bytes": self.raw_bytes.hex() if self.raw_bytes is not None else None,
+                    "raw_bytes": self.raw_bytes if (self.raw_bytes is not None and self.raw_content is None) else None,
                     "leading_whitespace": self.leading_whitespace,
                     "trailing_whitespace": self.trailing_whitespace,
                     # Note: ast_node_type is already in the base payload above;
@@ -353,7 +616,11 @@ class Entity(BaseModel):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Entity":
         d = data.copy()
-        d.pop("id", None)
+        id_val = d.pop("id", None)
+        # Preserve the serialized ID unconditionally to ensure identity stability.
+        # The id_override takes precedence over the computed id property.
+        if id_val is not None and "id_override" not in d:
+            d["id_override"] = id_val
         if "type" in d and isinstance(d["type"], str):
             # Convert lowercase string to uppercase enum key
             type_str = d["type"].upper()
@@ -411,7 +678,18 @@ class Relationship(BaseModel):
     source_id: str
     target_id: str
     type: RelationshipType
+    roles: SymbolRole = SymbolRole(0)
+    reference_start_byte: int | None = None
+    reference_end_byte: int | None = None
+    definition_start_byte: int | None = None
+    definition_end_byte: int | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = 1.0
+
+    # Note on confidence:
+    # Mutating confidence inside a model validator for a frozen Pydantic model is not
+    # supported. Instead, confidence scoring (e.g. 0.7 for SymbolRole.Heuristic) is
+    # handled at construction time inside the extractor.
 
     @computed_field  # type: ignore[misc]
     @property
@@ -422,7 +700,17 @@ class Relationship(BaseModel):
         to the same target from the same source (e.g., multiple calls to foo()).
         """
         line_number = self.metadata.get("line_number") if self.metadata else None
-        return generate_relationship_id(self.source_id, self.target_id, self.type.name, line_number)
+        return build_relationship_id(
+            self.source_id,
+            self.target_id,
+            self.type.name,
+            reference_start_byte=self.reference_start_byte,
+            reference_end_byte=self.reference_end_byte,
+            definition_start_byte=self.definition_start_byte,
+            definition_end_byte=self.definition_end_byte,
+            line_number=line_number,
+            roles=self.roles,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -430,7 +718,13 @@ class Relationship(BaseModel):
             "source_id": self.source_id,
             "target_id": self.target_id,
             "type": self.type.name,
+            "roles": int(self.roles),
+            "reference_start_byte": self.reference_start_byte,
+            "reference_end_byte": self.reference_end_byte,
+            "definition_start_byte": self.definition_start_byte,
+            "definition_end_byte": self.definition_end_byte,
             "metadata": self.metadata,
+            "confidence": self.confidence,
         }
 
     @classmethod
@@ -441,7 +735,34 @@ class Relationship(BaseModel):
             # Convert lowercase string to uppercase enum key
             type_str = d["type"].upper()
             d["type"] = RelationshipType[type_str]
+        if "roles" in d:
+            role_val = d["roles"]
+            if isinstance(role_val, str):
+                if role_val.isdigit():
+                    d["roles"] = SymbolRole(int(role_val))
+                else:
+                    parts = [p.strip() for p in role_val.split(",") if p.strip()]
+                    role_bits = SymbolRole(0)
+                    for part in parts:
+                        role_bits |= SymbolRole[part]
+                    d["roles"] = role_bits
+            else:
+                d["roles"] = SymbolRole(role_val)
         return cls(**d)
+
+    def _evolve(self, **fields: Any) -> "Relationship":
+        """Return a copy of this Relationship with the specified fields replaced.
+
+        Mirrors ``Entity._evolve``.  Uses Pydantic v2 ``model_copy(update=...)``
+        so callers do not need to reconstruct every field manually.
+
+        Args:
+            **fields: Field names and their new values.
+
+        Returns:
+            A new frozen ``Relationship`` instance with the requested updates applied.
+        """
+        return self.model_copy(update=fields)
 
     def __str__(self) -> str:
         return f"{self.source_id} --[{self.type}]--> {self.target_id}"

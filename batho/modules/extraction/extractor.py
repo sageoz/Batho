@@ -27,6 +27,15 @@ from typing import Any
 from tree_sitter import Language, Node, Query, QueryCursor
 from tree_sitter_language_pack import get_language, get_parser
 
+_TS_PARSER_CACHE: dict[str, Any] = {}
+
+def get_pooled_parser(language: str) -> Any:
+    """Retrieve or initialize a pooled tree-sitter Parser instance for a language."""
+    if language not in _TS_PARSER_CACHE:
+        _TS_PARSER_CACHE[language] = get_parser(language)  # type: ignore[arg-type]
+    return _TS_PARSER_CACHE[language]
+
+
 from batho.utils.encoding import normalize_to_utf8
 from batho.utils.hash import compute_bytes_hash
 from batho.utils.logging import get_logger
@@ -38,7 +47,37 @@ from batho.core.schemas import (
     EntityType,
     Relationship,
     RelationshipType,
+    PackageMetadata,
+    DescriptorSuffix,
+    generate_hierarchical_id,
+    SymbolRole,
 )
+from batho.modules.extraction.symbol_table import FileSymbolTable, SymbolDefinition, ImportStatement
+from batho.modules.extraction.scope_manager import ScopeManager
+
+
+def _sanitize_identifier(name: str) -> str:
+    # Replace invalid characters with underscore
+    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    if not sanitized:
+        return "_"
+    if sanitized[0].isdigit():
+        return f"_{sanitized}"
+    return sanitized
+
+
+def _file_to_descriptors(filepath: str) -> list[tuple[str, DescriptorSuffix]]:
+    from pathlib import Path
+    from batho.core.config import get_active_root
+    path_obj = Path(filepath)
+    try:
+        path_obj = path_obj.relative_to(get_active_root())
+    except ValueError:
+        pass
+    posix_path = path_obj.with_suffix("").as_posix()
+    parts = [p for p in posix_path.split("/") if p]
+    return [(_sanitize_identifier(part), DescriptorSuffix.NAMESPACE) for part in parts]
+
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -86,7 +125,63 @@ _CAPTURE_REL_MAP: dict[str, RelationshipType] = {
     "ref.inherit": RelationshipType.INHERITS,
     "ref.implement": RelationshipType.IMPLEMENTS,
     "ref.use": RelationshipType.USES,
+    "ref.read": RelationshipType.REFERENCES,
+    "ref.write": RelationshipType.REFERENCES,
 }
+
+
+_BUILTINS_BY_LANG: dict[str, set[str]] = {
+    "python": {"int", "str", "float", "bool", "dict", "list", "set", "tuple", "len", "range", "print", "self", "cls", "None", "True", "False", "object", "type", "open", "Exception", "ValueError", "TypeError", "KeyError", "IndexError", "any", "all", "sum", "min", "max", "zip", "enumerate", "map", "filter", "isinstance", "id", "hash", "super", "getattr", "setattr", "hasattr", "iter", "next"},
+    "javascript": {"console", "log", "Object", "Array", "String", "Number", "Boolean", "null", "undefined", "true", "false", "window", "document", "process", "require", "module", "exports", "Error", "Promise", "JSON", "Math", "setTimeout", "clearTimeout", "setInterval", "clearInterval"},
+    "typescript": {"console", "log", "Object", "Array", "String", "Number", "Boolean", "null", "undefined", "true", "false", "window", "document", "process", "require", "module", "exports", "Error", "Promise", "JSON", "Math", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "any", "string", "number", "boolean", "void", "never", "unknown"},
+    "go": {"int", "int32", "int64", "uint", "uint32", "uint64", "float32", "float64", "string", "bool", "byte", "rune", "error", "nil", "true", "false", "len", "cap", "make", "new", "append", "copy", "close", "delete", "panic", "recover", "print", "println"},
+    "rust": {"int", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "f32", "f64", "str", "String", "bool", "char", "Option", "Some", "None", "Result", "Ok", "Err", "Vec", "Box", "Rc", "Arc", "self", "Self", "true", "false", "println", "print", "format", "panic"}
+}
+
+
+def _should_prune_unresolved(ref_text: str, rel_type: RelationshipType, file_imports: list, language: str, filepath: str) -> bool:
+    if "/" not in filepath and "\\" not in filepath:
+        return False
+
+    from batho.core.config import get_config_cached
+    try:
+        cfg = get_config_cached()
+        prune_enabled = cfg.get("bsg", {}).get("symbol_resolution", {}).get("prune_unresolved", True)
+    except Exception:
+        prune_enabled = True
+
+    if not prune_enabled:
+        return False
+
+    name = ref_text.strip()
+    if not name:
+        return True
+
+    # 1. Prune builtins
+    builtins = _BUILTINS_BY_LANG.get(language, set())
+    if name in builtins or name.lower() in builtins:
+        return True
+
+    # 2. Prune common noise stubs
+    if name in {"self", "cls", "this", "err", "error", "nil", "null", "undefined", "true", "false", "args", "kwargs", "ctx", "context"}:
+        return True
+
+    # 3. If it has dot, slash, or colon, it's likely a qualified name or path -> keep
+    if "." in name or "/" in name or ":" in name:
+        return False
+
+    # 4. If it is imported in this file -> keep
+    for module_path, symbols, _ in file_imports:
+        if name == module_path or name in symbols:
+            return False
+
+    # 5. If it's a CALLS or IMPORTS or INHERITS or IMPLEMENTS, keep (could be cross-file function/class)
+    if rel_type in (RelationshipType.CALLS, RelationshipType.IMPORTS, RelationshipType.INHERITS, RelationshipType.IMPLEMENTS):
+        return False
+
+    # 6. Otherwise, if it's USES or REFERENCES, and not imported, and has no dots -> prune!
+    return True
+
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +358,7 @@ class ASTExtractor(abc.ABC):
                 - skip_comments: bool (default False)
         """
         self._language_name: str = language
-        self._ts_parser = get_parser(language)  # type: ignore[arg-type]
+        self._ts_parser = get_pooled_parser(language)
         self._ts_language: Language = get_language(language)  # type: ignore[arg-type]
         self._compiled_query: Query | None = None
         self._compile_failed: bool = False
@@ -329,6 +424,7 @@ class ASTExtractor(abc.ABC):
         content: bytes,
         index_id: str | None = None,
         include_gaps: bool = False,
+        package: PackageMetadata | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """
         Parse *content* and return extracted entities and relationships.
@@ -336,17 +432,6 @@ class ASTExtractor(abc.ABC):
         This method is fully exception-isolated: any internal error is caught,
         logged, and an empty result is returned so the caller can continue
         processing other files.
-
-        Args:
-            filepath: Repo-relative path stored as the ``file`` field on every
-                      extracted Entity.
-            content:  Raw source bytes.
-            index_id: Optional index ID to stamp on entities.
-            include_gaps: When True, emit SYNTAX_GLUE entities for every byte
-                          not covered by semantic entities, producing 100% coverage.
-
-        Returns:
-            A 2-tuple ``(entities, relationships)``, both sorted by source position.
         """
         t0 = time.perf_counter()
 
@@ -355,16 +440,17 @@ class ASTExtractor(abc.ABC):
 
         try:
             tree = self._ts_parser.parse(content)
-        except (TypeError, ValueError) as exc:
-            # Error recovery: tree-sitter still produces a tree on syntax errors.
-            # A second parse() call with identical args will not change the result;
-            # just log and return empty to avoid blocking the whole build.
+        except (TypeError, ValueError, Exception) as exc:
             self.logger.warning(
-                "parse_failed",
+                "parse_failed_triggering_fallback",
                 filepath=filepath,
                 error=str(exc),
             )
-            return [], []
+            
+            from batho.modules.extraction.fallback_parser import FallbackParser
+            fallback_parser = FallbackParser()
+            fallback_result = fallback_parser.parse_file(Path(filepath), content)
+            return fallback_result.entities, fallback_result.relationships
 
         # Check if we should skip comment nodes
         skip_comments = self._parsing_config.get("skip_comments", False)
@@ -379,32 +465,22 @@ class ASTExtractor(abc.ABC):
 
         try:
             cursor = QueryCursor(query)
-            # If skip_comments is enabled, we'll filter during capture processing
             raw_captures: dict[str, list[Node]] = cursor.captures(tree.root_node)
 
             if skip_comments:
                 raw_captures = self._filter_comment_captures(raw_captures)
 
             entities, relationships = self._process_captures(
-                raw_captures, content, filepath, index_id=index_id
+                raw_captures, content, filepath, index_id=index_id, package=package
             )
             entities = self._enrich_bidirectional_attributes(entities, content)
         except Exception as exc:
-            if error_recovery:
-                self.logger.warning(
-                    "capture_processing_failed_with_recovery",
-                    filepath=filepath,
-                    error=str(exc),
-                )
-                # Return empty results but don't fail the entire build
-                return [], []
-            else:
-                self.logger.warning(
-                    "capture_processing_failed",
-                    filepath=filepath,
-                    error=str(exc),
-                )
-                return [], []
+            self.logger.warning(
+                "capture_processing_failed",
+                filepath=filepath,
+                error=str(exc),
+            )
+            return [], []
 
         if include_gaps:
             gap_entities = self._extract_gaps(content, filepath, entities)
@@ -432,14 +508,9 @@ class ASTExtractor(abc.ABC):
     ) -> dict[str, list[Node]]:
         """
         Filter out comment-related captures when skip_comments is enabled.
-
-        This removes captures that are primarily comment nodes, reducing AST size
-        and processing time for comment-heavy files.
         """
         filtered: dict[str, list[Node]] = {}
         for key, nodes in captures.items():
-            # Filter out nodes that are comment types
-            # Common comment node types across languages
             filtered_nodes = [
                 node
                 for node in nodes
@@ -466,14 +537,13 @@ class ASTExtractor(abc.ABC):
         source: bytes,
         filepath: str,
         index_id: str | None = None,
+        package: PackageMetadata | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """
         Group raw captures into entity definitions + auxiliary metadata,
         then build frozen Pydantic models.
         """
-        # definition_nodes: "def.function" → [name_node, ...]
         definition_nodes: dict[str, list[Node]] = {}
-        # auxiliary_nodes: ("def.function", "params") → [node, ...]
         auxiliary_nodes: dict[tuple[str, str], list[Node]] = {}
 
         for cap_name, nodes in captures.items():
@@ -489,13 +559,28 @@ class ASTExtractor(abc.ABC):
                 definition_nodes.setdefault(cap_name, []).extend(nodes)
 
         entities = self._build_entities(
-            definition_nodes, auxiliary_nodes, source, filepath, index_id=index_id
+            definition_nodes, auxiliary_nodes, source, filepath, index_id=index_id, package=package
         )
         unresolved_entities, relationships = self._build_relationships(
-            captures, entities, source, filepath
+            captures, entities, source, filepath, package=package
         )
         entities.extend(unresolved_entities)
         return entities, relationships
+
+    def _find_import_parent(self, node: Node) -> Node:
+        curr = node.parent
+        while curr:
+            if "import" in curr.type or "include" in curr.type or curr.type in (
+                "use_declaration", "namespace_use_clause", "import_spec",
+                "preproc_include", "preproc_include_expression"
+            ):
+                return curr
+            if curr.parent is None:
+                return curr
+            if curr.type in ("block", "source_file"):
+                break
+            curr = curr.parent
+        return node.parent or node
 
     def _build_entities(
         self,
@@ -504,8 +589,10 @@ class ASTExtractor(abc.ABC):
         source: bytes,
         filepath: str,
         index_id: str | None = None,
+        package: PackageMetadata | None = None,
     ) -> list[Entity]:
         """Instantiate Entity models from grouped capture nodes."""
+        from pathlib import Path
         entities: list[Entity] = []
 
         # Pre-decode source lines once for the whole file to avoid repeated
@@ -514,6 +601,8 @@ class ASTExtractor(abc.ABC):
             _source_lines: list[str] = source.decode("utf-8", errors="replace").splitlines()
         except Exception:
             _source_lines = []
+
+        self._def_name_bytes = set()
 
         # 1. Collect flat list of all captured definitions with their node bounds
         flat_definitions = []
@@ -525,6 +614,7 @@ class ASTExtractor(abc.ABC):
                 name = _node_text(name_node, source)
                 if not name:
                     continue
+                self._def_name_bytes.add(name_node.start_byte)
                 decl_node = name_node.parent if name_node.parent is not None else name_node
                 flat_definitions.append((
                     decl_node.start_byte,
@@ -540,7 +630,9 @@ class ASTExtractor(abc.ABC):
         flat_definitions.sort(key=lambda x: (x[0], x[1]))
 
         # 3. Process definitions using a monotonic stack to resolve nested scoping (FQN dot-notation)
-        scope_stack: list[tuple[int, str]] = []  # Stack of (end_byte, parent_fqn)
+        root_descriptors = _file_to_descriptors(filepath)
+
+        scope_stack: list[tuple[int, str, list[tuple[str, DescriptorSuffix]]]] = []  # Stack of (end_byte, parent_fqn, parent_descriptors)
         for start_byte, neg_end_byte, base_key, entity_type, raw_name, name_node, decl_node in flat_definitions:
             end_byte = -neg_end_byte
 
@@ -551,21 +643,40 @@ class ASTExtractor(abc.ABC):
             # Append parent prefix if nested, else keep raw name
             if scope_stack:
                 parent_fqn = scope_stack[-1][1]
+                parent_descriptors = scope_stack[-1][2]
                 fqn_name = f"{parent_fqn}.{raw_name}"
             else:
+                parent_fqn = ""
+                parent_descriptors = root_descriptors
                 fqn_name = raw_name
 
+            # Map entity_type to DescriptorSuffix
+            if entity_type in (EntityType.CLASS, EntityType.STRUCT, EntityType.INTERFACE):
+                current_suffix = DescriptorSuffix.TYPE
+            elif entity_type in (EntityType.FUNCTION, EntityType.METHOD):
+                current_suffix = DescriptorSuffix.METHOD
+            elif entity_type in (EntityType.MODULE, EntityType.NAMESPACE):
+                current_suffix = DescriptorSuffix.NAMESPACE
+            elif entity_type in (EntityType.VARIABLE, EntityType.CONSTANT):
+                current_suffix = DescriptorSuffix.TERM
+            else:
+                current_suffix = DescriptorSuffix.TERM
+
             # For overloading or same-name scopes, optionally append short hash of params signature
+            current_name = raw_name
             params_nodes = auxiliary_nodes.get((base_key, "params"), [])
             params_node = self._nearest_ancestor(params_nodes, decl_node)
             params_text = _node_text(params_node, source) if params_node else ""
             if params_text and params_text != "()":
                 param_hash = hashlib.sha256(params_text.encode("utf-8")).hexdigest()[:6]
                 fqn_name = f"{fqn_name}_[{param_hash}]"
+                current_name = f"{raw_name}_[{param_hash}]"
+
+            descriptors = parent_descriptors + [(current_name, current_suffix)]
 
             # Push current definition to scope stack if it can contain children (e.g. Class, Module, Namespace)
             if entity_type in (EntityType.CLASS, EntityType.MODULE, EntityType.NAMESPACE, EntityType.STRUCT):
-                scope_stack.append((end_byte, fqn_name))
+                scope_stack.append((end_byte, fqn_name, descriptors))
 
             metadata = self._collect_metadata_with_source(
                 base_key, decl_node, auxiliary_nodes, source, source_lines=_source_lines
@@ -574,6 +685,7 @@ class ASTExtractor(abc.ABC):
                 raw_name, base_key, decl_node, auxiliary_nodes, source
             )
 
+            metadata["is_exported"] = True
             if index_id:
                 metadata["bsg.index_id"] = index_id
 
@@ -598,6 +710,9 @@ class ASTExtractor(abc.ABC):
                 raw_bytes_slice, filepath, context=f"entity {normalized_name}"
             )
 
+            encl_start, encl_end = self._get_enclosing_range(decl_node, entity_type)
+            symbol_id = generate_hierarchical_id(package, descriptors)
+
             entity = Entity(
                 type=entity_type,
                 name=normalized_name,
@@ -606,17 +721,81 @@ class ASTExtractor(abc.ABC):
                 end_line=decl_node.end_point[0] + 1,
                 start_byte=decl_node.start_byte,
                 end_byte=decl_node.end_byte,
+                enclosing_start_byte=encl_start,
+                enclosing_end_byte=encl_end,
                 signature=signature,
                 metadata=metadata,
                 raw_content=decoded_content,
                 content_hash=compute_bytes_hash(raw_bytes_slice),
                 raw_bytes=stored_raw_bytes,
                 ast_node_type=decl_node.type,
+                id_override=symbol_id,
             )
             entities.append(entity)
 
+            # Extract docstring as a first-class COMMENT_BLOCK entity
+            doc_nodes = auxiliary_nodes.get((base_key, "docstring"), [])
+            doc_node = self._nearest_ancestor(doc_nodes, decl_node)
+            if doc_node is not None:
+                doc_bytes_slice = source[doc_node.start_byte:doc_node.end_byte]
+                decoded_doc, stored_doc_bytes = self._safe_decode(
+                    doc_bytes_slice, filepath, context=f"docstring of {normalized_name}"
+                )
+                doc_entity = Entity(
+                    type=EntityType.COMMENT_BLOCK,
+                    name=f"{normalized_name}::docstring",
+                    file=filepath,
+                    start_line=doc_node.start_point[0] + 1,
+                    end_line=doc_node.end_point[0] + 1,
+                    start_byte=doc_node.start_byte,
+                    end_byte=doc_node.end_byte,
+                    enclosing_start_byte=doc_node.start_byte,
+                    enclosing_end_byte=doc_node.end_byte,
+                    signature=None,
+                    metadata={"is_docstring": True, "language": self._language_name},
+                    raw_content=decoded_doc,
+                    content_hash=compute_bytes_hash(doc_bytes_slice),
+                    raw_bytes=stored_doc_bytes,
+                    ast_node_type=doc_node.type,
+                    is_documentation=True,
+                    parent_id=entity.id,
+                )
+                entities.append(doc_entity)
+
         entities.sort(key=lambda e: e.start_byte)
         return entities
+
+    def _get_enclosing_range(
+        self, decl_node: Node, entity_type: EntityType
+    ) -> tuple[int, int]:
+        """Compute the enclosing range for a declaration node."""
+        start = decl_node.start_byte
+        end = decl_node.end_byte
+
+        # For functions and classes, check if there is a decorator / decorated_definition parent
+        if entity_type in (EntityType.FUNCTION, EntityType.METHOD, EntityType.CLASS):
+            curr = decl_node.parent
+            if curr and curr.type == "decorated_definition":
+                start = curr.start_byte
+                end = curr.end_byte
+
+        # For variables, find the nearest enclosing block or statement list
+        elif entity_type == EntityType.VARIABLE:
+            curr = decl_node.parent
+            while curr:
+                if curr.type in (
+                    "block",
+                    "statement_block",
+                    "compound_statement",
+                    "function_definition",
+                    "class_definition",
+                ):
+                    start = curr.start_byte
+                    end = curr.end_byte
+                    break
+                curr = curr.parent
+
+        return start, end
 
     def _build_relationships(
         self,
@@ -624,6 +803,7 @@ class ASTExtractor(abc.ABC):
         entities: list[Entity],
         source: bytes,
         filepath: str,
+        package: PackageMetadata | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Build Relationship models from reference captures.
 
@@ -632,23 +812,25 @@ class ASTExtractor(abc.ABC):
         """
         relationships: list[Relationship] = []
         unresolved_entities: list[Entity] = []
-        emitted: set[tuple[str, str, str]] = set()
+        emitted: set[tuple[str, str, str, int, int, int]] = set()
         unresolved_emitted: set[str] = set()
 
         # Compute timestamp once per _build_relationships call rather than per
-        # unresolved entity (EXT-08: avoids repeated datetime.now() in hot loop).
+        # unresolved entity.
         now_ts = datetime.now(timezone.utc).isoformat()
 
-        def _make_unresolved(
-            ref_text: str, line: int, rel_type: RelationshipType
+        def _make_contextual_stub(
+            ref_text: str, line: int, rel_type: RelationshipType, caller_scope: str
         ) -> Entity:
+            stub_id = f"unresolved:{caller_scope}::{ref_text}"
             meta: dict[str, Any] = {
                 "reference_type": rel_type.name.lower(),
-                "resolution_reason": "not_found",
-                "attempts": 1,
+                "resolution_reason": "contextual_stub",
                 "created_at": now_ts,
-                "last_attempt": now_ts,
                 "is_visible": False,
+                "stub_resolution_state": "pending",
+                "caller_scope": caller_scope,
+                "target_name": ref_text,
             }
             return Entity(
                 type=EntityType.UNRESOLVED,
@@ -657,6 +839,7 @@ class ASTExtractor(abc.ABC):
                 start_line=line,
                 end_line=line,
                 metadata=meta,
+                id_override=stub_id,
             )
 
         def _add(
@@ -665,8 +848,17 @@ class ASTExtractor(abc.ABC):
             rel_type: RelationshipType,
             line: int,
             extra_metadata: dict[str, Any] | None = None,
+            *,
+            reference_start_byte: int | None = None,
+            reference_end_byte: int | None = None,
+            definition_start_byte: int | None = None,
+            definition_end_byte: int | None = None,
+            roles: SymbolRole | int | None = None,
+            confidence: float = 1.0,
         ) -> None:
-            key = (src_id, tgt_id, str(rel_type))
+            ref_start_key = reference_start_byte if reference_start_byte is not None else -1
+            ref_end_key = reference_end_byte if reference_end_byte is not None else -1
+            key = (src_id, tgt_id, str(rel_type), ref_start_key, ref_end_key, line)
             if key not in emitted:
                 emitted.add(key)
                 metadata = {"line_number": line}
@@ -677,15 +869,43 @@ class ASTExtractor(abc.ABC):
                         source_id=src_id,
                         target_id=tgt_id,
                         type=rel_type,
+                        roles=SymbolRole(roles) if roles is not None else SymbolRole(0),
+                        reference_start_byte=reference_start_byte,
+                        reference_end_byte=reference_end_byte,
+                        definition_start_byte=definition_start_byte,
+                        definition_end_byte=definition_end_byte,
                         metadata=metadata,
+                        confidence=confidence,
                     )
                 )
 
+        # Extract file imports for local resolution support
+        file_imports = []
+        parent_to_nodes = {}
+        for cap_name, nodes in captures.items():
+            if cap_name.startswith("ref.import"):
+                for node in nodes:
+                    parent = self._find_import_parent(node)
+                    parent_to_nodes.setdefault(parent, []).append((cap_name, node))
+        for parent, cap_nodes in parent_to_nodes.items():
+            modules = []
+            symbols_list = []
+            for cap_name, node in cap_nodes:
+                text = _node_text(node, source)
+                if not text:
+                    continue
+                if "module" in cap_name or "require" in cap_name or "load" in cap_name:
+                    modules.append(text)
+                elif "symbol" in cap_name or "static" in cap_name:
+                    symbols_list.append(text)
+            if not modules:
+                module_path = _normalize_import_target(_node_text(parent, source))
+            else:
+                module_path = _normalize_import_target(modules[0])
+            is_from_import = len(symbols_list) > 0 or "from" in _node_text(parent, source).lower()
+            file_imports.append((module_path, symbols_list, is_from_import))
+
         # CONTAINS: parent entity → child entity
-        # O(N) monotonic stack algorithm (EXT-02: replaces O(N²) backward scan).
-        # Entities are assumed sorted by start_byte ascending, end_byte descending
-        # (i.e. outer entities appear before inner ones at the same start).
-        # Stack entries: Entity objects whose byte range is still "open".
         parent_stack: list[Entity] = []
         for child in entities:
             # Pop any entries that cannot contain this child.
@@ -693,17 +913,23 @@ class ASTExtractor(abc.ABC):
                 parent_stack.pop()
             if parent_stack and parent_stack[-1].id != child.id:
                 parent = parent_stack[-1]
-                _add(parent.id, child.id, RelationshipType.CONTAINS, child.start_line)
+                _add(
+                    parent.id,
+                    child.id,
+                    RelationshipType.CONTAINS,
+                    child.start_line,
+                    definition_start_byte=child.start_byte,
+                    definition_end_byte=child.end_byte,
+                )
             # Only push if this entity can contain future entities.
             if not parent_stack or child.end_byte <= parent_stack[-1].end_byte:
                 parent_stack.append(child)
             elif child.end_byte > parent_stack[-1].end_byte:
-                # This entity is wider than the current top — replace (unusual,
-                # happens when entities overlap rather than nest cleanly).
                 parent_stack.pop()
                 parent_stack.append(child)
 
         by_name: dict[str, Entity] = {e.name: e for e in entities}
+        by_id: dict[str, Entity] = {e.id: e for e in entities}
         sorted_ents = entities
 
         def _find_enclosing(byte_offset: int) -> Entity | None:
@@ -723,7 +949,10 @@ class ASTExtractor(abc.ABC):
             if rel_type == RelationshipType.CONTAINS:
                 continue
 
+            def_name_bytes = getattr(self, "_def_name_bytes", set())
             for node in nodes:
+                if node.start_byte in def_name_bytes:
+                    continue
                 ref_text = _node_text(node, source)
                 if not ref_text:
                     continue
@@ -734,6 +963,10 @@ class ASTExtractor(abc.ABC):
                 if capture_variant:
                     rel_meta["capture_variant"] = capture_variant
 
+                role = self._determine_symbol_role(cap_name, node)
+                if role == SymbolRole(0):
+                    continue
+
                 if rel_type in (
                     RelationshipType.CALLS,
                     RelationshipType.USES,
@@ -743,15 +976,55 @@ class ASTExtractor(abc.ABC):
                     if source_ent is None:
                         continue
                     source_id = source_ent.id
+
+                    target_id = None
                     target_ent = by_name.get(ref_text)
-                    if target_ent is not None and source_id != target_ent.id:
-                        _add(source_id, target_ent.id, rel_type, line_no, rel_meta)
-                    elif target_ent is None:
-                        unres = _make_unresolved(ref_text, line_no, rel_type)
-                        if unres.id not in unresolved_emitted:
-                            unresolved_emitted.add(unres.id)
-                            unresolved_entities.append(unres)
-                        _add(source_id, unres.id, rel_type, line_no, rel_meta)
+                    if target_ent is not None:
+                        target_id = target_ent.id
+
+                    ref_to_use = ref_text
+                    if target_id is None:
+                        for module_path, symbols_list, is_from in file_imports:
+                            if is_from and ref_text in symbols_list:
+                                ref_to_use = f"{module_path}.{ref_text}"
+                                break
+                            elif not is_from:
+                                if ref_text == module_path or ref_text.startswith(module_path + ".") or ref_text.startswith(module_path + "/"):
+                                    ref_to_use = ref_text
+                                    break
+
+                    target_ent = by_id.get(target_id) if target_id else None
+
+                    if target_id is not None and source_id != target_id:
+                        _add(
+                            source_id,
+                            target_id,
+                            rel_type,
+                            line_no,
+                            rel_meta,
+                            reference_start_byte=node.start_byte,
+                            reference_end_byte=node.end_byte,
+                            definition_start_byte=target_ent.start_byte,
+                            definition_end_byte=target_ent.end_byte,
+                            roles=role,
+                            confidence=1.0,
+                        )
+                    elif target_id is None:
+                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath):
+                            unres = _make_contextual_stub(ref_to_use, line_no, rel_type, caller_scope=source_id)
+                            if unres.id not in unresolved_emitted:
+                                unresolved_emitted.add(unres.id)
+                                unresolved_entities.append(unres)
+                            _add(
+                                source_id,
+                                unres.id,
+                                rel_type,
+                                line_no,
+                                rel_meta,
+                                reference_start_byte=node.start_byte,
+                                reference_end_byte=node.end_byte,
+                                roles=role,
+                            )
 
                 elif rel_type == RelationshipType.IMPORTS:
                     source_ent = _find_enclosing(node.start_byte)
@@ -763,20 +1036,43 @@ class ASTExtractor(abc.ABC):
                         continue
 
                     for target_ref in targets:
+                        target_id = None
                         target_ent = by_name.get(target_ref)
-                        if target_ent is not None and source_id != target_ent.id:
-                            _add(source_id, target_ent.id, rel_type, line_no, rel_meta)
-                        elif target_ent is None:
-                            unres = _make_unresolved(target_ref, line_no, rel_type)
-                            if unres.id not in unresolved_emitted:
-                                unresolved_emitted.add(unres.id)
-                                unresolved_entities.append(unres)
-                            _add(source_id, unres.id, rel_type, line_no, rel_meta)
-                            self.logger.debug(
-                                "unresolved_import",
-                                filepath=filepath,
-                                ref=target_ref,
+                        if target_ent is not None:
+                            target_id = target_ent.id
+
+                        target_ent = by_id.get(target_id) if target_id else None
+
+                        if target_id is not None and source_id != target_id:
+                            _add(
+                                source_id,
+                                target_id,
+                                rel_type,
+                                line_no,
+                                rel_meta,
+                                reference_start_byte=node.start_byte,
+                                reference_end_byte=node.end_byte,
+                                definition_start_byte=target_ent.start_byte,
+                                definition_end_byte=target_ent.end_byte,
+                                roles=role,
+                                confidence=1.0,
                             )
+                        elif target_id is None:
+                            if not _should_prune_unresolved(target_ref, rel_type, file_imports, self._language_name, filepath):
+                                unres = _make_contextual_stub(target_ref, line_no, rel_type, caller_scope=source_id)
+                                if unres.id not in unresolved_emitted:
+                                    unresolved_emitted.add(unres.id)
+                                    unresolved_entities.append(unres)
+                                _add(
+                                    source_id,
+                                    unres.id,
+                                    rel_type,
+                                    line_no,
+                                    rel_meta,
+                                    reference_start_byte=node.start_byte,
+                                    reference_end_byte=node.end_byte,
+                                    roles=role,
+                                )
 
                 elif rel_type in (
                     RelationshipType.INHERITS,
@@ -786,13 +1082,47 @@ class ASTExtractor(abc.ABC):
                     if source_ent is None:
                         continue
 
+                    target_id = None
                     target_ent = by_name.get(ref_text)
-                    if target_ent is not None and source_ent.id != target_ent.id:
-                        _add(source_ent.id, target_ent.id, rel_type, line_no, rel_meta)
-                    elif target_ent is None:
+                    if target_ent is not None:
+                        target_id = target_ent.id
+
+                    if target_id is None:
                         normalized_ref = _normalize_import_target(ref_text)
                         if normalized_ref:
-                            unres = _make_unresolved(normalized_ref, line_no, rel_type)
+                            target_ent = by_name.get(normalized_ref)
+                            if target_ent is not None:
+                                target_id = target_ent.id
+
+                    ref_to_use = normalized_ref if normalized_ref else ref_text
+                    if target_id is None:
+                        for module_path, symbols_list, is_from in file_imports:
+                            if is_from and ref_to_use in symbols_list:
+                                ref_to_use = f"{module_path}.{ref_to_use}"
+                                break
+                            elif not is_from:
+                                if ref_to_use == module_path or ref_to_use.startswith(module_path + ".") or ref_to_use.startswith(module_path + "/"):
+                                    break
+
+                    target_ent = by_id.get(target_id) if target_id else None
+
+                    if target_id is not None and source_ent.id != target_id:
+                        _add(
+                            source_ent.id,
+                            target_id,
+                            rel_type,
+                            line_no,
+                            rel_meta,
+                            reference_start_byte=node.start_byte,
+                            reference_end_byte=node.end_byte,
+                            definition_start_byte=target_ent.start_byte,
+                            definition_end_byte=target_ent.end_byte,
+                            roles=role,
+                            confidence=1.0,
+                        )
+                    else:
+                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath):
+                            unres = _make_contextual_stub(ref_to_use, line_no, rel_type, caller_scope=source_ent.id)
                             if unres.id not in unresolved_emitted:
                                 unresolved_emitted.add(unres.id)
                                 unresolved_entities.append(unres)
@@ -802,9 +1132,35 @@ class ASTExtractor(abc.ABC):
                                 rel_type,
                                 line_no,
                                 rel_meta,
+                                reference_start_byte=node.start_byte,
+                                reference_end_byte=node.end_byte,
+                                roles=role,
                             )
 
         return unresolved_entities, relationships
+
+    def _determine_symbol_role(self, cap_name: str, node: Node) -> SymbolRole:
+        """Process tree-sitter capture and return symbol role."""
+        from batho.core.schemas import SymbolRole
+        if cap_name.startswith("ref.write"):
+            return SymbolRole.WriteAccess
+        elif cap_name.startswith("ref.read"):
+            # If it's a read capture, but the node is also in a write position of a standard assignment,
+            # skip ReadAccess.
+            if node.parent and node.parent.type in ("assignment", "assignment_expression"):
+                left_node = node.parent.child_by_field_name("left")
+                if left_node == node or (left_node and left_node.start_byte <= node.start_byte < left_node.end_byte):
+                    return SymbolRole(0)
+            return SymbolRole.ReadAccess
+        elif cap_name.startswith("ref.call"):
+            return SymbolRole.ReadAccess
+        elif cap_name.startswith("ref.import"):
+            return SymbolRole.Import
+        elif cap_name.startswith("ref.inherit"):
+            return SymbolRole.ReadAccess
+        elif cap_name.startswith("ref.implement"):
+            return SymbolRole.ReadAccess
+        return SymbolRole(0)
 
     # ------------------------------------------------------------------
     # Internal — metadata / signature helpers
@@ -1365,6 +1721,7 @@ class MarkupConfigExtractor(ASTExtractor):
         content: bytes,
         index_id: str | None = None,
         include_gaps: bool = False,
+        package: PackageMetadata | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Parse a markup or configuration file."""
         t0 = time.perf_counter()
@@ -1503,13 +1860,29 @@ class MarkupConfigExtractor(ASTExtractor):
         target_id: str,
         rel_type: RelationshipType,
         line: int,
+        *,
+        reference_start_byte: int | None = None,
+        reference_end_byte: int | None = None,
+        definition_start_byte: int | None = None,
+        definition_end_byte: int | None = None,
+        roles: SymbolRole | int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Relationship:
         """Helper to create a Relationship with consistent defaults."""
+        role_val = SymbolRole(roles) if roles is not None else SymbolRole(0)
+        meta = {"line_number": line}
+        if metadata:
+            meta.update(metadata)
         return Relationship(
             source_id=source_id,
             target_id=target_id,
             type=rel_type,
-            metadata={"line_number": line},
+            roles=role_val,
+            reference_start_byte=reference_start_byte,
+            reference_end_byte=reference_end_byte,
+            definition_start_byte=definition_start_byte,
+            definition_end_byte=definition_end_byte,
+            metadata=meta,
         )
 
     def _extract_key_value_pairs(

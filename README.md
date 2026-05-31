@@ -16,7 +16,6 @@
 </p>
 
 <br>
-
 ## 📚 Official Documentation
 
 For complete documentation, guides, and API reference, visit **[batho.sageoz.org](https://batho.sageoz.org)**.
@@ -48,9 +47,13 @@ batho fix --deep
 - **40+ language AST parsing** — Python, TypeScript, Rust, Go, Java, and more
 - **10x context compression** — Fit entire codebases into LLM context windows
 - **Time Machine snapshots** — Track codebase evolution with incremental patching
-- **BSG Plugin System v2** — 9 built-in security & quality interceptor plugins
-- **Symbol Resolution** — Cross-file symbol resolution with FQN-based matching
-- **SQLite Artifact Database** — Schema v7 with three-blob design (agent/storage/rel views)
+- **BSG Plugin System v2** — 38 built-in plugins (28 foundation + 10 interceptors) for security, quality, and optimization
+- **Single-Pass Extraction** — One parse per file; cross-file references emit contextual stubs (`EntityType.UNRESOLVED`) resolved post-extraction by ScopeManager
+- **Deterministic IDs** — Position-based ID generation for stable entity tracking (no false positives from code movement)
+- **Graph Optimization** — Cyclic dependency detection and orphan node pruning
+- **Dependency-Aware Resolution** — CDEU module resolves stdlib and third-party symbols (pip, npm, cargo, go) via manifest parsing and live introspection
+- **Symbol Resolution** — Cross-file symbol resolution with hierarchical encoding and SymbolRole tagging
+- **SQLite Artifact Database** — Schema v1 with three-blob design (agent/storage/rel views) and symbol table storage
 - **Query Engine** — Fast SQLite-index-first entity and relationship queries
 - **File Changelog** — Node-level diff history with FTS5 full-text search
 - **Integrity Verification** — Multi-stage fix command with auto-repair capabilities

@@ -14,10 +14,9 @@ import orjson
 import pytest
 
 from batho.modules.extraction.extractor import ASTExtractor
-from batho.modules.extraction.pipeline import _deserialize_result, process_file_worker
+from batho.modules.extraction.pipeline import process_file_single_pass_worker
 from batho.core.schemas import Entity, EntityType, Relationship, RelationshipType
 from batho.modules.storage.sqlite_registry.engine import BathoDatabase
-from batho.utils.hash import generate_entity_id
 
 
 class DummyPythonExtractor(ASTExtractor):
@@ -96,12 +95,14 @@ class Calculator:
 
     # Verify deterministic line-number-free entity IDs are unique
     assert method_1.id != method_2.id
-    assert method_1.id == generate_entity_id(method_1.type.name, method_1.name, method_1.file)
+    assert "Calculator#process" in method_1.id
 
 
 @pytest.mark.unit
 def test_ipc_serialization_bypass_and_gc():
-    """Verify process_file_worker outputs orjson bytes (bypassing pickle) and worker GC is cycled."""
+    """Verify process_file_single_pass_worker outputs msgpack + zstd bytes and worker GC is cycled."""
+    import msgpack
+    import zstandard as zstd
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
         filepath = tmp_path / "test_ipc.py"
@@ -113,8 +114,8 @@ def process_data(a, b):
         # Record GC state
         gc_was_enabled = gc.isenabled()
 
-        # Run process_file_worker
-        result = process_file_worker(
+        # Run process_file_single_pass_worker
+        result = process_file_single_pass_worker(
             file_path=filepath,
             filepath=str(filepath),
             current_mtime=os.path.getmtime(filepath),
@@ -124,34 +125,30 @@ def process_data(a, b):
             ttl_days=30,
             max_file_size_kb=500,
             bsg_cache_cfg={},
-            cache_variant="",
         )
 
         # Assert GC is restored properly
         assert gc.isenabled() == gc_was_enabled
 
         assert result is not None
-        filepath_res, ent_bytes, rel_bytes, cached_hit = result
+        # New 9-tuple: (filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, global_manifest, file_security_audit, local_hits)
+        filepath_res, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, global_manifest, file_security_audit, local_hits = result
 
         assert filepath_res == str(filepath)
-        assert isinstance(ent_bytes, bytes)
+        assert isinstance(hollow_bytes, bytes)
         assert isinstance(rel_bytes, bytes)
-        assert not cached_hit
+        assert isinstance(agent_blob, bytes)
+        assert isinstance(storage_blob, bytes)
+        assert isinstance(global_manifest, list)
+        assert isinstance(file_security_audit, dict)
+        assert isinstance(local_hits, dict)
 
-        # Decode via orjson to check data
-        ents_data = orjson.loads(ent_bytes)
-        assert len(ents_data) == 1
-        assert ents_data[0]["name"].startswith("process_data")
-        assert ents_data[0]["type"] == "FUNCTION"
 
-        # Deserialize back into objects using pipeline helper
-        deser = _deserialize_result(result)
-        assert deser is not None
-        _, entities, relationships, _ = deser
-
-        assert len(entities) == 1
-        assert isinstance(entities[0], Entity)
-        assert entities[0].name.startswith("process_data")
+        # Decode hollow topology via msgpack (not compressed)
+        hollow_data = msgpack.unpackb(hollow_bytes)
+        func_ents = [e for e in hollow_data if e.get("type") == 1]  # FUNCTION = 1
+        assert len(func_ents) == 1
+        assert func_ents[0]["name"].startswith("process_data")
 
 
 @pytest.mark.integration
@@ -243,17 +240,31 @@ def test_lazy_cross_file_resolution_sql_join():
 
         # Assert query_entities has both
         with db.connection(read_only=True) as conn:
-            rows = conn.execute("SELECT * FROM query_entities WHERE run_id = ?", (run_internal_id,)).fetchall()
+            rows = conn.execute(
+                """SELECT ed.val AS entity_id FROM query_entities qe
+                   JOIN entity_dict ed ON qe.entity_key = ed.id
+                   WHERE qe.run_id = ?""",
+                (run_internal_id,)
+            ).fetchall()
             assert len(rows) == 2
 
             # Assert dangling_references contains the CALLS edge to process_data
-            dangling = conn.execute("SELECT * FROM dangling_references WHERE run_id = ?", (run_internal_id,)).fetchall()
+            dangling = conn.execute(
+                """SELECT ed.val AS source_id, d.unresolved_target_name, d.relation_type, d.run_id 
+                   FROM dangling_references d
+                   JOIN entity_dict ed ON d.source_key = ed.id
+                   WHERE d.run_id = ?""",
+                (run_internal_id,)
+            ).fetchall()
             assert len(dangling) == 1
             assert dangling[0]["unresolved_target_name"] == "process_data"
             assert dangling[0]["source_id"] == "function:main:src/main.py"
 
             # Assert query_relationships is empty initially
-            rels = conn.execute("SELECT * FROM query_relationships WHERE run_id = ?", (run_internal_id,)).fetchall()
+            rels = conn.execute(
+                """SELECT * FROM query_relationships WHERE run_id = ?""",
+                (run_internal_id,)
+            ).fetchall()
             assert len(rels) == 0
 
         # Execute lazy SQL Join Resolution
@@ -262,7 +273,14 @@ def test_lazy_cross_file_resolution_sql_join():
 
         # Verify query_relationships has the newly resolved cross-file relationship
         with db.connection(read_only=True) as conn:
-            rels = conn.execute("SELECT * FROM query_relationships WHERE run_id = ?", (run_internal_id,)).fetchall()
+            rels = conn.execute(
+                """SELECT ed_src.val AS source_id, ed_tgt.val AS target_id, r.relation_type, r.run_id
+                   FROM query_relationships r
+                   JOIN entity_dict ed_src ON r.source_key = ed_src.id
+                   JOIN entity_dict ed_tgt ON r.target_key = ed_tgt.id
+                   WHERE r.run_id = ?""",
+                (run_internal_id,)
+            ).fetchall()
             assert len(rels) == 1
             assert rels[0]["source_id"] == "function:main:src/main.py"
             assert rels[0]["target_id"] == "function:process_data:src/lib.py"
@@ -271,3 +289,10 @@ def test_lazy_cross_file_resolution_sql_join():
             # Verify dangling references table is cleaned up
             dangling_after = conn.execute("SELECT * FROM dangling_references WHERE run_id = ?", (run_internal_id,)).fetchall()
             assert len(dangling_after) == 0
+
+        # Verify bsg_rel_view in file_artifacts is updated with resolved target ID
+        artifacts = db.get_file_artifacts(run_internal_id)
+        main_art = next(a for a in artifacts if a["file_path"] == "src/main.py")
+        rels = main_art["graph"]["relationships"]
+        assert len(rels) == 1
+        assert rels[0]["target_id"] == "function:process_data:src/lib.py"

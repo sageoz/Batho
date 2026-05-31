@@ -56,8 +56,8 @@ patterns:
   - "Cargo.lock"
   - "Gemfile.lock"
 
-  # Batho's own directories
-  - ".ctn/"
+  # Batho's own files and directories
+  - "batho.yaml"
   - ".batho/"
   - "artifact_*.batho*"
   - ".aider/"

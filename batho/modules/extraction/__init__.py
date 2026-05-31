@@ -1,10 +1,20 @@
 """Extraction module re-exports."""
 from .extractor import ASTExtractor as ASTExtractor, MarkupConfigExtractor as MarkupConfigExtractor
-from .pipeline import build_graph_parallel as build_graph_parallel, build_graph_sequential as build_graph_sequential
+from .pipeline import extract_and_emit_parallel as extract_and_emit_parallel
+from .scope_manager import ScopeManager as ScopeManager, SymbolInfo as SymbolInfo
+from .symbol_table import (
+    FileSymbolTable as FileSymbolTable,
+    SymbolDefinition as SymbolDefinition,
+    ImportStatement as ImportStatement,
+)
 
 __all__ = [
     "ASTExtractor",
     "MarkupConfigExtractor",
-    "build_graph_parallel",
-    "build_graph_sequential",
+    "extract_and_emit_parallel",
+    "ScopeManager",
+    "SymbolInfo",
+    "FileSymbolTable",
+    "SymbolDefinition",
+    "ImportStatement",
 ]

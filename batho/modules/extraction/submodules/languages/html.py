@@ -21,7 +21,7 @@ import re
 from typing import Any
 
 from batho.modules.extraction.extractor import MarkupConfigExtractor
-from batho.core.schemas import Entity, EntityType, Relationship, RelationshipType
+from batho.core.schemas import Entity, EntityType, Relationship, RelationshipType, SymbolRole
 
 # Precompiled regex patterns for performance
 _TAG_PATTERN = re.compile(
@@ -61,6 +61,9 @@ class HTMLExtractor(MarkupConfigExtractor):
 
         try:
             content = source.decode("utf-8")
+
+            def _byte_offset(idx: int) -> int:
+                return len(content[:idx].encode("utf-8"))
 
             # Parse HTML tags using regex (lightweight approach)
             # Matches: <tag attr="value" ...>
@@ -176,6 +179,9 @@ class HTMLExtractor(MarkupConfigExtractor):
         try:
             content = source.decode("utf-8")
 
+            def _byte_offset(idx: int) -> int:
+                return len(content[:idx].encode("utf-8"))
+
             # Build entity lookup
             elements = {e.name: e for e in entities if e.type == EntityType.ELEMENT}
             documents = {e.name: e for e in entities if e.type == EntityType.DOCUMENT}
@@ -192,6 +198,8 @@ class HTMLExtractor(MarkupConfigExtractor):
                             target_id=element.id,
                             rel_type=RelationshipType.CONTAINS,
                             line=element.start_line,
+                            definition_start_byte=element.start_byte,
+                            definition_end_byte=element.end_byte,
                         )
                     )
 
@@ -201,6 +209,8 @@ class HTMLExtractor(MarkupConfigExtractor):
                 if href.startswith(("http://", "https://", "//")):
                     # External link
                     line_no = content[: match.start()].count("\n") + 1
+                    ref_start = _byte_offset(match.start())
+                    ref_end = _byte_offset(match.end())
                     if doc:
                         relationships.append(
                             self._create_relationship(
@@ -208,6 +218,9 @@ class HTMLExtractor(MarkupConfigExtractor):
                                 target_id=f"external:{href}",
                                 rel_type=RelationshipType.LINKS_TO,
                                 line=line_no,
+                                reference_start_byte=ref_start,
+                                reference_end_byte=ref_end,
+                                roles=SymbolRole.ReadAccess,
                             )
                         )
 
@@ -215,6 +228,8 @@ class HTMLExtractor(MarkupConfigExtractor):
             for match in _STYLE_PATTERN.finditer(content):
                 stylesheet = match.group(1)
                 line_no = content[: match.start()].count("\n") + 1
+                ref_start = _byte_offset(match.start())
+                ref_end = _byte_offset(match.end())
                 if doc:
                     relationships.append(
                         self._create_relationship(
@@ -222,6 +237,9 @@ class HTMLExtractor(MarkupConfigExtractor):
                             target_id=f"stylesheet:{stylesheet}",
                             rel_type=RelationshipType.IMPORTS_STYLE,
                             line=line_no,
+                            reference_start_byte=ref_start,
+                            reference_end_byte=ref_end,
+                            roles=SymbolRole.Import,
                         )
                     )
 

@@ -523,9 +523,15 @@ def _hash_file(path: Path) -> str:
 
 
 def _rules_cache_path(root_path: Path) -> Path:
-    cache_dir = root_path / ".batho-config" / "cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / _CACHE_FILENAME
+    from batho.core.config.loader import get_config_with_root
+    try:
+        cfg = get_config_with_root(root_path)
+        cache_dir = cfg.get("paths", {}).get("cache_dir")
+    except Exception:
+        cache_dir = ".batho/cache"
+    cache_path = root_path / cache_dir
+    cache_path.mkdir(parents=True, exist_ok=True)
+    return cache_path / _CACHE_FILENAME
 
 
 
@@ -1987,13 +1993,22 @@ def load_effective_rules(
     return effective_rules, stats
 
 
-def _to_relative_posix(file_path: str, root_path: Path) -> str:
+def _to_relative_posix(file_path: str, root_path: Path | str) -> str:
     """Best-effort relative path normalization for glob matching."""
+    file_path_str = str(file_path).replace('\\', '/')
+    root_str = str(root_path).replace('\\', '/')
+    if not root_str.endswith('/'):
+        root_str += '/'
+        
+    # FAST PATH: String slicing avoids disk I/O
+    if file_path_str.startswith(root_str):
+        return file_path_str[len(root_str):]
 
+    # Fallback for paths outside the root
     candidate = Path(file_path)
     if candidate.is_absolute():
         try:
-            return candidate.resolve().relative_to(root_path.resolve()).as_posix()
+            return candidate.resolve().relative_to(Path(root_path).resolve()).as_posix()
         except Exception:  # noqa: BLE001
             return candidate.as_posix()
     return candidate.as_posix()
@@ -2095,8 +2110,11 @@ def _tokenize_identifier(value: str) -> set[str]:
 
 def _path_token_set(rel_file_path: str) -> set[str]:
     tokens: set[str] = set()
-    for part in Path(rel_file_path).parts:
-        tokens.update(_tokenize_identifier(part))
+    # FAST PATH: String split instead of Path.parts
+    parts = rel_file_path.replace('\\', '/').split('/')
+    for part in parts:
+        if part and part != ".":
+            tokens.update(_tokenize_identifier(part))
     return tokens
 
 
@@ -2122,7 +2140,11 @@ def _semantic_key_tokens(value: str) -> set[str]:
 
 def _infer_semantic_tags(entity: Entity, rel_file_path: str) -> set[str]:
     tokens = _semantic_tokens_for_entity(entity, rel_file_path)
-    suffix = Path(rel_file_path).suffix.lower()
+    
+    # FAST PATH: String slicing instead of Path.suffix
+    idx = rel_file_path.rfind('.')
+    suffix = rel_file_path[idx:].lower() if idx != -1 else ""
+    
     tags: set[str] = set()
 
     if entity.type in {
@@ -2840,7 +2862,8 @@ def _derive_scope_tier(entity: Entity) -> str:
 
 
 def _derive_service_tag(rel_file_path: str) -> str | None:
-    parts = [part for part in Path(rel_file_path).parts if part and part != "."]
+    # FAST PATH: String split instead of Path.parts
+    parts = [part for part in rel_file_path.replace('\\', '/').split('/') if part and part != "."]
     if not parts:
         return None
 
@@ -3461,3 +3484,267 @@ def validate_plugin_file(
         result["errors"].append(f"Validation failed: {exc}")
 
     return result
+
+
+def apply_bsg_rules_to_entities(
+    entities: list[Entity],
+    relationships: list[Relationship],
+    rules: list[RuleDefinition],
+    root_path: str,
+    file_path: str,
+) -> tuple[list[Entity], dict[str, Any]]:
+    """Apply non-bidirectional BSG rules to a single file's entities.
+
+    Skips rules with bidirectional=True (those need full graph topology).
+    Returns the updated entities list with BSG metadata applied, plus a
+    per-file security_audit fragment.
+    """
+    if not entities or not rules:
+        return entities, {}
+
+    from pathlib import Path
+
+    root = Path(root_path)
+    rel_file_path = _to_relative_posix(file_path, root)
+    rel_file_path_lower = rel_file_path.lower()
+
+    # Filter to non-bidirectional rules only
+    applicable_rules = [r for r in rules if not r.bidirectional]
+    if not applicable_rules:
+        return entities, {}
+
+    # Pre-compute file content for content_patterns matching
+    file_content_cache: dict[str, str] = {}
+    regex_cache: dict[tuple[str, bool], re.Pattern[str]] = {}
+
+    # Build outbound/inbound maps from this file's relationships only
+    outbound: dict[str, list[Any]] = {}
+    inbound: dict[str, list[Any]] = {}
+    entity_ids = {e.id for e in entities}
+    for rel in relationships:
+        if rel.source_id in entity_ids:
+            outbound.setdefault(rel.source_id, []).append(rel)
+        if rel.target_id in entity_ids:
+            inbound.setdefault(rel.target_id, []).append(rel)
+
+    # Rules pre-filter by entity type cache
+    rules_by_type_cache: dict[str, list[RuleDefinition]] = {}
+
+    def get_rules_for_type(ent_type_lower: str) -> list[RuleDefinition]:
+        if ent_type_lower not in rules_by_type_cache:
+            rules_by_type_cache[ent_type_lower] = [
+                r for r in applicable_rules
+                if not r.match.entity_types
+                or "*" in r.match._entity_types_set
+                or ent_type_lower in r.match._entity_types_set
+            ]
+        return rules_by_type_cache[ent_type_lower]
+
+    entity_tags_cache: dict[str, set[str]] = {}
+
+    def get_entity_tags(ent_id: str, ent: Entity) -> set[str]:
+        if ent_id not in entity_tags_cache:
+            entity_tags_cache[ent_id] = _entity_usn_tags(ent)
+        return entity_tags_cache[ent_id]
+
+    updated_entities = []
+    file_security_audit: dict[str, Any] = {
+        "schema_version": "interception-stats.v1",
+        "plugins": {},
+    }
+    plugin_hits: dict[str, int] = {}
+
+    for entity in entities:
+        entity_id = entity.id
+        ent_type_lower = str(entity.type).lower()
+        entity_name_lower = entity.name.lower()
+
+        metadata = dict(entity.metadata or {})
+        matched_rules: list[str] = []
+        changed = False
+
+        entity_rules = get_rules_for_type(ent_type_lower)
+        entity_tags = get_entity_tags(entity_id, entity)
+
+        for rule in entity_rules:
+            # Check basic matchers (entity_type, name, file, usn_tags, regex, content)
+            if rule.match.entity_types:
+                if (
+                    "*" not in rule.match._entity_types_set
+                    and ent_type_lower not in rule.match._entity_types_set
+                ):
+                    continue
+
+            if rule.match.usn_tags_any:
+                if not entity_tags.intersection(rule.match._usn_tags_any_set):
+                    continue
+
+            if rule.match.name_patterns:
+                if not _pattern_matches_lower(entity_name_lower, rule.match._name_patterns_lower):
+                    continue
+
+            if rule.match.file_patterns:
+                if not _pattern_matches_lower(rel_file_path_lower, rule.match._file_patterns_lower):
+                    continue
+
+            if rule.match.regex_patterns:
+                if not _matches_regex_patterns(
+                    entity, rel_file_path, rule.match.regex_patterns, regex_cache
+                ):
+                    continue
+
+            if rule.match.content_patterns:
+                if not _matches_content_patterns(
+                    rel_file_path,
+                    rule.match.content_patterns,
+                    None,  # graph not needed for per-file
+                    file_content_cache,
+                    root,
+                ):
+                    continue
+
+            if rule.match.metadata_conditions:
+                if not _matches_metadata_conditions(entity, rule.match.metadata_conditions):
+                    continue
+
+            # Skip ast_edges matchers for per-file processing
+            if rule.match.ast_edges_any or rule.match.ast_edges_all:
+                continue
+
+            # Check bidirectional matchers (v2) - skip if present
+            if (
+                rule.match.gap_entity_types
+                or rule.match.has_raw_content is not None
+                or rule.match.has_coverage_gap is not None
+                or rule.match.byte_range_start is not None
+                or rule.match.byte_range_end is not None
+                or rule.match.content_hash_pattern is not None
+            ):
+                continue
+
+            # Conditional action gate
+            if not _matches_when_clause(entity, rule.actions.when):
+                continue
+
+            matched_rules.append(rule.name)
+            plugin_hits[rule.plugin] = plugin_hits.get(rule.plugin, 0) + 1
+
+            # Apply actions
+            for key, value in rule.actions.metadata.items():
+                if metadata.get(key) != value:
+                    metadata[key] = value
+                    changed = True
+
+            if rule.actions.add_usn_tags:
+                current_tags = metadata.get("bsg.usn")
+                existing = current_tags if isinstance(current_tags, list) else []
+                merged_tags = sorted(
+                    {str(item) for item in existing} | set(rule.actions.add_usn_tags)
+                )
+                if existing != merged_tags:
+                    metadata["bsg.usn"] = merged_tags
+                    changed = True
+                    entity_tags_cache[entity_id] = {
+                        str(item).strip().lower() for item in merged_tags if str(item).strip()
+                    }
+                    entity_tags = entity_tags_cache[entity_id]
+
+            if rule.actions.derive_scope_tier:
+                scope_tier = _derive_scope_tier(entity)
+                if metadata.get("bsg.scope_tier") != scope_tier:
+                    metadata["bsg.scope_tier"] = scope_tier
+                    changed = True
+
+            if rule.actions.derive_service_tag:
+                service_tag = _derive_service_tag(rel_file_path)
+                if service_tag and metadata.get("bsg.service_tag") != service_tag:
+                    metadata["bsg.service_tag"] = service_tag
+                    changed = True
+
+            if rule.actions.truncate_docstring:
+                docstring = metadata.get("docstring")
+                if docstring and isinstance(docstring, str):
+                    max_len = rule.actions.max_docstring_length
+                    if max_len > 0 and len(docstring) > max_len:
+                        metadata["docstring"] = docstring[:max_len] + "..."
+                        changed = True
+
+            if rule.actions.normalize_entry_point and entity.type == EntityType.ENTRY_POINT:
+                raw_value = metadata.get("invocation_snippet")
+                raw_snippet = (
+                    str(raw_value) if isinstance(raw_value, str) and raw_value.strip() else entity.name
+                )
+                normalized_snippet = raw_snippet.replace("'", '"')
+                if (
+                    ("__name__" in normalized_snippet and '"__main__"' in normalized_snippet)
+                    or raw_snippet == "__name__"
+                ) and entity.name != "__main__":
+                    metadata["invocation_snippet"] = raw_snippet
+                    metadata["bsg.normalized_name"] = "__main__"
+                    changed = True
+
+            if rule.actions.detect_language:
+                language = rule.actions.detect_language.get("language")
+                if language and metadata.get("bsg.language") != language:
+                    metadata["bsg.language"] = language
+                    changed = True
+
+            if rule.actions.detect_framework:
+                framework = rule.actions.detect_framework.get("framework")
+                language = rule.actions.detect_framework.get("language")
+                if framework:
+                    current_frameworks = metadata.get("bsg.frameworks", [])
+                    if not isinstance(current_frameworks, list):
+                        current_frameworks = []
+                    if framework not in current_frameworks:
+                        metadata["bsg.frameworks"] = current_frameworks + [framework]
+                        changed = True
+                if language and metadata.get("bsg.language") != language:
+                    metadata["bsg.language"] = language
+                    changed = True
+
+            if rule.actions.detect_package_manager:
+                package_manager = rule.actions.detect_package_manager.get("package_manager")
+                if package_manager and metadata.get("bsg.package_manager") != package_manager:
+                    metadata["bsg.package_manager"] = package_manager
+                    changed = True
+
+            if rule.actions.detect_infra:
+                infra_type = rule.actions.detect_infra.get("infra_type")
+                if infra_type:
+                    current_infra = metadata.get("bsg.infra", [])
+                    if not isinstance(current_infra, list):
+                        current_infra = []
+                    if infra_type not in current_infra:
+                        metadata["bsg.infra"] = current_infra + [infra_type]
+                        changed = True
+
+            if rule.actions.assign_category:
+                category = rule.actions.assign_category.get("category")
+                if category and metadata.get("bsg.category") != category:
+                    metadata["bsg.category"] = category
+                    changed = True
+
+        if matched_rules:
+            existing_rules = metadata.get("bsg.rules")
+            existing_list = existing_rules if isinstance(existing_rules, list) else []
+            combined = sorted(set(existing_list + matched_rules))
+            if existing_rules != combined:
+                metadata["bsg.rules"] = combined
+                changed = True
+
+        if changed:
+            updated_entities.append(entity.model_copy(update={"metadata": metadata}))
+        else:
+            updated_entities.append(entity)
+
+    # Build per-file security_audit fragment
+    for plugin_id, hits in plugin_hits.items():
+        if hits > 0:
+            file_security_audit["plugins"][plugin_id] = {
+                "plugin_id": plugin_id,
+                "name": _plugin_display_name(plugin_id),
+                "interceptions": hits,
+            }
+
+    return updated_entities, file_security_audit

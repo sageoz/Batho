@@ -109,7 +109,7 @@ def read_file_text(
         return None
 
     try:
-        return bytes_content.decode(encoding, errors=errors)
+        return bytes_content.decode(encoding, errors="strict")
     except UnicodeDecodeError:
         # Use the encoding utility's fallback mechanism
         from batho.utils.encoding import decode_bytes_with_fallback
@@ -164,6 +164,21 @@ def write_atomically(
         else:
             bytes_content = str(content).encode(encoding)
 
+        # Check target permissions to preserve them or apply default mode using umask
+        original_mode = None
+        if path.exists():
+            try:
+                original_mode = path.stat().st_mode & 0o7777
+            except OSError:
+                pass
+        else:
+            try:
+                current_umask = os.umask(0)
+                os.umask(current_umask)
+                original_mode = 0o666 & ~current_umask
+            except Exception:
+                original_mode = 0o666
+
         # Write to temporary file
         import tempfile
         fd, tmp_path_str = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
@@ -171,6 +186,12 @@ def write_atomically(
         
         with os.fdopen(fd, 'wb') as f:
             f.write(bytes_content)
+
+        if original_mode is not None:
+            try:
+                os.chmod(tmp_path_str, original_mode)
+            except OSError:
+                pass
 
         # Atomic rename
         tmp_path.replace(path)

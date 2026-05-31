@@ -72,6 +72,18 @@ class JavaScriptExtractor(ASTExtractor):
 (call_expression
   function: (member_expression
     property: (property_identifier) @ref.call))
+
+; ── Variable read / write access ──────────────────────────────────────────────
+(assignment_expression
+  left: (identifier) @ref.write)
+
+(update_expression
+  argument: (identifier) @ref.write)
+
+(variable_declarator
+  name: (identifier) @ref.write)
+
+(identifier) @ref.read
 """
             + CommonQueries.http_server_entry_points()
             + CommonQueries.react_render_entry_points()

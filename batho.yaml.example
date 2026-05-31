@@ -12,6 +12,7 @@ logging:
 
 paths:
   db_path: .batho           # Base SQLite artifact name prefix
+  cache_dir: .batho/cache   # Shared cache directory for rules, deps, and AST
 
 indexer:
   max_file_size_kb: 500     # Skip files exceeding this size
@@ -23,17 +24,37 @@ indexer:
   fail_on_warning: false
   strict: false             # Treat parse warnings as errors
 
-patch:
-  timeout_seconds: 300      # Max seconds for a patch run
-  max_changes: 10000        # Max file changes in one patch
-  history_days: 90          # Retention for patch history
-  max_count: 1000           # Max patches to retain
-  cleanup_on_startup: false # Purge expired patches on start
+graph:
+  cycle_detection:
+    enabled: true           # Detect import/inheritance cycles
+    fatal: false            # Fail build on cycles when true
+  orphan_pruning:
+    enabled: true           # Remove nodes with no edges
+    keep_entry_points: true # Preserve ENTRY_POINT entities
+    keep_exports: true      # Preserve exported symbols when detected
 
 flags:
   fail_on_warning: false
   strict: false
   audit_log_enabled: true   # Enable patch audit trail in run_artifacts
+
+# Consolidated Dependency Extraction Utility (CDEU)
+dependency:
+  enabled: true             # Enable stdlib and third-party dependency indexing
+  introspection:
+    enabled: true           # Introspect installed packages (Python venv, etc.)
+    mode: shallow           # shallow (exports only) | deep (recursive)
+    venv_auto_detect: true  # Look for .venv in root automatically
+    timeout_seconds: 5      # Subprocess timeout for introspecting one package
+    full_scan: false        # false = only popular packages; true = all declared deps
+    popular_packages_db_path: null # null = use bundled DB
+  stdlib:
+    enabled: true           # Index built-in language standard libraries
+    languages: ["python", "javascript", "go", "rust"]
+  cache:
+    enabled: true           # Persist indexed symbols across runs
+    ttl_days: 90
+  max_deps_per_manifest: 500
 
 # Fine-grained control over which blobs are written to the SQLite artifact.
 # Disable blobs you don't need to reduce artifact size.
@@ -97,57 +118,18 @@ bsg:
     max_workers: 16         # Max parallel BSG workers (1-32)
     chunk_size: 50          # Files per parallel chunk
 
-  ignore:
-    enabled: true           # Apply ignore patterns during BSG parsing
-
   cache:
     enabled: true
     max_size_mb: 1024       # In-process BSG cache size limit
     ttl_days: 30            # BSG cache entry TTL
 
-  incremental:
-    enabled: true
-    auto_detect_git: true   # Use git for faster change detection hint
-
   symbol_resolution:
     enabled: true
-    fuzzy_matching: false   # Enable fuzzy symbol matching (slower)
     cache_symbols: true
-
-  serialization:
-    method: streaming       # streaming (default)
-    compression: false
-    batch_size: 1000
 
   parsing:
     error_recovery: true    # Continue past parse errors
-    partial_parsing: false
-    max_file_size_mb: 10    # Skip files larger than this
     skip_comments: false
-
-  query:
-    enabled: true
-    index_on_write: true    # Maintain query index on every write
-    cache_enabled: true
-    cache_size: 256         # LRU cache size for query results
-    default_limit: 200      # Default result page size
-    query_timeout_ms: 5000  # Query timeout in milliseconds
-
-  storage:
-    enabled: true
-    content_scope: durable  # durable | all
-    track_content_ids: true
-    busy_timeout_ms: 5000   # SQLite busy timeout
-    page_size: 8192         # SQLite page size
-    auto_vacuum: incremental # none | full | incremental
-    retention:
-      enabled: true
-      snapshot_ttl_days: 90
-      patch_ttl_days: 90
-      metrics_ttl_days: 30
-      context_ttl_days: 90
-      max_snapshots: 500    # Maximum snapshots retained
-      max_patches: 5000     # Maximum patch records retained
 
   bidirectional:
     enabled: true           # Enable bidirectional BSG (lossless reconstruction)

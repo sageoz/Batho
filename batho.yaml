@@ -1,37 +1,55 @@
-# Batho unified root configuration — v1.1.0
 schema_version: batho-config.v1
-
 logging:
-  level: INFO
+  level: ERROR
   json_format: null
   quiet: false
   file: null
-  format: "%(message)s"
-
+  format: '%(message)s'
 paths:
-  db_path: {root}
-
+  db_path: '{root}'
 indexer:
   max_file_size_kb: 500
   max_indexed_files: 200000
   max_workers: 0
   ignore_patterns: []
   ignore_files: null
+  default_patterns_file: null
   fail_on_warning: false
   strict: false
-
-patch:
-  timeout_seconds: 300
-  max_changes: 10000
-  history_days: 90
-  max_count: 1000
-  cleanup_on_startup: false
-
+graph:
+  cycle_detection:
+    enabled: true
+    fatal: false
+  orphan_pruning:
+    enabled: true
+    keep_entry_points: true
+    keep_exports: true
 flags:
   fail_on_warning: false
   strict: false
   audit_log_enabled: true
-
+rules:
+  enabled: true
+  auto_load_all_plugins: true
+  builtin_plugins:
+  - bsg_core
+  - bsg_silent_failure_catcher
+  - bsg_dependency_blast_radius
+  - bsg_resource_leak_preventer
+  - bsg_nplus1_query_catcher
+  - bsg_iac_drift_sentinel
+  - bsg_schema_migration_enforcer
+  - bsg_api_contract_guardian
+  - bsg_hardcoded_secret_catcher
+  - bsg_auth_boundary_shield
+  disabled_rules: []
+  custom_rules_path: null
+  custom_rules_inline: []
+  strict_validation: false
+  cache_ttl: 3600
+  fail_on_rule_error: false
+plugins:
+  overrides: {}
 artifact_blobs:
   file_artifacts:
     bsg_agent_view: true
@@ -41,85 +59,53 @@ artifact_blobs:
     context_overview: true
     telemetry_metrics: true
     structural_metrics: true
-    security_audit: true
-    artifact_payload: true
+    security_audit: false
+    artifact_payload: false
     delta_stats: true
-
-rules:
-  enabled: true
-  auto_load_all_plugins: true
-  builtin_plugins:
-    - bsg_core
-    - bsg_silent_failure_catcher
-    - bsg_dependency_blast_radius
-    - bsg_resource_leak_preventer
-    - bsg_nplus1_query_catcher
-    - bsg_iac_drift_sentinel
-    - bsg_schema_migration_enforcer
-    - bsg_api_contract_guardian
-    - bsg_hardcoded_secret_catcher
-    - bsg_auth_boundary_shield
-  disabled_rules: []
-  custom_rules_path: null
-  custom_rules_inline: []
-  strict_validation: false
-  cache_ttl: 3600
-  fail_on_rule_error: false
-
-plugins:
-  overrides: {}
-
+persistence:
+  batch_size: 500
+  batch_bytes_threshold: 15728640
 bsg:
   parallel:
     enabled: true
     max_workers: 16
     chunk_size: 50
-  ignore:
-    enabled: true
   cache:
     enabled: true
     max_size_mb: 1024
     ttl_days: 30
-  incremental:
-    enabled: true
-    auto_detect_git: true
   symbol_resolution:
     enabled: true
     fuzzy_matching: false
     cache_symbols: true
-  serialization:
-    method: streaming
-    compression: false
-    batch_size: 1000
+    prune_unresolved: false
+    max_unresolved_attempts: 3
+    unresolved_tracking: true
   parsing:
     error_recovery: true
-    partial_parsing: false
-    max_file_size_mb: 10
     skip_comments: false
-  query:
-    enabled: true
-    index_on_write: true
-    cache_enabled: true
-    cache_size: 256
-    default_limit: 200
-    query_timeout_ms: 5000
-  storage:
-    enabled: true
-    content_scope: durable
-    track_content_ids: true
-    busy_timeout_ms: 5000
-    page_size: 8192
-    auto_vacuum: incremental
-    retention:
-      enabled: true
-      snapshot_ttl_days: 90
-      patch_ttl_days: 90
-      metrics_ttl_days: 30
-      context_ttl_days: 90
-      max_snapshots: 500
-      max_patches: 5000
   bidirectional:
     enabled: true
     include_gaps: true
     verify_integrity: false
     storage_view: false
+dependency:
+  enabled: true
+  introspection:
+    enabled: true
+    mode: shallow
+    venv_auto_detect: true
+    timeout_seconds: 5
+    full_scan: false
+    popular_packages_db_path: null
+  stdlib:
+    enabled: true
+    languages:
+    - python
+    - javascript
+    - go
+    - rust
+  cache:
+    enabled: true
+    ttl_days: 90
+  max_deps_per_manifest: 500

@@ -13,51 +13,6 @@ DEFAULT_ENCODING = "utf-8"
 FALLBACK_ENCODINGS = ["utf-8", "ascii", "latin-1", "cp1252"]
 
 
-def read_text_with_fallback(
-    filepath: Path | str, encodings: list[str] | None = None, errors: str = "strict"
-) -> str:
-    """
-    Read file text with encoding fallback.
-
-    Attempts to decode the file using multiple encodings in order.
-    Useful for reading files that may not be UTF-8 encoded.
-
-    Args:
-        filepath: Path to file
-        encodings: List of encodings to try (default: FALLBACK_ENCODINGS)
-        errors: Error handling strategy ('strict', 'replace', 'ignore')
-
-    Returns:
-        Decoded text content
-
-    Raises:
-        UnicodeDecodeError: If all encodings fail
-        FileNotFoundError: If file does not exist
-
-    Example:
-        >>> from backend.utils.encoding import read_text_with_fallback
-        >>> text = read_text_with_fallback("/path/to/file.txt")
-        >>> text = read_text_with_fallback("/path/to/file.txt", errors="strict")
-    """
-    encodings = encodings or FALLBACK_ENCODINGS
-    data_bytes = Path(filepath).read_bytes()
-
-    last_exc: UnicodeDecodeError | None = None
-    for encoding in encodings:
-        try:
-            decoded = data_bytes.decode(encoding, errors="strict")
-            if errors == "strict":
-                return decoded
-            return data_bytes.decode(encoding, errors=errors)
-        except UnicodeDecodeError as exc:
-            last_exc = exc
-            continue
-
-    if last_exc is not None:
-        raise last_exc
-    raise UnicodeDecodeError("unknown", b"", 0, 0, f"Failed to decode {filepath} with encodings: {encodings}")
-
-
 def decode_bytes_with_fallback(
     data: bytes, encodings: list[str] | None = None, errors: str = "replace"
 ) -> str:
@@ -83,7 +38,7 @@ def decode_bytes_with_fallback(
 
     for encoding in encodings:
         try:
-            return data.decode(encoding, errors=errors)
+            return data.decode(encoding, errors="strict")
         except UnicodeDecodeError:
             continue
 

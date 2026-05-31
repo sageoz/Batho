@@ -67,7 +67,9 @@ class GraphSyncChecker:
 
             # Query database query_entities
             db_entities = conn.execute(
-                "SELECT entity_id FROM query_entities WHERE run_id = ? AND file_path = ?",
+                "SELECT ed.val AS entity_id FROM query_entities qe "
+                "JOIN entity_dict ed ON qe.entity_key = ed.id "
+                "WHERE qe.run_id = ? AND qe.file_path = ?",
                 (run_id, file_path),
             ).fetchall()
             db_entity_ids = {r[0] for r in db_entities}
@@ -113,20 +115,22 @@ class GraphSyncChecker:
         """Validate query_relationships referential integrity."""
         issues = []
         query = """
-            SELECT r.source_id, r.target_id, r.relation_type, r.run_id
+            SELECT ed_src.val AS source_id, ed_tgt.val AS target_id, r.relation_type, r.run_id
             FROM query_relationships r
-            WHERE (r.target_id NOT LIKE 'external:%'
-                AND r.target_id NOT LIKE 'file:%'
-                AND r.target_id NOT LIKE 'anchor:%'
-                AND r.target_id NOT LIKE 'image:%'
-                AND r.target_id NOT LIKE 'import:%'
-                AND r.target_id NOT LIKE 'stylesheet:%'
-                AND r.target_id NOT LIKE 'resource:%'
-                AND r.target_id NOT LIKE 'variable:%')
+            JOIN entity_dict ed_src ON r.source_key = ed_src.id
+            JOIN entity_dict ed_tgt ON r.target_key = ed_tgt.id
+            WHERE (ed_tgt.val NOT LIKE 'external:%'
+                AND ed_tgt.val NOT LIKE 'file:%'
+                AND ed_tgt.val NOT LIKE 'anchor:%'
+                AND ed_tgt.val NOT LIKE 'image:%'
+                AND ed_tgt.val NOT LIKE 'import:%'
+                AND ed_tgt.val NOT LIKE 'stylesheet:%'
+                AND ed_tgt.val NOT LIKE 'resource:%'
+                AND ed_tgt.val NOT LIKE 'variable:%')
             AND (NOT EXISTS (
-                SELECT 1 FROM query_entities e WHERE e.entity_id = r.source_id AND e.run_id = r.run_id
+                SELECT 1 FROM query_entities e WHERE e.entity_key = r.source_key AND e.run_id = r.run_id
             ) OR NOT EXISTS (
-                SELECT 1 FROM query_entities e WHERE e.entity_id = r.target_id AND e.run_id = r.run_id
+                SELECT 1 FROM query_entities e WHERE e.entity_key = r.target_key AND e.run_id = r.run_id
             ))
         """
         rows = conn.execute(query).fetchall()
@@ -155,8 +159,22 @@ class GraphSyncChecker:
         """Run all Phase 4 checks and apply repairs if not dry_run."""
         start_time = time.time()
         issues = []
+        tables_created = False
 
         try:
+            self.db.ensure_query_tables_exist()
+            tables_created = True
+            
+            run_uuid = self.db.get_latest_run_id()
+            if run_uuid:
+                run_internal_id = self.db.get_run_internal_id(run_uuid)
+                if run_internal_id is not None:
+                    with self.db.transaction() as conn:
+                        conn.execute("DELETE FROM query_entities WHERE run_id = ?", (run_internal_id,))
+                        conn.execute("DELETE FROM query_relationships WHERE run_id = ?", (run_internal_id,))
+                        conn.execute("DELETE FROM dangling_references WHERE run_id = ?", (run_internal_id,))
+                    self.db.populate_query_tables_for_unchanged_files(run_internal_id, run_internal_id, set())
+
             with self.db.connection() as conn:
                 issues.extend(self.check_dangling_references(conn))
                 issues.extend(self.check_query_relationships(conn))
@@ -172,6 +190,12 @@ class GraphSyncChecker:
                     description=f"Error executing graph sync checks: {e}",
                 )
             )
+        finally:
+            if tables_created:
+                try:
+                    self.db.cleanup_query_tables()
+                except Exception:
+                    pass
 
         repairs = []
         if not self.dry_run:

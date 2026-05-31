@@ -82,9 +82,15 @@ CREATE TABLE IF NOT EXISTS run_artifacts (
     created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) WITHOUT ROWID;
 
+-- NEW: Entity dictionary (maps integer → full deterministic ID)
+CREATE TABLE IF NOT EXISTS entity_dict (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    val  TEXT UNIQUE NOT NULL
+);
+
 -- 7. QUERY ENTITIES (SQLite-index-first search)
 CREATE TABLE IF NOT EXISTS query_entities (
-    entity_id       TEXT NOT NULL,
+    entity_key      INTEGER NOT NULL REFERENCES entity_dict(id) ON DELETE CASCADE,
     run_id          INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
     entity_name     TEXT NOT NULL,
     entity_type     TEXT NOT NULL,
@@ -93,7 +99,7 @@ CREATE TABLE IF NOT EXISTS query_entities (
     line_number     INTEGER NOT NULL,
     signature       TEXT,
     is_exported     INTEGER DEFAULT 0,
-    PRIMARY KEY (entity_id, run_id)
+    PRIMARY KEY (entity_key, run_id)
 ) WITHOUT ROWID;
 
 -- Indexes for fast search
@@ -105,20 +111,20 @@ CREATE INDEX IF NOT EXISTS idx_entities_run ON query_entities(run_id);
 
 -- 7.2 QUERY RELATIONSHIPS (Relational edges)
 CREATE TABLE IF NOT EXISTS query_relationships (
-    source_id       TEXT NOT NULL,
-    target_id       TEXT NOT NULL,
+    source_key      INTEGER NOT NULL REFERENCES entity_dict(id) ON DELETE CASCADE,
+    target_key      INTEGER NOT NULL REFERENCES entity_dict(id) ON DELETE CASCADE,
     relation_type   TEXT NOT NULL,
     run_id          INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
     metadata_json   TEXT DEFAULT '{}',
-    PRIMARY KEY (source_id, target_id, relation_type, run_id)
+    PRIMARY KEY (source_key, target_key, relation_type, run_id)
 ) WITHOUT ROWID;
 
-CREATE INDEX IF NOT EXISTS idx_relationships_source ON query_relationships(source_id, run_id);
-CREATE INDEX IF NOT EXISTS idx_relationships_target ON query_relationships(target_id, run_id);
+CREATE INDEX IF NOT EXISTS idx_relationships_source ON query_relationships(source_key, run_id);
+CREATE INDEX IF NOT EXISTS idx_relationships_target ON query_relationships(target_key, run_id);
 
 -- 7.3 DANGLING REFERENCES (Temporary storage for unresolved edges during parsing)
 CREATE TABLE IF NOT EXISTS dangling_references (
-    source_id               TEXT NOT NULL,
+    source_key              INTEGER NOT NULL REFERENCES entity_dict(id) ON DELETE CASCADE,
     unresolved_target_name  TEXT NOT NULL,
     relation_type           TEXT NOT NULL,
     run_id                  INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE
@@ -189,3 +195,5 @@ BEGIN
     INSERT INTO file_changelog_fts(rowid, entity_index)
     VALUES (new.id, new.entity_index);
 END;
+
+

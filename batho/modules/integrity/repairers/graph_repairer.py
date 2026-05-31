@@ -66,6 +66,9 @@ class GraphRepairer:
 
                 # 4. Insert entities
                 query_rows = []
+                entity_ids = [e.get("id") for e in entities if e.get("id")]
+                entity_keys = self.db.bulk_get_or_create_entity_ids(entity_ids)
+
                 for e in entities:
                     ent_id = e.get("id")
                     ent_name = e.get("name")
@@ -75,22 +78,24 @@ class GraphRepairer:
                     sig = e.get("signature")
                     is_exp = e.get("is_exported") or 0
                     if ent_id and ent_name and ent_type:
-                        query_rows.append((
-                            ent_id,
-                            run_id,
-                            ent_name,
-                            ent_type,
-                            ent_fqn,
-                            file_path,
-                            line,
-                            sig,
-                            is_exp,
-                        ))
+                        ent_key = entity_keys.get(ent_id)
+                        if ent_key is not None:
+                            query_rows.append((
+                                ent_key,
+                                run_id,
+                                ent_name,
+                                ent_type,
+                                ent_fqn,
+                                file_path,
+                                line,
+                                sig,
+                                is_exp,
+                            ))
 
                 if query_rows:
                     conn.executemany(
                         """INSERT OR REPLACE INTO query_entities(
-                            entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
+                            entity_key, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         query_rows,
                     )
@@ -123,10 +128,16 @@ class GraphRepairer:
             return RepairResult(issue=issue, success=False, error="Missing fields in relationship identifier")
 
         try:
+            # Resolve src_id and tgt_id to keys
+            src_key = self.db.bulk_get_or_create_entity_ids([src_id]).get(src_id)
+            tgt_key = self.db.bulk_get_or_create_entity_ids([tgt_id]).get(tgt_id)
+            if src_key is None or tgt_key is None:
+                return RepairResult(issue=issue, success=True, rows_affected=0)
+
             with self.db.connection() as conn:
                 cursor = conn.execute(
-                    "DELETE FROM query_relationships WHERE source_id = ? AND target_id = ? AND relation_type = ? AND run_id = ?",
-                    (src_id, tgt_id, rel_type, run_id),
+                    "DELETE FROM query_relationships WHERE source_key = ? AND target_key = ? AND relation_type = ? AND run_id = ?",
+                    (src_key, tgt_key, rel_type, run_id),
                 )
                 rows_deleted = cursor.rowcount
                 conn.commit()

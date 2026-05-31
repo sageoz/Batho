@@ -17,14 +17,14 @@ import gc
 import os
 import orjson
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from batho.modules.storage.cache.unified_cache import (
     BathoCache,
-    build_ast_cache_variant,
 )
 from batho.modules.extraction.extractor import ASTExtractor
 from batho.core.schemas import Entity, EntityType, FileSnapshot, Relationship
+from batho.modules.extraction.symbol_table import FileSymbolTable
 from batho.utils.file_io import read_file_bytes
 from batho.utils.hash import _is_binary
 from batho.utils.logging import configure_logging, get_logger
@@ -32,14 +32,8 @@ from batho.utils.logging import configure_logging, get_logger
 logger = get_logger(__name__, component="pipeline")
 _WORKER_LOGGING_INITIALIZED = False
 _WORKER_CACHE: BathoCache | None = None
-
-
-def _cache_variant_key(bsg_cfg: dict[str, Any], include_gaps: bool) -> str:
-    parsing_cfg = bsg_cfg.get("parsing", {}) if isinstance(bsg_cfg, dict) else {}
-    return build_ast_cache_variant(
-        include_gaps=include_gaps,
-        parsing_config=parsing_cfg,
-    )
+_WORKER_RULES_CACHE: list[Any] | None = None
+_WORKER_ROOT_PATH: str | None = None
 
 
 def _create_file_snapshot(
@@ -284,9 +278,17 @@ def _enrich_cached_entities(
     return result
 
 
-def _initialize_worker(log_config: dict[str, Any] | None, cache_path: str | None = None) -> None:
-    """Apply configured logging and initialize cache once per worker process."""
-    global _WORKER_LOGGING_INITIALIZED, _WORKER_CACHE
+def _process_file_worker_wrapper(args: tuple) -> Any:
+    """Wrapper function to unpack arguments for pool map worker."""
+    return process_file_single_pass_worker(*args)
+
+
+def _initialize_worker(log_config: dict[str, Any] | None, cache_path: str | None, root_path: str | None = None, rules_config: dict[str, Any] | None = None) -> None:
+    """Apply configured logging, initialize cache, and pre-load BSG rules once per worker process."""
+    global _WORKER_LOGGING_INITIALIZED, _WORKER_CACHE, _WORKER_RULES_CACHE, _WORKER_ROOT_PATH
+
+    import gc
+    gc.set_threshold(50000, 50, 50)
 
     if not _WORKER_LOGGING_INITIALIZED:
         configure_logging(log_config or {})
@@ -298,6 +300,26 @@ def _initialize_worker(log_config: dict[str, Any] | None, cache_path: str | None
         except Exception as exc:
             logger.warning("worker_cache_init_failed", cache_path=cache_path, error=str(exc))
 
+    if root_path and rules_config and _WORKER_RULES_CACHE is None:
+        try:
+            from batho.modules.compression.rules import load_effective_rules
+            _WORKER_RULES_CACHE, _ = load_effective_rules(rules_config, Path(root_path))
+            _WORKER_ROOT_PATH = root_path
+        except Exception as exc:
+            logger.warning("worker_bsg_rules_init_failed", error=str(exc))
+
+
+def _init_worker_bsg_rules(root_path: str, rules_config: dict[str, Any]) -> None:
+    global _WORKER_RULES_CACHE, _WORKER_ROOT_PATH
+    if _WORKER_RULES_CACHE is not None:
+        return
+    _WORKER_ROOT_PATH = root_path
+    try:
+        from batho.modules.compression.rules import load_effective_rules
+        _WORKER_RULES_CACHE, _ = load_effective_rules(rules_config, Path(root_path))
+    except Exception as exc:
+        logger.warning("worker_bsg_rules_init_failed", error=str(exc))
+
 
 
 
@@ -306,7 +328,7 @@ def _initialize_worker(log_config: dict[str, Any] | None, cache_path: str | None
 # ---------------------------------------------------------------------------
 
 
-def process_file_worker(
+def process_file_single_pass_worker(
     file_path: Path,
     filepath: str,
     current_mtime: float,
@@ -316,23 +338,31 @@ def process_file_worker(
     ttl_days: int,
     max_file_size_kb: int,
     bsg_cache_cfg: dict[str, Any],
-    cache_variant: str,
+    cache_variant: str | None = None,
     index_id: str | None = None,
     include_gaps: bool = False,
-) -> tuple[str, bytes, bytes, bool] | None:
+    package: dict | None = None,
+    rules_config: dict[str, Any] | None = None,
+    root_path: str | None = None,
+) -> tuple[str, str, bytes, bytes, bytes, bytes, list[dict], dict] | None:
     """
-    Worker function for parallel file processing.
-
-    Reads file bytes and computes hash inside the worker to reduce pickle traffic.
-    Uses a persisted per-worker BathoCache if available.
+    Worker function for parallel single-pass extraction.
+    Returns: (filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, global_manifest, file_security_audit)
+    - hollow_bytes: lightweight topology for graph (no raw_content/raw_bytes)
+    - agent_blob: precompiled agent view for persistence
+    - storage_blob: precompiled storage view for persistence
+    - file_security_audit: per-file BSG audit fragment (empty dict if no rules applied)
     """
     global _WORKER_CACHE
 
-    gc.disable()
     try:
-        # Step 1: Read content and compute hash inside the worker (reduces pickle traffic)
         from batho.utils.hash import compute_bytes_hash
-        
+        import msgpack
+        import zstandard as zstd
+        from batho.core.schemas import PackageMetadata
+
+        zstd_compressor = zstd.ZstdCompressor(level=3)
+
         content = read_file_bytes(filepath, max_size_kb=max_file_size_kb, detect_binary=True)
         if content is None:
             return None
@@ -353,7 +383,6 @@ def process_file_worker(
                 cached_entities, cached_relationships = cached_result
 
                 # Update entity file path to current location (handles renames/copies)
-                # This also recomputes Entity.id since it's derived from file
                 cached_entities = _update_cached_entity_file(cached_entities, filepath)
 
                 # Enrich cached entities with raw contents sliced from file bytes
@@ -369,16 +398,42 @@ def process_file_worker(
                     ]
 
                 # Create file snapshot on cache hit when include_gaps is enabled.
-                # Only create if snapshot doesn't already exist to avoid staleness.
                 if include_gaps and cached_entities:
                     existing_snapshot = cache.get_file_snapshot(filepath)
                     if existing_snapshot is None:
                         _create_file_snapshot(filepath, content_hash, len(content), cached_entities, cache)
 
-                # Serialize cached entities and relationships to orjson bytes
-                ent_bytes = orjson.dumps([e.to_dict() for e in cached_entities])
-                rel_bytes = orjson.dumps([r.to_dict() for r in cached_relationships])
-                return (filepath, ent_bytes, rel_bytes, True)
+                global_manifest = [
+                    {"name": ent.name, "id": ent.id, "type": ent.type.value}
+                    for ent in cached_entities if ent.metadata.get("is_exported")
+                ]
+
+                # Build hollow topology for graph (excludes heavy raw_content/raw_bytes)
+                hollow_topology = [
+                    {"id": e.id, "name": e.name, "type": e.type.value, "file": filepath, "parent_id": e.parent_id}
+                    for e in cached_entities if e.type != EntityType.SYNTAX_GLUE
+                ]
+                hollow_bytes = msgpack.packb(hollow_topology)
+
+                # Precompile agent and storage views for persistence (worker-side compression)
+                from batho.modules.storage.sqlite_registry.engine import _minify_graph_payload
+                agent_entities = [e.to_dict(view="agent") for e in cached_entities]
+                storage_entities = [e.to_dict(view="storage") for e in cached_entities]
+                agent_blob = zstd_compressor.compress(msgpack.packb(_minify_graph_payload({"entities": agent_entities})))
+                storage_blob = zstd_compressor.compress(msgpack.packb(_minify_graph_payload({"entities": storage_entities})))
+
+                rel_bytes = zstd_compressor.compress(msgpack.packb([r.to_dict() for r in cached_relationships]))
+
+                local_hits = {"rules_applied": 0, "entities_tagged": 0}
+                rules_applied_set = set()
+                for ent in cached_entities:
+                    if ent.metadata and ent.metadata.get("bsg.rules"):
+                        local_hits["entities_tagged"] += 1
+                        for rule_name in ent.metadata["bsg.rules"]:
+                            rules_applied_set.add(rule_name)
+                local_hits["rules_applied"] = len(rules_applied_set)
+
+                return (filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, global_manifest, {}, local_hits)
 
         # Cache miss or cache disabled - parse the file
         from batho.modules.extraction.submodules.parser_factory.detector import default_detector
@@ -401,35 +456,57 @@ def process_file_worker(
         if not isinstance(file_extractor, ASTExtractor):
             return None
 
-        if index_id is None:
-            try:
-                entities, relationships = file_extractor.parse_file(
-                    filepath, content, include_gaps=include_gaps
-                )
-            except TypeError:
-                entities, relationships = file_extractor.parse_file(
-                    filepath, content
-                )
-        else:
+        pkg = PackageMetadata.from_dict(package) if package else None
+        try:
+            entities, relationships = file_extractor.parse_file(
+                filepath,
+                content,
+                index_id=index_id,
+                include_gaps=include_gaps,
+                package=pkg,
+            )
+        except TypeError:
             try:
                 entities, relationships = file_extractor.parse_file(
                     filepath,
                     content,
                     index_id=index_id,
-                    include_gaps=include_gaps,
+                    package=pkg,
                 )
             except TypeError:
-                try:
-                    entities, relationships = file_extractor.parse_file(
-                        filepath, content, index_id=index_id
-                    )
-                except TypeError:
-                    entities, relationships = file_extractor.parse_file(
-                        filepath, content
-                    )
+                entities, relationships = file_extractor.parse_file(
+                    filepath,
+                    content,
+                )
+
+        # Apply BSG rules per-file in parallel (before serialization)
+        file_security_audit: dict[str, Any] = {}
+        local_hits = {"rules_applied": 0, "entities_tagged": 0}
+        if _WORKER_RULES_CACHE:
+            try:
+                from batho.modules.compression.rules import apply_bsg_rules_to_entities
+                entities, file_security_audit = apply_bsg_rules_to_entities(
+                    entities=entities,
+                    relationships=relationships,
+                    rules=_WORKER_RULES_CACHE,
+                    root_path=_WORKER_ROOT_PATH or str(file_path.parent),
+                    file_path=filepath,
+                )
+                rules_applied_set = set()
+                for ent in entities:
+                    if ent.metadata and ent.metadata.get("bsg.rules"):
+                        local_hits["entities_tagged"] += 1
+                        for rule_name in ent.metadata["bsg.rules"]:
+                            rules_applied_set.add(rule_name)
+                local_hits["rules_applied"] = len(rules_applied_set)
+            except Exception as exc:
+                logger.warning(
+                    "worker_bsg_rules_failed",
+                    filepath=filepath,
+                    error=str(exc),
+                )
 
         # Cache the extracted entities and relationships if cache is enabled
-        # Skip caching empty results to avoid re-parsing files that legitimately have no entities
         if cache_enabled and entities and cache is not None:
             cache.set_ast(
                 filepath,
@@ -446,20 +523,47 @@ def process_file_worker(
             if include_gaps:
                 _create_file_snapshot(filepath, content_hash, size, entities, cache)
 
-        # Serialize entities and relationships to orjson bytes
-        ent_bytes = orjson.dumps([e.to_dict() for e in entities])
-        rel_bytes = orjson.dumps([r.to_dict() for r in relationships])
-        return (filepath, ent_bytes, rel_bytes, False)
+        global_manifest = [
+            {"name": ent.name, "id": ent.id, "type": ent.type.value}
+            for ent in entities if ent.metadata.get("is_exported")
+        ]
+
+        # Build hollow topology for graph (excludes heavy raw_content/raw_bytes)
+        # Include stub resolution metadata if present
+        hollow_topology = []
+        for e in entities:
+            if e.type != EntityType.SYNTAX_GLUE:
+                node = {
+                    "id": e.id,
+                    "name": e.name,
+                    "type": e.type.value,
+                    "file": filepath,
+                    "parent_id": e.parent_id,
+                }
+                # Preserve stub resolution metadata
+                if e.is_contextual_stub:
+                    node["caller_scope"] = e.metadata.get("caller_scope")
+                    node["target_name"] = e.metadata.get("target_name")
+                hollow_topology.append(node)
+        hollow_bytes = msgpack.packb(hollow_topology)
+
+        # Precompile agent and storage views for persistence (worker-side compression)
+        from batho.modules.storage.sqlite_registry.engine import _minify_graph_payload
+        agent_entities = [e.to_dict(view="agent") for e in entities]
+        storage_entities = [e.to_dict(view="storage") for e in entities]
+        agent_blob = zstd_compressor.compress(msgpack.packb(_minify_graph_payload({"entities": agent_entities})))
+        storage_blob = zstd_compressor.compress(msgpack.packb(_minify_graph_payload({"entities": storage_entities})))
+
+        rel_bytes = zstd_compressor.compress(msgpack.packb([r.to_dict() for r in relationships]))
+        return (filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, global_manifest, file_security_audit, local_hits)
     except Exception as exc:
         logger.warning(
-            "worker_parse_failed",
+            "worker_single_pass_parse_failed",
             filepath=filepath,
             error=str(exc),
         )
         return None
-    finally:
-        gc.enable()
-        gc.collect()
+
 
 
 # ---------------------------------------------------------------------------
@@ -473,21 +577,10 @@ def _calculate_optimal_chunk_size(
 ) -> int:
     """
     Calculate optimal chunk size based on file sizes for better load balancing.
-    
-    Uses file size distribution to determine chunk size that balances
-    work across workers. Smaller chunks for varied sizes, larger for uniform.
-    
-    Args:
-        candidates: List of (file_path, filepath) tuples
-        num_workers: Number of worker processes
-        
-    Returns:
-        Optimal chunk size for the workload
     """
     if not candidates or num_workers <= 0:
         return 50
     
-    # Collect file sizes
     sizes: list[int] = []
     for file_path, _ in candidates:
         try:
@@ -498,21 +591,14 @@ def _calculate_optimal_chunk_size(
     if not sizes:
         return 50
     
-    # Calculate coefficient of variation (CV) for size distribution
-    # High CV = varied sizes = smaller chunks for better load balance
-    # Low CV = uniform sizes = larger chunks for efficiency
     mean_size = sum(sizes) / len(sizes)
     if mean_size > 0:
         variance = sum((s - mean_size) ** 2 for s in sizes) / len(sizes)
         std_dev = variance ** 0.5
-        cv = std_dev / mean_size  # Coefficient of variation
+        cv = std_dev / mean_size
     else:
         cv = 0
     
-    # Base chunk size on CV and number of workers
-    # CV > 0.5: varied sizes -> smaller chunks (10-20)
-    # CV 0.2-0.5: moderate variation -> medium chunks (20-50)
-    # CV < 0.2: uniform sizes -> larger chunks (50-100)
     if cv > 0.5:
         base_chunk = 15
     elif cv > 0.2:
@@ -520,124 +606,122 @@ def _calculate_optimal_chunk_size(
     else:
         base_chunk = 70
     
-    # Adjust based on worker count and total files
-    # More workers need smaller chunks for better load balancing
     worker_factor = max(1, num_workers // 4)
     chunk_size = max(5, base_chunk // worker_factor)
     
-    # Ensure we have enough chunks to keep workers busy
     min_chunks = num_workers * 2
     if len(candidates) < min_chunks:
         chunk_size = max(1, len(candidates) // min_chunks)
     
-    return min(chunk_size, 200)  # Cap at 200 to avoid memory issues
+    return min(chunk_size, 200)
 
 
-def _deserialize_result(result: tuple[str, bytes, bytes, bool] | None) -> tuple[str, list[Entity], list[Relationship], bool] | None:
-    """Helper to deserialize raw JSON bytes back into Entity and Relationship objects."""
-    if result is None:
-        return None
-    try:
-        filepath, ent_bytes, rel_bytes, cached_hit = result
-        ent_dicts = orjson.loads(ent_bytes)
-        rel_dicts = orjson.loads(rel_bytes)
-        entities = [Entity.from_dict(d) for d in ent_dicts]
-        relationships = [Relationship.from_dict(d) for d in rel_dicts]
-        return (filepath, entities, relationships, cached_hit)
-    except Exception as exc:
-        logger.warning("deserialization_failed", error=str(exc))
-        return None
+def build_ast_cache_variant(
+    *,
+    include_gaps: bool,
+    parsing_config: dict[str, Any] | None = None,
+) -> str:
+    """Helper to return a stable variant key for AST cache entries."""
+    from batho.modules.storage.cache.unified_cache import build_ast_cache_variant as _build_var
+    return _build_var(include_gaps=include_gaps, parsing_config=parsing_config)
 
 
-def build_graph_parallel(
+def extract_and_emit_parallel(
     candidates: list[tuple[Path, str]],
     configured_max_file_size_kb: int,
     bsg_cfg: dict[str, Any],
-    extractor: ASTExtractor | None = None,
+    package_dict: dict | None = None,
     index_id: str | None = None,
     include_gaps: bool = False,
-) -> tuple[list[tuple[str, list[Entity], list[Relationship], bool]], int]:
+    result_callback: Callable[[tuple], None] | None = None,
+) -> tuple[list[tuple[str, bytes, bytes, list[dict]]], int, dict[str, Any]]:
     """
-    Process files in parallel using multiprocessing.Pool.
-
-    Args:
-        candidates: List of (file_path, filepath) tuples to process.
-        configured_max_file_size_kb: Maximum file size in KB.
-        bsg_cfg: BSG configuration dict.
-        extractor: Optional ASTExtractor instance (for single-extractor mode).
-        index_id: Optional index ID to stamp on entities.
-        include_gaps: When True, emit SYNTAX_GLUE entities for full byte coverage.
-
-    Returns:
-        Tuple of (results list, error count).
+    Process files in parallel to parse and emit compressed binary representations 
+    along with lightweight global manifests of exported definitions.
     """
-    # Get parallel configuration
     bsg_parallel_cfg = bsg_cfg.get("parallel", {})
     parallel_enabled = bsg_parallel_cfg.get("enabled", True)
     max_workers = bsg_parallel_cfg.get("max_workers", 16)
-    chunk_size = bsg_parallel_cfg.get("chunk_size", 50)
 
-    # Get cache configuration
     bsg_cache_cfg = bsg_cfg.get("cache", {})
     cache_enabled = bsg_cache_cfg.get("enabled", True)
     cache_path = bsg_cache_cfg.get("path") or None
     ttl_days = bsg_cache_cfg.get("ttl_days", 30)
-    cache_variant = _cache_variant_key(bsg_cfg, include_gaps)
-
-    if not parallel_enabled:
-        # Fallback to sequential processing
-        logger.info("parallel_disabled", reason="config")
-        return build_graph_sequential(
-            candidates,
-            configured_max_file_size_kb,
-            bsg_cfg,
-            extractor,
-            index_id=index_id,
-            include_gaps=include_gaps,
-        )
-
-    # Calculate worker count
-    cpu_count = os.cpu_count() or 4
-    actual_workers = min(cpu_count, max_workers)
-    actual_workers = min(actual_workers, len(candidates))
-
-    # Ensure at least 1 worker if there are files to process
-    if actual_workers == 0 and len(candidates) > 0:
-        actual_workers = 1
-
-    # If no files to process, return early
-    if len(candidates) == 0:
-        return [], 0
-
-    # Dynamic chunk sizing based on file sizes for better load balancing
-    chunk_size = _calculate_optimal_chunk_size(candidates, actual_workers)
-
-    logger.info(
-        "parallel_start",
-        workers=actual_workers,
-        files=len(candidates),
-        chunk_size=chunk_size,
+    
+    cache_variant = build_ast_cache_variant(
+        include_gaps=include_gaps,
+        parsing_config=bsg_cfg.get("parsing", {}),
     )
 
-    # Prepare work items
-    work_items = []
-    for file_path, filepath in candidates:
-        try:
-            stat_info = file_path.stat()
-            size = stat_info.st_size
-            current_mtime = stat_info.st_mtime
-        except OSError:
-            continue
+    rules_config = bsg_cfg.get("rules", {})
+    root_path = bsg_cfg.get("root_path")
 
-        if size > configured_max_file_size_kb * 1024:
-            logger.debug("skipping_large_file", filepath=filepath, size_kb=size // 1024)
-            continue
+    # Initialize rules cache on the main thread for fallback/sequential operations
+    if root_path and rules_config:
+        _init_worker_bsg_rules(root_path, rules_config)
 
-        # NOTICE: We no longer read file bytes or compute hashes in the parent process.
-        # This significantly reduces pickle overhead and memory pressure on large repos.
+    raw_results = []
+    error_count = 0
 
-        work_items.append(
-            (
+    if not parallel_enabled or len(candidates) == 0:
+        logger.info("parallel_disabled_or_empty_candidates")
+        for file_path, filepath in candidates:
+            try:
+                stat_info = file_path.stat()
+                size = stat_info.st_size
+                current_mtime = stat_info.st_mtime
+            except OSError:
+                error_count += 1
+                continue
+
+            if size > configured_max_file_size_kb * 1024:
+                continue
+
+            res = process_file_single_pass_worker(
+                file_path,
+                filepath,
+                current_mtime,
+                size,
+                cache_enabled,
+                cache_path,
+                ttl_days,
+                configured_max_file_size_kb,
+                bsg_cache_cfg,
+                cache_variant=cache_variant,
+                index_id=index_id,
+                include_gaps=include_gaps,
+                package=package_dict,
+            )
+            if res is None:
+                error_count += 1
+            else:
+                raw_results.append(res)
+                if result_callback is not None:
+                    result_callback(res)
+    else:
+        cpu_count = os.cpu_count() or 4
+        actual_workers = min(cpu_count, max_workers, len(candidates))
+        actual_workers = max(1, actual_workers)
+        chunk_size = _calculate_optimal_chunk_size(candidates, actual_workers)
+
+        logger.info(
+            "parallel_single_pass_start",
+            workers=actual_workers,
+            files=len(candidates),
+            chunk_size=chunk_size,
+        )
+
+        work_items = []
+        for file_path, filepath in candidates:
+            try:
+                stat_info = file_path.stat()
+                size = stat_info.st_size
+                current_mtime = stat_info.st_mtime
+            except OSError:
+                continue
+            if size > configured_max_file_size_kb * 1024:
+                continue
+            work_items.append((
                 file_path,
                 filepath,
                 current_mtime,
@@ -650,124 +734,59 @@ def build_graph_parallel(
                 cache_variant,
                 index_id,
                 include_gaps,
-            )
-        )
+                package_dict
+            ))
 
-    # Use multiprocessing for parallel processing.
-    try:
-        import multiprocessing as _mp
+        try:
+            import multiprocessing as _mp
+            from batho.core.config import get_config_cached
+            worker_log_config = dict(get_config_cached().get("logging", {}))
+            ctx = _mp.get_context("spawn")
+            with ctx.Pool(
+                processes=actual_workers,
+                initializer=_initialize_worker,
+                initargs=(worker_log_config, cache_path, root_path, rules_config),
+            ) as pool:
+                for res in pool.imap_unordered(
+                    _process_file_worker_wrapper, work_items, chunksize=chunk_size
+                ):
+                    raw_results.append(res)
+                    if result_callback is not None and res is not None:
+                        result_callback(res)
+        except Exception as exc:
+            logger.warning("parallel_extract_and_emit_failed_fallback_sequential", error=str(exc))
+            raw_results = []
+            error_count = 0
+            for item in work_items:
+                res = process_file_single_pass_worker(*item)
+                if res is None:
+                    error_count += 1
+                else:
+                    raw_results.append(res)
+                    if result_callback is not None:
+                        result_callback(res)
 
-        from batho.core.config import get_config_cached
-
-        worker_log_config = dict(get_config_cached().get("logging", {}))
-        ctx = _mp.get_context("spawn")
-        with ctx.Pool(
-            processes=actual_workers,
-            initializer=_initialize_worker,
-            initargs=(worker_log_config, cache_path),
-        ) as pool:
-            results = pool.starmap(
-                process_file_worker, work_items, chunksize=chunk_size
-            )
-    except (ImportError, OSError, RuntimeError) as exc:
-        # Fallback to sequential processing:
-        # - ImportError: multiprocessing module unavailable
-        # - OSError: pool startup failure (e.g., spawn process resource limits)
-        # - RuntimeError: pool startup or communication failure
-        logger.warning(
-            "multiprocessing_unavailable_or_failed",
-            fallback="sequential",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        return build_graph_sequential(
-            candidates,
-            configured_max_file_size_kb,
-            bsg_cfg,
-            extractor,
-            index_id=index_id,
-            include_gaps=include_gaps,
-        )
-
-    # Filter out None results (errors) and deserialize
     valid_results = []
-    error_count = 0
-    for r in results:
+    from collections import defaultdict
+    merged_audit = {
+        "schema_version": "interception-stats.v1",
+        "plugins": defaultdict(lambda: {"plugin_id": "", "name": "", "interceptions": 0})
+    }
+
+    for r in raw_results:
         if r is None:
             error_count += 1
         else:
-            deser = _deserialize_result(r)
-            if deser is not None:
-                valid_results.append(deser)
-            else:
-                error_count += 1
+            # Merge file security audit fragment
+            if len(r) > 7 and r[7]:
+                for plugin_id, data in r[7].get("plugins", {}).items():
+                    merged_audit["plugins"][plugin_id]["plugin_id"] = plugin_id
+                    merged_audit["plugins"][plugin_id]["name"] = data.get("name", "")
+                    merged_audit["plugins"][plugin_id]["interceptions"] += data.get("interceptions", 0)
+            local_hits = r[8] if len(r) > 8 else {"rules_applied": 0, "entities_tagged": 0}
+            valid_results.append((r[0], r[1], r[2], r[3], r[4], r[5], r[6], local_hits))
 
-    logger.info(
-        "parallel_complete",
-        total_files=len(work_items),
-        successful=len(valid_results),
-        errors=error_count,
-    )
-
-    return valid_results, error_count
+    merged_audit["plugins"] = dict(merged_audit["plugins"])
+    return valid_results, error_count, merged_audit
 
 
-def build_graph_sequential(
-    candidates: list[tuple[Path, str]],
-    configured_max_file_size_kb: int,
-    bsg_cfg: dict[str, Any],
-    extractor: ASTExtractor | None = None,
-    index_id: str | None = None,
-    include_gaps: bool = False,
-) -> tuple[list[tuple[str, list[Entity], list[Relationship], bool]], int]:
-    """
-    Process files sequentially (fallback when multiprocessing unavailable).
-    """
-    bsg_cache_cfg = bsg_cfg.get("cache", {})
-    cache_enabled = bsg_cache_cfg.get("enabled", True)
-    cache_path = bsg_cache_cfg.get("path") or None
-    ttl_days = bsg_cache_cfg.get("ttl_days", 30)
-    cache_variant = _cache_variant_key(bsg_cfg, include_gaps)
-
-    results = []
-    errors = 0
-
-    for file_path, filepath in candidates:
-        try:
-            stat_info = file_path.stat()
-            size = stat_info.st_size
-            current_mtime = stat_info.st_mtime
-        except OSError:
-            errors += 1
-            continue
-
-        if size > configured_max_file_size_kb * 1024:
-            logger.debug("skipping_large_file", filepath=filepath, size_kb=size // 1024)
-            continue
-
-        # Process the file using the worker function logic (it now handles its own reading)
-        result = process_file_worker(
-            file_path,
-            filepath,
-            current_mtime,
-            size,
-            cache_enabled,
-            cache_path,
-            ttl_days,
-            configured_max_file_size_kb,
-            bsg_cache_cfg,
-            cache_variant,
-            index_id=index_id,
-            include_gaps=include_gaps,
-        )
-
-        if result is None:
-            errors += 1
-        else:
-            deser = _deserialize_result(result)
-            if deser is not None:
-                results.append(deser)
-            else:
-                errors += 1
-
-    return results, errors

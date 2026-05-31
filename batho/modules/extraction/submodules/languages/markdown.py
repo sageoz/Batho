@@ -20,7 +20,7 @@ import re
 from typing import Any
 
 from batho.modules.extraction.extractor import MarkupConfigExtractor
-from batho.core.schemas import Entity, EntityType, Relationship, RelationshipType
+from batho.core.schemas import Entity, EntityType, Relationship, RelationshipType, SymbolRole
 
 # Precompiled regex patterns for performance
 _HEADER_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
@@ -50,6 +50,9 @@ class MarkdownExtractor(MarkupConfigExtractor):
 
         try:
             content = source.decode("utf-8")
+
+            def _byte_offset(idx: int) -> int:
+                return len(content[:idx].encode("utf-8"))
 
             # Track line positions
             lines = content.split("\n")
@@ -269,6 +272,9 @@ class MarkdownExtractor(MarkupConfigExtractor):
         try:
             content = source.decode("utf-8")
 
+            def _byte_offset(idx: int) -> int:
+                return len(content[:idx].encode("utf-8"))
+
             # Build entity lookup
             elements = {e.name: e for e in entities if e.type == EntityType.ELEMENT}
             settings = {e.name: e for e in entities if e.type == EntityType.SETTING}
@@ -285,6 +291,8 @@ class MarkdownExtractor(MarkupConfigExtractor):
                             target_id=element.id,
                             rel_type=RelationshipType.CONTAINS,
                             line=element.start_line,
+                            definition_start_byte=element.start_byte,
+                            definition_end_byte=element.end_byte,
                         )
                     )
 
@@ -293,6 +301,8 @@ class MarkdownExtractor(MarkupConfigExtractor):
                 text = match.group(1)
                 url = match.group(2)
                 line_no = content[: match.start()].count("\n") + 1
+                ref_start = _byte_offset(match.start())
+                ref_end = _byte_offset(match.end())
 
                 if url.startswith(("http://", "https://", "//")):
                     # External link
@@ -303,6 +313,9 @@ class MarkdownExtractor(MarkupConfigExtractor):
                                 target_id=f"external:{url}",
                                 rel_type=RelationshipType.LINKS_TO,
                                 line=line_no,
+                                reference_start_byte=ref_start,
+                                reference_end_byte=ref_end,
+                                roles=SymbolRole.ReadAccess,
                             )
                         )
                 elif url.startswith("#"):
@@ -314,6 +327,9 @@ class MarkdownExtractor(MarkupConfigExtractor):
                             target_id=f"anchor:{anchor}",
                             rel_type=RelationshipType.LINKS_TO,
                             line=line_no,
+                            reference_start_byte=ref_start,
+                            reference_end_byte=ref_end,
+                            roles=SymbolRole.ReadAccess,
                         )
                     )
                 else:
@@ -325,6 +341,9 @@ class MarkdownExtractor(MarkupConfigExtractor):
                                 target_id=f"file:{url}",
                                 rel_type=RelationshipType.LINKS_TO,
                                 line=line_no,
+                                reference_start_byte=ref_start,
+                                reference_end_byte=ref_end,
+                                roles=SymbolRole.ReadAccess,
                             )
                         )
 
@@ -333,6 +352,8 @@ class MarkdownExtractor(MarkupConfigExtractor):
                 alt = match.group(1)
                 url = match.group(2)
                 line_no = content[: match.start()].count("\n") + 1
+                ref_start = _byte_offset(match.start())
+                ref_end = _byte_offset(match.end())
 
                 if doc:
                     relationships.append(
@@ -341,6 +362,9 @@ class MarkdownExtractor(MarkupConfigExtractor):
                             target_id=f"image:{url}",
                             rel_type=RelationshipType.LINKS_TO,
                             line=line_no,
+                            reference_start_byte=ref_start,
+                            reference_end_byte=ref_end,
+                            roles=SymbolRole.ReadAccess,
                         )
                     )
 

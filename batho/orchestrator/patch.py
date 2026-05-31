@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
 from batho.core.config import get_config_cached, set_active_root
 from batho.utils.logging import get_logger
 
@@ -74,97 +75,31 @@ def _generate_run_id() -> str:
 
 
 
-def _hash_scan_changes(
-    root: Path,
-    known_tracking: dict[str, dict],
-    max_file_size_kb: int | None = None,
-    *,
-    strict_hashing: bool = True,
-) -> list[FileChange]:
-    """Scan filesystem for added/modified/deleted files.
 
-    ``known_tracking`` maps relative path -> {"content_hash": str, "mtime": float,
-    "mtime_ns": int, "inode": int, "size": int}.
-
-    Args:
-        root: Root directory to scan.
-        known_tracking: Dictionary of tracked files with their metadata.
-        max_file_size_kb: Maximum file size to consider.
-        strict_hashing: If True (default and recommended), always compute the
-            content hash so timestamp-preserving edits are caught. If False,
-            allow a fast-path that skips hashing when *all three* of
-            ``mtime_ns``, ``inode``, and ``size`` match the tracked record.
-            Float-second ``st_mtime`` is intentionally NOT accepted as a
-            fast-path comparator because JSON/SQLite round-trips can drop
-            sub-second precision and produce false negatives.
-    """
-    from batho.modules.graph.incremental import _collect_candidate_files
-
-    max_bytes = (max_file_size_kb * 1024) if max_file_size_kb else None
-    changes: list[FileChange] = []
-    current_files: set[str] = set()
-
-    for abs_path in _collect_candidate_files(root):
+def _estimate_batch_size_bytes(batch_item: dict) -> int:
+    """Estimate the size of a batch item in bytes for persistence."""
+    if batch_item.get("_use_precompiled"):
+        return (
+            len(batch_item.get("agent_blob", b""))
+            + len(batch_item.get("storage_blob", b""))
+            + len(batch_item.get("rels_blob", b""))
+        )
+    else:
         try:
-            rel = str(abs_path.relative_to(root))
-        except ValueError:
-            continue
-        current_files.add(rel)
-
-        try:
-            st = abs_path.stat()
-        except OSError:
-            continue
-
-        if max_bytes is not None and st.st_size > max_bytes:
-            continue
-
-        tracked = known_tracking.get(rel)
-        if tracked is None:
-            new_hash = compute_file_hash(abs_path)
-            changes.append(FileChange(rel, FileChangeType.ADDED, new_hash=new_hash))
-            continue
-
-        old_hash = tracked["content_hash"]
-
-        # Strict hashing: always compute hash to catch content changes with preserved timestamps
-        # Non-strict: skip hashing ONLY when mtime_ns AND inode AND size all match.
-        # We refuse to fall back to float-second mtime: it loses precision after
-        # JSON/SQLite round-trips and produces false negatives (silent stale index).
-        if not strict_hashing:
-            tracked_mtime_ns = tracked.get("mtime_ns")
-            tracked_ino = tracked.get("inode")
-            tracked_size = tracked.get("size")
-            st_mtime_ns = getattr(st, "st_mtime_ns", None)
-            st_ino = getattr(st, "st_ino", None)
-
-            if (
-                tracked_mtime_ns is not None
-                and tracked_ino is not None
-                and tracked_size is not None
-                and st_mtime_ns is not None
-                and st_ino is not None
-                and st_mtime_ns == tracked_mtime_ns
-                and st_ino == tracked_ino
-                and st.st_size == tracked_size
-            ):
-                continue
-            # Otherwise fall through and hash — never trust float-second mtime alone.
-
-        # Compute hash, catching errors (e.g., file modified concurrently)
-        try:
-            new_hash = compute_file_hash(abs_path)
-        except OSError:
-            continue
-
-        if old_hash != new_hash:
-            changes.append(FileChange(rel, FileChangeType.MODIFIED, old_hash=old_hash, new_hash=new_hash))
-
-    for rel, tracked in known_tracking.items():
-        if rel not in current_files:
-            changes.append(FileChange(rel, FileChangeType.DELETED, old_hash=tracked["content_hash"]))
-
-    return changes
+            import orjson
+            dumps = orjson.dumps
+        except ImportError:
+            import json
+            dumps = lambda x: json.dumps(x).encode("utf-8")
+        
+        size = 0
+        if "agent_view_data" in batch_item:
+            size += len(dumps(batch_item["agent_view_data"]))
+        if "storage_delta_data" in batch_item:
+            size += len(dumps(batch_item["storage_delta_data"]))
+        if "relationships_data" in batch_item:
+            size += len(dumps(batch_item["relationships_data"]))
+        return size
 
 
 def run_patch(options: PatchOptions) -> PatchResult:
@@ -209,14 +144,16 @@ def run_patch(options: PatchOptions) -> PatchResult:
         max_file_size_kb = options.max_file_size_kb or cfg.get("indexer", {}).get("max_file_size_kb", 500)
 
         # --- Detect changes natively (Batho's Local Git Model) ---
-        known_tracking = db.get_all_file_tracking()
         # Strict hashing is the safe default; users can opt in to the
         # mtime_ns/inode/size fast-path via config (indexer.strict_hashing=false).
         strict_hashing = bool(cfg.get("indexer", {}).get("strict_hashing", True))
-        changes = _hash_scan_changes(
-            root,
-            known_tracking,
-            max_file_size_kb,
+        
+        from batho.modules.extraction.incremental_engine import IncrementalEngine, FileChangeType, FileChange
+        incremental_engine = IncrementalEngine(db, base_run_uuid)
+        
+        changes = incremental_engine.scan_changes(
+            root=root,
+            max_file_size_kb=max_file_size_kb,
             strict_hashing=strict_hashing,
         )
 
@@ -288,56 +225,9 @@ def run_patch(options: PatchOptions) -> PatchResult:
                         WHERE run_id = ? AND file_id NOT IN (SELECT file_id FROM temp_changed_file_ids)""",
                     [run_internal_id, base_run_internal_id],
                 )
-                # 2. Copy query_entities for unchanged files
-                conn.execute(
-                    f"""INSERT INTO query_entities (entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported)
-                        SELECT entity_id, ?, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
-                        FROM query_entities
-                        WHERE run_id = ? AND file_path NOT IN (SELECT file_path FROM temp_changed_file_paths)""",
-                    [run_internal_id, base_run_internal_id],
-                )
-                # 3. Copy query_relationships for unchanged files
-                # - Direct copy for relationships where both source and target are in unchanged files
-                conn.execute(
-                    f"""INSERT INTO query_relationships (source_id, target_id, relation_type, run_id, metadata_json)
-                        SELECT r.source_id, r.target_id, r.relation_type, ?, r.metadata_json
-                        FROM query_relationships r
-                        WHERE r.run_id = ?
-                          AND r.source_id IN (
-                              SELECT entity_id FROM query_entities
-                              WHERE run_id = ? AND file_path NOT IN (SELECT file_path FROM temp_changed_file_paths)
-                          )
-                          AND r.target_id NOT IN (
-                              SELECT entity_id FROM query_entities
-                              WHERE run_id = ? AND file_path IN (SELECT file_path FROM temp_changed_file_paths)
-                          )""",
-                    [run_internal_id, base_run_internal_id, base_run_internal_id, base_run_internal_id],
-                )
-                # - Convert relationships pointing to changed target files to dangling_references so they can be re-resolved
-                conn.execute(
-                    f"""INSERT INTO dangling_references (source_id, unresolved_target_name, relation_type, run_id)
-                        SELECT r.source_id, COALESCE(e.entity_name, r.target_id), r.relation_type, ?
-                        FROM query_relationships r
-                        LEFT JOIN query_entities e ON r.target_id = e.entity_id AND r.run_id = e.run_id
-                        WHERE r.run_id = ?
-                          AND r.source_id IN (
-                              SELECT entity_id FROM query_entities
-                              WHERE run_id = ? AND file_path NOT IN (SELECT file_path FROM temp_changed_file_paths)
-                          )
-                          AND e.file_path IN (SELECT file_path FROM temp_changed_file_paths)""",
-                    [run_internal_id, base_run_internal_id, base_run_internal_id],
-                )
-                # 4. Copy dangling_references for unchanged files
-                conn.execute(
-                    f"""INSERT INTO dangling_references (source_id, unresolved_target_name, relation_type, run_id)
-                        SELECT source_id, unresolved_target_name, relation_type, ?
-                        FROM dangling_references
-                        WHERE run_id = ? AND source_id IN (
-                            SELECT entity_id FROM query_entities
-                            WHERE run_id = ? AND file_path NOT IN (SELECT file_path FROM temp_changed_file_paths)
-                        )""",
-                    [run_internal_id, base_run_internal_id, base_run_internal_id],
-                )
+
+            # Recreate query tables and populate them from the unchanged files
+            db.populate_query_tables_for_unchanged_files(run_internal_id, base_run_internal_id, changed_file_paths)
 
         # --- Re-parse changed (non-deleted) files ---
         added_or_modified = [c for c in changes if c.change_type != FileChangeType.DELETED]
@@ -359,6 +249,24 @@ def run_patch(options: PatchOptions) -> PatchResult:
             cache_cfg["path"] = str(db_path)
             bsg_cfg["cache"] = cache_cfg
 
+            # --- Dependency Indexing (CDEU) for Patch ---
+            from batho.modules.dependency import build_dependency_index
+            from batho.modules.extraction.scope_manager import ScopeManager
+
+            dep_scope_manager = ScopeManager()
+            dep_cfg = cfg.get("dependency", {})
+            if isinstance(dep_cfg, BaseModel):
+                dep_cfg = dep_cfg.model_dump()
+
+            if dep_cfg.get("enabled", True):
+                # Always re-index stdlib; third-party is cached by ResolutionCache
+                build_dependency_index(
+                    root=root,
+                    scope_manager=dep_scope_manager,
+                    cfg=dep_cfg,
+                    cache_dir=cfg.get("paths", {}).get("cache_dir"),
+                )
+
             from batho.modules.graph.builder.codegraph import CodeGraphIndexer
             from batho.modules.storage.sqlite_registry.engine import _minify_graph_payload
             from collections import defaultdict
@@ -371,6 +279,8 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     except Exception:
                         pass
                 write_batch = []
+                current_batch_bytes = 0
+                unindexed_paths = set()
                 for change in added_or_modified:
                     full_path = root / change.path
                     if not full_path.exists():
@@ -384,7 +294,11 @@ def run_patch(options: PatchOptions) -> PatchResult:
                             max_file_size_kb=max_file_size_kb,
                             verbose=options.verbose,
                             index_id=run_uuid,
+                            external_scope_manager=dep_scope_manager,
                         )
+                        for _, rel in indexer.get_unindexed_files():
+                            unindexed_paths.add(rel)
+                        indexer.clear_unindexed_files()
                     except Exception as exc:
                         LOGGER.warning("patch_file_parse_failed", path=change.path, error=str(exc))
                         continue
@@ -452,12 +366,18 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     new_entity_count += len(entities_list)
                     new_rel_count += len(rels_list)
 
-                    # Flush batch when it reaches 50 files
-                    if len(write_batch) >= 50:
+                    new_item = write_batch[-1]
+                    current_batch_bytes += _estimate_batch_size_bytes(new_item)
+
+                    # Flush batch using configurable dynamic size or byte threshold (default 15MB)
+                    batch_size = cfg.get("persistence", {}).get("batch_size", 500)
+                    batch_bytes_threshold = cfg.get("persistence", {}).get("batch_bytes_threshold", 15_728_640)
+                    if len(write_batch) >= batch_size or current_batch_bytes >= batch_bytes_threshold:
                         t_write_0 = time.monotonic()
                         db.insert_file_artifacts_batch(run_internal_id, write_batch)
                         t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
                         write_batch = []
+                        current_batch_bytes = 0
 
                     # Fetch base-run entities for this file and diff
                     if base_run_internal_id is not None:
@@ -483,8 +403,10 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
 
         # --- Update file tracking ---
+        deleted_paths = {change.path for change in deleted}
+        incremental_engine.handle_deleted_files(deleted_paths)
+        
         for change in deleted:
-            db.delete_file_tracking(change.path)
             # Fetch base-run entities for this deleted file and record their removal
             if base_run_internal_id is not None:
                 old_entities = db.get_agent_entities_for_file(base_run_internal_id, change.path) or []
@@ -497,24 +419,28 @@ def run_patch(options: PatchOptions) -> PatchResult:
                             if diff.change_kind == "removed":
                                 nodes_removed += 1
 
+        fingerprints = []
         for change in added_or_modified:
             full_path = root / change.path
             if full_path.exists():
                 try:
                     stat = full_path.stat()
                     content_hash = change.new_hash or compute_file_hash(full_path) or ""
-                    db.upsert_file_tracking([{
+                    is_indexed = 0 if change.path in unindexed_paths else 1
+                    fingerprints.append({
                         "file_path": change.path,
                         "content_hash": content_hash,
                         "mtime": stat.st_mtime,
                         "mtime_ns": getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1e9)),
                         "inode": getattr(stat, "st_ino", None),
                         "size": stat.st_size,
-                        "is_indexed": 1,
+                        "is_indexed": is_indexed,
                         "last_run_id": run_uuid,
-                    }])
+                        "encoding": "utf-8",
+                    })
                 except OSError:
                     pass
+        incremental_engine.update_state(fingerprints)
 
         # --- Resolve dangling cross-file references via SQL JOIN ---
         try:
@@ -565,7 +491,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
             "git_branch": git_branch,
         }
         
-        total_base_files = len(known_tracking)
+        total_base_files = len(incremental_engine.db.get_all_file_tracking())
         files_changed = len(changes)
         churn_pct = (files_changed / total_base_files * 100.0) if total_base_files > 0 else 0.0
         churn_pct = float(min(max(churn_pct, 0.0), 100.0))
@@ -599,6 +525,11 @@ def run_patch(options: PatchOptions) -> PatchResult:
             },
             blob_config=artifact_blobs_cfg
         )
+
+        try:
+            db.cleanup_query_tables()
+        except Exception as exc:
+            LOGGER.warning("failed_to_cleanup_query_tables", error=str(exc))
 
         LOGGER.info(
             "patch_complete",

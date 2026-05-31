@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
+import msgpack
 import zstandard as zstd
 
 from batho.utils.logging import get_logger
@@ -109,7 +110,7 @@ def _expand_entity(mini: dict[str, Any]) -> dict[str, Any]:
     e = {}
     if "id" in mini:
         e["id"] = mini["id"]
-        
+
     rev_map = {
         "ty": "entity_type",
         "n": "name",
@@ -132,7 +133,7 @@ def _expand_entity(mini: dict[str, Any]) -> dict[str, Any]:
             e[v] = mini[k]
             if v == "entity_type":
                 e["type"] = mini[k]
-            
+
     if "sg" in mini and mini["sg"]:
         sg = mini["sg"]
         e["syntax_glue"] = {
@@ -141,7 +142,14 @@ def _expand_entity(mini: dict[str, Any]) -> dict[str, Any]:
         }
         e["leading_whitespace"] = sg.get("lw", "")
         e["trailing_whitespace"] = sg.get("tw", "")
-        
+
+    # Pass through any full keys that weren't mapped (handles precompiled blobs
+    # that store full dicts instead of minified ones)
+    mapped_keys = set(rev_map.keys()) | {"id", "sg"}
+    for k, v in mini.items():
+        if k not in mapped_keys and k not in e:
+            e[k] = v
+
     return e
 
 
@@ -157,6 +165,11 @@ def _minify_relationship(r: dict[str, Any]) -> dict[str, Any]:
         "relationship_type": "rt",
         "source_id": "s",
         "target_id": "t",
+        "roles": "ro",
+        "reference_start_byte": "rs",
+        "reference_end_byte": "re",
+        "definition_start_byte": "ds",
+        "definition_end_byte": "de",
         "metadata": "m",
     }
     for k, v in key_map.items():
@@ -170,11 +183,18 @@ def _expand_relationship(mini: dict[str, Any]) -> dict[str, Any]:
     if "id" in mini:
         r["id"] = mini["id"]
         r["relationship_id"] = mini["id"]
-        
+    elif "relationship_id" in mini:
+        r["relationship_id"] = mini["relationship_id"]
+
     rev_map = {
         "rt": "type",
         "s": "source_id",
         "t": "target_id",
+        "ro": "roles",
+        "rs": "reference_start_byte",
+        "re": "reference_end_byte",
+        "ds": "definition_start_byte",
+        "de": "definition_end_byte",
         "m": "metadata",
     }
     for k, v in rev_map.items():
@@ -182,6 +202,14 @@ def _expand_relationship(mini: dict[str, Any]) -> dict[str, Any]:
             r[v] = mini[k]
     if "type" in r:
         r["relationship_type"] = r["type"]
+
+    # Pass through any full keys that weren't mapped (handles precompiled blobs
+    # that store full dicts instead of minified ones)
+    mapped_keys = set(rev_map.keys()) | {"id", "relationship_id"}
+    for k, v in mini.items():
+        if k not in mapped_keys and k not in r:
+            r[k] = v
+
     return r
 
 
@@ -294,6 +322,8 @@ class BathoDatabase:
         self._all_connections: list[sqlite3.Connection] = []
         self._string_dict_cache: dict[str, int] = {}
         self._string_val_cache: dict[int, str] = {}
+        self._entity_dict_cache: dict[str, int] = {}
+        self._entity_val_cache: dict[int, str] = {}
         self._zstd_level = 3
 
         try:
@@ -357,9 +387,12 @@ class BathoDatabase:
             self._local = threading.local()
             self._string_dict_cache.clear()
             self._string_val_cache.clear()
+            self._entity_dict_cache.clear()
+            self._entity_val_cache.clear()
             # Clear connections without calling conn.close() to prevent dropping advisory locks in the parent process.
             self._all_connections = []
             self._pid = current_pid
+            self._lock = threading.RLock()
 
     @property
     def _cctx(self) -> zstd.ZstdCompressor:
@@ -387,6 +420,7 @@ class BathoDatabase:
                 str(self._db_path),
                 check_same_thread=False,
                 timeout=30.0,
+                isolation_level=None,
             )
             conn.row_factory = sqlite3.Row
             self._apply_pragmas(conn)
@@ -401,6 +435,7 @@ class BathoDatabase:
         conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS}")
         conn.execute("PRAGMA cache_size = -128000")  # Larger cache
         conn.execute("PRAGMA mmap_size = 30000000000")  # Enable memory-mapped I/O up to 30GB
+        conn.execute("PRAGMA journal_size_limit = 67108864")
 
         current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         if current_mode.lower() != "wal":
@@ -409,12 +444,7 @@ class BathoDatabase:
             else:
                 conn.execute("PRAGMA journal_mode = WAL")
 
-        # Determine final journal mode to set synchronous safely
-        final_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-        if final_mode.lower() == "wal":
-            conn.execute("PRAGMA synchronous = NORMAL")
-        else:
-            conn.execute("PRAGMA synchronous = FULL")
+        conn.execute("PRAGMA synchronous = NORMAL")
 
     @contextmanager
     def connection(self, *, read_only: bool = False) -> Iterator[sqlite3.Connection]:
@@ -531,7 +561,8 @@ class BathoDatabase:
             if val in self._string_dict_cache:
                 return self._string_dict_cache[val]
 
-            with self.connection() as conn:
+            conn = self._get_connection()
+            try:
                 cursor = conn.execute(
                     "INSERT OR IGNORE INTO string_dict(val) VALUES (?)",
                     (val,),
@@ -544,9 +575,14 @@ class BathoDatabase:
                     sid = row["id"]
                 else:
                     sid = cursor.lastrowid
-                self._string_dict_cache[val] = sid
-                self._string_val_cache[sid] = val
-                return sid
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+            self._string_dict_cache[val] = sid
+            self._string_val_cache[sid] = val
+            return sid
 
     def get_string_val(self, sid: int) -> str | None:
         """Get the string value for a string ID from string_dict."""
@@ -555,16 +591,16 @@ class BathoDatabase:
             if sid in self._string_val_cache:
                 return self._string_val_cache[sid]
 
-            with self.connection(read_only=True) as conn:
-                row = conn.execute(
-                    "SELECT val FROM string_dict WHERE id = ?",
-                    (sid,),
-                ).fetchone()
-                val = row["val"] if row else None
-                if val is not None:
-                    self._string_val_cache[sid] = val
-                    self._string_dict_cache[val] = sid
-                return val
+            conn = self._get_connection()
+            row = conn.execute(
+                "SELECT val FROM string_dict WHERE id = ?",
+                (sid,),
+            ).fetchone()
+            val = row["val"] if row else None
+            if val is not None:
+                self._string_val_cache[sid] = val
+                self._string_dict_cache[val] = sid
+            return val
 
     # ------------------------------------------------------------------
     # Index Runs
@@ -701,6 +737,7 @@ class BathoDatabase:
         relationships_data: list[dict[str, Any]],
     ) -> None:
         """Insert or replace a file artifact, compressing the three views individually."""
+        self.ensure_query_tables_exist()
         file_id = self.get_or_create_string_id(file_path)
 
         # Minify payloads
@@ -708,16 +745,33 @@ class BathoDatabase:
         minified_storage = _minify_graph_payload(storage_delta_data)
         minified_rels = [_minify_relationship(r) for r in relationships_data]
 
-        # Serialize and encode
-        agent_bytes = json.dumps(minified_agent, ensure_ascii=True).encode("utf-8")
-        storage_bytes = json.dumps(minified_storage, ensure_ascii=True).encode("utf-8")
-        rels_bytes = json.dumps(minified_rels, ensure_ascii=True).encode("utf-8")
+        # Serialize and encode using msgpack
+        import msgpack
+        agent_bytes = msgpack.packb(minified_agent)
+        storage_bytes = msgpack.packb(minified_storage)
+        rels_bytes = msgpack.packb(minified_rels)
 
         # Compress (level 3)
         cctx = zstd.ZstdCompressor(level=3)
         agent_blob = cctx.compress(agent_bytes)
         storage_blob = cctx.compress(storage_bytes)
         rels_blob = cctx.compress(rels_bytes)
+
+        # Collect all entity IDs to resolve
+        entity_ids = set()
+        for e in agent_view_data.get("entities", []):
+            ent_id = e.get("id")
+            if ent_id:
+                entity_ids.add(ent_id)
+        for r in relationships_data:
+            src_id = r.get("source_id")
+            tgt_id = r.get("target_id")
+            if src_id:
+                entity_ids.add(src_id)
+            if tgt_id:
+                entity_ids.add(tgt_id)
+
+        entity_keys = self.bulk_get_or_create_entity_ids(list(entity_ids))
 
         # Update query_entities for fast search fallback
         entities = agent_view_data.get("entities", [])
@@ -731,17 +785,19 @@ class BathoDatabase:
             sig = e.get("signature")
             is_exp = e.get("is_exported") or 0
             if ent_id and ent_name and ent_type:
-                query_rows.append((
-                    ent_id,
-                    run_internal_id,
-                    ent_name,
-                    ent_type,
-                    ent_fqn,
-                    file_path,
-                    line,
-                    sig,
-                    is_exp,
-                ))
+                ent_key = entity_keys.get(ent_id)
+                if ent_key is not None:
+                    query_rows.append((
+                        ent_key,
+                        run_internal_id,
+                        ent_name,
+                        ent_type,
+                        ent_fqn,
+                        file_path,
+                        line,
+                        sig,
+                        is_exp,
+                    ))
 
         # Update query_relationships and dangling_references
         unresolved_ids = {}
@@ -760,22 +816,28 @@ class BathoDatabase:
             
             if not src_id or not tgt_id or not r_type:
                 continue
+
+            src_key = entity_keys.get(src_id)
+            if src_key is None:
+                continue
                 
             if tgt_id in unresolved_ids:
                 dangling_rows.append((
-                    src_id,
+                    src_key,
                     unresolved_ids[tgt_id],
                     r_type,
                     run_internal_id
                 ))
             else:
-                rel_rows.append((
-                    src_id,
-                    tgt_id,
-                    r_type,
-                    run_internal_id,
-                    meta
-                ))
+                tgt_key = entity_keys.get(tgt_id)
+                if tgt_key is not None:
+                    rel_rows.append((
+                        src_key,
+                        tgt_key,
+                        r_type,
+                        run_internal_id,
+                        meta
+                    ))
 
         # Execute everything inside a single transaction to guarantee atomicity and speed up commits
         with self.transaction() as conn:
@@ -787,36 +849,36 @@ class BathoDatabase:
             )
 
             conn.execute(
+                "DELETE FROM query_relationships WHERE run_id = ? AND source_key IN (SELECT entity_key FROM query_entities WHERE run_id = ? AND file_path = ?)",
+                (run_internal_id, run_internal_id, file_path),
+            )
+            conn.execute(
+                "DELETE FROM dangling_references WHERE run_id = ? AND source_key IN (SELECT entity_key FROM query_entities WHERE run_id = ? AND file_path = ?)",
+                (run_internal_id, run_internal_id, file_path),
+            )
+
+            conn.execute(
                 "DELETE FROM query_entities WHERE run_id = ? AND file_path = ?",
                 (run_internal_id, file_path),
             )
             if query_rows:
                 conn.executemany(
                     """INSERT OR REPLACE INTO query_entities(
-                        entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
+                        entity_key, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     query_rows,
                 )
-
-            conn.execute(
-                "DELETE FROM query_relationships WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE file_path = ?)",
-                (run_internal_id, file_path),
-            )
-            conn.execute(
-                "DELETE FROM dangling_references WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE file_path = ?)",
-                (run_internal_id, file_path),
-            )
             if rel_rows:
                 conn.executemany(
                     """INSERT OR REPLACE INTO query_relationships(
-                        source_id, target_id, relation_type, run_id, metadata_json
+                        source_key, target_key, relation_type, run_id, metadata_json
                     ) VALUES (?, ?, ?, ?, ?)""",
                     rel_rows,
                 )
             if dangling_rows:
                 conn.executemany(
                     """INSERT INTO dangling_references(
-                        source_id, unresolved_target_name, relation_type, run_id
+                        source_key, unresolved_target_name, relation_type, run_id
                     ) VALUES (?, ?, ?, ?)""",
                     dangling_rows,
                 )
@@ -828,8 +890,8 @@ class BathoDatabase:
         
         with self.transaction() as conn:
             dangling = conn.execute(
-                """SELECT d.source_id, d.unresolved_target_name, d.relation_type,
-                          (SELECT file_path FROM query_entities WHERE entity_id = d.source_id AND run_id = d.run_id) AS source_file
+                """SELECT d.source_key, d.unresolved_target_name, d.relation_type,
+                          (SELECT file_path FROM query_entities WHERE entity_key = d.source_key AND run_id = d.run_id) AS source_file
                    FROM dangling_references d
                    WHERE d.run_id = ?""",
                 (run_internal_id,)
@@ -840,9 +902,10 @@ class BathoDatabase:
                 return 0
 
             entities = conn.execute(
-                """SELECT entity_id, entity_name, file_path 
-                   FROM query_entities 
-                   WHERE run_id = ? AND entity_type != 'UNRESOLVED'""",
+                """SELECT qe.entity_key, ed.val AS entity_id, qe.entity_name, qe.file_path 
+                   FROM query_entities qe
+                   JOIN entity_dict ed ON qe.entity_key = ed.id
+                   WHERE qe.run_id = ? AND qe.entity_type != 'UNRESOLVED'""",
                 (run_internal_id,)
             ).fetchall()
 
@@ -850,10 +913,13 @@ class BathoDatabase:
             entities_by_id = defaultdict(list)
             files_by_id = {}
             names_by_id = {}
+            id_to_key = {}
             for e in entities:
+                ekey = e["entity_key"]
                 eid = e["entity_id"]
                 ename = e["entity_name"]
                 efile = e["file_path"]
+                id_to_key[eid] = ekey
                 files_by_id[eid] = efile
                 names_by_id[eid] = ename
                 entities_by_name[ename].append(eid)
@@ -911,8 +977,9 @@ class BathoDatabase:
                 return max(candidate_ids, key=score)
 
             rels_to_insert = []
+            resolution_map = defaultdict(list)
             for d in dangling:
-                src_id = d["source_id"]
+                src_key = d["source_key"]
                 ref_name = d["unresolved_target_name"]
                 rel_type = d["relation_type"]
                 src_file = d["source_file"]
@@ -926,21 +993,99 @@ class BathoDatabase:
 
                 target_id = choose_best(target_ids, src_file) if target_ids else None
                 if target_id:
-                    rels_to_insert.append((src_id, target_id, rel_type, run_internal_id, "{}"))
+                    tgt_key = id_to_key.get(target_id)
+                    if tgt_key is not None:
+                        rels_to_insert.append((src_key, tgt_key, rel_type, run_internal_id, "{}"))
+                        
+                        src_id = self.get_entity_val(src_key)
+                        if src_id:
+                            file_path = src_file
+                            if not file_path:
+                                if ":" in src_id:
+                                    file_path = src_id.split(":")[-1]
+                                else:
+                                    file_path = src_id
+                            resolution_map[file_path].append({
+                                "source_id": src_id,
+                                "relation_type": rel_type,
+                                "unresolved_target": ref_name,
+                                "resolved_target": target_id,
+                            })
 
             resolved_count = 0
             if rels_to_insert:
                 for rel in rels_to_insert:
                     cursor = conn.execute(
-                        """INSERT OR IGNORE INTO query_relationships (source_id, target_id, relation_type, run_id, metadata_json)
+                        """INSERT OR IGNORE INTO query_relationships (source_key, target_key, relation_type, run_id, metadata_json)
                            VALUES (?, ?, ?, ?, ?)""",
                         rel
                     )
                     resolved_count += cursor.rowcount
 
+            # Update bsg_rel_view blobs in file_artifacts with resolved target IDs
+            if resolution_map:
+                cctx = zstd.ZstdCompressor(level=3)
+                dctx = zstd.ZstdDecompressor()
+                for file_path, resolutions in resolution_map.items():
+                    row = conn.execute(
+                        """SELECT bsg_rel_view FROM file_artifacts 
+                           WHERE run_id = ? AND file_id = (SELECT id FROM string_dict WHERE val = ?)""",
+                        (run_internal_id, file_path)
+                    ).fetchone()
+                    if not row or not row["bsg_rel_view"]:
+                        continue
+                    
+                    try:
+                        rels_blob = row["bsg_rel_view"]
+                        rels_decompressed = dctx.decompress(rels_blob)
+                        rels_minified = msgpack.unpackb(rels_decompressed)
+                        
+                        updated = False
+                        for rel in rels_minified:
+                            # Map keys: 's' -> source_id, 'rt' -> relation_type, 't' -> target_id
+                            r_src = rel.get("s")
+                            r_type = rel.get("rt")
+                            r_tgt = rel.get("t")
+                            
+                            for res in resolutions:
+                                is_match = False
+                                if r_src == res["source_id"] and r_type == res["relation_type"]:
+                                    if r_tgt == res["unresolved_target"]:
+                                        is_match = True
+                                    elif isinstance(r_tgt, str) and r_tgt.startswith("unresolved:"):
+                                        parts = r_tgt.split(":")
+                                        if len(parts) >= 2 and parts[1] == res["unresolved_target"]:
+                                            is_match = True
+                                if is_match:
+                                    rel["t"] = res["resolved_target"]
+                                    updated = True
+                                    break
+                                    
+                        if updated:
+                            new_rels_bytes = msgpack.packb(rels_minified)
+                            new_rels_blob = cctx.compress(new_rels_bytes)
+                            conn.execute(
+                                """UPDATE file_artifacts SET bsg_rel_view = ? 
+                                   WHERE run_id = ? AND file_id = (SELECT id FROM string_dict WHERE val = ?)""",
+                                (new_rels_blob, run_internal_id, file_path)
+                            )
+                    except Exception as e:
+                        LOGGER.warning("failed_to_update_bsg_rel_view_blob", file_path=file_path, error=str(e))
+
             conn.execute("DELETE FROM dangling_references WHERE run_id = ?", (run_internal_id,))
-            conn.commit()
             return resolved_count
+
+
+    def _extract_name_from_entity_id(self, entity_id: str) -> str:
+        """Extract the human-readable symbol name from an opaque entity ID."""
+        # "batho pip myproject 0.1.0 src/foo.py#MyFunc()." -> "MyFunc"
+        if "#" in entity_id:
+            name = entity_id.rsplit("#", 1)[-1].rstrip("().")
+            if name:
+                return name
+        if "/" in entity_id:
+            return entity_id.rsplit("/", 1)[-1]
+        return entity_id
 
     def insert_file_artifacts_batch(
         self,
@@ -951,6 +1096,8 @@ class BathoDatabase:
         if not batch_items:
             return
 
+        self.ensure_query_tables_exist()
+
         # Build set of all entity IDs in the entire batch upfront to prevent O(N^2) loop complexity
         entity_ids_in_batch = set()
         for b_item in batch_items:
@@ -959,8 +1106,37 @@ class BathoDatabase:
                 if ent_id:
                     entity_ids_in_batch.add(ent_id)
 
+        # Collect all entity IDs to resolve in one go
+        entity_ids_to_resolve = set()
+        for b_item in batch_items:
+            for e in b_item["agent_view_data"].get("entities", []):
+                ent_id = e.get("id")
+                if ent_id:
+                    entity_ids_to_resolve.add(ent_id)
+            for r in b_item["relationships_data"]:
+                src_id = r.get("source_id")
+                tgt_id = r.get("target_id")
+                if src_id:
+                    entity_ids_to_resolve.add(src_id)
+                if tgt_id:
+                    entity_ids_to_resolve.add(tgt_id)
+
+        # Bulk resolve all entity IDs to their integer keys
+        entity_keys = self.bulk_get_or_create_entity_ids(list(entity_ids_to_resolve))
+
         # Pseudo-target prefixes that are valid external references
-        PSEDUO_TARGET_PREFIXES = ("external:", "file:", "anchor:", "unresolved:", "symbol:")
+        PSEDUO_TARGET_PREFIXES = (
+            "external:",
+            "file:",
+            "anchor:",
+            "unresolved:",
+            "symbol:",
+            "image:",
+            "import:",
+            "stylesheet:",
+            "resource:",
+            "variable:",
+        )
 
         file_artifacts_rows = []
         query_entities_rows = []
@@ -971,6 +1147,10 @@ class BathoDatabase:
 
         cctx = zstd.ZstdCompressor(level=3)
 
+        # Resolve all file path IDs in ONE transaction to eliminate commit latency
+        all_file_paths = [item["file_path"] for item in batch_items]
+        resolved_ids = self.bulk_get_or_create_string_ids(all_file_paths)
+
         for item in batch_items:
             file_path = item["file_path"]
             content_hash = item["content_hash"]
@@ -978,7 +1158,7 @@ class BathoDatabase:
             storage_delta_data = item["storage_delta_data"]
             relationships_data = item["relationships_data"]
 
-            file_id = self.get_or_create_string_id(file_path)
+            file_id = resolved_ids[file_path]
             file_paths_to_delete.append(file_path)
 
             # Minify payloads
@@ -986,10 +1166,11 @@ class BathoDatabase:
             minified_storage = _minify_graph_payload(storage_delta_data)
             minified_rels = [_minify_relationship(r) for r in relationships_data]
 
-            # Serialize and encode
-            agent_bytes = json.dumps(minified_agent, ensure_ascii=True).encode("utf-8")
-            storage_bytes = json.dumps(minified_storage, ensure_ascii=True).encode("utf-8")
-            rels_bytes = json.dumps(minified_rels, ensure_ascii=True).encode("utf-8")
+            # Serialize and encode using msgpack
+            import msgpack
+            agent_bytes = msgpack.packb(minified_agent)
+            storage_bytes = msgpack.packb(minified_storage)
+            rels_bytes = msgpack.packb(minified_rels)
 
             # Compress
             agent_blob = cctx.compress(agent_bytes)
@@ -1011,9 +1192,11 @@ class BathoDatabase:
                 sig = e.get("signature")
                 is_exp = e.get("is_exported") or 0
                 if ent_id and ent_name and ent_type:
-                    query_entities_rows.append((
-                        ent_id, run_internal_id, ent_name, ent_type, ent_fqn, file_path, line, sig, is_exp
-                    ))
+                    ent_key = entity_keys.get(ent_id)
+                    if ent_key is not None:
+                        query_entities_rows.append((
+                            ent_key, run_internal_id, ent_name, ent_type, ent_fqn, file_path, line, sig, is_exp
+                        ))
 
             # Unresolved IDs
             unresolved_ids = {}
@@ -1032,76 +1215,130 @@ class BathoDatabase:
                 if not src_id or not tgt_id or not r_type:
                     continue
 
+                src_key = entity_keys.get(src_id)
+                if src_key is None:
+                    continue
+
                 # Check if target is a pseudo-target (external reference)
                 is_pseudo_target = any(tgt_id.startswith(prefix) for prefix in PSEDUO_TARGET_PREFIXES)
 
                 if is_pseudo_target:
                     # Insert pseudo-target relationships directly (they're valid external refs)
-                    query_relationships_rows.append((
-                        src_id, tgt_id, r_type, run_internal_id, meta
-                    ))
+                    tgt_key = entity_keys.get(tgt_id)
+                    if tgt_key is not None:
+                        query_relationships_rows.append((
+                            src_key, tgt_key, r_type, run_internal_id, meta
+                        ))
                 elif tgt_id in unresolved_ids:
                     dangling_references_rows.append((
-                        src_id, unresolved_ids[tgt_id], r_type, run_internal_id
+                        src_key, unresolved_ids[tgt_id], r_type, run_internal_id
                     ))
                 elif tgt_id not in entity_ids_in_batch:
+                    target_name = _extract_name_from_entity_id(tgt_id)
                     dangling_references_rows.append((
-                        src_id, tgt_id, r_type, run_internal_id
+                        src_key, target_name, r_type, run_internal_id
                     ))
                 else:
-                    query_relationships_rows.append((
-                        src_id, tgt_id, r_type, run_internal_id, meta
-                    ))
+                    tgt_key = entity_keys.get(tgt_id)
+                    if tgt_key is not None:
+                        query_relationships_rows.append((
+                            src_key, tgt_key, r_type, run_internal_id, meta
+                        ))
 
         # Single transaction for all database insertions
         with self.transaction() as conn:
-            # 1. Insert File Artifacts
-            conn.executemany(
-                """INSERT OR REPLACE INTO file_artifacts(
-                    run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
-                ) VALUES (?, ?, ?, ?, ?, ?)""",
-                file_artifacts_rows,
-            )
+            # 1. Insert File Artifacts in chunks to prevent 999 param limit issues
+            chunk_size_artifacts = 999 // 6
+            for idx in range(0, len(file_artifacts_rows), chunk_size_artifacts):
+                chunk = file_artifacts_rows[idx:idx + chunk_size_artifacts]
+                conn.executemany(
+                    """INSERT OR REPLACE INTO file_artifacts(
+                        run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
+                    ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    chunk,
+                )
 
-            # 2. Update query_entities
+            # 2. Update query_relationships and dangling_references (delete old first using old query_entities state)
+            for file_path in file_paths_to_delete:
+                conn.execute(
+                    "DELETE FROM query_relationships WHERE run_id = ? AND source_key IN (SELECT entity_key FROM query_entities WHERE run_id = ? AND file_path = ?)",
+                    (run_internal_id, run_internal_id, file_path),
+                )
+                conn.execute(
+                    "DELETE FROM dangling_references WHERE run_id = ? AND source_key IN (SELECT entity_key FROM query_entities WHERE run_id = ? AND file_path = ?)",
+                    (run_internal_id, run_internal_id, file_path),
+                )
+
+            # 3. Update query_entities
             for file_path in file_paths_to_delete:
                 conn.execute(
                     "DELETE FROM query_entities WHERE run_id = ? AND file_path = ?",
                     (run_internal_id, file_path),
                 )
             if query_entities_rows:
-                conn.executemany(
-                    """INSERT OR REPLACE INTO query_entities(
-                        entity_id, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    query_entities_rows,
-                )
-
-            # 3. Update query_relationships and dangling_references
-            for file_path in file_paths_to_delete:
-                conn.execute(
-                    "DELETE FROM query_relationships WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE run_id = ? AND file_path = ?)",
-                    (run_internal_id, run_internal_id, file_path),
-                )
-                conn.execute(
-                    "DELETE FROM dangling_references WHERE run_id = ? AND source_id IN (SELECT entity_id FROM query_entities WHERE run_id = ? AND file_path = ?)",
-                    (run_internal_id, run_internal_id, file_path),
-                )
+                chunk_size_entities = 999 // 9
+                for idx in range(0, len(query_entities_rows), chunk_size_entities):
+                    chunk = query_entities_rows[idx:idx + chunk_size_entities]
+                    conn.executemany(
+                        """INSERT OR REPLACE INTO query_entities(
+                            entity_key, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        chunk,
+                    )
             if query_relationships_rows:
-                conn.executemany(
-                    """INSERT OR REPLACE INTO query_relationships(
-                        source_id, target_id, relation_type, run_id, metadata_json
-                    ) VALUES (?, ?, ?, ?, ?)""",
-                    query_relationships_rows,
-                )
+                chunk_size_rels = 999 // 5
+                for idx in range(0, len(query_relationships_rows), chunk_size_rels):
+                    chunk = query_relationships_rows[idx:idx + chunk_size_rels]
+                    conn.executemany(
+                        """INSERT OR REPLACE INTO query_relationships(
+                            source_key, target_key, relation_type, run_id, metadata_json
+                        ) VALUES (?, ?, ?, ?, ?)""",
+                        chunk,
+                    )
             if dangling_references_rows:
-                conn.executemany(
-                    """INSERT INTO dangling_references(
-                        source_id, unresolved_target_name, relation_type, run_id
-                    ) VALUES (?, ?, ?, ?)""",
-                    dangling_references_rows,
-                )
-            conn.commit()
+                chunk_size_dangling = 999 // 4
+                for idx in range(0, len(dangling_references_rows), chunk_size_dangling):
+                    chunk = dangling_references_rows[idx:idx + chunk_size_dangling]
+                    conn.executemany(
+                        """INSERT INTO dangling_references(
+                            source_key, unresolved_target_name, relation_type, run_id
+                        ) VALUES (?, ?, ?, ?)""",
+                        chunk,
+                    )
+
+    def _insert_precompiled_batch(
+        self,
+        run_internal_id: int,
+        batch: list[dict[str, Any]],
+    ) -> None:
+        """
+        Direct insertion of pre-compiled blobs.
+        Bypasses minification loops - blobs already compressed.
+        """
+        if not batch:
+            return
+
+        with self.transaction() as conn:
+            # Chunk to avoid SQLITE_MAX_VARIABLE_NUMBER (999)
+            safe_chunk_size = 999 // 6  # = 166
+
+            sql = """INSERT OR REPLACE INTO file_artifacts
+                (run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?)"""
+
+            for i in range(0, len(batch), safe_chunk_size):
+                chunk = batch[i:i + safe_chunk_size]
+                params = []
+                for item in chunk:
+                    params.append((
+                        run_internal_id,
+                        item["file_id"],
+                        item["agent_blob"],
+                        item["storage_blob"],
+                        item["rels_blob"],
+                        item["content_hash"]
+                    ))
+                conn.executemany(sql, params)
 
     def get_file_artifacts(
         self,
@@ -1135,7 +1372,7 @@ class BathoDatabase:
                 agent_blob = row["bsg_agent_view"]
                 if agent_blob:
                     agent_decompressed = dctx.decompress(agent_blob)
-                    agent_minified = json.loads(agent_decompressed.decode("utf-8"))
+                    agent_minified = msgpack.unpackb(agent_decompressed)
                     agent_data = _expand_graph_payload(agent_minified)
                 else:
                     agent_data = {"entities": [], "relationships": []}
@@ -1148,7 +1385,7 @@ class BathoDatabase:
                     storage_blob = row["bsg_storage_view"]
                     if storage_blob:
                         storage_decompressed = dctx.decompress(storage_blob)
-                        storage_minified = json.loads(storage_decompressed.decode("utf-8"))
+                        storage_minified = msgpack.unpackb(storage_decompressed)
                         storage_data = _expand_graph_payload(storage_minified)
                         
                         storage_entities = storage_data.get("entities", [])
@@ -1172,7 +1409,7 @@ class BathoDatabase:
                     rels_blob = row["bsg_rel_view"]
                     if rels_blob:
                         rels_decompressed = dctx.decompress(rels_blob)
-                        rels_minified = json.loads(rels_decompressed.decode("utf-8"))
+                        rels_minified = msgpack.unpackb(rels_decompressed)
                         rels_list = [_expand_relationship(r) for r in rels_minified]
 
                 results.append({
@@ -1203,28 +1440,29 @@ class BathoDatabase:
         if run_internal_id is None:
             return []
 
-        conditions = ["run_id = ?"]
+        conditions = ["qe.run_id = ?"]
         params: list[Any] = [run_internal_id]
 
         if "." in query:
-            conditions.append("fqn = ?")
+            conditions.append("qe.fqn = ?")
             params.append(query)
         else:
-            conditions.append("(entity_name = ? OR entity_name LIKE ?)")
+            conditions.append("(qe.entity_name = ? OR qe.entity_name LIKE ?)")
             params.append(query)
             params.append(query + "%")
 
         if kinds:
             placeholders = ",".join("?" * len(kinds))
-            conditions.append(f"entity_type IN ({placeholders})")
+            conditions.append(f"qe.entity_type IN ({placeholders})")
             params.extend(kinds)
 
         params.append(limit)
         where_clause = " AND ".join(conditions)
 
         sql = f"""
-            SELECT entity_id, entity_name, entity_type, file_path, line_number, signature, fqn
-            FROM query_entities
+            SELECT ed.val AS entity_id, qe.entity_name, qe.entity_type, qe.file_path, qe.line_number, qe.signature, qe.fqn
+            FROM query_entities qe
+            JOIN entity_dict ed ON qe.entity_key = ed.id
             WHERE {where_clause}
             LIMIT ?
         """
@@ -1253,10 +1491,14 @@ class BathoDatabase:
         if not records:
             return 0
 
+        # Resolve all file path IDs in ONE transaction to eliminate commit latency
+        all_file_paths = [r["file_path"] for r in records]
+        resolved_ids = self.bulk_get_or_create_string_ids(all_file_paths)
+
         now = datetime.now(timezone.utc).isoformat()
         rows_to_insert = []
         for r in records:
-            file_id = self.get_or_create_string_id(r["file_path"])
+            file_id = resolved_ids[r["file_path"]]
             rows_to_insert.append((
                 file_id,
                 r["content_hash"],
@@ -1389,7 +1631,6 @@ class BathoDatabase:
                     delta_stats
                 )
             )
-            conn.commit()
 
     def get_run_artifacts(self, run_internal_id: int) -> dict | None:
         """Retrieve and decompress all 6 columns for a run."""
@@ -1435,7 +1676,7 @@ class BathoDatabase:
                 return []
             dctx = zstd.ZstdDecompressor()
             decompressed = dctx.decompress(row["bsg_agent_view"])
-            minified = json.loads(decompressed.decode("utf-8"))
+            minified = msgpack.unpackb(decompressed)
             expanded = _expand_graph_payload(minified)
             return expanded.get("entities", [])
 
@@ -1459,31 +1700,366 @@ class BathoDatabase:
                 return result
 
             with self.transaction() as conn:
-                placeholders = ",".join("?" * len(missing_from_cache))
-                existing = conn.execute(
-                    f"SELECT id, val FROM string_dict WHERE val IN ({placeholders})",
-                    missing_from_cache,
-                ).fetchall()
-                for row in existing:
-                    result[row["val"]] = row["id"]
-                    self._string_dict_cache[row["val"]] = row["id"]
+                chunk_size = 900
+                for idx in range(0, len(missing_from_cache), chunk_size):
+                    chunk = missing_from_cache[idx:idx + chunk_size]
+                    placeholders = ",".join("?" * len(chunk))
+                    existing = conn.execute(
+                        f"SELECT id, val FROM string_dict WHERE val IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                    for row in existing:
+                        result[row["val"]] = row["id"]
+                        self._string_dict_cache[row["val"]] = row["id"]
+                        self._string_val_cache[row["id"]] = row["val"]
 
                 still_missing = [s for s in missing_from_cache if s not in result]
                 if still_missing:
-                    conn.executemany(
-                        "INSERT OR IGNORE INTO string_dict(val) VALUES (?)",
-                        [(s,) for s in still_missing],
-                    )
-                    new_placeholders = ",".join("?" * len(still_missing))
-                    new_ids = conn.execute(
-                        f"SELECT id, val FROM string_dict WHERE val IN ({new_placeholders})",
-                        still_missing,
-                    ).fetchall()
-                    for row in new_ids:
-                        result[row["val"]] = row["id"]
-                        self._string_dict_cache[row["val"]] = row["id"]
+                    for idx in range(0, len(still_missing), chunk_size):
+                        chunk = still_missing[idx:idx + chunk_size]
+                        conn.executemany(
+                            "INSERT OR IGNORE INTO string_dict(val) VALUES (?)",
+                            [(s,) for s in chunk],
+                        )
+                        new_placeholders = ",".join("?" * len(chunk))
+                        new_ids = conn.execute(
+                            f"SELECT id, val FROM string_dict WHERE val IN ({new_placeholders})",
+                            chunk,
+                        ).fetchall()
+                        for row in new_ids:
+                            result[row["val"]] = row["id"]
+                            self._string_dict_cache[row["val"]] = row["id"]
+                            self._string_val_cache[row["id"]] = row["val"]
 
             return result
+
+    def bulk_get_or_create_entity_ids(self, entity_ids: list[str]) -> dict[str, int]:
+        """Batch-resolve entity IDs to entity_dict IDs in one SELECT + one INSERT."""
+        self._check_pid()
+        with self._lock:
+            result: dict[str, int] = {}
+            if not entity_ids:
+                return result
+
+            # Check cache first
+            missing_from_cache = []
+            for s in entity_ids:
+                if s in self._entity_dict_cache:
+                    result[s] = self._entity_dict_cache[s]
+                else:
+                    missing_from_cache.append(s)
+
+            if not missing_from_cache:
+                return result
+
+            with self.transaction() as conn:
+                chunk_size = 900
+                for idx in range(0, len(missing_from_cache), chunk_size):
+                    chunk = missing_from_cache[idx:idx + chunk_size]
+                    placeholders = ",".join("?" * len(chunk))
+                    existing = conn.execute(
+                        f"SELECT id, val FROM entity_dict WHERE val IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                    for row in existing:
+                        result[row["val"]] = row["id"]
+                        self._entity_dict_cache[row["val"]] = row["id"]
+                        self._entity_val_cache[row["id"]] = row["val"]
+
+                still_missing = [s for s in missing_from_cache if s not in result]
+                if still_missing:
+                    for idx in range(0, len(still_missing), chunk_size):
+                        chunk = still_missing[idx:idx + chunk_size]
+                        conn.executemany(
+                            "INSERT OR IGNORE INTO entity_dict(val) VALUES (?)",
+                            [(s,) for s in chunk],
+                        )
+                        new_placeholders = ",".join("?" * len(chunk))
+                        new_ids = conn.execute(
+                            f"SELECT id, val FROM entity_dict WHERE val IN ({new_placeholders})",
+                            chunk,
+                        ).fetchall()
+                        for row in new_ids:
+                            result[row["val"]] = row["id"]
+                            self._entity_dict_cache[row["val"]] = row["id"]
+                            self._entity_val_cache[row["id"]] = row["val"]
+
+            return result
+
+    def get_entity_val(self, eid: int) -> str | None:
+        """Get the entity ID string for an entity ID from entity_dict."""
+        self._check_pid()
+        with self._lock:
+            if eid in self._entity_val_cache:
+                return self._entity_val_cache[eid]
+
+            with self.connection(read_only=True) as conn:
+                row = conn.execute(
+                    "SELECT val FROM entity_dict WHERE id = ?",
+                    (eid,),
+                ).fetchone()
+                val = row["val"] if row else None
+                if val is not None:
+                    self._entity_val_cache[eid] = val
+                    self._entity_dict_cache[val] = eid
+                return val
+
+    def ensure_query_tables_exist(self) -> None:
+        """Create query_entities, query_relationships, dangling_references, and entity_dict tables if they don't exist."""
+        sql = """
+        CREATE TABLE IF NOT EXISTS entity_dict (
+            id   INTEGER PRIMARY KEY AUTOINCREMENT,
+            val  TEXT UNIQUE NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS query_entities (
+            entity_key      INTEGER NOT NULL REFERENCES entity_dict(id) ON DELETE CASCADE,
+            run_id          INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
+            entity_name     TEXT NOT NULL,
+            entity_type     TEXT NOT NULL,
+            fqn             TEXT,
+            file_path       TEXT NOT NULL,
+            line_number     INTEGER NOT NULL,
+            signature       TEXT,
+            is_exported     INTEGER DEFAULT 0,
+            PRIMARY KEY (entity_key, run_id)
+        ) WITHOUT ROWID;
+
+        CREATE INDEX IF NOT EXISTS idx_entities_name ON query_entities(entity_name);
+        CREATE INDEX IF NOT EXISTS idx_entities_name_prefix ON query_entities(entity_name COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_entities_type ON query_entities(entity_type);
+        CREATE INDEX IF NOT EXISTS idx_entities_fqn ON query_entities(fqn);
+        CREATE INDEX IF NOT EXISTS idx_entities_run ON query_entities(run_id);
+
+        CREATE TABLE IF NOT EXISTS query_relationships (
+            source_key      INTEGER NOT NULL REFERENCES entity_dict(id) ON DELETE CASCADE,
+            target_key      INTEGER NOT NULL REFERENCES entity_dict(id) ON DELETE CASCADE,
+            relation_type   TEXT NOT NULL,
+            run_id          INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
+            metadata_json   TEXT DEFAULT '{}',
+            PRIMARY KEY (source_key, target_key, relation_type, run_id)
+        ) WITHOUT ROWID;
+
+        CREATE INDEX IF NOT EXISTS idx_relationships_source ON query_relationships(source_key, run_id);
+        CREATE INDEX IF NOT EXISTS idx_relationships_target ON query_relationships(target_key, run_id);
+
+        CREATE TABLE IF NOT EXISTS dangling_references (
+            source_key              INTEGER NOT NULL REFERENCES entity_dict(id) ON DELETE CASCADE,
+            unresolved_target_name  TEXT NOT NULL,
+            relation_type           TEXT NOT NULL,
+            run_id                  INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_dangling_run_name
+            ON dangling_references(run_id, unresolved_target_name);
+        """
+        with self.transaction() as conn:
+            conn.executescript(sql)
+            conn.commit()
+
+    def populate_query_tables_for_unchanged_files(
+        self,
+        run_internal_id: int,
+        base_run_internal_id: int,
+        changed_file_paths: set[str],
+    ) -> None:
+        """Populate query tables (query_entities, query_relationships, dangling_references)
+        from file_artifacts bsg_agent_view and bsg_rel_view blobs of unchanged files from the base run.
+        """
+        self.ensure_query_tables_exist()
+        
+        # 1. Fetch all files from file_artifacts of base_run_internal_id on a read_only connection
+        dctx = zstd.ZstdDecompressor()
+        
+        with self.connection(read_only=True) as conn:
+            rows = conn.execute(
+                """SELECT sd.val AS file_path, fa.bsg_agent_view, fa.bsg_rel_view 
+                   FROM file_artifacts fa
+                   JOIN string_dict sd ON fa.file_id = sd.id
+                   WHERE fa.run_id = ?""",
+                (base_run_internal_id,)
+            ).fetchall()
+            
+        # 2. Extract and prepare rows for query_entities, query_relationships, dangling_references
+        # Filter unchanged files in Python to prevent DDL/writes on read-only connection
+        # and to avoid SQL variable limit issues.
+        query_entities_rows = []
+        query_relationships_rows = []
+        dangling_references_rows = []
+        
+        # We need to collect all entity/string IDs to resolve them in bulk
+        entity_ids_to_resolve = set()
+        
+        # Also store the unpacked data to process in a second pass
+        unpacked_items = []
+        
+        for row in rows:
+            file_path = row["file_path"]
+            if file_path in changed_file_paths:
+                continue
+                
+            agent_blob = row["bsg_agent_view"]
+            rels_blob = row["bsg_rel_view"]
+            
+            entities = []
+            if agent_blob:
+                try:
+                    agent_decompressed = dctx.decompress(agent_blob)
+                    agent_minified = msgpack.unpackb(agent_decompressed)
+                    agent_data = _expand_graph_payload(agent_minified)
+                    entities = agent_data.get("entities", [])
+                except Exception:
+                    pass
+                    
+            rels = []
+            if rels_blob:
+                try:
+                    rels_decompressed = dctx.decompress(rels_blob)
+                    rels_minified = msgpack.unpackb(rels_decompressed)
+                    rels = [_expand_relationship(r) for r in rels_minified]
+                except Exception:
+                    pass
+            
+            for e in entities:
+                ent_id = e.get("id")
+                if ent_id:
+                    entity_ids_to_resolve.add(ent_id)
+            for r in rels:
+                src_id = r.get("source_id")
+                tgt_id = r.get("target_id")
+                if src_id:
+                    entity_ids_to_resolve.add(src_id)
+                if tgt_id:
+                    entity_ids_to_resolve.add(tgt_id)
+                    
+            unpacked_items.append({
+                "file_path": file_path,
+                "entities": entities,
+                "relationships": rels,
+            })
+            
+        # Bulk resolve all entity IDs
+        entity_keys = self.bulk_get_or_create_entity_ids(list(entity_ids_to_resolve))
+        
+        PSEDUO_TARGET_PREFIXES = (
+            "external:", "file:", "anchor:", "unresolved:", "symbol:",
+            "image:", "import:", "stylesheet:", "resource:", "variable:"
+        )
+        
+        for item in unpacked_items:
+            file_path = item["file_path"]
+            entities = item["entities"]
+            relationships = item["relationships"]
+            
+            # Entities
+            for e in entities:
+                ent_id = e.get("id")
+                ent_name = e.get("name")
+                ent_type = e.get("type") or e.get("entity_type")
+                ent_fqn = e.get("fqn")
+                line = e.get("start_line") or e.get("line") or 1
+                sig = e.get("signature")
+                is_exp = e.get("is_exported") or 0
+                if ent_id and ent_name and ent_type:
+                    ent_key = entity_keys.get(ent_id)
+                    if ent_key is not None:
+                        query_entities_rows.append((
+                            ent_key, run_internal_id, ent_name, ent_type, ent_fqn, file_path, line, sig, is_exp
+                        ))
+                        
+            # Unresolved IDs
+            unresolved_ids = {}
+            for e in entities:
+                e_type = e.get("type") or e.get("entity_type")
+                if e_type == "UNRESOLVED" or (isinstance(e_type, str) and e_type.upper() == "UNRESOLVED"):
+                    unresolved_ids[e.get("id")] = e.get("name")
+                    
+            # Relationships
+            for r in relationships:
+                src_id = r.get("source_id")
+                tgt_id = r.get("target_id")
+                r_type = r.get("type") or r.get("relationship_type")
+                meta = json.dumps(r.get("metadata") or {})
+                
+                if not src_id or not tgt_id or not r_type:
+                    continue
+                    
+                src_key = entity_keys.get(src_id)
+                if src_key is None:
+                    continue
+                    
+                is_pseudo_target = any(tgt_id.startswith(prefix) for prefix in PSEDUO_TARGET_PREFIXES)
+                
+                if is_pseudo_target:
+                    tgt_key = entity_keys.get(tgt_id)
+                    if tgt_key is not None:
+                        query_relationships_rows.append((
+                            src_key, tgt_key, r_type, run_internal_id, meta
+                        ))
+                elif tgt_id in unresolved_ids:
+                    dangling_references_rows.append((
+                        src_key, unresolved_ids[tgt_id], r_type, run_internal_id
+                    ))
+                else:
+                    tgt_key = entity_keys.get(tgt_id)
+                    if tgt_key is not None:
+                        query_relationships_rows.append((
+                            src_key, tgt_key, r_type, run_internal_id, meta
+                        ))
+                    else:
+                        dangling_references_rows.append((
+                            src_key, tgt_id, r_type, run_internal_id
+                        ))
+                        
+        # 3. Write in chunks
+        with self.transaction() as conn:
+            if query_entities_rows:
+                chunk_size_entities = 999 // 9
+                for idx in range(0, len(query_entities_rows), chunk_size_entities):
+                    chunk = query_entities_rows[idx:idx + chunk_size_entities]
+                    conn.executemany(
+                        """INSERT OR REPLACE INTO query_entities(
+                            entity_key, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        chunk,
+                    )
+            if query_relationships_rows:
+                chunk_size_rels = 999 // 5
+                for idx in range(0, len(query_relationships_rows), chunk_size_rels):
+                    chunk = query_relationships_rows[idx:idx + chunk_size_rels]
+                    conn.executemany(
+                        """INSERT OR REPLACE INTO query_relationships(
+                            source_key, target_key, relation_type, run_id, metadata_json
+                        ) VALUES (?, ?, ?, ?, ?)""",
+                        chunk,
+                    )
+            if dangling_references_rows:
+                chunk_size_dangling = 999 // 4
+                for idx in range(0, len(dangling_references_rows), chunk_size_dangling):
+                    chunk = dangling_references_rows[idx:idx + chunk_size_dangling]
+                    conn.executemany(
+                        """INSERT INTO dangling_references(
+                            source_key, unresolved_target_name, relation_type, run_id
+                        ) VALUES (?, ?, ?, ?)""",
+                        chunk,
+                    )
+
+    def cleanup_query_tables(self) -> None:
+        """Drop query_entities, query_relationships, dangling_references, and entity_dict tables to save space, and run vacuum to reclaim space."""
+        with self.transaction() as conn:
+            conn.execute("DROP TABLE IF EXISTS query_entities")
+            conn.execute("DROP TABLE IF EXISTS query_relationships")
+            conn.execute("DROP TABLE IF EXISTS dangling_references")
+            conn.execute("DROP TABLE IF EXISTS entity_dict")
+
+        # Reclaim space outside transaction using autocommit mode
+        with self.connection() as conn:
+            old_isolation = conn.isolation_level
+            conn.isolation_level = None
+            try:
+                conn.execute("PRAGMA incremental_vacuum").fetchall()
+            finally:
+                conn.isolation_level = old_isolation
 
     def record_file_changelog(self, run_id: int, base_run_id: int, diffs: list[NodeDiff]) -> None:
         """Group NodeDiffs by file, compress as orjson blob, bulk-insert one row per file."""
@@ -1685,18 +2261,47 @@ class BathoDatabase:
                     })
         return results
 
-    # ------------------------------------------------------------------
-    # Maintenance
-    # ------------------------------------------------------------------
+    def drop_query_indexes(self) -> None:
+        """Drop search indexes on query_entities and query_relationships for bulk insert speedup."""
+        self.ensure_query_tables_exist()
+        with self.connection() as conn:
+            conn.execute("DROP INDEX IF EXISTS idx_entities_name")
+            conn.execute("DROP INDEX IF EXISTS idx_entities_name_prefix")
+            conn.execute("DROP INDEX IF EXISTS idx_entities_type")
+            conn.execute("DROP INDEX IF EXISTS idx_entities_fqn")
+            conn.execute("DROP INDEX IF EXISTS idx_entities_run")
+            conn.execute("DROP INDEX IF EXISTS idx_relationships_source")
+            conn.execute("DROP INDEX IF EXISTS idx_relationships_target")
+            conn.commit()
+
+    def recreate_query_indexes(self) -> None:
+        """Recreate search indexes after bulk insert."""
+        self.ensure_query_tables_exist()
+        with self.connection() as conn:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_name ON query_entities(entity_name)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_name_prefix ON query_entities(entity_name COLLATE NOCASE)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_type ON query_entities(entity_type)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_fqn ON query_entities(fqn)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_run ON query_entities(run_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_relationships_source ON query_relationships(source_key, run_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_relationships_target ON query_relationships(target_key, run_id)")
+            conn.commit()
 
     def vacuum(self) -> None:
-        with self.connection() as conn:
-            auto_vacuum = conn.execute("PRAGMA auto_vacuum").fetchone()[0]
-            if auto_vacuum == 2:  # INCREMENTAL
-                conn.execute("PRAGMA incremental_vacuum")
-            else:
-                conn.commit()
-                conn.execute("VACUUM")
+        try:
+            with self.connection() as conn:
+                auto_vacuum = conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+                old_isolation = conn.isolation_level
+                conn.isolation_level = None
+                try:
+                    if auto_vacuum == 2:  # INCREMENTAL
+                        conn.execute("PRAGMA incremental_vacuum").fetchall()
+                    else:
+                        conn.execute("VACUUM")
+                finally:
+                    conn.isolation_level = old_isolation
+        except sqlite3.OperationalError as exc:
+            LOGGER.warning("vacuum_failed_database_busy", error=str(exc))
 
     def full_vacuum(self) -> None:
         with self.connection() as conn:

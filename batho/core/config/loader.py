@@ -31,7 +31,7 @@ _active_root: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
 
 def set_active_root(root: Path) -> None:
     _active_root.set(root.resolve())
-    _get_config_cached_for_root.cache_clear()
+    _get_config_cached_for_root.cache_clear()  # Bust cache on root switch
 
 
 def get_active_root() -> Path:
@@ -77,77 +77,153 @@ def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, A
     return merged
 
 
+def _safe_get_nested(d: Any, keys: list[str], default: Any) -> Any:
+    curr = d
+    for k in keys:
+        if isinstance(curr, dict):
+            curr = curr.get(k)
+        else:
+            return default
+    return default if curr is None else curr
+
+
+def _safe_set_nested(d: dict[str, Any], keys: list[str], val: Any) -> None:
+    curr = d
+    for k in keys[:-1]:
+        if k not in curr or not isinstance(curr[k], dict):
+            curr[k] = {}
+        curr = curr[k]
+    curr[keys[-1]] = val
+
+
 def get_config_with_root(root_dir: Path) -> dict[str, Any]:
-    """Return validated config as a plain dict, loading config.yaml or batho.yaml from root_dir."""
+    """Return validated config as a plain dict, loading batho.yaml from root_dir.
+
+    If batho.yaml does not exist, it is created with default configuration options.
+    """
     base_cfg: dict[str, Any] = Config().model_dump()
 
-    cfg_path = root_dir / "config.yaml"
+    cfg_path = root_dir / "batho.yaml"
+
     if not cfg_path.exists():
-        cfg_path = root_dir / "batho.yaml"
+        try:
+            cfg_path.write_text(
+                yaml.safe_dump(base_cfg, default_flow_style=False, sort_keys=False),
+                encoding="utf-8",
+            )
+            _get_logger().info("config_created_default", config_file=str(cfg_path))
+        except OSError as exc:
+            _get_logger().warning(
+                "config_create_failed",
+                config_file=str(cfg_path),
+                error=str(exc),
+            )
 
     if cfg_path.exists():
         try:
             file_cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
             base_cfg = _merge_config(base_cfg, file_cfg)
-        except (yaml.YAMLError, OSError):
-            pass
+        except yaml.YAMLError as exc:
+            _get_logger().error(
+                "config_yaml_parse_error",
+                config_file=cfg_path.name,
+                error=str(exc),
+            )
+            raise RuntimeError(
+                f"Failed to parse YAML configuration file {cfg_path.name}: {exc}"
+            ) from exc
+        except OSError as exc:
+            _get_logger().error(
+                "config_file_read_error",
+                config_file=cfg_path.name,
+                error=str(exc),
+            )
+            raise RuntimeError(
+                f"Failed to read configuration file {cfg_path.name}: {exc}"
+            ) from exc
 
     # Logging overrides
-    base_cfg["logging"]["level"] = (
-        _env("BATHO_LOG_LEVEL", base_cfg["logging"]["level"])
-        or base_cfg["logging"]["level"]
+    _safe_set_nested(
+        base_cfg,
+        ["logging", "level"],
+        _env("BATHO_LOG_LEVEL", _safe_get_nested(base_cfg, ["logging", "level"], "ERROR"))
+        or _safe_get_nested(base_cfg, ["logging", "level"], "ERROR"),
     )
-    base_cfg["logging"]["quiet"] = _env_bool(
-        "BATHO_LOG_QUIET", base_cfg["logging"].get("quiet", False)
+    _safe_set_nested(
+        base_cfg,
+        ["logging", "quiet"],
+        _env_bool("BATHO_LOG_QUIET", _safe_get_nested(base_cfg, ["logging", "quiet"], False)),
     )
     env_log_json = os.getenv("BATHO_LOG_JSON")
     if env_log_json is not None:
-        base_cfg["logging"]["json_format"] = env_log_json.lower() in {"1", "true", "yes"}
+        _safe_set_nested(
+            base_cfg,
+            ["logging", "json_format"],
+            env_log_json.lower() in {"1", "true", "yes"},
+        )
     env_log_file = _env("BATHO_LOG_FILE")
     if env_log_file is not None:
-        base_cfg["logging"]["file"] = env_log_file
+        _safe_set_nested(base_cfg, ["logging", "file"], env_log_file)
 
     # Paths overrides
-    base_cfg["paths"]["db_path"] = (
-        _env("BATHO_DB_PATH", base_cfg["paths"]["db_path"])
-        or base_cfg["paths"]["db_path"]
+    _safe_set_nested(
+        base_cfg,
+        ["paths", "db_path"],
+        _env("BATHO_DB_PATH", _safe_get_nested(base_cfg, ["paths", "db_path"], "{root}"))
+        or _safe_get_nested(base_cfg, ["paths", "db_path"], "{root}"),
     )
 
     # Indexer overrides
-    base_cfg["indexer"]["max_file_size_kb"] = _env_int(
-        "BATHO_MAX_FILE_SIZE_KB", base_cfg["indexer"]["max_file_size_kb"]
+    _safe_set_nested(
+        base_cfg,
+        ["indexer", "max_file_size_kb"],
+        _env_int("BATHO_MAX_FILE_SIZE_KB", _safe_get_nested(base_cfg, ["indexer", "max_file_size_kb"], 500)),
     )
-    base_cfg["indexer"]["max_indexed_files"] = _env_int(
-        "BATHO_MAX_INDEXED_FILES", base_cfg["indexer"]["max_indexed_files"]
+    _safe_set_nested(
+        base_cfg,
+        ["indexer", "max_indexed_files"],
+        _env_int("BATHO_MAX_INDEXED_FILES", _safe_get_nested(base_cfg, ["indexer", "max_indexed_files"], 200_000)),
     )
-    base_cfg["indexer"]["max_workers"] = _env_int(
-        "BATHO_INDEX_WORKERS", base_cfg["indexer"]["max_workers"]
+    _safe_set_nested(
+        base_cfg,
+        ["indexer", "max_workers"],
+        _env_int("BATHO_INDEX_WORKERS", _safe_get_nested(base_cfg, ["indexer", "max_workers"], 0)),
     )
     env_ignore_patterns = _env_list("BATHO_IGNORE_PATTERNS")
     if env_ignore_patterns is not None:
-        base_cfg["indexer"]["ignore_patterns"] = env_ignore_patterns
+        _safe_set_nested(base_cfg, ["indexer", "ignore_patterns"], env_ignore_patterns)
     env_ignore_files = _env_list("BATHO_IGNORE_FILES")
     if env_ignore_files is not None:
-        base_cfg["indexer"]["ignore_files"] = env_ignore_files
+        _safe_set_nested(base_cfg, ["indexer", "ignore_files"], env_ignore_files)
     env_default_patterns_file = _env("BATHO_DEFAULT_PATTERNS_FILE")
     if env_default_patterns_file is not None:
-        base_cfg["indexer"]["default_patterns_file"] = env_default_patterns_file
+        _safe_set_nested(base_cfg, ["indexer", "default_patterns_file"], env_default_patterns_file)
 
-    # Patch overrides
-    base_cfg["patch"]["timeout_seconds"] = _env_int(
-        "BATHO_PATCH_TIMEOUT_SECONDS", base_cfg["patch"]["timeout_seconds"]
+    # Graph overrides
+    _safe_set_nested(
+        base_cfg,
+        ["graph", "cycle_detection", "enabled"],
+        _env_bool("BATHO_GRAPH_CYCLE_DETECTION_ENABLED", _safe_get_nested(base_cfg, ["graph", "cycle_detection", "enabled"], True)),
     )
-    base_cfg["patch"]["max_changes"] = _env_int(
-        "BATHO_MAX_PATCH_CHANGES", base_cfg["patch"]["max_changes"]
+    _safe_set_nested(
+        base_cfg,
+        ["graph", "cycle_detection", "fatal"],
+        _env_bool("BATHO_GRAPH_CYCLE_DETECTION_FATAL", _safe_get_nested(base_cfg, ["graph", "cycle_detection", "fatal"], False)),
     )
-    base_cfg["patch"]["history_days"] = _env_int(
-        "BATHO_PATCH_HISTORY_DAYS", base_cfg["patch"]["history_days"]
+    _safe_set_nested(
+        base_cfg,
+        ["graph", "orphan_pruning", "enabled"],
+        _env_bool("BATHO_GRAPH_ORPHAN_PRUNING_ENABLED", _safe_get_nested(base_cfg, ["graph", "orphan_pruning", "enabled"], True)),
     )
-    base_cfg["patch"]["max_count"] = _env_int(
-        "BATHO_PATCH_COUNT", base_cfg["patch"]["max_count"]
+    _safe_set_nested(
+        base_cfg,
+        ["graph", "orphan_pruning", "keep_entry_points"],
+        _env_bool("BATHO_GRAPH_ORPHAN_PRUNING_KEEP_ENTRY_POINTS", _safe_get_nested(base_cfg, ["graph", "orphan_pruning", "keep_entry_points"], True)),
     )
-    base_cfg["patch"]["cleanup_on_startup"] = _env_bool(
-        "BATHO_PATCH_CLEANUP_ON_STARTUP", base_cfg["patch"]["cleanup_on_startup"]
+    _safe_set_nested(
+        base_cfg,
+        ["graph", "orphan_pruning", "keep_exports"],
+        _env_bool("BATHO_GRAPH_ORPHAN_PRUNING_KEEP_EXPORTS", _safe_get_nested(base_cfg, ["graph", "orphan_pruning", "keep_exports"], True)),
     )
 
     # Flags overrides
@@ -155,229 +231,199 @@ def get_config_with_root(root_dir: Path) -> dict[str, Any]:
     env_strict = os.getenv("BATHO_STRICT")
     if env_fail_on_warning is not None:
         val = env_fail_on_warning.lower() in {"1", "true", "yes"}
-        base_cfg["indexer"]["fail_on_warning"] = val
-        base_cfg["flags"]["fail_on_warning"] = val
+        _safe_set_nested(base_cfg, ["indexer", "fail_on_warning"], val)
+        _safe_set_nested(base_cfg, ["flags", "fail_on_warning"], val)
     if env_strict is not None:
         val = env_strict.lower() in {"1", "true", "yes"}
-        base_cfg["indexer"]["strict"] = val
-        base_cfg["flags"]["strict"] = val
-    base_cfg["flags"]["audit_log_enabled"] = _env_bool(
-        "BATHO_AUDIT_LOG_ENABLED", base_cfg["flags"].get("audit_log_enabled", True)
+        _safe_set_nested(base_cfg, ["indexer", "strict"], val)
+        _safe_set_nested(base_cfg, ["flags", "strict"], val)
+    _safe_set_nested(
+        base_cfg,
+        ["flags", "audit_log_enabled"],
+        _env_bool("BATHO_AUDIT_LOG_ENABLED", _safe_get_nested(base_cfg, ["flags", "audit_log_enabled"], True)),
     )
 
     # Rules overrides
-    base_cfg["rules"]["enabled"] = _env_bool(
-        "BATHO_RULES_ENABLED", base_cfg["rules"]["enabled"]
+    _safe_set_nested(
+        base_cfg,
+        ["rules", "enabled"],
+        _env_bool("BATHO_RULES_ENABLED", _safe_get_nested(base_cfg, ["rules", "enabled"], True)),
     )
     env_builtin_plugins = _env_list("BATHO_RULES_BUILTIN_PLUGINS")
     if env_builtin_plugins is not None:
-        base_cfg["rules"]["builtin_plugins"] = env_builtin_plugins
+        _safe_set_nested(base_cfg, ["rules", "builtin_plugins"], env_builtin_plugins)
     env_disabled_rules = _env_list("BATHO_RULES_DISABLED_RULES")
     if env_disabled_rules is not None:
-        base_cfg["rules"]["disabled_rules"] = env_disabled_rules
+        _safe_set_nested(base_cfg, ["rules", "disabled_rules"], env_disabled_rules)
     env_custom_rules_path = _env("BATHO_RULES_CUSTOM_RULES_PATH")
     if env_custom_rules_path is not None:
-        base_cfg["rules"]["custom_rules_path"] = env_custom_rules_path
-    base_cfg["rules"]["strict_validation"] = _env_bool(
-        "BATHO_RULES_STRICT_VALIDATION", base_cfg["rules"]["strict_validation"]
+        _safe_set_nested(base_cfg, ["rules", "custom_rules_path"], env_custom_rules_path)
+    _safe_set_nested(
+        base_cfg,
+        ["rules", "strict_validation"],
+        _env_bool("BATHO_RULES_STRICT_VALIDATION", _safe_get_nested(base_cfg, ["rules", "strict_validation"], False)),
     )
-    base_cfg["rules"]["fail_on_rule_error"] = _env_bool(
-        "BATHO_RULES_FAIL_ON_RULE_ERROR", base_cfg["rules"]["fail_on_rule_error"]
+    _safe_set_nested(
+        base_cfg,
+        ["rules", "fail_on_rule_error"],
+        _env_bool("BATHO_RULES_FAIL_ON_RULE_ERROR", _safe_get_nested(base_cfg, ["rules", "fail_on_rule_error"], False)),
     )
-    base_cfg["rules"]["cache_ttl"] = _env_int(
-        "BATHO_RULES_CACHE_TTL", base_cfg["rules"]["cache_ttl"]
+    _safe_set_nested(
+        base_cfg,
+        ["rules", "cache_ttl"],
+        _env_int("BATHO_RULES_CACHE_TTL", _safe_get_nested(base_cfg, ["rules", "cache_ttl"], 3600)),
     )
 
     # Artifact blobs overrides (per-blob fine-grained flags)
-    ab = base_cfg["artifact_blobs"]
-    ab["file_artifacts"]["bsg_agent_view"] = _env_bool(
-        "BATHO_ARTIFACT_BLOBS_BSG_AGENT_VIEW",
-        ab["file_artifacts"]["bsg_agent_view"],
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "file_artifacts", "bsg_agent_view"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_BSG_AGENT_VIEW", _safe_get_nested(base_cfg, ["artifact_blobs", "file_artifacts", "bsg_agent_view"], True)),
     )
-    ab["file_artifacts"]["bsg_storage_view"] = _env_bool(
-        "BATHO_ARTIFACT_BLOBS_BSG_STORAGE_VIEW",
-        ab["file_artifacts"]["bsg_storage_view"],
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "file_artifacts", "bsg_storage_view"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_BSG_STORAGE_VIEW", _safe_get_nested(base_cfg, ["artifact_blobs", "file_artifacts", "bsg_storage_view"], True)),
     )
-    ab["file_artifacts"]["bsg_rel_view"] = _env_bool(
-        "BATHO_ARTIFACT_BLOBS_BSG_REL_VIEW",
-        ab["file_artifacts"]["bsg_rel_view"],
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "file_artifacts", "bsg_rel_view"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_BSG_REL_VIEW", _safe_get_nested(base_cfg, ["artifact_blobs", "file_artifacts", "bsg_rel_view"], True)),
     )
-    ab["run_artifacts"]["context_overview"] = _env_bool(
-        "BATHO_ARTIFACT_BLOBS_CONTEXT_OVERVIEW",
-        ab["run_artifacts"]["context_overview"],
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "run_artifacts", "context_overview"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_CONTEXT_OVERVIEW", _safe_get_nested(base_cfg, ["artifact_blobs", "run_artifacts", "context_overview"], True)),
     )
-    ab["run_artifacts"]["telemetry_metrics"] = _env_bool(
-        "BATHO_ARTIFACT_BLOBS_TELEMETRY_METRICS",
-        ab["run_artifacts"]["telemetry_metrics"],
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "run_artifacts", "telemetry_metrics"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_TELEMETRY_METRICS", _safe_get_nested(base_cfg, ["artifact_blobs", "run_artifacts", "telemetry_metrics"], True)),
     )
-    ab["run_artifacts"]["structural_metrics"] = _env_bool(
-        "BATHO_ARTIFACT_BLOBS_STRUCTURAL_METRICS",
-        ab["run_artifacts"]["structural_metrics"],
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "run_artifacts", "structural_metrics"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_STRUCTURAL_METRICS", _safe_get_nested(base_cfg, ["artifact_blobs", "run_artifacts", "structural_metrics"], True)),
     )
-    ab["run_artifacts"]["security_audit"] = _env_bool(
-        "BATHO_ARTIFACT_BLOBS_SECURITY_AUDIT",
-        ab["run_artifacts"]["security_audit"],
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "run_artifacts", "security_audit"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_SECURITY_AUDIT", _safe_get_nested(base_cfg, ["artifact_blobs", "run_artifacts", "security_audit"], False)),
     )
-    ab["run_artifacts"]["artifact_payload"] = _env_bool(
-        "BATHO_ARTIFACT_BLOBS_ARTIFACT_PAYLOAD",
-        ab["run_artifacts"]["artifact_payload"],
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "run_artifacts", "artifact_payload"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_ARTIFACT_PAYLOAD", _safe_get_nested(base_cfg, ["artifact_blobs", "run_artifacts", "artifact_payload"], True)),
     )
-    ab["run_artifacts"]["delta_stats"] = _env_bool(
-        "BATHO_ARTIFACT_BLOBS_DELTA_STATS",
-        ab["run_artifacts"]["delta_stats"],
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "run_artifacts", "delta_stats"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_DELTA_STATS", _safe_get_nested(base_cfg, ["artifact_blobs", "run_artifacts", "delta_stats"], True)),
     )
 
     # BSG overrides
-    base_cfg["bsg"]["parallel"]["enabled"] = _env_bool(
-        "BATHO_BSG_PARALLEL_ENABLED", base_cfg["bsg"]["parallel"]["enabled"]
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "parallel", "enabled"],
+        _env_bool("BATHO_BSG_PARALLEL_ENABLED", _safe_get_nested(base_cfg, ["bsg", "parallel", "enabled"], True)),
     )
-    base_cfg["bsg"]["parallel"]["max_workers"] = _env_int(
-        "BATHO_BSG_MAX_WORKERS", base_cfg["bsg"]["parallel"]["max_workers"]
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "parallel", "max_workers"],
+        _env_int("BATHO_BSG_MAX_WORKERS", _safe_get_nested(base_cfg, ["bsg", "parallel", "max_workers"], 16)),
     )
-    base_cfg["bsg"]["parallel"]["chunk_size"] = _env_int(
-        "BATHO_BSG_CHUNK_SIZE", base_cfg["bsg"]["parallel"]["chunk_size"]
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "parallel", "chunk_size"],
+        _env_int("BATHO_BSG_CHUNK_SIZE", _safe_get_nested(base_cfg, ["bsg", "parallel", "chunk_size"], 50)),
     )
-    base_cfg["bsg"]["ignore"]["enabled"] = _env_bool(
-        "BATHO_BSG_IGNORE_ENABLED", base_cfg["bsg"]["ignore"]["enabled"]
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "cache", "enabled"],
+        _env_bool("BATHO_BSG_CACHE_ENABLED", _safe_get_nested(base_cfg, ["bsg", "cache", "enabled"], True)),
     )
-    base_cfg["bsg"]["cache"]["enabled"] = _env_bool(
-        "BATHO_BSG_CACHE_ENABLED", base_cfg["bsg"]["cache"]["enabled"]
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "cache", "max_size_mb"],
+        _env_int("BATHO_BSG_CACHE_MAX_SIZE_MB", _safe_get_nested(base_cfg, ["bsg", "cache", "max_size_mb"], 1024)),
     )
-    base_cfg["bsg"]["cache"]["max_size_mb"] = _env_int(
-        "BATHO_BSG_CACHE_MAX_SIZE_MB", base_cfg["bsg"]["cache"]["max_size_mb"]
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "cache", "ttl_days"],
+        _env_int("BATHO_BSG_CACHE_TTL_DAYS", _safe_get_nested(base_cfg, ["bsg", "cache", "ttl_days"], 30)),
     )
-    base_cfg["bsg"]["cache"]["ttl_days"] = _env_int(
-        "BATHO_BSG_CACHE_TTL_DAYS", base_cfg["bsg"]["cache"]["ttl_days"]
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "symbol_resolution", "enabled"],
+        _env_bool("BATHO_BSG_SYMBOL_RESOLUTION_ENABLED", _safe_get_nested(base_cfg, ["bsg", "symbol_resolution", "enabled"], True)),
     )
-    base_cfg["bsg"]["incremental"]["enabled"] = _env_bool(
-        "BATHO_BSG_INCREMENTAL_ENABLED", base_cfg["bsg"]["incremental"]["enabled"]
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "symbol_resolution", "fuzzy_matching"],
+        _env_bool("BATHO_BSG_SYMBOL_RESOLUTION_FUZZY", _safe_get_nested(base_cfg, ["bsg", "symbol_resolution", "fuzzy_matching"], False)),
     )
-    base_cfg["bsg"]["incremental"]["auto_detect_git"] = _env_bool(
-        "BATHO_BSG_INCREMENTAL_AUTO_DETECT_GIT",
-        base_cfg["bsg"]["incremental"]["auto_detect_git"],
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "symbol_resolution", "cache_symbols"],
+        _env_bool("BATHO_BSG_SYMBOL_RESOLUTION_CACHE_SYMBOLS", _safe_get_nested(base_cfg, ["bsg", "symbol_resolution", "cache_symbols"], True)),
     )
-    base_cfg["bsg"]["symbol_resolution"]["enabled"] = _env_bool(
-        "BATHO_BSG_SYMBOL_RESOLUTION_ENABLED",
-        base_cfg["bsg"]["symbol_resolution"]["enabled"],
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "parsing", "error_recovery"],
+        _env_bool("BATHO_BSG_PARSING_ERROR_RECOVERY", _safe_get_nested(base_cfg, ["bsg", "parsing", "error_recovery"], True)),
     )
-    base_cfg["bsg"]["symbol_resolution"]["fuzzy_matching"] = _env_bool(
-        "BATHO_BSG_SYMBOL_RESOLUTION_FUZZY",
-        base_cfg["bsg"]["symbol_resolution"]["fuzzy_matching"],
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "parsing", "skip_comments"],
+        _env_bool("BATHO_BSG_PARSING_SKIP_COMMENTS", _safe_get_nested(base_cfg, ["bsg", "parsing", "skip_comments"], False)),
     )
-    base_cfg["bsg"]["symbol_resolution"]["cache_symbols"] = _env_bool(
-        "BATHO_BSG_SYMBOL_RESOLUTION_CACHE_SYMBOLS",
-        base_cfg["bsg"]["symbol_resolution"]["cache_symbols"],
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "bidirectional", "enabled"],
+        _env_bool("BATHO_BSG_BIDIRECTIONAL_ENABLED", _safe_get_nested(base_cfg, ["bsg", "bidirectional", "enabled"], True)),
     )
-    base_cfg["bsg"]["serialization"]["compression"] = _env_bool(
-        "BATHO_BSG_SERIALIZATION_COMPRESSION",
-        base_cfg["bsg"]["serialization"]["compression"],
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "bidirectional", "include_gaps"],
+        _env_bool("BATHO_BSG_BIDIRECTIONAL_INCLUDE_GAPS", _safe_get_nested(base_cfg, ["bsg", "bidirectional", "include_gaps"], True)),
     )
-    base_cfg["bsg"]["serialization"]["batch_size"] = _env_int(
-        "BATHO_BSG_SERIALIZATION_BATCH_SIZE",
-        base_cfg["bsg"]["serialization"]["batch_size"],
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "bidirectional", "verify_integrity"],
+        _env_bool("BATHO_BSG_BIDIRECTIONAL_VERIFY_INTEGRITY", _safe_get_nested(base_cfg, ["bsg", "bidirectional", "verify_integrity"], False)),
     )
-    base_cfg["bsg"]["parsing"]["error_recovery"] = _env_bool(
-        "BATHO_BSG_PARSING_ERROR_RECOVERY",
-        base_cfg["bsg"]["parsing"]["error_recovery"],
-    )
-    base_cfg["bsg"]["parsing"]["partial_parsing"] = _env_bool(
-        "BATHO_BSG_PARSING_PARTIAL",
-        base_cfg["bsg"]["parsing"]["partial_parsing"],
-    )
-    base_cfg["bsg"]["parsing"]["max_file_size_mb"] = _env_int(
-        "BATHO_BSG_PARSING_MAX_FILE_SIZE_MB",
-        base_cfg["bsg"]["parsing"]["max_file_size_mb"],
-    )
-    base_cfg["bsg"]["parsing"]["skip_comments"] = _env_bool(
-        "BATHO_BSG_PARSING_SKIP_COMMENTS",
-        base_cfg["bsg"]["parsing"]["skip_comments"],
-    )
-    base_cfg["bsg"]["query"]["enabled"] = _env_bool(
-        "BATHO_BSG_QUERY_ENABLED", base_cfg["bsg"]["query"]["enabled"]
-    )
-    base_cfg["bsg"]["query"]["index_on_write"] = _env_bool(
-        "BATHO_BSG_QUERY_INDEX_ON_WRITE", base_cfg["bsg"]["query"]["index_on_write"]
-    )
-    base_cfg["bsg"]["query"]["cache_enabled"] = _env_bool(
-        "BATHO_BSG_QUERY_CACHE_ENABLED", base_cfg["bsg"]["query"]["cache_enabled"]
-    )
-    base_cfg["bsg"]["query"]["cache_size"] = _env_int(
-        "BATHO_BSG_QUERY_CACHE_SIZE", base_cfg["bsg"]["query"]["cache_size"]
-    )
-    base_cfg["bsg"]["query"]["default_limit"] = _env_int(
-        "BATHO_BSG_QUERY_DEFAULT_LIMIT", base_cfg["bsg"]["query"]["default_limit"]
-    )
-    base_cfg["bsg"]["query"]["query_timeout_ms"] = _env_int(
-        "BATHO_BSG_QUERY_TIMEOUT_MS", base_cfg["bsg"]["query"]["query_timeout_ms"]
-    )
-    base_cfg["bsg"]["storage"]["enabled"] = _env_bool(
-        "BATHO_BSG_STORAGE_ENABLED", base_cfg["bsg"]["storage"]["enabled"]
-    )
-    env_storage_scope = _env("BATHO_BSG_STORAGE_CONTENT_SCOPE")
-    if env_storage_scope:
-        base_cfg["bsg"]["storage"]["content_scope"] = env_storage_scope
-    base_cfg["bsg"]["storage"]["track_content_ids"] = _env_bool(
-        "BATHO_BSG_STORAGE_TRACK_CONTENT_IDS",
-        base_cfg["bsg"]["storage"]["track_content_ids"],
-    )
-    base_cfg["bsg"]["storage"]["busy_timeout_ms"] = _env_int(
-        "BATHO_STORAGE_BUSY_TIMEOUT_MS",
-        base_cfg["bsg"]["storage"]["busy_timeout_ms"],
-    )
-    base_cfg["bsg"]["storage"]["retention"]["enabled"] = _env_bool(
-        "BATHO_BSG_STORAGE_RETENTION_ENABLED",
-        base_cfg["bsg"]["storage"]["retention"]["enabled"],
-    )
-    base_cfg["bsg"]["storage"]["retention"]["snapshot_ttl_days"] = _env_int(
-        "BATHO_BSG_STORAGE_RETENTION_SNAPSHOT_TTL_DAYS",
-        base_cfg["bsg"]["storage"]["retention"]["snapshot_ttl_days"],
-    )
-    base_cfg["bsg"]["storage"]["retention"]["patch_ttl_days"] = _env_int(
-        "BATHO_BSG_STORAGE_RETENTION_PATCH_TTL_DAYS",
-        base_cfg["bsg"]["storage"]["retention"]["patch_ttl_days"],
-    )
-    base_cfg["bsg"]["storage"]["retention"]["metrics_ttl_days"] = _env_int(
-        "BATHO_BSG_STORAGE_RETENTION_METRICS_TTL_DAYS",
-        base_cfg["bsg"]["storage"]["retention"]["metrics_ttl_days"],
-    )
-    base_cfg["bsg"]["storage"]["retention"]["context_ttl_days"] = _env_int(
-        "BATHO_BSG_STORAGE_RETENTION_CONTEXT_TTL_DAYS",
-        base_cfg["bsg"]["storage"]["retention"]["context_ttl_days"],
-    )
-    base_cfg["bsg"]["storage"]["retention"]["max_snapshots"] = _env_int(
-        "BATHO_BSG_STORAGE_RETENTION_MAX_SNAPSHOTS",
-        base_cfg["bsg"]["storage"]["retention"]["max_snapshots"],
-    )
-    base_cfg["bsg"]["storage"]["retention"]["max_patches"] = _env_int(
-        "BATHO_BSG_STORAGE_RETENTION_MAX_PATCHES",
-        base_cfg["bsg"]["storage"]["retention"]["max_patches"],
-    )
-    base_cfg["bsg"]["bidirectional"]["enabled"] = _env_bool(
-        "BATHO_BSG_BIDIRECTIONAL_ENABLED",
-        base_cfg["bsg"]["bidirectional"]["enabled"],
-    )
-    base_cfg["bsg"]["bidirectional"]["include_gaps"] = _env_bool(
-        "BATHO_BSG_BIDIRECTIONAL_INCLUDE_GAPS",
-        base_cfg["bsg"]["bidirectional"]["include_gaps"],
-    )
-    base_cfg["bsg"]["bidirectional"]["verify_integrity"] = _env_bool(
-        "BATHO_BSG_BIDIRECTIONAL_VERIFY_INTEGRITY",
-        base_cfg["bsg"]["bidirectional"]["verify_integrity"],
-    )
-    base_cfg["bsg"]["bidirectional"]["storage_view"] = _env_bool(
-        "BATHO_BSG_BIDIRECTIONAL_STORAGE_VIEW",
-        base_cfg["bsg"]["bidirectional"]["storage_view"],
+    _safe_set_nested(
+        base_cfg,
+        ["bsg", "bidirectional", "storage_view"],
+        _env_bool("BATHO_BSG_BIDIRECTIONAL_STORAGE_VIEW", _safe_get_nested(base_cfg, ["bsg", "bidirectional", "storage_view"], False)),
     )
 
     try:
         cfg = Config.model_validate(base_cfg)
     except ValidationError as exc:
-        _get_logger().warning(
-            "config_validation_failed",
+        _get_logger().info(
+            "config_validation_failed_regenerating",
             config_file=cfg_path.name,
             error=str(exc),
         )
-        cfg = Config()
+        # No backward compatibility: regenerate with current defaults
+        try:
+            cfg = Config()
+            if cfg_path.exists():
+                try:
+                    cfg_path.write_text(
+                        yaml.safe_dump(cfg.model_dump(), default_flow_style=False, sort_keys=False),
+                        encoding="utf-8",
+                    )
+                    _get_logger().info("config_regenerated", config_file=str(cfg_path))
+                except OSError as write_exc:
+                    _get_logger().warning(
+                        "config_regenerate_failed",
+                        config_file=str(cfg_path),
+                        error=str(write_exc),
+                    )
+        except ValidationError:
+            cfg = Config.model_construct()
 
     cfg_dict = cfg.model_dump()
     cfg_dict["logging"]["level"] = cfg.logging.std_level

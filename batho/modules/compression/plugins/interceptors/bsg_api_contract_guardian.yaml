@@ -3,6 +3,7 @@ plugin_id: bsg_api_contract_guardian
 name: API Contract Guardian
 version: 1.0.0
 enabled: true
+bidirectional: true
 description: Prevent backend API contract changes from drifting away from frontend request consumers.
 rules:
   - rule_id: api-contract-boundary-drift

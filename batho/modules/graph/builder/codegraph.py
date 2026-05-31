@@ -44,9 +44,20 @@ from batho.modules.storage.cache.unified_cache import (
     build_ast_cache_variant,
 )
 from batho.modules.extraction.extractor import ASTExtractor
-from batho.modules.extraction.pipeline import build_graph_parallel
-from batho.core.schemas import Entity, EntityType, GraphConsistencyError, Relationship, RelationshipType
-from batho.modules.query.symbol_index import SymbolIndex
+from batho.modules.extraction.pipeline import (
+    extract_and_emit_parallel,
+)
+from batho.core.schemas import (
+    Entity,
+    EntityType,
+    GraphConsistencyError,
+    Relationship,
+    RelationshipType,
+    generate_hierarchical_id,
+    detect_package_from_config,
+)
+from batho.modules.extraction.scope_manager import ScopeManager
+from batho.modules.extraction.symbol_table import FileSymbolTable
 
 # Binary detection is now handled in batho.utils.file_io
 
@@ -79,6 +90,7 @@ class InMemoryGraph:
         entities: dict[str, Entity] | None = None,
         relationships: list[Relationship] | None = None,
     ) -> None:
+        self._lock = threading.Lock()
         self.entities: dict[str, Entity] = entities if entities is not None else {}
         self.relationships: list[Relationship] = (
             relationships if relationships is not None else []
@@ -104,38 +116,15 @@ class InMemoryGraph:
                 self._rels_by_endpoint[rel.target_id].append(rel)
 
     def add_entity(self, entity: Entity) -> None:
-        self.entities[entity.id] = entity
-        self._by_file[entity.file].add(entity.id)
-        self._by_type[entity.type].add(entity.id)
-
-    def add_relationship(self, relationship: Relationship) -> None:
-        if relationship.id in self._rel_ids:
-            return
-        self._rel_ids.add(relationship.id)
-        self.relationships.append(relationship)
-
-        # Update secondary index
-        self._rels_by_endpoint[relationship.source_id].append(relationship)
-        self._rels_by_endpoint[relationship.target_id].append(relationship)
-
-        # Incremental update instead of full invalidation
-        if self._adj_out is not None:
-            self._adj_out.setdefault(relationship.source_id, []).append(relationship.target_id)
-        if self._adj_in is not None:
-            self._adj_in.setdefault(relationship.target_id, []).append(relationship.source_id)
-
-    def add_entities_batch(self, entities: list[Entity]) -> None:
-        """Add multiple entities efficiently in a single operation."""
-        for entity in entities:
+        with self._lock:
             self.entities[entity.id] = entity
             self._by_file[entity.file].add(entity.id)
             self._by_type[entity.type].add(entity.id)
 
-    def add_relationships_batch(self, relationships: list[Relationship]) -> None:
-        """Add multiple relationships efficiently in a single operation."""
-        for relationship in relationships:
+    def add_relationship(self, relationship: Relationship) -> None:
+        with self._lock:
             if relationship.id in self._rel_ids:
-                continue
+                return
             self._rel_ids.add(relationship.id)
             self.relationships.append(relationship)
 
@@ -149,6 +138,33 @@ class InMemoryGraph:
             if self._adj_in is not None:
                 self._adj_in.setdefault(relationship.target_id, []).append(relationship.source_id)
 
+    def add_entities_batch(self, entities: list[Entity]) -> None:
+        """Add multiple entities efficiently in a single operation."""
+        with self._lock:
+            for entity in entities:
+                self.entities[entity.id] = entity
+                self._by_file[entity.file].add(entity.id)
+                self._by_type[entity.type].add(entity.id)
+
+    def add_relationships_batch(self, relationships: list[Relationship]) -> None:
+        """Add multiple relationships efficiently in a single operation."""
+        with self._lock:
+            for relationship in relationships:
+                if relationship.id in self._rel_ids:
+                    continue
+                self._rel_ids.add(relationship.id)
+                self.relationships.append(relationship)
+
+                # Update secondary index
+                self._rels_by_endpoint[relationship.source_id].append(relationship)
+                self._rels_by_endpoint[relationship.target_id].append(relationship)
+
+                # Incremental update instead of full invalidation
+                if self._adj_out is not None:
+                    self._adj_out.setdefault(relationship.source_id, []).append(relationship.target_id)
+                if self._adj_in is not None:
+                    self._adj_in.setdefault(relationship.target_id, []).append(relationship.source_id)
+
     def get_entity(self, entity_id: str) -> Entity | None:
         return self.entities.get(entity_id)
 
@@ -161,6 +177,10 @@ class InMemoryGraph:
         self._adj_out = out
         self._adj_in = in_
 
+    def _ensure_adjacency(self) -> None:
+        if self._adj_out is None or self._adj_in is None:
+            self._build_index()
+
     def neighbors(self, entity_id: str, direction: str = "out") -> list[str]:
         if self._adj_out is None:
             self._build_index()
@@ -172,13 +192,26 @@ class InMemoryGraph:
         in_ = self._adj_in.get(entity_id, [])  # type: ignore[union-attr]
         return list(dict.fromkeys(out + in_))
 
+    def has_incoming_edges(self, entity_id: str) -> bool:
+        self._ensure_adjacency()
+        return bool(self._adj_in.get(entity_id, []))  # type: ignore[union-attr]
+
+    def has_outgoing_edges(self, entity_id: str) -> bool:
+        self._ensure_adjacency()
+        return bool(self._adj_out.get(entity_id, []))  # type: ignore[union-attr]
+
+    def get_all_nodes(self) -> list[str]:
+        return list(self.entities.keys())
+
     def entities_by_file(self, file_path: str) -> list[Entity]:
         """Return entities for a file path using secondary index (O(k))."""
-        return [self.entities[eid] for eid in self._by_file.get(file_path, []) if eid in self.entities]
+        with self._lock:
+            return [self.entities[eid] for eid in self._by_file.get(file_path, []) if eid in self.entities]
 
     def entities_by_type(self, entity_type: EntityType) -> list[Entity]:
         """Return entities of a specific type using secondary index (O(k))."""
-        return [self.entities[eid] for eid in self._by_type.get(entity_type, []) if eid in self.entities]
+        with self._lock:
+            return [self.entities[eid] for eid in self._by_type.get(entity_type, []) if eid in self.entities]
 
     def _remove_entity_indexes(self, entity_id: str) -> None:
         """Remove an entity from secondary indexes."""
@@ -187,6 +220,89 @@ class InMemoryGraph:
             self._by_file[entity.file].discard(entity_id)
             self._by_type[entity.type].discard(entity_id)
 
+    def remove_node(self, entity_id: str) -> bool:
+        with self._lock:
+            entity = self.entities.get(entity_id)
+            if entity is None:
+                return False
+
+            del self.entities[entity_id]
+            self._by_file[entity.file].discard(entity_id)
+            self._by_type[entity.type].discard(entity_id)
+
+            rels = list(self._rels_by_endpoint.get(entity_id, []))
+            rel_ids = {rel.id for rel in rels}
+            if rel_ids:
+                self.relationships = [
+                    r for r in self.relationships if r.id not in rel_ids
+                ]
+                self._rel_ids.difference_update(rel_ids)
+                self._stale_relations_count += len(rel_ids)
+
+                for rel in rels:
+                    if rel.source_id != entity_id:
+                        self._rels_by_endpoint[rel.source_id] = [
+                            r
+                            for r in self._rels_by_endpoint.get(rel.source_id, [])
+                            if r.id not in rel_ids
+                        ]
+                    if rel.target_id != entity_id:
+                        self._rels_by_endpoint[rel.target_id] = [
+                            r
+                            for r in self._rels_by_endpoint.get(rel.target_id, [])
+                            if r.id not in rel_ids
+                        ]
+
+                threshold = max(1000, len(self.relationships) // 5)
+                if self._stale_relations_count > threshold:
+                    self._rels_by_endpoint.clear()
+                    for rel in self.relationships:
+                        self._rels_by_endpoint[rel.source_id].append(rel)
+                        self._rels_by_endpoint[rel.target_id].append(rel)
+                    self._stale_relations_count = 0
+
+            self._rels_by_endpoint.pop(entity_id, None)
+
+            if self._adj_out is not None:
+                self._adj_out.pop(entity_id, None)
+                for src, targets in list(self._adj_out.items()):
+                    if entity_id in targets:
+                        self._adj_out[src] = [
+                            target for target in targets if target != entity_id
+                        ]
+            if self._adj_in is not None:
+                self._adj_in.pop(entity_id, None)
+                for tgt, sources in list(self._adj_in.items()):
+                    if entity_id in sources:
+                        self._adj_in[tgt] = [
+                            source for source in sources if source != entity_id
+                        ]
+
+            return True
+
+    def evict_file_graph(self, file_path: str) -> None:
+        """Safely evicts file entities and relationships without corrupting secondary indexes."""
+        with self._lock:
+            entities_to_remove = list(self._by_file.get(file_path, set()))
+            if not entities_to_remove:
+                return
+
+            rel_ids_to_remove = set()
+            for eid in entities_to_remove:
+                ent = self.entities.pop(eid, None)
+                if ent:
+                    self._by_type[ent.type].discard(eid)
+                for rel in self._rels_by_endpoint.get(eid, []):
+                    rel_ids_to_remove.add(rel.id)
+                self._rels_by_endpoint.pop(eid, None)
+
+            self._by_file.pop(file_path, None)
+
+            if rel_ids_to_remove:
+                self.relationships = [r for r in self.relationships if r.id not in rel_ids_to_remove]
+                self._rel_ids.difference_update(rel_ids_to_remove)
+                self._adj_out = None
+                self._adj_in = None
 
     def root_entities(self) -> list[Entity]:
         return [e for e in self.entities.values() if e.parent_id is None]
@@ -313,6 +429,12 @@ class IncrementalGraphUpdater:
         Uses secondary indexes for O(removed × degree) complexity instead of O(F×R).
         Updates adjacency cache incrementally instead of full invalidation.
 
+        NOTE on threading (BUG-02): This method mutates graph structures without
+        acquiring graph._lock. This is a design decision; patch operations (including
+        this method and add_entities_for_file) are executed sequentially on the main
+        thread inside a single-threaded orchestrator. No concurrent mutations occur
+        during patch execution.
+
         Args:
             graph: The InMemoryGraph to update
             file_path: Absolute path to the deleted file
@@ -330,6 +452,20 @@ class IncrementalGraphUpdater:
         # Build new relationships list (filtering out removed ones)
         relationships_to_keep = [r for r in graph.relationships if r.id not in rel_ids_to_remove]
  
+        # Snapshot for rollback in case of partial mutation failure (BUG-03)
+        original_entities = {eid: graph.entities[eid] for eid in entities_to_remove if eid in graph.entities}
+        original_by_file = set(graph._by_file.get(file_path, set()))
+        original_by_type = {
+            ent.type: set(graph._by_type.get(ent.type, set()))
+            for ent in original_entities.values()
+        }
+        original_relationships = list(graph.relationships)
+        original_rel_ids = set(graph._rel_ids)
+        original_rels_by_endpoint = {k: list(v) for k, v in graph._rels_by_endpoint.items()}
+        original_stale_relations_count = graph._stale_relations_count
+        original_adj_out = {k: list(v) for k, v in graph._adj_out.items()} if graph._adj_out is not None else None
+        original_adj_in = {k: list(v) for k, v in graph._adj_in.items()} if graph._adj_in is not None else None
+
         # Apply all changes atomically
         try:
             # Remove entities and update secondary indexes
@@ -385,18 +521,31 @@ class IncrementalGraphUpdater:
                 relationship_count=len(rel_ids_to_remove),
             )
  
-        except (KeyError, ValueError, RuntimeError) as e:
-            self.logger.error(
-                "remove_entities_recoverable_error",
-                file_path=file_path,
-                error=str(e),
-                entities_targeted=len(entities_to_remove),
-                relationships_targeted=len(rel_ids_to_remove),
-            )
-            raise GraphConsistencyError(f"Failed to remove entities for {file_path}: {e}") from e
         except Exception as e:
-            self.logger.exception("Unexpected error in remove_entities_for_file")
-            raise
+            # Rollback mutations to ensure transactional atomicity
+            graph.entities.update(original_entities)
+            graph._by_file[file_path] = original_by_file
+            for etype, original_set in original_by_type.items():
+                graph._by_type[etype] = original_set
+            graph.relationships = original_relationships
+            graph._rel_ids = original_rel_ids
+            graph._rels_by_endpoint = original_rels_by_endpoint
+            graph._stale_relations_count = original_stale_relations_count
+            graph._adj_out = original_adj_out
+            graph._adj_in = original_adj_in
+
+            if isinstance(e, (KeyError, ValueError, RuntimeError)):
+                self.logger.error(
+                    "remove_entities_recoverable_error",
+                    file_path=file_path,
+                    error=str(e),
+                    entities_targeted=len(entities_to_remove),
+                    relationships_targeted=len(rel_ids_to_remove),
+                )
+                raise GraphConsistencyError(f"Failed to remove entities for {file_path}: {e}") from e
+            else:
+                self.logger.exception("Unexpected error in remove_entities_for_file")
+                raise
 
     def add_entities_for_file(
         self,
@@ -485,12 +634,12 @@ class IncrementalGraphUpdater:
             """Check if target is a valid entity reference or intentional external reference."""
             if target_id in entity_ids:
                 return True
-            # Allow UNRESOLVED entity IDs
+            # Allow UNRESOLVED and EXTERNAL_SYMBOL entity IDs
             target_entity = graph.entities.get(target_id)
-            if target_entity is not None and target_entity.type == EntityType.UNRESOLVED:
+            if target_entity is not None and target_entity.type in (EntityType.UNRESOLVED, EntityType.EXTERNAL_SYMBOL):
                 return True
             # Allow special external references (URLs, files, anchors, imports, resources, variables, images)
-            valid_prefixes = ("external:", "file:", "anchor:", "import:", "resource:", "variable:", "image:")
+            valid_prefixes = ("external:", "file:", "anchor:", "import:", "resource:", "variable:", "image:", "batho ")
             if any(target_id.startswith(prefix) for prefix in valid_prefixes):
                 return True
             return False
@@ -531,6 +680,11 @@ class IncrementalGraphUpdater:
 # ---------------------------------------------------------------------------
 
 
+def _merge_external_scope(target: ScopeManager, source: ScopeManager) -> None:
+    """Bulk-merge all global symbols from source into target (write-once, no lock per symbol)."""
+    snapshot = source.get_global_symbols()
+    target.load_global_symbols(snapshot)
+
 class CodeGraphIndexer:
     """
     Production code graph indexer for batho-v1.
@@ -566,6 +720,8 @@ class CodeGraphIndexer:
         self.build_stats: dict[str, Any] = {}  # populated after build_graph(); distinct from stats() method
         self._last_reconstruction: Any = None  # set after reconstruct_file
         self._unindexed_files: list[tuple[str, str]] = []  # (abs_path_str, rel_path_str) populated by build_graph()
+        self._indexed_files: list[str] = []
+        self._keep_nodes: set[str] = set()
 
     def close(self) -> None:
         """Close the cache database connection to release file locks."""
@@ -592,9 +748,115 @@ class CodeGraphIndexer:
         """Clear the list of unindexed files."""
         self._unindexed_files.clear()
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    def get_file_snapshot(self, path_or_rel: str) -> Optional[FileSnapshot]:
+        """Expose file snapshot from the unified cache."""
+        from batho.core.schemas import FileSnapshot
+        if hasattr(self, "_cache") and self._cache is not None:
+            return self._cache.get_file_snapshot(path_or_rel)
+        return None
+
+    def resolve_contextual_stubs(self, graph: InMemoryGraph, scope_manager: ScopeManager) -> None:
+        """Resolve contextual stubs in the graph using the global ScopeManager."""
+        self.logger.info("resolving_contextual_stubs")
+        stubs = [ent for ent in graph.entities.values() if ent.is_contextual_stub]
+        self.logger.info("stubs_found_in_graph", count=len(stubs))
+        
+        resolved_count = 0
+        unresolved_count = 0
+        stub_to_target: dict[str, str] = {}
+
+        for stub in stubs:
+            caller_scope = stub.metadata.get("caller_scope")
+            target_name = stub.metadata.get("target_name")
+            self.logger.debug("checking_stub", stub_id=stub.id, target_name=target_name, caller_scope=caller_scope)
+            if not target_name:
+                continue
+
+            # Check if this stub has a parent stub in the graph (e.g., json.dumps)
+            # Find relationships where THIS stub is the source
+            # Wait, usually it's the other way: Parent -> Member.
+            # In contextual stubs, we often only have the leaf.
+            
+            resolved_info = None
+            
+            # 1. Try resolving target_name directly
+            resolved_info = scope_manager.resolve_symbol_dotpath(target_name)
+            
+            # 2. Try building qualified path from parent stubs if any
+            if not resolved_info:
+                current_target = target_name
+                # Find if any other stub is a 'parent' of this one
+                # This is tricky because InMemoryGraph doesn't easily expose 'parent' for stubs
+                # unless metadata was set. Let's look at incoming relationships to this stub.
+                # Use secondary index for O(k) lookup
+                incoming = [r for r in graph._rels_by_endpoint.get(stub.id, []) if r.target_id == stub.id]
+                for rel in incoming:
+                    source_ent = graph.entities.get(rel.source_id)
+                    if source_ent and source_ent.is_contextual_stub:
+                        parent_name = source_ent.metadata.get("target_name")
+                        if parent_name:
+                            full_path = f"{parent_name}.{target_name}"
+                            resolved_info = scope_manager.resolve_symbol_dotpath(full_path)
+                            if resolved_info: break
+
+            if resolved_info:
+                self.logger.debug("stub_resolved", stub_id=stub.id, target_id=resolved_info.symbol_id)
+                stub_to_target[stub.id] = resolved_info.symbol_id
+                resolved_count += 1
+            else:
+                parts = caller_scope.split()
+                if len(parts) >= 5:
+                    scope_path = parts[4]
+                else:
+                    scope_path = caller_scope
+
+                base_path = scope_path.split('#')[0].split('(')[0]
+                if '/' in base_path:
+                    parent_dir = base_path.rsplit('/', 1)[0]
+                    qualified_try = f"{parent_dir}/{target_name}"
+                    resolved_info = scope_manager.resolve_symbol_strict(qualified_try)
+                    if not resolved_info:
+                        qualified_try_dot = qualified_try.replace('/', '.')
+                        resolved_info = scope_manager.resolve_symbol_strict(qualified_try_dot)
+
+                if resolved_info:
+                    stub_to_target[stub.id] = resolved_info.symbol_id
+                    resolved_count += 1
+                else:
+                    unresolved_count += 1
+
+        new_relationships = []
+        for rel in graph.relationships:
+            if rel.target_id in stub_to_target:
+                new_relationships.append(
+                    rel._evolve(target_id=stub_to_target[rel.target_id])
+                )
+            else:
+                new_relationships.append(rel)
+
+        graph.relationships = new_relationships
+        graph._rel_ids = {r.id for r in graph.relationships}
+        graph._adj_out = None
+        graph._adj_in = None
+        graph._rels_by_endpoint.clear()
+        for rel in graph.relationships:
+            graph._rels_by_endpoint[rel.source_id].append(rel)
+            graph._rels_by_endpoint[rel.target_id].append(rel)
+
+        for stub_id, target_id in stub_to_target.items():
+            stub = graph.entities.get(stub_id)
+            if stub:
+                updated_meta = dict(stub.metadata)
+                updated_meta["stub_resolution_state"] = "resolved"
+                updated_meta["resolved_target_id"] = target_id
+                graph.entities[stub_id] = stub._evolve(metadata=updated_meta)
+
+        self.logger.info(
+            "contextual_stub_resolution_complete",
+            stubs_found=len(stubs),
+            resolved=resolved_count,
+            unresolved=unresolved_count,
+        )
 
     def build_graph(
         self,
@@ -609,6 +871,8 @@ class CodeGraphIndexer:
         ast_cache_enabled: bool | None = None,
         include_gaps: bool | None = None,
         file_list: list[str] | None = None,
+        write_callback: Callable[[str, dict], None] | None = None,
+        external_scope_manager: ScopeManager | None = None,
     ) -> InMemoryGraph:
         """
         Walk *root* recursively, index every matching source file, and return
@@ -712,6 +976,11 @@ class CodeGraphIndexer:
 
             bsg_parsing_cfg = bsg_cfg.get("parsing", {})
             set_parsing_config(bsg_parsing_cfg)
+
+            bsg_symbol_cfg = bsg_cfg.get("symbol_resolution", {})
+            symbol_resolution_enabled = bsg_symbol_cfg.get("enabled", True)
+            max_unresolved_attempts = int(bsg_symbol_cfg.get("max_unresolved_attempts", 10))
+            prune_unresolved = bool(bsg_symbol_cfg.get("prune_unresolved", True))
 
             ignore_spec = load_ignore_spec(
                 root_path,
@@ -856,95 +1125,168 @@ class CodeGraphIndexer:
                 cached = 0
                 skipped = 0
                 local_errors = 0
-                for filepath, entities, relationships, cached_hit in results:
+                total = len(results)
+                progress_interval = 0
+                if total >= 1000:
+                    progress_interval = max(200, total // 10)
+
+                for index, (filepath, entities, relationships, cached_hit) in enumerate(
+                    results, start=1
+                ):
                     try:
-                        for entity in entities:
-                            built_graph.add_entity(entity)
-                        for rel in relationships:
-                            built_graph.add_relationship(rel)
+                        built_graph.add_entities_batch(entities)
+                        built_graph.add_relationships_batch(relationships)
                         parsed += 1
                         if cached_hit:
                             cached += 1
+                        if progress_interval and index % progress_interval == 0:
+                            self.logger.info(
+                                "graph_materialize_progress",
+                                processed=index,
+                                total=total,
+                                entities=len(built_graph.entities),
+                                relationships=len(built_graph.relationships),
+                            )
                     except Exception as graph_error:
                         _handle_file_error(filepath, graph_error, "graph_update")
                         local_errors += 1
                         skipped += 1
                 return built_graph, parsed, cached, skipped, local_errors
 
-            # Process files using multiprocessing pipeline
-            try:
-                results, parallel_errors = build_graph_parallel(
-                    candidates,
-                    configured_max_file_size_kb,
-                    bsg_cfg,
-                    extractor,
-                    index_id=index_id,
-                    include_gaps=include_gaps_flag,
-                )
-                errors = parallel_errors
-                graph, files_parsed, files_cached, files_skipped, graph_errors = (
-                    _materialize_graph(results)
-                )
-                errors += graph_errors
-            except Exception as pool_error:
-                self.logger.error("parallel_processing_failed", error=str(pool_error))
-                raise
+            # --- SINGLE-PASS PARALLEL EXTRACTION & RESOLUTION ---
+            package_obj = detect_package_from_config(root_path)
+            package_dict = package_obj.to_dict() if package_obj else None
 
+            # Store precompiled blobs for async persistence/file tracking
+            self._precompiled_blobs: dict[str, dict] = {}
 
-            bsg_symbol_cfg = bsg_cfg.get("symbol_resolution", {})
-            symbol_resolution_enabled = bsg_symbol_cfg.get("enabled", True)
-            symbol_resolution_fuzzy = bool(bsg_symbol_cfg.get("fuzzy_matching", False))
-            max_unresolved_attempts = int(bsg_symbol_cfg.get("max_unresolved_attempts", 10))
-            prune_unresolved = bool(bsg_symbol_cfg.get("prune_unresolved", True))
+            def on_result_extracted(res: tuple) -> None:
+                if res is None:
+                    return
+                filepath = res[0]
+                content_hash = res[1]
+                hollow_bytes = res[2]
+                rel_bytes = res[3]
+                agent_blob = res[4]
+                storage_blob = res[5]
 
-            # --- Stale cache detection (Phase 8 migration) ---
-            stale_cache_detected = self._detect_stale_cached_entities(graph)
-            if stale_cache_detected:
-                self.logger.warning(
-                    "stale_cache_detected",
-                    message=(
-                        "Cached entities contain old-style 'unresolved:' string targets "
-                        "or relationships to non-existent entities. Performing full "
-                        "re-parse to regenerate graph."
-                    ),
-                )
-                # Force full rebuild: clear the cache and reprocess
-                if bsg_cache_cfg.get("enabled"):
+                self._precompiled_blobs[filepath] = {
+                    "content_hash": content_hash,
+                    "agent_blob": agent_blob,
+                    "storage_blob": storage_blob,
+                    "rels_blob": rel_bytes,
+                }
+
+                if write_callback is not None:
                     try:
-                        self._cache.invalidate_cache()
-                    except Exception as exc:
-                        self.logger.warning("stale_cache_invalidate_failed", error=str(exc))
-                bsg_cfg_no_cache = dict(bsg_cfg)
-                cache_cfg = dict(bsg_cfg_no_cache.get("cache", {}))
-                cache_cfg["enabled"] = False
-                bsg_cfg_no_cache["cache"] = cache_cfg
-                try:
-                    results, parallel_errors = build_graph_parallel(
-                        candidates,
-                        configured_max_file_size_kb,
-                        bsg_cfg_no_cache,
-                        extractor,
-                        index_id=index_id,
-                        include_gaps=include_gaps_flag,
-                    )
-                    errors = parallel_errors
-                    graph, files_parsed, files_cached, files_skipped, graph_errors = (
-                        _materialize_graph(results)
-                    )
-                    errors += graph_errors
-                except Exception as pool_error:
-                    self.logger.error("parallel_processing_failed", error=str(pool_error))
-                    raise
+                        file_rel = str(Path(filepath).relative_to(root_path))
+                    except ValueError:
+                        file_rel = filepath
+                    blob_data = {
+                        "content_hash": content_hash,
+                        "agent_blob": agent_blob,
+                        "storage_blob": storage_blob,
+                        "rels_blob": rel_bytes,
+                    }
+                    write_callback(file_rel, blob_data)
 
-            symbol_index = SymbolIndex.build(graph) if symbol_resolution_enabled else None
-
-            graph, resolved_count, pruned_count = self._resolve_imports(
-                graph,
-                symbol_index=symbol_index,
-                fuzzy_matching=symbol_resolution_fuzzy,
-                max_unresolved_attempts=max_unresolved_attempts,
-                prune_unresolved=prune_unresolved,
+            self.logger.info("single_pass_extraction_started", candidates=len(candidates))
+            bsg_cfg_payload = dict(bsg_cfg)
+            bsg_cfg_payload["root_path"] = str(root_path)
+            bsg_cfg_payload["rules"] = cfg.get("rules", {})
+            results, extract_errors, merged_audit = extract_and_emit_parallel(
+                candidates,
+                configured_max_file_size_kb,
+                bsg_cfg_payload,
+                package_dict=package_dict,
+                index_id=index_id,
+                include_gaps=include_gaps_flag,
+                result_callback=on_result_extracted,
             )
+
+            errors += extract_errors
+
+            # Populate ScopeManager with all definition symbols from GlobalSymbolManifests
+            scope_manager = ScopeManager()
+            for result in results:
+                # New 8-tuple: (filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, global_manifest, local_hits)
+                filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, global_manifest, _ = result
+                for entry in global_manifest:
+                    scope_manager.define_global_symbol_qualified(
+                        name=entry["name"],
+                        symbol_id=entry["id"],
+                        symbol_type=entry["type"],
+                        filepath=filepath,
+                        is_global=True,
+                    )
+
+            # Merge external (dependency) symbols into project scope
+            if external_scope_manager is not None:
+                _merge_external_scope(scope_manager, external_scope_manager)
+
+            # Materialize graph using hollow topology (no raw_content/raw_bytes)
+            import msgpack
+            import zstandard as zstd
+            zstd_decompressor = zstd.ZstdDecompressor()
+
+            total_rules_applied = 0
+            total_entities_tagged = 0
+
+            for result in results:
+                try:
+                    # New 8-tuple: (filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, global_manifest, local_hits)
+                    filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, _, local_hits = result
+                    total_rules_applied += local_hits.get("rules_applied", 0)
+                    total_entities_tagged += local_hits.get("entities_tagged", 0)
+
+                    # Deserialize hollow topology (lightweight - not compressed)
+                    hollow_topology = msgpack.unpackb(hollow_bytes)
+
+                    # Add hollow entities to graph using model_construct (bypasses Pydantic validation)
+                    for node in hollow_topology:
+                        # Convert integer type to EntityType enum for proper comparison
+                        # (worker stores e.type.value which is an integer)
+                        node_type = node["type"]
+                        if isinstance(node_type, int):
+                            node_type = EntityType(node_type)
+
+                        # Preserve stub resolution metadata if present
+                        metadata = {"is_hollow": True}
+                        if "caller_scope" in node:
+                            metadata["caller_scope"] = node["caller_scope"]
+                        if "target_name" in node:
+                            metadata["target_name"] = node["target_name"]
+
+                        ent = Entity.model_construct(
+                            id_override=node["id"],
+                            name=node["name"],
+                            type=node_type,
+                            file=node["file"],
+                            start_line=node.get("start_line", 1),
+                            end_line=node.get("end_line", 1),
+                            start_byte=node.get("start_byte", 0),
+                            end_byte=node.get("end_byte", 0),
+                            parent_id=node.get("parent_id"),
+                            raw_content=None,
+                            raw_bytes=None,
+                            metadata=metadata
+                        )
+                        graph.add_entity(ent)
+
+                    # Deserialize relationships
+                    raw_rels = msgpack.unpackb(zstd_decompressor.decompress(rel_bytes))
+                    relationships = [Relationship.from_dict(d) for d in raw_rels]
+                    graph.add_relationships_batch(relationships)
+
+                    files_parsed += 1
+                except Exception as mat_error:
+                    _handle_file_error(filepath, mat_error, "graph_materialize")
+                    errors += 1
+                    files_skipped += 1
+
+            # Batch resolve contextual stubs using populated ScopeManager
+            self.resolve_contextual_stubs(graph, scope_manager)
+
             derived_hierarchy_edges = self._derive_hierarchy_relations(graph)
             derived_overrides_edges = self._derive_override_edges(graph)
 
@@ -963,6 +1305,14 @@ class CodeGraphIndexer:
             except Exception as exc:
                 self.logger.warning("bsg_semantic_stage_failed", error=str(exc))
 
+            # Load and apply BSG rules
+            rules_cfg = cfg.get("rules", {}) if isinstance(cfg, dict) else {}
+            plugins_cfg = cfg.get("plugins", {}) if isinstance(cfg, dict) else {}
+            if isinstance(rules_cfg, dict) and isinstance(plugins_cfg, dict):
+                overrides = plugins_cfg.get("overrides")
+                if overrides:
+                    rules_cfg = {**rules_cfg, "plugins_overrides": overrides}
+
             rule_stats: dict[str, Any] = {
                 "enabled": False,
                 "rules_loaded": 0,
@@ -970,26 +1320,47 @@ class CodeGraphIndexer:
                 "entities_updated": 0,
                 "errors": [],
             }
-            rules_cfg = cfg.get("rules", {}) if isinstance(cfg, dict) else {}
-            plugins_cfg = cfg.get("plugins", {}) if isinstance(cfg, dict) else {}
-            if isinstance(rules_cfg, dict) and isinstance(plugins_cfg, dict):
-                overrides = plugins_cfg.get("overrides")
-                if overrides:
-                    rules_cfg = {**rules_cfg, "plugins_overrides": overrides}
-            try:
-                from batho.modules.compression import apply_rule_plugins
 
-                rule_stats = apply_rule_plugins(
-                    graph=graph,
-                    root_path=root_path,
-                    rules_config=rules_cfg,
-                    logger=self.logger,
-                )
-            except Exception as exc:
-                if rules_cfg.get("fail_on_rule_error", False):
-                    raise
-                self.logger.warning("bsg_rules_stage_failed", error=str(exc))
-                rule_stats["errors"] = [str(exc)]
+            if rules_cfg and rules_cfg.get("enabled", False):
+                try:
+                    from batho.modules.compression.rules import load_effective_rules
+                    # Load the rules to determine rules_loaded count, but do NOT execute apply_rule_plugins on the graph.
+                    effective_rules, load_stats = load_effective_rules(rules_cfg, Path(root_path))
+                    rule_stats = {
+                        "enabled": True,
+                        "rules_loaded": len(effective_rules),
+                        "rules_applied": total_rules_applied,
+                        "entities_updated": total_entities_tagged,
+                        "security_audit": merged_audit,
+                        "errors": [],
+                    }
+                except Exception as exc:
+                    self.logger.warning("bsg_rules_telemetry_failed", error=str(exc))
+                    rule_stats = {
+                        "enabled": True,
+                        "rules_loaded": 0,
+                        "rules_applied": total_rules_applied,
+                        "entities_updated": total_entities_tagged,
+                        "security_audit": merged_audit,
+                        "errors": [str(exc)],
+                    }
+            else:
+                rule_stats = {
+                    "enabled": bool(rules_cfg),
+                    "rules_loaded": 0,
+                    "rules_applied": 0,
+                    "entities_updated": 0,
+                    "security_audit": merged_audit,
+                    "errors": [],
+                }
+
+
+            orphan_pruned_count = self.prune_orphan_nodes(graph)
+            consistency_issues, cycle_counts, broken_relationships, cycle_fatal = (
+                self._collect_consistency_issues(graph)
+            )
+            import_cycle_count = cycle_counts.get("imports", 0)
+            inherit_cycle_count = cycle_counts.get("inherits", 0)
 
             elapsed = (
                 (os.times().elapsed if hasattr(os, "times") else 0.0) - start_ts
@@ -1008,13 +1379,16 @@ class CodeGraphIndexer:
                 "elapsed_seconds": elapsed,
                 "workers_used": actual_workers,
                 "symbol_resolution_enabled": bool(symbol_resolution_enabled),
-                "symbol_resolution_fuzzy": bool(symbol_resolution_fuzzy),
-                "symbol_index_size": int(symbol_index.size) if symbol_index else 0,
+                "symbol_index_size": 0,
+                "import_cycle_count": int(import_cycle_count),
+                "inherit_cycle_count": int(inherit_cycle_count),
+                "orphan_pruned_count": int(orphan_pruned_count),
+                "graph_consistency_issue_count": len(consistency_issues),
                 "unresolved_entities_count": sum(
-                    1 for e in graph.entities.values() if e.type == EntityType.UNRESOLVED
+                    1 for e in graph.entities.values() if e.type in (EntityType.UNRESOLVED, EntityType.EXTERNAL_SYMBOL)
                 ),
-                "unresolved_pruned_count": pruned_count,
-                "unresolved_resolved_count": resolved_count,
+                "unresolved_pruned_count": 0,
+                "unresolved_resolved_count": 0,
                 "derived_hierarchy_edges": derived_hierarchy_edges,
                 "derived_overrides_edges": derived_overrides_edges,
                 "semantic_tags_added": int(semantic_stats.get("semantic_tags_added", 0)),
@@ -1024,6 +1398,7 @@ class CodeGraphIndexer:
                 "rules_applied": int(rule_stats.get("rules_applied", 0)),
                 "entities_rule_tagged": int(rule_stats.get("entities_updated", 0)),
                 "rules": rule_stats,
+                "security_audit": rule_stats.get("security_audit"),
                 "include_gaps": include_gaps_flag,
             }
 
@@ -1075,16 +1450,23 @@ class CodeGraphIndexer:
                         self.logger.warning("failed_to_write_opaque_snapshot", filepath=abs_path_str, error=str(e))
 
             # Validate graph consistency before returning
-            updater = IncrementalGraphUpdater()
-            if not updater.validate_graph_consistency(graph):
-                self.logger.warning("initial_graph_inconsistency_detected")
-                if strict_mode or fail_on_warning:
-                    raise RuntimeError("Initial graph build produced inconsistent relationships")
+            if consistency_issues:
+                self.logger.warning(
+                    "initial_graph_consistency_issues",
+                    issue_count=len(consistency_issues),
+                )
+                if broken_relationships and (strict_mode or fail_on_warning):
+                    raise RuntimeError(
+                        "Initial graph build produced inconsistent relationships"
+                    )
+                if (import_cycle_count or inherit_cycle_count) and (
+                    cycle_fatal or strict_mode or fail_on_warning
+                ):
+                    raise RuntimeError(
+                        "Initial graph build detected cyclic dependencies"
+                    )
 
-            # Force garbage collection for large operations
-            if len(candidates) > 1000:
-                gc_stats = batho.utils.memory_monitor.force_garbage_collection()
-                self.logger.info("gc_completed", **gc_stats)
+            self._indexed_files = [result[0] for result in results]
 
             self._graph = graph
             return graph
@@ -1212,38 +1594,252 @@ class CodeGraphIndexer:
         """Get detailed cache statistics for monitoring."""
         return self._cache.get_stats()
 
+    def mark_keep_node(self, node_id: str) -> None:
+        """Mark a node to be preserved during orphan pruning."""
+        self._keep_nodes.add(node_id)
+
+    def _cycle_key(self, cycle: list[str]) -> tuple[str, ...]:
+        if not cycle:
+            return ()
+        base = cycle[:-1] if len(cycle) > 1 and cycle[0] == cycle[-1] else list(cycle)
+        if not base:
+            return ()
+        rotations = [tuple(base[i:] + base[:i]) for i in range(len(base))]
+        return min(rotations)
+
+    def _format_cycle_path(self, graph: InMemoryGraph, cycle: list[str]) -> str:
+        labels: list[str] = []
+        for node_id in cycle:
+            entity = graph.get_entity(node_id)
+            labels.append(entity.name if entity is not None else node_id)
+        return " -> ".join(labels)
+
+    def find_cycles(
+        self, graph: InMemoryGraph, relationship_type: RelationshipType
+    ) -> list[list[str]]:
+        adjacency: dict[str, list[str]] = defaultdict(list)
+        for rel in graph.relationships:
+            if rel.type == relationship_type:
+                adjacency[rel.source_id].append(rel.target_id)
+
+        visited: set[str] = set()
+        seen_keys: set[tuple[str, ...]] = set()
+        cycles: list[list[str]] = []
+
+        for start_node in list(adjacency.keys()):
+            if start_node in visited:
+                continue
+
+            path_index: dict[str, int] = {}
+            path_list: list[str] = []
+
+            # stack holds tuples of (node, neighbor_index)
+            stack = [(start_node, 0)]
+            visited.add(start_node)
+            path_index[start_node] = 0
+            path_list.append(start_node)
+
+            while stack:
+                node, edge_idx = stack[-1]
+                neighbors = adjacency.get(node, [])
+
+                if edge_idx < len(neighbors):
+                    neighbor = neighbors[edge_idx]
+                    stack[-1] = (node, edge_idx + 1)
+
+                    if neighbor in path_index:
+                        # Cycle detected!
+                        start_index = path_index[neighbor]
+                        cycle = path_list[start_index:] + [neighbor]
+                        key = self._cycle_key(cycle)
+                        if key and key not in seen_keys:
+                            seen_keys.add(key)
+                            cycles.append(cycle)
+                    elif neighbor not in visited:
+                        visited.add(neighbor)
+                        path_index[neighbor] = len(path_list)
+                        path_list.append(neighbor)
+                        stack.append((neighbor, 0))
+                else:
+                    stack.pop()
+                    path_index.pop(node)
+                    path_list.pop()
+
+        return cycles
+
+    def _collect_consistency_issues(
+        self, graph: InMemoryGraph
+    ) -> tuple[list[str], dict[str, int], bool, bool]:
+        cfg = get_config_cached()
+        graph_cfg = cfg.get("graph", {}) if isinstance(cfg, dict) else {}
+        cycle_cfg = graph_cfg.get("cycle_detection", {}) if isinstance(graph_cfg, dict) else {}
+        cycle_enabled = bool(cycle_cfg.get("enabled", True))
+        cycle_fatal = bool(cycle_cfg.get("fatal", False))
+
+        issues: list[str] = []
+        cycle_counts = {"imports": 0, "inherits": 0}
+
+        updater = IncrementalGraphUpdater()
+        broken_relationships = not updater.validate_graph_consistency(graph)
+        if broken_relationships:
+            issues.append("Broken relationships detected in graph")
+
+        if cycle_enabled:
+            import_cycles = self.find_cycles(graph, RelationshipType.IMPORTS)
+            inherit_cycles = self.find_cycles(graph, RelationshipType.INHERITS)
+            cycle_counts["imports"] = len(import_cycles)
+            cycle_counts["inherits"] = len(inherit_cycles)
+
+            log_fn = self.logger.error if cycle_fatal else self.logger.warning
+            for cycle in import_cycles:
+                issues.append(
+                    f"Cyclic import detected: {self._format_cycle_path(graph, cycle)}"
+                )
+                log_fn(
+                    "cyclic_import_detected",
+                    cycle=self._format_cycle_path(graph, cycle),
+                )
+            for cycle in inherit_cycles:
+                issues.append(
+                    f"Cyclic inheritance detected: {self._format_cycle_path(graph, cycle)}"
+                )
+                log_fn(
+                    "cyclic_inheritance_detected",
+                    cycle=self._format_cycle_path(graph, cycle),
+                )
+
+        return issues, cycle_counts, broken_relationships, cycle_fatal
+
+    def validate_graph_consistency(self, graph: InMemoryGraph) -> list[str]:
+        """Validate graph consistency and return a list of issues."""
+        issues, _, _, _ = self._collect_consistency_issues(graph)
+        return issues
+
+    def _is_exported_entity(self, entity: Entity) -> bool:
+        meta = dict(entity.metadata or {})
+        if meta.get("is_exported"):
+            return True
+        if meta.get("exported"):
+            return True
+        return False
+
+    def is_orphan(
+        self,
+        graph: InMemoryGraph,
+        node_id: str,
+        *,
+        keep_exports: bool | None = None,
+        keep_entry_points: bool | None = None,
+    ) -> bool:
+        if node_id in self._keep_nodes:
+            return False
+
+        entity = graph.get_entity(node_id)
+        if entity is None:
+            return False
+
+        cfg = get_config_cached()
+        graph_cfg = cfg.get("graph", {}) if isinstance(cfg, dict) else {}
+        orphan_cfg = graph_cfg.get("orphan_pruning", {}) if isinstance(graph_cfg, dict) else {}
+        keep_entry = (
+            keep_entry_points
+            if keep_entry_points is not None
+            else bool(orphan_cfg.get("keep_entry_points", True))
+        )
+        keep_exports_flag = (
+            keep_exports
+            if keep_exports is not None
+            else bool(orphan_cfg.get("keep_exports", True))
+        )
+
+        if keep_entry and entity.type == EntityType.ENTRY_POINT:
+            return False
+        if keep_exports_flag and self._is_exported_entity(entity):
+            return False
+
+        return not (
+            graph.has_incoming_edges(node_id) or graph.has_outgoing_edges(node_id)
+        )
+
+    def prune_orphan_nodes(
+        self,
+        graph: InMemoryGraph,
+        *,
+        keep_exports: bool | None = None,
+        keep_entry_points: bool | None = None,
+    ) -> int:
+        cfg = get_config_cached()
+        graph_cfg = cfg.get("graph", {}) if isinstance(cfg, dict) else {}
+        orphan_cfg = graph_cfg.get("orphan_pruning", {}) if isinstance(graph_cfg, dict) else {}
+        if not bool(orphan_cfg.get("enabled", True)):
+            return 0
+
+        keep_entry = (
+            keep_entry_points
+            if keep_entry_points is not None
+            else bool(orphan_cfg.get("keep_entry_points", True))
+        )
+        keep_exports_flag = (
+            keep_exports
+            if keep_exports is not None
+            else bool(orphan_cfg.get("keep_exports", True))
+        )
+
+        # 1. O(E) pass to collect all connected entity IDs
+        active_node_ids = set()
+        for rel in graph.relationships:
+            active_node_ids.add(rel.source_id)
+            active_node_ids.add(rel.target_id)
+
+        # 2. O(V) pass to identify orphans using C-optimized set logic
+        all_entity_ids = set(graph.entities.keys())
+        orphan_ids = all_entity_ids - active_node_ids
+
+        orphans = []
+        for node_id in orphan_ids:
+            if node_id in self._keep_nodes:
+                continue
+            entity = graph.get_entity(node_id)
+            if entity is None:
+                continue
+            if keep_entry and entity.type == EntityType.ENTRY_POINT:
+                continue
+            if keep_exports_flag and self._is_exported_entity(entity):
+                continue
+            orphans.append(node_id)
+
+        with graph._lock:
+            for node_id in orphans:
+                ent = graph.entities.pop(node_id, None)
+                if ent:
+                    # Safely remove from secondary O(1) lookups
+                    if ent.type in graph._by_type:
+                        graph._by_type[ent.type].discard(node_id)
+                    if ent.file in graph._by_file:
+                        graph._by_file[ent.file].discard(node_id)
+
+                    # Pop endpoint relationships (already detached topologically)
+                    graph._rels_by_endpoint.pop(node_id, None)
+
+                    # Pop from adjacency dicts
+                    if graph._adj_out is not None:
+                        graph._adj_out.pop(node_id, None)
+                    if graph._adj_in is not None:
+                        graph._adj_in.pop(node_id, None)
+
+        if orphans:
+            self.logger.info(
+                "orphan_nodes_pruned",
+                pruned=len(orphans),
+            )
+
+        return len(orphans)
+
     # ------------------------------------------------------------------
     # Internal — cross-file import resolution
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _detect_stale_cached_entities(graph: InMemoryGraph) -> bool:
-        """
-        Detect stale cached entities containing old-style 'unresolved:' targets.
 
-        Returns True if stale data is detected (relationships with 'unresolved:'
-        string prefixes or relationships targeting non-existent entity IDs that
-        are not UNRESOLVED entities).
-
-        This handles the migration from the old 'unresolved:X' string pattern
-        to proper EntityType.UNRESOLVED nodes.
-        """
-        # Check for legacy 'unresolved:' string targets in relationships
-        for rel in graph.relationships:
-            if rel.target_id.startswith("unresolved:"):
-                return True
-
-        # Check for relationships pointing to non-existent entities
-        # (only flag if there are many; a few are normal during builds)
-        entity_ids = set(graph.entities.keys())
-        broken = 0
-        for rel in graph.relationships:
-            if rel.target_id not in entity_ids:
-                broken += 1
-                if broken > 10:  # threshold to avoid false positives on small graphs
-                    return True
-
-        return False
 
     @staticmethod
     def _normalize_ref_token(text: str) -> str:
@@ -1336,7 +1932,7 @@ class CodeGraphIndexer:
             return 0
 
         name_to_id: dict[str, str] = {}
-        for ent in sorted(graph.entities.values(), key=lambda e: e.id):
+        for ent in graph.entities.values():
             name_to_id[ent.name] = ent.id
             if "." in ent.name:
                 name_to_id[ent.name.split(".")[-1]] = ent.id
@@ -1345,9 +1941,9 @@ class CodeGraphIndexer:
 
         existing = {
             (
-                str(rel.source_id),
-                str(rel.target_id),
-                rel.type if isinstance(rel.type, RelationshipType) else rel.type,
+                rel.source_id,
+                rel.target_id,
+                rel.type,
             )
             for rel in graph.relationships
         }
@@ -1410,9 +2006,9 @@ class CodeGraphIndexer:
         parent_map: dict[str, set[str]] = defaultdict(set)
         existing = {
             (
-                str(rel.source_id),
-                str(rel.target_id),
-                rel.type if isinstance(rel.type, RelationshipType) else rel.type,
+                rel.source_id,
+                rel.target_id,
+                rel.type,
             )
             for rel in graph.relationships
         }
@@ -1489,137 +2085,21 @@ class CodeGraphIndexer:
 
         return added
 
-    def _resolve_imports(
-        self,
-        graph: InMemoryGraph,
-        symbol_index: SymbolIndex | None = None,
-        fuzzy_matching: bool = False,
-        max_unresolved_attempts: int = 10,
-        prune_unresolved: bool = True,
-    ) -> tuple[InMemoryGraph, int, int]:
-        """
-        Resolve relationships targeting EntityType.UNRESOLVED entities.
-
-        Builds a name → entity_id index and replaces unresolved targets with
-        real entity IDs where possible. Unresolvable references remain as
-        UNRESOLVED entities with incremented attempt counters.
-
-        Returns:
-            (graph, resolved_count, pruned_count)
-        """
-        lookup = symbol_index or SymbolIndex.build(graph)
-
-        unresolved_entities = {
-            eid: entity
-            for eid, entity in graph.entities.items()
-            if entity.type == EntityType.UNRESOLVED
+    def _merge_security_audits(self, audit1: dict, audit2: dict) -> dict:
+        merged = {
+            "schema_version": "interception-stats.v1",
+            "plugins": {},
         }
-
-        resolved_count = 0
-        pruned_count = 0
-        now_ts = datetime.now(timezone.utc).isoformat()
-
-        # Group unresolved entities by (name, file) for batch resolution.
-        unresolved_entities_by_name_file: dict[tuple[str, str], list[str]] = defaultdict(list)
-        for eid, entity in unresolved_entities.items():
-            unresolved_entities_by_name_file[(entity.name, entity.file)].append(eid)
-
-        # ------------------------------------------------------------------
-        # Pre-build a reverse index: target_id -> list[Relationship]
-        # Previously this was rebuilt (O(R)) inside the resolution loop, making
-        # the total cost O(groups × R).  With the pre-built index, each lookup
-        # is O(1) amortized.
-        # ------------------------------------------------------------------
-        rels_by_target: dict[str, list[Relationship]] = defaultdict(list)
-        for rel in graph.relationships:
-            rels_by_target[rel.target_id].append(rel)
-
-        # Accumulate eids to remove from entities and relationships in one pass.
-        eids_to_remove: set[str] = set()
-
-        for (ref_name, _ref_file), eid_list in unresolved_entities_by_name_file.items():
-            # Attempt resolution via symbol index
-            target_id = lookup.resolve_candidates(
-                self._lookup_candidates(ref_name),
-                source_file=_ref_file,
-                fuzzy_matching=fuzzy_matching,
-            )
-
-            if target_id and target_id in graph.entities:
-                # Resolved — repoint all relationships and remove unresolved entities.
-                for eid in eid_list:
-                    for rel in rels_by_target.get(eid, []):
-                        graph.add_relationship(
-                            Relationship(
-                                source_id=rel.source_id,
-                                target_id=target_id,
-                                type=rel.type,
-                                metadata=rel.metadata,
-                            )
-                        )
-                    if eid in graph.entities:
-                        del graph.entities[eid]
-                    eids_to_remove.add(eid)
-                    resolved_count += 1
-            else:
-                # Not resolved — increment attempt counter, check pruning threshold.
-                for eid in eid_list:
-                    entity = graph.entities.get(eid)
-                    if entity is None:
-                        continue
-                    metadata = dict(entity.metadata or {})
-                    attempts = metadata.get("attempts", 1)
-                    new_attempts = attempts + 1
-                    metadata["attempts"] = new_attempts
-                    metadata["last_attempt"] = now_ts
-
-                    if prune_unresolved and new_attempts >= max_unresolved_attempts:
-                        del graph.entities[eid]
-                        eids_to_remove.add(eid)
-                        pruned_count += 1
-                    else:
-                        # Use _evolve() instead of full Entity construction.
-                        graph.entities[eid] = entity._evolve(metadata=metadata)
-
-        # Single-pass relationship filter — O(R) total rather than O(groups × R).
-        if eids_to_remove:
-            graph.relationships = [
-                r for r in graph.relationships if r.target_id not in eids_to_remove
-            ]
-
-        # Also check for any lingering relationships with old-style "unresolved:" targets
-        # (stale cache migration — see Phase 8)
-        stale_unresolved_rels = [
-            r for r in graph.relationships if r.target_id.startswith("unresolved:")
-        ]
-        if stale_unresolved_rels:
-            for rel in stale_unresolved_rels:
-                ref_text = rel.target_id[11:]  # strip "unresolved:"
-                ref_text = self._normalize_ref_token(ref_text)
-                target_id = lookup.resolve_candidates(
-                    self._lookup_candidates(ref_text),
-                    source_file=None,
-                    fuzzy_matching=fuzzy_matching,
-                )
-                if target_id and target_id in graph.entities:
-                    graph.add_relationship(
-                        Relationship(
-                            source_id=rel.source_id,
-                            target_id=target_id,
-                            type=rel.type,
-                            metadata=rel.metadata,
-                        )
-                    )
-            graph.relationships = [
-                r for r in graph.relationships
-                if not r.target_id.startswith("unresolved:")
-            ]
-
-        self.logger.info(
-            "import_resolution_complete",
-            unresolved_entity_count=len(unresolved_entities),
-            resolved_count=resolved_count,
-            pruned_count=pruned_count,
-            symbol_index_size=lookup.size,
-        )
-        return graph, resolved_count, pruned_count
+        for audit in (audit1, audit2):
+            if not audit:
+                continue
+            for plugin_id, data in audit.get("plugins", {}).items():
+                if plugin_id in merged["plugins"]:
+                    merged["plugins"][plugin_id]["interceptions"] += data.get("interceptions", 0)
+                else:
+                    merged["plugins"][plugin_id] = {
+                        "plugin_id": plugin_id,
+                        "name": data.get("name", ""),
+                        "interceptions": data.get("interceptions", 0),
+                    }
+        return merged

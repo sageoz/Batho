@@ -123,22 +123,10 @@ def test_get_database_path_conflict(temp_project):
     assert "Database path conflict" in str(exc_info.value)
 
 
-def test_config_yaml_preferred_over_batho_yaml(temp_project):
-    """Verify config.yaml is loaded and takes precedence over batho.yaml."""
-    (temp_project / "batho.yaml").write_text("paths:\n  db_path: batho_dir\n")
-    (temp_project / "config.yaml").write_text("paths:\n  db_path: config_dir\n")
-    set_active_root(temp_project)
-    reload_config()
-    
-    resolved = resolve_db_path(temp_project)
-    expected = (temp_project / "config_dir" / artifact_filename(temp_project)).resolve()
-    assert resolved == expected
-
-
 def test_resolve_db_path_unquoted_root(temp_project):
     """Verify unquoted {root} is resolved correctly and doesn't cause validation failure."""
-    # Write config.yaml with unquoted {root}
-    (temp_project / "config.yaml").write_text("paths:\n  db_path: {root}\n")
+    # Write batho.yaml with unquoted {root}
+    (temp_project / "batho.yaml").write_text("paths:\n  db_path: {root}\n")
     set_active_root(temp_project)
     reload_config()
     

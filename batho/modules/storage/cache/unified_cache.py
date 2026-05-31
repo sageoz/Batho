@@ -21,6 +21,9 @@ from batho.utils.logging import get_logger
 logger = get_logger(__name__, component="cache")
 
 
+CACHE_SCHEMA_VERSION = "v2"
+
+
 def build_ast_cache_variant(
     *,
     include_gaps: bool,
@@ -28,6 +31,7 @@ def build_ast_cache_variant(
 ) -> str:
     """Return a stable variant key for AST cache entries."""
     payload = {
+        "schema_version": CACHE_SCHEMA_VERSION,
         "include_gaps": bool(include_gaps),
         "parsing": parsing_config or {},
     }
@@ -110,11 +114,13 @@ class BathoCache:
         self, file_path: str, file_hash: str, variant: str | None = None
     ) -> tuple[list[Entity], list[Relationship]] | None:
         with self._lock:
-            self._purge_expired()
             key = self._ast_key(file_path, file_hash, variant)
             if key in self._ast:
-                self._ast.move_to_end(key)
                 entry = self._ast[key]
+                if len(entry) >= 3 and entry[2] is not None and entry[2] <= time.time():
+                    self._ast.pop(key)
+                    return None
+                self._ast.move_to_end(key)
                 if len(entry) >= 2:
                     return entry[0], entry[1]
             return None
@@ -143,6 +149,8 @@ class BathoCache:
                 relationships,
                 expires_at,
             )
+            if len(self._ast) > self._max_ast_size:
+                self._purge_expired()
             while len(self._ast) > self._max_ast_size:
                 self._ast.popitem(last=False)
 
@@ -283,6 +291,15 @@ class BathoCache:
             "db_path": str(self._db.path) if self._db is not None else "",
         }
 
+
+    def __enter__(self) -> "BathoCache":
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit - ensures database is closed."""
+        self.close()
+        return False
 
     def close(self) -> None:
         self._ast.clear()

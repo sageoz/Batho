@@ -12,7 +12,6 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from batho.core.config import SCHEMA_VERSIONS
-from batho.utils.hash import generate_relationship_id
 from batho.utils.logging import get_logger
 
 BSG_SCHEMA_VERSION = SCHEMA_VERSIONS["bsg"]
@@ -64,7 +63,10 @@ class BSGMap:
         """
         from batho.modules.graph.builder.codegraph import InMemoryGraph
 
-        assert isinstance(graph, InMemoryGraph)
+        if not isinstance(graph, InMemoryGraph):
+            raise TypeError(
+                f"BSGMap.patch() requires an InMemoryGraph instance, got {type(graph).__name__}"
+            )
 
         _rel = PathRelativizer(self._root)
 
@@ -181,7 +183,10 @@ class BSGMap:
         """
         from batho.modules.graph.builder.codegraph import InMemoryGraph
 
-        assert isinstance(graph, InMemoryGraph)
+        if not isinstance(graph, InMemoryGraph):
+            raise TypeError(
+                f"BSGMap.build() requires an InMemoryGraph instance, got {type(graph).__name__}"
+            )
 
         _rel = PathRelativizer(root)
 

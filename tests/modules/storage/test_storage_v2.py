@@ -238,7 +238,8 @@ class TestFileArtifacts:
         
         dctx = zstd.ZstdDecompressor()
         decompressed = dctx.decompress(blob)
-        payload = json.loads(decompressed.decode("utf-8"))
+        import msgpack
+        payload = msgpack.unpackb(decompressed)
         assert "e" in payload
 
     def test_replace_on_upsert(self, tmp_path):

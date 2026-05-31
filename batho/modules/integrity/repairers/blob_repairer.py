@@ -43,7 +43,7 @@ class BlobRepairer:
                     (run_id, file_id),
                 )
                 conn.execute(
-                    "DELETE FROM query_relationships WHERE run_id = ? AND (source_id IN (SELECT entity_id FROM query_entities WHERE file_path = (SELECT val FROM string_dict WHERE id = ?)) OR target_id IN (SELECT entity_id FROM query_entities WHERE file_path = (SELECT val FROM string_dict WHERE id = ?)))",
+                    "DELETE FROM query_relationships WHERE run_id = ? AND (source_key IN (SELECT entity_key FROM query_entities WHERE file_path = (SELECT val FROM string_dict WHERE id = ?)) OR target_key IN (SELECT entity_key FROM query_entities WHERE file_path = (SELECT val FROM string_dict WHERE id = ?)))",
                     (run_id, file_id, file_id),
                 )
                 # 2. Delete the artifact row

@@ -3,6 +3,7 @@ plugin_id: bsg_dependency_blast_radius
 name: Dependency Blast Radius
 version: 1.0.0
 enabled: true
+bidirectional: true
 description: Highlight high fan-in symbols where changes can cause broad regressions.
 rules:
   - rule_id: high-blast-radius-node

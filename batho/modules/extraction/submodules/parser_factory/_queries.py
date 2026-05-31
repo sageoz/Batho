@@ -27,8 +27,7 @@ PYTHON_QUERY = r"""
   name: (identifier) @def.class.name
   superclasses: (argument_list)? @def.class.bases
   body: (block
-    (expression_statement
-      (string) @def.class.docstring)?))
+    (string)? @def.class.docstring))
 
 ; ── Method definitions (function inside a class body) ────────────────────────────
 (class_definition
@@ -38,8 +37,7 @@ PYTHON_QUERY = r"""
       parameters: (parameters) @def.method.params
       return_type: (type)? @def.method.return_type
       body: (block
-        (expression_statement
-          (string) @def.method.docstring)?))))
+        (string)? @def.method.docstring))))
 
 ; ── Module-level / nested function definitions ────────────────────────────────
 (module
@@ -48,8 +46,7 @@ PYTHON_QUERY = r"""
     parameters: (parameters) @def.function.params
     return_type: (type)? @def.function.return_type
     body: (block
-      (expression_statement
-        (string) @def.function.docstring)?)))
+      (string)? @def.function.docstring)))
 
 ; Decorated module-level functions
 (module
@@ -59,8 +56,7 @@ PYTHON_QUERY = r"""
       parameters: (parameters) @def.function.params
       return_type: (type)? @def.function.return_type
       body: (block
-        (expression_statement
-          (string) @def.function.docstring)?))))
+        (string)? @def.function.docstring))))
 
 ; Nested functions inside other functions
 (function_definition
@@ -68,7 +64,9 @@ PYTHON_QUERY = r"""
     (function_definition
       name: (identifier) @def.function.name
       parameters: (parameters) @def.function.params
-      return_type: (type)? @def.function.return_type)))
+      return_type: (type)? @def.function.return_type
+      body: (block
+        (string)? @def.function.docstring))))
 
 ; ── Imports ───────────────────────────────────────────────────────────────────
 (import_statement
@@ -87,6 +85,22 @@ PYTHON_QUERY = r"""
     (attribute
       attribute: (identifier) @ref.call)
   ])
+
+; ── Variable read / write access ──────────────────────────────────────────────
+(assignment
+  left: (identifier) @ref.write)
+
+(augmented_assignment
+  left: (identifier) @ref.write)
+
+(for_statement
+  left: (identifier) @ref.write)
+
+(as_pattern
+  (as_pattern_target
+    (identifier) @ref.write))
+
+(identifier) @ref.read
 
 ; ── Entry point: if __name__ == "__main__": ─────────────────────────────────
 (if_statement
@@ -146,6 +160,18 @@ JAVASCRIPT_QUERY = (
 (call_expression
   function: (member_expression
     property: (property_identifier) @ref.call))
+
+; ── Variable read / write access ──────────────────────────────────────────────
+(assignment_expression
+  left: (identifier) @ref.write)
+
+(update_expression
+  argument: (identifier) @ref.write)
+
+(variable_declarator
+  name: (identifier) @ref.write)
+
+(identifier) @ref.read
 """
     + CommonQueries.http_server_entry_points()
     + CommonQueries.react_render_entry_points()
@@ -211,6 +237,18 @@ TYPESCRIPT_QUERY = (
 (call_expression
   function: (member_expression
     property: (property_identifier) @ref.call))
+
+; ── Variable read / write access ──────────────────────────────────────────────
+(assignment_expression
+  left: (identifier) @ref.write)
+
+(update_expression
+  argument: (identifier) @ref.write)
+
+(variable_declarator
+  name: (identifier) @ref.write)
+
+(identifier) @ref.read
 """
     + CommonQueries.http_server_entry_points()
     + CommonQueries.react_render_entry_points()

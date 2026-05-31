@@ -12,9 +12,7 @@ from typing import TYPE_CHECKING, Any
 from pathlib import Path
 
 from batho.core.config import SCHEMA_VERSIONS
-from batho.utils.hash import generate_relationship_id
-
-from batho.core.schemas import EntityType, BSGViewType
+from batho.core.schemas import EntityType, BSGViewType, build_relationship_id
 from .relativizer import PathRelativizer
 
 BSG_SCHEMA_VERSION = SCHEMA_VERSIONS["bsg"]
@@ -138,11 +136,25 @@ def _build_render_components(
         edge_type: str,
         metadata: dict[str, Any] | None = None,
         derived_from: str | None = None,
+        *,
+        roles: int | None = None,
+        reference_start_byte: int | None = None,
+        reference_end_byte: int | None = None,
+        definition_start_byte: int | None = None,
+        definition_end_byte: int | None = None,
     ) -> dict[str, Any] | None:
         if source_id not in node_by_id or target_id not in node_by_id:
             return None
 
-        edge_key = (source_id, target_id, edge_type)
+        edge_key = (
+            source_id,
+            target_id,
+            edge_type,
+            reference_start_byte,
+            reference_end_byte,
+            definition_start_byte,
+            definition_end_byte,
+        )
         if edge_key in edge_key_seen:
             return None
         edge_key_seen.add(edge_key)
@@ -151,7 +163,17 @@ def _build_render_components(
         if derived_from:
             edge_metadata.setdefault("derived_from", derived_from)
 
-        edge_id = generate_relationship_id(source_id, target_id, edge_type)
+        edge_id = build_relationship_id(
+            source_id,
+            target_id,
+            edge_type,
+            reference_start_byte=reference_start_byte,
+            reference_end_byte=reference_end_byte,
+            definition_start_byte=definition_start_byte,
+            definition_end_byte=definition_end_byte,
+            line_number=edge_metadata.get("line_number") if edge_metadata else None,
+            roles=roles,
+        )
         edge = {
             "id": edge_id,
             "source_id": source_id,
@@ -159,6 +181,16 @@ def _build_render_components(
             "type": edge_type,
             "metadata": edge_metadata,
         }
+        if roles is not None:
+            edge["roles"] = roles
+        if reference_start_byte is not None:
+            edge["reference_start_byte"] = reference_start_byte
+        if reference_end_byte is not None:
+            edge["reference_end_byte"] = reference_end_byte
+        if definition_start_byte is not None:
+            edge["definition_start_byte"] = definition_start_byte
+        if definition_end_byte is not None:
+            edge["definition_end_byte"] = definition_end_byte
         edges.append(edge)
         outbound_edge_map[source_id].append(edge_id)
         inbound_edge_map[target_id].append(edge_id)
@@ -187,11 +219,26 @@ def _build_render_components(
             else str(rel_type_value)
         )
         rel_metadata = dict(getattr(rel, "metadata", {}) or {})
+        rel_roles = getattr(rel, "roles", None)
+        rel_ref_start = getattr(rel, "reference_start_byte", None)
+        rel_ref_end = getattr(rel, "reference_end_byte", None)
+        rel_def_start = getattr(rel, "definition_start_byte", None)
+        rel_def_end = getattr(rel, "definition_end_byte", None)
 
         if not source_id or not target_id or not rel_type:
             continue
 
-        edge = _add_edge(source_id, target_id, rel_type, rel_metadata)
+        edge = _add_edge(
+            source_id,
+            target_id,
+            rel_type,
+            rel_metadata,
+            roles=int(rel_roles) if rel_roles is not None else None,
+            reference_start_byte=rel_ref_start,
+            reference_end_byte=rel_ref_end,
+            definition_start_byte=rel_def_start,
+            definition_end_byte=rel_def_end,
+        )
         if edge is None:
             continue
 

@@ -370,12 +370,12 @@ artifact_blobs:
     assert not (tmp_path / ".batho-config").exists() or not (tmp_path / ".batho-config" / "metrics").exists()
 
 
-def test_build_security_audit_populated_via_config_yaml_unquoted_root(tmp_path):
-    """security_audit column is populated when enabled in config.yaml with unquoted db_path {root}."""
+def test_build_security_audit_populated_via_batho_yaml_unquoted_root(tmp_path):
+    """security_audit column is populated when enabled in batho.yaml with unquoted db_path {root}."""
     py_file = tmp_path / "app.py"
     py_file.write_text("def run():\n    pass\n", encoding="utf-8")
-    
-    # Write a custom config.yaml with security_audit and unquoted {root} db_path
+
+    # Write a custom batho.yaml with security_audit and unquoted {root} db_path
     config_yaml = """
 paths:
   db_path: {root}
@@ -383,7 +383,7 @@ artifact_blobs:
   run_artifacts:
     security_audit: true
 """
-    (tmp_path / "config.yaml").write_text(config_yaml, encoding="utf-8")
+    (tmp_path / "batho.yaml").write_text(config_yaml, encoding="utf-8")
     
     opts = BuildOptions(root=tmp_path)
     res = run_build(opts)
@@ -519,11 +519,19 @@ def test_patch_context_overview_final_state(tmp_path):
     arts = db.get_run_artifacts(db.get_run_internal_id(patch_res.run_id))
     
     # Query final entities from db
+    import msgpack
+    from batho.modules.storage.sqlite_registry.engine import _expand_graph_payload
     conn = sqlite3.connect(str(db_path))
-    ent_count = conn.execute(
-        "SELECT COUNT(*) FROM query_entities WHERE run_id = ?",
+    rows = conn.execute(
+        "SELECT bsg_agent_view FROM file_artifacts WHERE run_id = ?",
         (db.get_run_internal_id(patch_res.run_id),)
-    ).fetchone()[0]
+    ).fetchall()
+    ent_count = 0
+    dctx = zstd.ZstdDecompressor()
+    for r in rows:
+        if r[0]:
+            expanded = _expand_graph_payload(msgpack.unpackb(dctx.decompress(r[0])))
+            ent_count += len(expanded.get("entities", []))
     conn.close()
     db.close()
     

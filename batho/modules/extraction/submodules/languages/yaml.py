@@ -252,6 +252,8 @@ class YAMLExtractor(MarkupConfigExtractor):
                                 target_id=entity.id,
                                 rel_type=RelationshipType.CONTAINS,
                                 line=entity.start_line,
+                                definition_start_byte=entity.start_byte,
+                                definition_end_byte=entity.end_byte,
                             )
                         )
 
@@ -279,6 +281,8 @@ class YAMLExtractor(MarkupConfigExtractor):
                                 target_id=entity.id,
                                 rel_type=RelationshipType.CONTAINS,
                                 line=entity.start_line,
+                                definition_start_byte=entity.start_byte,
+                                definition_end_byte=entity.end_byte,
                             )
                         )
 

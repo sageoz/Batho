@@ -1,0 +1,528 @@
+schema_version: 1
+description: >
+  Pre-indexed popular third-party packages per language/runtime for Batho CDEU.
+  Used when dependency introspection is enabled but full_scan is disabled, to
+  prioritize symbol indexing for the most widely used packages.
+generated_at: "2026-05-30T19:44:00+05:30"
+maintainer: "Batho CDEU"
+source_notes:
+  - "Python: Top PyPI packages by recent download count (30-day window)."
+  - "npm: Most depended-upon npm packages."
+  - "Rust/Go/Java: Curated from community 'most used' and 'blessed' crate/module lists."
+
+defaults:
+  # Global default when config doesn't override per language
+  max_preindexed_packages: 200
+  default_preindexed_packages: 100
+  full_scan_default: false   # future: overridable via dependency config
+
+languages:
+  python:
+    language_id: python
+    display_name: "Python"
+    package_manager: pip
+    ecosystem: pypi
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: live_introspection_with_stub_fallback
+      live_introspection:
+        enabled: true
+        requires_venv: true      # requires .venv or active env
+        depth: shallow           # shallow by default; deep can be config-driven
+        timeout_seconds: 5
+      type_stubs:
+        enabled: true
+        sources:
+          - typeshed
+          - pyright
+    packages:
+      # Seeded from recent Top PyPI downloads (30-day window).
+      # Ordered by popularity; ranks are within this list, not global guarantees.
+      - name: boto3
+        manager: pip
+        rank: 1
+        selection_source: "top-pypi-packages 30d"
+        source_url: "https://hugovk.dev/top-pypi-packages/top-pypi-packages.csv"
+      - name: packaging
+        manager: pip
+        rank: 2
+        selection_source: "top-pypi-packages 30d"
+      - name: urllib3
+        manager: pip
+        rank: 3
+        selection_source: "top-pypi-packages 30d"
+      - name: botocore
+        manager: pip
+        rank: 4
+        selection_source: "top-pypi-packages 30d"
+      - name: setuptools
+        manager: pip
+        rank: 5
+        selection_source: "top-pypi-packages 30d"
+      - name: requests
+        manager: pip
+        rank: 6
+        selection_source: "top-pypi-packages 30d"
+      - name: certifi
+        manager: pip
+        rank: 7
+        selection_source: "top-pypi-packages 30d"
+      - name: typing-extensions
+        manager: pip
+        rank: 8
+        selection_source: "top-pypi-packages 30d"
+      - name: charset-normalizer
+        manager: pip
+        rank: 9
+        selection_source: "top-pypi-packages 30d"
+      - name: idna
+        manager: pip
+        rank: 10
+        selection_source: "top-pypi-packages 30d"
+      - name: python-dateutil
+        manager: pip
+        rank: 11
+        selection_source: "top-pypi-packages 30d"
+      - name: six
+        manager: pip
+        rank: 12
+        selection_source: "top-pypi-packages 30d"
+      - name: numpy
+        manager: pip
+        rank: 13
+        selection_source: "top-pypi-packages 30d"
+      - name: pyyaml
+        manager: pip
+        rank: 14
+        selection_source: "top-pypi-packages 30d"
+      - name: pandas
+        manager: pip
+        rank: 15
+        selection_source: "top-pypi-packages 30d"
+      - name: protobuf
+        manager: pip
+        rank: 16
+        selection_source: "top-pypi-packages 30d"
+      - name: cryptography
+        manager: pip
+        rank: 17
+        selection_source: "top-pypi-packages 30d"
+      - name: pydantic
+        manager: pip
+        rank: 18
+        selection_source: "top-pypi-packages 30d"
+      - name: pip
+        manager: pip
+        rank: 19
+        selection_source: "top-pypi-packages 30d"
+      - name: cffi
+        manager: pip
+        rank: 20
+        selection_source: "top-pypi-packages 30d"
+      - name: pycparser
+        manager: pip
+        rank: 21
+        selection_source: "top-pypi-packages 30d"
+      - name: attrs
+        manager: pip
+        rank: 22
+        selection_source: "top-pypi-packages 30d"
+      - name: click
+        manager: pip
+        rank: 23
+        selection_source: "top-pypi-packages 30d"
+      - name: virtualenv
+        manager: pip
+        rank: 24
+        selection_source: "top-pypi-packages 30d"
+      - name: wheel
+        manager: pip
+        rank: 25
+        selection_source: "top-pypi-packages 30d"
+      - name: pytest
+        manager: pip
+        rank: 26
+        selection_source: "top-pypi-packages 30d"
+      - name: httpx
+        manager: pip
+        rank: 27
+        selection_source: "top-pypi-packages 30d"
+      - name: aiohttp
+        manager: pip
+        rank: 28
+        selection_source: "top-pypi-packages 30d"
+      - name: sqlalchemy
+        manager: pip
+        rank: 29
+        selection_source: "top-pypi-packages 30d"
+      - name: pyarrow
+        manager: pip
+        rank: 30
+        selection_source: "top-pypi-packages 30d"
+      # ...
+      # TODO: extend up to 100-200 entries from the same CSV/JSON source.
+      # Schema supports up to 200 per language without changes.
+
+  javascript:
+    language_id: javascript
+    display_name: "JavaScript / Node.js"
+    package_manager: npm
+    ecosystem: npm
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_with_opt_in_full_scan
+      bundled_tables:
+        enabled: true
+        coverage: "top-200"
+        notes: >
+          Uses curated, hand-maintained symbol tables for most-used packages
+          (React, Express, lodash, etc.) to avoid expensive node_modules scans.
+      node_modules_scan:
+        enabled: true
+        depth: shallow
+        timeout_seconds: 5
+        notes: >
+          Only enabled when per-language or global full_scan flag is true, to
+          avoid pathological performance on large node_modules trees.
+    packages:
+      # Seeded from "most depended-upon" npm list.
+      - name: lodash
+        manager: npm
+        rank: 1
+        selection_source: "npm most depended-upon"
+        source_url: "https://gist.github.com/anvaka/8e8fa57c7ee1350e3491"
+      - name: chalk
+        manager: npm
+        rank: 2
+        selection_source: "npm most depended-upon"
+      - name: request
+        manager: npm
+        rank: 3
+        selection_source: "npm most depended-upon"
+        notes: "Deprecated but still heavily depended-on in the ecosystem."
+      - name: commander
+        manager: npm
+        rank: 4
+        selection_source: "npm most depended-upon"
+      - name: react
+        manager: npm
+        rank: 5
+        selection_source: "npm most depended-upon"
+      - name: express
+        manager: npm
+        rank: 6
+        selection_source: "npm most depended-upon"
+      - name: debug
+        manager: npm
+        rank: 7
+        selection_source: "npm most depended-upon"
+      - name: async
+        manager: npm
+        rank: 8
+        selection_source: "npm most depended-upon"
+      - name: fs-extra
+        manager: npm
+        rank: 9
+        selection_source: "npm most depended-upon"
+      - name: moment
+        manager: npm
+        rank: 10
+        selection_source: "npm most depended-upon"
+      - name: prop-types
+        manager: npm
+        rank: 11
+        selection_source: "npm most depended-upon"
+      - name: react-dom
+        manager: npm
+        rank: 12
+        selection_source: "npm most depended-upon"
+      - name: bluebird
+        manager: npm
+        rank: 13
+        selection_source: "npm most depended-upon"
+      - name: underscore
+        manager: npm
+        rank: 14
+        selection_source: "npm most depended-upon"
+      - name: vue
+        manager: npm
+        rank: 15
+        selection_source: "npm most depended-upon"
+      - name: axios
+        manager: npm
+        rank: 16
+        selection_source: "npm most depended-upon"
+      - name: tslib
+        manager: npm
+        rank: 17
+        selection_source: "npm most depended-upon"
+      - name: mkdirp
+        manager: npm
+        rank: 18
+        selection_source: "npm most depended-upon"
+      - name: glob
+        manager: npm
+        rank: 19
+        selection_source: "npm most depended-upon"
+      - name: yargs
+        manager: npm
+        rank: 20
+        selection_source: "npm most depended-upon"
+      - name: inquirer
+        manager: npm
+        rank: 21
+        selection_source: "npm most depended-upon"
+      - name: webpack
+        manager: npm
+        rank: 22
+        selection_source: "npm most depended-upon"
+      - name: uuid
+        manager: npm
+        rank: 23
+        selection_source: "npm most depended-upon"
+      - name: classnames
+        manager: npm
+        rank: 24
+        selection_source: "npm most depended-upon"
+      - name: minimist
+        manager: npm
+        rank: 25
+        selection_source: "npm most depended-upon"
+      - name: body-parser
+        manager: npm
+        rank: 26
+        selection_source: "npm most depended-upon"
+      - name: rxjs
+        manager: npm
+        rank: 27
+        selection_source: "npm most depended-upon"
+      - name: webpack-dev-server
+        manager: npm
+        rank: 28
+        selection_source: "npm most depended-upon"
+      - name: eslint
+        manager: npm
+        rank: 29
+        selection_source: "npm most depended-upon"
+      - name: dotenv
+        manager: npm
+        rank: 30
+        selection_source: "npm most depended-upon"
+      # ...
+      # TODO: extend to 100-200 entries using the same list.
+
+  rust:
+    language_id: rust
+    display_name: "Rust"
+    package_manager: cargo
+    ecosystem: crates.io
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        For Rust, symbol tables are derived from crates.io metadata plus
+        hand-curated lists; dynamic introspection is deferred to a later CDEU
+        version, per your implementation plan.
+    packages:
+      # Curated from common "most used" crate lists and community threads.
+      - name: serde
+        manager: cargo
+        rank: 1
+        selection_source: "crates.io + community 'most used crates'"
+        notes: "Serialization/deserialization framework; widely used core dependency."
+      - name: serde_json
+        manager: cargo
+        rank: 2
+        selection_source: "crates.io + community 'most used crates'"
+      - name: anyhow
+        manager: cargo
+        rank: 3
+        selection_source: "crates.io + community 'most used crates'"
+      - name: thiserror
+        manager: cargo
+        rank: 4
+        selection_source: "crates.io + community 'most used crates'"
+      - name: tokio
+        manager: cargo
+        rank: 5
+        selection_source: "crates.io + community 'most used crates'"
+      - name: log
+        manager: cargo
+        rank: 6
+        selection_source: "crates.io + community 'most used crates'"
+      - name: tracing
+        manager: cargo
+        rank: 7
+        selection_source: "crates.io + community 'most used crates'"
+      - name: env_logger
+        manager: cargo
+        rank: 8
+        selection_source: "crates.io + community 'most used crates'"
+      - name: chrono
+        manager: cargo
+        rank: 9
+        selection_source: "crates.io + community 'most used crates'"
+      - name: rayon
+        manager: cargo
+        rank: 10
+        selection_source: "crates.io + community 'most used crates'"
+      - name: clap
+        manager: cargo
+        rank: 11
+        selection_source: "crates.io + community 'most used crates'"
+      - name: regex
+        manager: cargo
+        rank: 12
+        selection_source: "crates.io + community 'most used crates'"
+      - name: anyhow
+        manager: cargo
+        rank: 13
+        selection_source: "crates.io + community 'most used crates'"
+      - name: once_cell
+        manager: cargo
+        rank: 14
+        selection_source: "crates.io + community 'most used crates'"
+      - name: smallvec
+        manager: cargo
+        rank: 15
+        selection_source: "crates.io + community 'most used crates'"
+      - name: itertools
+        manager: cargo
+        rank: 16
+        selection_source: "crates.io + community 'most used crates'"
+      # TODO: extend towards 100+ using blessed.rs and crates.io stats.
+
+  go:
+    language_id: go
+    display_name: "Go"
+    package_manager: gomod
+    ecosystem: "Go Modules"
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        Go stdlib is handled via StdlibSymbolTable; common external modules are
+        pre-indexed via this list. Full go env introspection is planned for
+        a later CDEU version.
+    packages:
+      # Curated common Go modules; not strictly ranked by downloads.
+      - name: github.com/stretchr/testify
+        manager: gomod
+        rank: 1
+        selection_source: "curated popular Go modules"
+        notes: "Testing utilities; heavily used."
+      - name: github.com/gin-gonic/gin
+        manager: gomod
+        rank: 2
+        selection_source: "curated popular Go modules"
+      - name: github.com/gorilla/mux
+        manager: gomod
+        rank: 3
+        selection_source: "curated popular Go modules"
+      - name: github.com/spf13/cobra
+        manager: gomod
+        rank: 4
+        selection_source: "curated popular Go modules"
+      - name: github.com/spf13/viper
+        manager: gomod
+        rank: 5
+        selection_source: "curated popular Go modules"
+      - name: golang.org/x/net
+        manager: gomod
+        rank: 6
+        selection_source: "curated popular Go modules"
+      - name: golang.org/x/sys
+        manager: gomod
+        rank: 7
+        selection_source: "curated popular Go modules"
+      - name: golang.org/x/text
+        manager: gomod
+        rank: 8
+        selection_source: "curated popular Go modules"
+      - name: github.com/sirupsen/logrus
+        manager: gomod
+        rank: 9
+        selection_source: "curated popular Go modules"
+      - name: go.uber.org/zap
+        manager: gomod
+        rank: 10
+        selection_source: "curated popular Go modules"
+      # TODO: extend list.
+
+  java:
+    language_id: java
+    display_name: "Java"
+    package_manager: "maven/gradle"
+    ecosystem: "Maven Central"
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        Java support is driven off Maven/Gradle manifests. CDEU uses this list
+        to prioritize symbol tables for widely used libraries (logging, Spring, etc.).
+    packages:
+      # Common Java libraries; coordinates use Maven groupId:artifactId.
+      - name: org.slf4j:slf4j-api
+        manager: maven
+        rank: 1
+        selection_source: "curated popular Maven artifacts"
+      - name: ch.qos.logback:logback-classic
+        manager: maven
+        rank: 2
+        selection_source: "curated popular Maven artifacts"
+      - name: org.springframework.boot:spring-boot-starter
+        manager: maven
+        rank: 3
+        selection_source: "curated popular Maven artifacts"
+      - name: org.springframework:spring-core
+        manager: maven
+        rank: 4
+        selection_source: "curated popular Maven artifacts"
+      - name: com.google.guava:guava
+        manager: maven
+        rank: 5
+        selection_source: "curated popular Maven artifacts"
+      - name: com.fasterxml.jackson.core:jackson-databind
+        manager: maven
+        rank: 6
+        selection_source: "curated popular Maven artifacts"
+      - name: junit:junit
+        manager: maven
+        rank: 7
+        selection_source: "curated popular Maven artifacts"
+      - name: org.junit.jupiter:junit-jupiter
+        manager: maven
+        rank: 8
+        selection_source: "curated popular Maven artifacts"
+      - name: org.apache.commons:commons-lang3
+        manager: maven
+        rank: 9
+        selection_source: "curated popular Maven artifacts"
+      - name: org.apache.commons:commons-io
+        manager: maven
+        rank: 10
+        selection_source: "curated popular Maven artifacts"
+      - name: com.google.code.gson:gson
+        manager: maven
+        rank: 11
+        selection_source: "curated popular Maven artifacts"
+      - name: org.hibernate:hibernate-core
+        manager: maven
+        rank: 12
+        selection_source: "curated popular Maven artifacts"
+      # TODO: extend list.
