@@ -30,22 +30,26 @@ batho-indexer:
       fi
 
     - |
-      # Batho stores everything in a single SQLite file: artifact_<dirname>.batho
+      # Batho stores the code graph as Arrow IPC files packed into artifact_<dirname>.batho
       if ls artifact_*.batho 1> /dev/null 2>&1; then
-        echo "✅ Found existing Batho database. Running incremental patch..."
-        
-        # Runs hash-based detection to update only changed files
+        echo "✅ Found existing Batho artifact. Running incremental patch..."
+
+        # Load the previous artifact into .batho/ then patch changed files
+        batho load --root . artifact_*.batho --force
         batho patch --root . --verbose
       else
-        echo "⚠️ No existing database found. Running full build..."
-        
-        # Creates the database from scratch (One-time setup)
+        echo "⚠️ No existing artifact found. Running full build..."
+
+        # Creates the Arrow IPC graph from scratch (one-time setup)
         batho build --root . --full --verbose
       fi
+
+      # Pack the updated .batho/ bundle into a transport artifact (Arrow IPC + zstd)
+      batho export --pack --root .
 
   artifacts:
     name: "batho-database-$CI_COMMIT_SHORT_SHA"
     paths:
-      # Uploads the artifact_<dirname>.batho SQLite file for the next run / agents to use
+      # Uploads the artifact_<dirname>.batho Arrow IPC transport artifact for the next run / agents
       - artifact_*.batho
     expire_in: 90 days

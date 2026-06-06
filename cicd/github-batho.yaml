@@ -42,23 +42,27 @@ jobs:
 
       - name: Run Batho (Patch or Build)
         run: |
-          # Batho stores everything in a single SQLite file: artifact_<dirname>.batho
+          # Batho stores the code graph as Arrow IPC files packed into artifact_<dirname>.batho
           if ls artifact_*.batho 1> /dev/null 2>&1; then
-            echo "✅ Found existing Batho database. Running incremental patch..."
-            
-            # Runs hash-based detection to update only changed files
+            echo "✅ Found existing Batho artifact. Running incremental patch..."
+
+            # Load the previous artifact into .batho/ then patch changed files
+            batho load --root . artifact_*.batho --force
             batho patch --root . --verbose
           else
-            echo "⚠️ No existing database found. Running full build..."
-            
-            # Creates the database from scratch (One-time setup)
+            echo "⚠️ No existing artifact found. Running full build..."
+
+            # Creates the Arrow IPC graph from scratch (one-time setup)
             batho build --root . --full --verbose
           fi
+
+          # Pack the updated .batho/ bundle into a transport artifact (Arrow IPC + zstd)
+          batho export --pack --root .
 
       - name: Upload Updated Artifact
         uses: actions/upload-artifact@v4
         with:
           name: batho-database
-          # Uploads the artifact_<dirname>.batho SQLite file
-          path: artifact_*.batho 
-          retention-days: 90 # Keeps the DB available for AI agents to download
+          # Uploads the artifact_<dirname>.batho Arrow IPC transport artifact
+          path: artifact_*.batho
+          retention-days: 90 # Keeps the artifact available for AI agents to download

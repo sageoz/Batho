@@ -2,14 +2,22 @@
 
 ## Overview
 
-Batho's CI/CD integration provides automated code graph indexing for fleet-scale repositories. The workflows maintain an up-to-date SQLite database (`.batho`) on every push or pull request, enabling AI agents to download pre-built code graphs without local indexing. Two platform-specific configurations are provided: GitHub Actions and GitLab CI. Both implement the same incremental patching strategy—downloading the previous artifact, running hash-based incremental updates, and uploading the refreshed database for subsequent runs.
+Batho's CI/CD integration provides automated code graph indexing for fleet-scale repositories. The workflows maintain an up-to-date Arrow IPC bundle (`.batho`) on every push or pull request, enabling AI agents to download pre-built code graphs without local indexing.
+
+**Storage format**: Batho uses Apache Arrow IPC File format for its at-rest graph store (`bsg/current/*.ipc`) — plain, memory-mappable files with zero decompression overhead. The transport artifact (`artifact_*.batho`) is a ZIP of zstd-compressed IPC files, produced by `batho export --pack` and consumed by `batho load`.
+
+Two platform-specific configurations are provided: GitHub Actions and GitLab CI. Both implement the same incremental patching strategy:
+1. Download previous artifact → `batho load` to restore the graph store
+2. `batho patch` to re-index only changed files
+3. `batho export --pack` to produce the new transport artifact
+4. Upload for subsequent runs and AI agent access
 
 ## Files Covered
 
-| Filename | Size (bytes) | Purpose |
-|---|---|---|
-| `github-batho.yaml` | 2 560 | GitHub Actions workflow for automated Batho indexing |
-| `gitlab-batho.yaml` | 2 048 | GitLab CI pipeline for automated Batho indexing |
+| Filename | Purpose |
+|---|---|
+| `github-batho.yaml` | GitHub Actions workflow for automated Batho indexing |
+| `gitlab-batho.yaml` | GitLab CI pipeline for automated Batho indexing |
 
 ## Workflow Specifications
 
@@ -27,8 +35,10 @@ Batho's CI/CD integration provides automated code graph indexing for fleet-scale
 | **Step 2** | `actions/setup-python@v5` | `python: 3.11` | Install Python runtime |
 | **Step 3** | `pip install batho` | - | Install Batho CLI |
 | **Step 4** | `dawidd6/action-download-artifact@v6` | `batho-database` | Download previous `.batho` artifact |
-| **Step 5** | `batho patch / build` | conditional | Incremental or full index |
-| **Step 6** | `actions/upload-artifact@v4` | `batho-database` | Upload updated `.batho` |
+| **Step 5** | `batho load / build` | conditional | Restore graph or full index |
+| **Step 5** | `batho patch` | if artifact existed | Incremental re-index |
+| **Step 5** | `batho export --pack` | always | Pack Arrow IPC graph into transport artifact |
+| **Step 6** | `actions/upload-artifact@v4` | `batho-database` | Upload transport artifact |
 | **Retention** | `retention-days` | `90` | Keep artifact for 90 days |
 
 ### GitLab CI (`gitlab-batho.yaml`)
@@ -44,8 +54,10 @@ Batho's CI/CD integration provides automated code graph indexing for fleet-scale
 | **Before Script** | `pip install batho` | - | Install Batho CLI |
 | **Script** | `curl` artifact download | conditional | Download previous `.batho` artifact |
 | **Script** | `unzip` extraction | conditional | Extract downloaded artifact |
-| **Script** | `batho patch / build` | conditional | Incremental or full index |
-| **Artifacts** | `paths` | `artifact_*.batho` | Upload updated `.batho` |
+| **Script** | `batho load / build` | conditional | Restore graph or full index |
+| **Script** | `batho patch` | if artifact existed | Incremental re-index |
+| **Script** | `batho export --pack` | always | Pack Arrow IPC graph into transport artifact |
+| **Artifacts** | `paths` | `artifact_*.batho` | Upload transport artifact |
 | **Expiration** | `expire_in` | `90 days` | Keep artifact for 90 days |
 
 ---
@@ -61,11 +73,13 @@ flowchart TD
     C --> D["Install Batho"]
     D --> E["Download Previous Artifact"]
     E --> F{Artifact exists?}
-    F -- "Yes" --> G["Run batho patch --root ."]
-    F -- "No" --> H["Run batho build --root . --full"]
-    G --> I["Upload Updated Artifact"]
-    H --> I
-    I --> J["Retain for 90 days"]
+    F -- "Yes" --> G["batho load --root . artifact_*.batho --force"]
+    G --> H["batho patch --root . --verbose"]
+    H --> I["batho export --pack --root ."]
+    F -- "No" --> J["batho build --root . --full --verbose"]
+    J --> I
+    I --> K["Upload artifact_*.batho"]
+    K --> L["Retain for 90 days"]
 ```
 
 ### GitLab CI Flowchart
@@ -78,20 +92,22 @@ flowchart TD
     D --> E{Download succeeded?}
     E -- "Yes" --> F["Unzip artifacts.zip"]
     E -- "No" --> G["Skip extraction"]
-    F --> H{.batho exists?}
+    F --> H{artifact_*.batho exists?}
     G --> H
-    H -- "Yes" --> I["Run batho patch --root ."]
-    H -- "No" --> J["Run batho build --root . --full"]
-    I --> K["Upload artifact_*.batho"]
-    J --> K
-    K --> L["Expire in 90 days"]
+    H -- "Yes" --> I["batho load --root . artifact_*.batho --force"]
+    I --> J["batho patch --root . --verbose"]
+    J --> K["batho export --pack --root ."]
+    H -- "No" --> L["batho build --root . --full --verbose"]
+    L --> K
+    K --> M["Upload artifact_*.batho"]
+    M --> N["Expire in 90 days"]
 ```
 
 ---
 
 ## Incremental Patching Strategy
 
-Both workflows implement the same three-phase strategy:
+Both workflows implement the same four-phase strategy:
 
 ### Phase 1: Artifact Retrieval
 
@@ -99,27 +115,44 @@ Both workflows implement the same three-phase strategy:
 - **GitLab**: Uses `curl` with `CI_JOB_TOKEN` to download artifacts from the last successful pipeline on the same branch
 - **First Run**: Both platforms gracefully handle the absence of a previous artifact (GitHub via `continue-on-error: true`, GitLab via `curl --fail` with fallback)
 
-### Phase 2: Conditional Execution
+### Phase 2: Load or Build
 
 ```bash
-# Both platforms execute this logic
 if ls artifact_*.batho 1> /dev/null 2>&1; then
-    echo "✅ Found existing Batho database. Running incremental patch..."
+    echo "✅ Found existing Batho artifact. Running incremental patch..."
+
+    # Restore the Arrow IPC graph store from the transport artifact
+    batho load --root . artifact_*.batho --force
+    # Re-index only changed files
     batho patch --root . --verbose
 else
-    echo "⚠️ No existing database found. Running full build..."
+    echo "⚠️ No existing artifact found. Running full build..."
+
+    # Build the Arrow IPC graph from scratch (one-time setup)
     batho build --root . --full --verbose
 fi
 ```
 
-- **Incremental Patch**: `batho patch` computes file hashes, compares against snapshot metadata, and only re-indexes changed files
-- **Full Build**: `batho build --full` creates the database from scratch, parsing all files in the repository
+- **`batho load`**: Unpacks the transport ZIP, restores `artifact/` IPC tables and `bsg/current/` plain IPC graph store (memory-mappable, zero-copy reads)
+- **`batho patch`**: Computes file hashes, compares against snapshot metadata, and only re-indexes changed files
+- **`batho build --full`**: Creates the Arrow IPC graph from scratch, parsing all files in the repository
 
-### Phase 3: Artifact Upload
+### Phase 3: Pack Transport Artifact
+
+```bash
+# Always run after build or patch
+batho export --pack --root .
+```
+
+`batho export --pack` produces `artifact_<dirname>.batho` — a ZIP containing:
+- `<table>.ipc.zst` — zstd-compressed Arrow IPC for each active bundle table (`agent_views`, `rels_views`, `file_tracking`, etc.)
+- `bsg/<name>.ipc.zst` — zstd-compressed `bsg/current/` plain IPC files (`entities`, `relationships`, `entity_dict`, `dangling`)
+
+### Phase 4: Artifact Upload
 
 - **GitHub**: Uploads `artifact_*.batho` as `batho-database` with 90-day retention
 - **GitLab**: Uploads `artifact_*.batho` with branch-specific naming and 90-day expiration
-- **AI Agent Access**: Agents can download the pre-built database to avoid local indexing overhead
+- **AI Agent Access**: Agents run `batho load` to restore the full graph store without local indexing
 
 ---
 
@@ -178,7 +211,7 @@ For organizations managing multiple repositories:
 
 ### AI Agent Integration
 
-Agents can download pre-built code graphs:
+Agents can download and load pre-built code graphs:
 
 **GitHub:**
 ```bash
@@ -190,6 +223,9 @@ gh api \
   /repos/{owner}/{repo}/actions/artifacts/{}/zip \
   --output batho-database.zip
 unzip batho-database.zip
+
+# Restore the Arrow IPC graph store (fast-path: bsg/current/ extracted directly)
+batho load --root . artifact_*.batho
 ```
 
 **GitLab:**
@@ -199,6 +235,9 @@ curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
   "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/artifacts/main/download?job=batho-indexer" \
   --output batho-database.zip
 unzip batho-database.zip
+
+# Restore the Arrow IPC graph store
+batho load --root . artifact_*.batho
 ```
 
 ---
@@ -212,9 +251,10 @@ unzip batho-database.zip
 | **Artifact download fails** | First run (no previous artifact) | Expected behavior; workflow continues with full build |
 | **Artifact download fails** | Workflow filename mismatch | Ensure `workflow` parameter matches actual filename (GitHub) |
 | **Artifact download fails** | Insufficient permissions | Verify `actions: read` permission (GitHub) or token scope (GitLab) |
-| **Patch command fails** | Corrupted database artifact | Delete artifact manually to trigger full rebuild |
+| **`batho load` fails** | Schema version mismatch | Delete artifact to trigger full rebuild with `batho build --full` |
+| **`batho patch` fails** | Corrupted or missing `bsg/current/`| Re-run `batho load` with `--force`, then `batho patch` |
 | **Build timeout** | Large repository | Increase job timeout or split into multiple jobs |
-| **Artifact size quota** | Database exceeds limits | Implement cleanup strategy or use external storage |
+| **Artifact size quota** | Bundle exceeds storage limits | Implement cleanup strategy or use external storage |
 
 ### Debug Mode
 
@@ -233,7 +273,7 @@ batho build --root . --full --verbose
 
 1. **Branch Strategy**: Run indexing on main branch and all merge requests to catch issues early
 2. **Artifact Retention**: Balance retention period (90 days default) with storage costs
-3. **Incremental First**: Always prefer `batho patch` over full builds for faster CI cycles
+3. **Incremental First**: Always prefer `batho load` + `batho patch` over full builds for faster CI cycles
 4. **Monitor Performance**: Track job duration to identify repositories needing optimization
 5. **Version Pinning**: Pin Python version (`3.11`) and Batho version for reproducible builds
 6. **Artifact Naming**: Use consistent naming conventions for cross-repository tooling
