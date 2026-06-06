@@ -56,14 +56,14 @@ class StateConsistencyChecker:
             return issues
         tracking = self.db.get_all_file_tracking()
         for file_path, row in tracking.items():
-            if row.get("is_indexed") and row.get("last_run_id") and row["last_run_id"] != latest_run_id:
+            if row.get("is_indexed") and row.get("last_run_uuid") and row["last_run_uuid"] != latest_run_id:
                 issues.append(Issue(
                     type="tracking_stale_run_ref",
                     severity=Severity.INFO,
                     table="file_tracking",
                     identifier={"file_path": file_path},
                     description=(
-                        f"File '{file_path}' last indexed in {row['last_run_id']!r}, "
+                        f"File '{file_path}' last indexed in {row['last_run_uuid']!r}, "
                         f"but current run is {latest_run_id!r}"
                     ),
                 ))

@@ -523,7 +523,14 @@ class ManifestParser:
     def _parse_pom_xml(self, path: Path) -> List[DependencySpec]:
         deps = []
         try:
-            tree = ET.parse(path)
+            try:
+                from defusedxml.ElementTree import parse as safe_parse
+                tree = safe_parse(path)
+            except ImportError:
+                content = path.read_text(encoding="utf-8")
+                if "&" in content and ("<!ENTITY" in content or "<!DOCTYPE" in content):
+                    raise ValueError("XML contains entity references - skipping for security")
+                tree = ET.parse(path)
             root = tree.getroot()
             # Handle XML namespaces if present
             ns = ""

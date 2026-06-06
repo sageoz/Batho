@@ -43,8 +43,9 @@ class BathoBundleReader:
             return pa.table({})
 
         try:
-            mmap = pa.memory_map(str(active_path), "r")
-            table = ipc.open_file(mmap).read_all()
+            with pa.memory_map(str(active_path), "r") as mmap:
+                with ipc.open_file(mmap) as reader:
+                    table = reader.read_all()
             self._tables[logical_name] = table
 
             if "file_id" in table.schema.names:

@@ -115,7 +115,7 @@ class BathoCache:
         """Delete AST entries for a file path across all cache variants."""
         if self._ast_cache is None:
             return 0
-        return self._ast_cache.delete_by_path_prefix(file_path)
+        return self._ast_cache.delete_ast(file_path)
 
     def clear_ast_cache(self, older_than_days: int | None = None) -> int:
         if self._ast_cache is None:

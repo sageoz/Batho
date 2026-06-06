@@ -47,14 +47,16 @@ def write_ipc(table: pa.Table, path: Path) -> None:
 
 def read_ipc(path: Path) -> pa.Table:
     """Read a plain Arrow IPC File via memory-map (zero-copy)."""
-    mmap = pa.memory_map(str(path), "r")
-    return ipc.open_file(mmap).read_all()
+    with pa.memory_map(str(path), "r") as mmap:
+        with ipc.open_file(mmap) as reader:
+            return reader.read_all()
 
 
 def read_ipc_columns(path: Path, columns: list[str]) -> pa.Table:
     """Read specific columns from a plain Arrow IPC File via memory-map."""
-    mmap = pa.memory_map(str(path), "r")
-    return ipc.open_file(mmap).read_all().select(columns)
+    with pa.memory_map(str(path), "r") as mmap:
+        with ipc.open_file(mmap) as reader:
+            return reader.read_all().select(columns)
 
 
 # ---------------------------------------------------------------------------

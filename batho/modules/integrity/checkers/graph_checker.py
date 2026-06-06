@@ -44,7 +44,7 @@ class GraphSyncChecker:
         artifacts = self.db.get_file_artifacts(run_internal_id, include_storage=False)
         for artifact in (artifacts or []):
             fp = artifact.get("file_path", "")
-            agent_entities = artifact.get("agent_view_data", {}).get("entities", [])
+            agent_entities = artifact.get("graph", {}).get("entities", [])
             blob_ids = {e.get("id") for e in agent_entities if e.get("id")}
             arrow_ids = arrow_by_file.get(fp, set())
             if blob_ids != arrow_ids:

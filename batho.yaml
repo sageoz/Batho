@@ -1,6 +1,6 @@
 schema_version: batho-config.v1
 logging:
-  level: ERROR
+  level: INFO
   json_format: null
   quiet: false
   file: null

@@ -215,7 +215,8 @@ def read_ipc_table(path: "Path | None") -> pa.Table:
     if path is None or not path.exists() or path.stat().st_size < 8:
         return pa.table({})
     try:
-        mmap = pa.memory_map(str(path), "r")
-        return ipc.open_file(mmap).read_all()
+        with pa.memory_map(str(path), "r") as mmap:
+            with ipc.open_file(mmap) as reader:
+                return reader.read_all()
     except Exception:
         return pa.table({})
