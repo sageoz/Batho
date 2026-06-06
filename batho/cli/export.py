@@ -103,6 +103,16 @@ def register_export_parser(subparsers: argparse._SubParsersAction) -> None:
         dest="include_relationships",
         help="Include relationship blob in the export output",
     )
+    parser.add_argument(
+        "--pack",
+        action="store_true",
+        default=False,
+        dest="pack",
+        help=(
+            "Produce a transport ZIP (artifact_<dir>.batho) instead of JSON export. "
+            "Use --output to override the destination path."
+        ),
+    )
     parser.set_defaults(func=cmd_export)
 
 
@@ -121,6 +131,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         token_budget=args.token_budget,
         baseline_path=args.baseline_path,
         include_relationships=args.include_relationships,
+        pack=args.pack,
     )
 
     result = run_export(options)
@@ -131,6 +142,10 @@ def cmd_export(args: argparse.Namespace) -> int:
         return 1
 
     # Print summary to stderr
+    if args.pack:
+        print(f"Packed → {result.output_path}", file=sys.stderr)
+        return 0
+
     summary_parts = [
         f"{result.file_count} files",
         f"{result.entity_count} entities",

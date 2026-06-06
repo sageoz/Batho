@@ -60,23 +60,23 @@ def register_diff_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def cmd_diff(args: argparse.Namespace) -> int:
     """Execute the diff subcommand."""
-    from batho.modules.storage.sqlite_registry.engine import get_database, resolve_db_path
-    
+    from batho.modules.storage.arrow_bundle import get_bundle, resolve_bundle_dir
+
     if args.since and not args.entity:
         print("error: --since can only be used with --entity", file=sys.stderr)
         return 1
-        
+
     root = Path(args.root or ".").resolve()
-    db_path = resolve_db_path(root)
-    
-    if not db_path.exists():
-        print(f"No artifact database found at {root}. Run: batho build --root {root}", file=sys.stderr)
+    bundle_dir = resolve_bundle_dir(root)
+
+    if not (bundle_dir / "meta.json").exists():
+        print(f"No artifact bundle found at {root}. Run: batho build --root {root}", file=sys.stderr)
         return 1
-        
+
     try:
-        db = get_database(root)
-    except (FileNotFoundError, PermissionError, ConnectionError) as exc:
-        print(f"error: Failed to open database: {exc}", file=sys.stderr)
+        db = get_bundle(root)
+    except Exception as exc:
+        print(f"error: Failed to open artifact bundle: {exc}", file=sys.stderr)
         return 1
         
     if args.run:

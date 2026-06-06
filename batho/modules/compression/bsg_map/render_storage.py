@@ -30,6 +30,48 @@ def _sorted_index(index: dict[str, list[str]]) -> dict[str, list[str]]:
     return {key: sorted(value) for key, value in sorted(index.items())}
 
 
+def _derive_scope_tier(entity: Any) -> str:
+    if entity.type in (EntityType.CLASS, EntityType.INTERFACE, EntityType.MODULE):
+        return "public"
+    return "internal"
+
+
+def _derive_category(file_path: str) -> str:
+    if "test" in file_path.lower():
+        return "TEST"
+    if file_path.endswith((".yaml", ".yml", ".json", ".toml")):
+        return "CONFIG"
+    if "doc" in file_path.lower() or file_path.endswith(".md"):
+        return "DOC"
+    return "SOURCE"
+
+
+def _normalize_category(cat: str) -> str:
+    c = cat.strip().upper()
+    if c in ("TESTS", "TESTING"):
+        return "TEST"
+    if c in ("DOCS", "DOCUMENTATION"):
+        return "DOC"
+    if c == "INFRASTRUCTURE":
+        return "INFRA"
+    if c == "SRC":
+        return "SOURCE"
+    return c
+
+
+def _derive_language(entity: Any, file_path: str) -> str:
+    from .constants import EXT_TO_LANGUAGE_ID
+    ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
+    return EXT_TO_LANGUAGE_ID.get(f".{ext}", "unknown")
+
+
+def _derive_service_tag(file_path: str) -> str | None:
+    parts = [p for p in file_path.replace("\\", "/").split("/") if p and p != "."]
+    if len(parts) > 1:
+        return parts[0]
+    return None
+
+
 def _build_render_components(
     bsg: BSGMap,
     build_ms: int | None = None,
@@ -67,12 +109,12 @@ def _build_render_components(
         for entity in sorted(entities, key=lambda item: (item.start_line, item.id)):
             metadata = dict(entity.metadata or {})
             scope_tier = str(
-                metadata.get("bsg.scope_tier") or bsg._derive_scope_tier(entity)
+                metadata.get("bsg.scope_tier") or _derive_scope_tier(entity)
             )
             raw_category = str(
-                metadata.get("bsg.category") or bsg._derive_category(file_path)
+                metadata.get("bsg.category") or _derive_category(file_path)
             )
-            category = bsg._normalize_category(raw_category)
+            category = _normalize_category(raw_category)
             if raw_category.strip().upper() != category:
                 normalized_categories += 1
 
@@ -80,14 +122,14 @@ def _build_render_components(
             service_tag = str(raw_service_tag or "").strip()
             if not service_tag:
                 service_tag = str(
-                    bsg._derive_service_tag(file_path) or resolved_default_service
+                    _derive_service_tag(file_path) or resolved_default_service
                 ).strip()
                 if service_tag:
                     autofilled_service_tags += 1
             if not service_tag:
                 missing_service_tags += 1
 
-            language = bsg._derive_language(entity, file_path)
+            language = _derive_language(entity, file_path)
             raw_index_id = metadata.get("bsg.index_id")
             index_id_text = (
                 str(raw_index_id).strip() if raw_index_id is not None else ""
@@ -425,8 +467,6 @@ def render_json(
     """
     Render the structural graph as a bsg.v1 dictionary.
     """
-    # Check serialization config to determine method
-    method = bsg._serialization_config.get("method", "streaming")
     _rel = PathRelativizer(bsg._root)
     opaque_files_data = [
         {
@@ -437,47 +477,12 @@ def render_json(
         }
         for snap in sorted(bsg._opaque_snapshots.values(), key=lambda s: s.file_path)
     ]
-
-    if method == "streaming":
-        components = _build_render_components(
-            bsg=bsg,
-            build_ms=build_ms,
-            default_index_id=default_index_id,
-            default_service_tag=default_service_tag,
-        )
-        return {
-            "schema_version": BSG_SCHEMA_VERSION,
-            "generated_at": components["generated_at"],
-            "root": bsg._root,
-            "stats": components["stats"],
-            "nodes": components["nodes"],
-            "edges": components["edges"],
-            "quality_warnings": components["quality_warnings"],
-            "indexes": components["indexes"],
-            "views": components["views"],
-            "opaque_files": opaque_files_data,
-        }
-
-    # Legacy mode - use original implementation
-    import copy
-    if (
-        bsg._serialized_bsg is not None
-        and build_ms is None
-        and default_index_id is None
-        and default_service_tag is None
-    ):
-        res = copy.deepcopy(bsg._serialized_bsg)
-        res["opaque_files"] = opaque_files_data
-        return res
-
-    # Full rebuild if needed (legacy path)
     components = _build_render_components(
         bsg=bsg,
         build_ms=build_ms,
         default_index_id=default_index_id,
         default_service_tag=default_service_tag,
     )
-
     return {
         "schema_version": BSG_SCHEMA_VERSION,
         "generated_at": components["generated_at"],
@@ -490,7 +495,6 @@ def render_json(
         "views": components["views"],
         "opaque_files": opaque_files_data,
     }
-
 
 
 def render_overview_json(
@@ -536,7 +540,7 @@ def render_overview_json(
     for file_path, entities in bsg._by_file.items():
         if entities:
             # Simple heuristic: use category of first entity
-            cat = bsg._derive_category(file_path)
+            cat = _derive_category(file_path)
             display_cat = {
                 "SOURCE": "Source",
                 "DOC": "Docs",
@@ -590,30 +594,30 @@ def render_overview_json(
         
     # 5. Directory structure (tree)
     def build_tree(paths: list[str]) -> dict[str, Any]:
-        tree = {"name": "root", "type": "directory", "children": []}
+        tree: dict[str, Any] = {"name": "root", "type": "directory", "children": []}
+        # _idx maps node → {child_name: child_node} for O(1) child lookup
+        _idx: dict[int, dict[str, Any]] = {id(tree): {}}
         for path in sorted(paths):
             parts = path.split("/")
             current = tree
             for i, part in enumerate(parts):
                 is_file = (i == len(parts) - 1)
-                found = None
-                for child in current["children"]:
-                    if child["name"] == part:
-                        found = child
-                        break
+                child_map = _idx[id(current)]
+                found = child_map.get(part)
                 if not found:
-                    new_node = {
+                    new_node: dict[str, Any] = {
                         "name": part,
                         "type": "file" if is_file else "directory",
                     }
                     if not is_file:
                         new_node["children"] = []
-                        # Add label for directories
-                        dir_path = "/".join(parts[:i+1])
+                        dir_path = "/".join(parts[:i + 1])
                         label = bsg._get_directory_label(dir_path)
                         if label:
                             new_node["label"] = label
+                        _idx[id(new_node)] = {}
                     current["children"].append(new_node)
+                    child_map[part] = new_node
                     found = new_node
                 current = found
         return tree
@@ -688,7 +692,7 @@ def render_files_json(
     
     for file_path in sorted(file_nodes.keys()):
         nodes = file_nodes[file_path]
-        cat = bsg._derive_category(file_path)
+        cat = _derive_category(file_path)
         display_cat = {
             "SOURCE": "Source",
             "DOC": "Docs",
@@ -700,9 +704,10 @@ def render_files_json(
         # Build file entry
         # breakdown of entity types
         type_counts = Counter(n["type"].lower() for n in nodes)
-        
+        fp_normalized = file_path.replace("\\", "/")
+        fp_name = fp_normalized.rsplit("/", 1)[-1] if "/" in fp_normalized else fp_normalized
         file_entry = {
-            "name": Path(file_path).name,
+            "name": fp_name,
             "path": file_path,
             "entities": nodes,
             "entity_summary": {
@@ -727,8 +732,9 @@ def render_files_json(
         total_entities = 0
         for f in data["files"]:
             rel_path = f["path"]
-            dir_path = str(Path(rel_path).parent)
-            if dir_path == ".":
+            rp_normalized = rel_path.replace("\\", "/")
+            dir_path = rp_normalized.rsplit("/", 1)[0] if "/" in rp_normalized else "."
+            if dir_path == "." or dir_path == rel_path:
                 dir_path = "(root)"
             dirs_map[dir_path].append(f)
             total_entities += f["entity_summary"]["total"]

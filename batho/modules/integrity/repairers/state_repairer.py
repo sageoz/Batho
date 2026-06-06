@@ -1,4 +1,4 @@
-"""State Repairer."""
+"""State Repairer — Arrow Bundle edition."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from ..models import Issue, RepairResult
 
 
 class StateRepairer:
-    """Repairer for relational consistency issues."""
+    """Repairer for relational consistency issues against Arrow Bundle."""
 
     def __init__(self, db: Any):
         self.db = db
@@ -19,7 +19,7 @@ class StateRepairer:
         if issue.repair_strategy == "fail_stuck_run":
             return self.repair_stuck_run(issue)
         elif issue.repair_strategy == "delete_orphaned_string":
-            return self.repair_orphaned_string(issue)
+            return RepairResult(issue=issue, success=True, rows_affected=0)
         elif issue.repair_strategy == "reset_file_tracking":
             return self.repair_tracking_desync(issue)
         else:
@@ -30,57 +30,30 @@ class StateRepairer:
             )
 
     def repair_stuck_run(self, issue: Issue) -> RepairResult:
-        """Mark stuck run as failed."""
+        """Mark stuck run as failed via BathoBundle.fail_run()."""
         run_uuid = issue.identifier.get("run_uuid")
         if not run_uuid:
             return RepairResult(issue=issue, success=False, error="Missing run_uuid in identifier")
 
         try:
-            now = datetime.now(timezone.utc).isoformat()
-            with self.db.connection() as conn:
-                conn.execute(
-                    """UPDATE index_runs
-                       SET status = 'failed',
-                           completed_at = ?,
-                           error_message = 'Aborted by batho fix'
-                       WHERE run_uuid = ?""",
-                    (now, run_uuid),
-                )
-                conn.commit()
+            self.db.fail_run(run_uuid, error_message="Aborted by batho fix")
             return RepairResult(issue=issue, success=True, rows_affected=1)
         except Exception as e:
             return RepairResult(issue=issue, success=False, error=str(e))
 
-    def repair_orphaned_string(self, issue: Issue) -> RepairResult:
-        """Delete orphaned string from string_dict and run incremental_vacuum."""
-        string_id = issue.identifier.get("id")
-        if string_id is None:
-            return RepairResult(issue=issue, success=False, error="Missing string id in identifier")
-
-        try:
-            with self.db.connection() as conn:
-                cursor = conn.execute("DELETE FROM string_dict WHERE id = ?", (string_id,))
-                rows_deleted = cursor.rowcount
-                conn.execute("PRAGMA incremental_vacuum")
-                conn.commit()
-            return RepairResult(issue=issue, success=True, rows_affected=rows_deleted)
-        except Exception as e:
-            return RepairResult(issue=issue, success=False, error=str(e))
-
     def repair_tracking_desync(self, issue: Issue) -> RepairResult:
-        """Reset is_indexed flags in file_tracking for desynced files."""
-        file_id = issue.identifier.get("file_id")
-        if file_id is None:
-            return RepairResult(issue=issue, success=False, error="Missing file_id in identifier")
+        """Reset is_indexed flag for a desynced file path."""
+        file_path = issue.identifier.get("file_path")
+        if not file_path:
+            return RepairResult(issue=issue, success=False, error="Missing file_path in identifier")
 
         try:
-            with self.db.connection() as conn:
-                cursor = conn.execute(
-                    "UPDATE file_tracking SET is_indexed = 0, last_run_id = NULL WHERE file_id = ?",
-                    (file_id,),
-                )
-                rows_updated = cursor.rowcount
-                conn.commit()
-            return RepairResult(issue=issue, success=True, rows_affected=rows_updated)
+            tracking = self.db.get_file_tracking(file_path)
+            if tracking is None:
+                return RepairResult(issue=issue, success=False, error=f"No tracking record for {file_path!r}")
+            tracking["is_indexed"] = False
+            tracking["last_run_uuid"] = None
+            self.db.upsert_file_tracking([tracking])
+            return RepairResult(issue=issue, success=True, rows_affected=1)
         except Exception as e:
             return RepairResult(issue=issue, success=False, error=str(e))

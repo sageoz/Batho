@@ -13,25 +13,17 @@ from batho.core.config import set_active_root, get_active_root, get_config_cache
 from batho.orchestrator.build import BuildOptions, run_build
 from batho.orchestrator.patch import PatchOptions, run_patch
 from batho.orchestrator.export import ExportOptions, run_export
-from batho.modules.storage.sqlite_registry.engine import get_database, artifact_filename, _DB_CACHE, _DB_CACHE_LOCK
+from batho.modules.storage.arrow_bundle import get_bundle, resolve_bundle_dir
 from batho.cli.diff import cmd_diff
-
-def close_all_databases():
-    with _DB_CACHE_LOCK:
-        for db in list(_DB_CACHE.values()):
-            db.close()
-        _DB_CACHE.clear()
 from batho.cli.fix import cmd_fix
 
 
 @pytest.fixture(autouse=True)
 def clean_caches():
-    close_all_databases()
-    from batho.core.config import _active_root, _get_config_cached_for_root
+    from batho.core.config.loader import _active_root, _get_config_cached_for_root
     _active_root.set(None)
     _get_config_cached_for_root.cache_clear()
     yield
-    close_all_databases()
     _active_root.set(None)
     _get_config_cached_for_root.cache_clear()
 
@@ -52,16 +44,16 @@ def test_build_artifact_in_root_not_cwd(temp_project, monkeypatch):
     other_dir = temp_project / "other"
     other_dir.mkdir()
     monkeypatch.chdir(other_dir)
-    
+
     options = BuildOptions(root=temp_project, force_full=True, verbose=False)
     res = run_build(options)
     assert res.success
-    
-    expected_db = temp_project / artifact_filename(temp_project)
-    assert expected_db.exists()
-    
-    # Assert nothing was created in other_dir
-    assert not list(other_dir.glob("artifact_*.batho"))
+
+    bundle_dir = resolve_bundle_dir(temp_project)
+    assert (bundle_dir / "meta.json").exists()
+
+    # Assert artifact bundle was not created under other_dir
+    assert not (other_dir / ".batho" / "artifact").exists()
 
 
 def test_patch_uses_root_not_cwd(temp_project, monkeypatch):
@@ -136,32 +128,25 @@ def test_two_projects_independent_artifacts(temp_project):
     proj_b = temp_project / "proj_b"
     proj_a.mkdir()
     proj_b.mkdir()
-    
+
     (proj_a / "main.py").write_text("def a(): pass\n")
     (proj_b / "main.py").write_text("def b(): pass\n")
-    
-    # Build A
-    options_a = BuildOptions(root=proj_a, force_full=True, verbose=False)
-    res_a = run_build(options_a)
+
+    res_a = run_build(BuildOptions(root=proj_a, force_full=True, verbose=False))
     assert res_a.success
-    
-    # Build B
-    options_b = BuildOptions(root=proj_b, force_full=True, verbose=False)
-    res_b = run_build(options_b)
+
+    res_b = run_build(BuildOptions(root=proj_b, force_full=True, verbose=False))
     assert res_b.success
-    
-    db_a = proj_a / artifact_filename(proj_a)
-    db_b = proj_b / artifact_filename(proj_b)
-    
-    assert db_a.exists()
-    assert db_b.exists()
-    
-    db_instance_a = get_database(proj_a)
-    db_instance_b = get_database(proj_b)
-    
-    assert db_instance_a.get_latest_run_id() is not None
-    assert db_instance_b.get_latest_run_id() is not None
-    assert db_instance_a.get_latest_run_id() != db_instance_b.get_latest_run_id()
+
+    assert (resolve_bundle_dir(proj_a) / "meta.json").exists()
+    assert (resolve_bundle_dir(proj_b) / "meta.json").exists()
+
+    db_a = get_bundle(proj_a)
+    db_b = get_bundle(proj_b)
+
+    assert db_a.get_latest_run_id() is not None
+    assert db_b.get_latest_run_id() is not None
+    assert db_a.get_latest_run_id() != db_b.get_latest_run_id()
 
 
 def test_set_active_root_clears_cache(temp_project):
@@ -188,33 +173,31 @@ def test_root_with_symlink(temp_project, monkeypatch):
     real_proj = temp_project / "real"
     real_proj.mkdir()
     (real_proj / "main.py").write_text("def hello(): pass\n")
-    
+
     link_proj = temp_project / "link"
     os.symlink(real_proj, link_proj)
-    
+
     other_dir = temp_project / "other"
     other_dir.mkdir()
     monkeypatch.chdir(other_dir)
-    
+
     options = BuildOptions(root=link_proj, force_full=True, verbose=False)
     res = run_build(options)
     assert res.success
-    
-    expected_db = real_proj / artifact_filename(real_proj)
-    assert expected_db.exists()
+
+    assert (resolve_bundle_dir(real_proj) / "meta.json").exists()
     assert get_active_root() == real_proj
 
 
 def test_root_with_trailing_slash(temp_project):
     path_str = str(temp_project) + "/"
     path_with_slash = Path(path_str)
-    
+
     options = BuildOptions(root=path_with_slash, force_full=True, verbose=False)
     res = run_build(options)
     assert res.success
-    
-    expected_db = temp_project / artifact_filename(temp_project)
-    assert expected_db.exists()
+
+    assert (resolve_bundle_dir(temp_project) / "meta.json").exists()
 
 
 def test_root_nonexistent_raises_clean_error():
@@ -271,7 +254,7 @@ def test_patch_on_nonexistent_artifact_clean_error(temp_project):
     options = PatchOptions(root=temp_project, verbose=False)
     res = run_patch(options)
     assert not res.success
-    assert any("no artifact database found" in w.lower() or "database not found" in w.lower() for w in res.warnings)
+    assert any("no artifact" in w.lower() or "bundle" in w.lower() for w in res.warnings)
 
 
 def test_diff_from_different_cwd(temp_project, monkeypatch, capsys):
@@ -327,12 +310,12 @@ def test_fix_from_different_cwd(temp_project, monkeypatch, capsys):
 
 
 
-def test_artifact_filename_based_on_dirname():
+def test_bundle_dir_based_on_root():
     path_a = Path("/tmp/my-project")
     path_b = Path("/tmp/other-path/my-project")
-    
-    name_a = artifact_filename(path_a)
-    name_b = artifact_filename(path_b)
-    
-    assert name_a == "artifact_my-project.batho"
-    assert name_b == "artifact_my-project.batho"
+
+    bundle_a = resolve_bundle_dir(path_a)
+    bundle_b = resolve_bundle_dir(path_b)
+
+    assert bundle_a == (path_a / ".batho" / "artifact").resolve()
+    assert bundle_b == (path_b / ".batho" / "artifact").resolve()

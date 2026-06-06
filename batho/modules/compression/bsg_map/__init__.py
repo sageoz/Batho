@@ -18,7 +18,6 @@ BSG_SCHEMA_VERSION = SCHEMA_VERSIONS["bsg"]
 
 from batho.core.schemas import BSGViewType, Entity, EntityType, FileSnapshot, IntegrityError
 from .relativizer import PathRelativizer
-from .constants import EXT_TO_LANGUAGE_DISPLAY, EXT_TO_LANGUAGE_ID
 
 if TYPE_CHECKING:
     from batho.modules.storage.cache.unified_cache import BathoCache
@@ -88,25 +87,25 @@ class BSGMap:
         for rel, entities in new_by_file.items():
             self._by_file[rel] = sorted(entities, key=lambda e: e.start_line)
 
-        # NOTE: This iterates over ALL relationships for each patch operation.
-        # For large graphs with 100k+ relationships, this is O(n) per patch.
-        # Consider indexing relationships by source file for O(1) lookup.
-        # See: https://github.com/batho/batho/issues/performance-123
+        # Build entity_id → rel_file index once so relationship iteration is O(n)
+        # over graph.entities (not O(n) per changed file × O(n) over relationships).
+        entity_file_index: dict[str, str] = {
+            eid: _rel(ent.file) for eid, ent in graph.entities.items()
+        }
+
         new_deps: dict[str, set[str]] = {}
         for rel in graph.relationships:
             if rel.type.name not in ("IMPORTS", "CALLS", "USES"):
                 continue
-            source_ent = graph.get_entity(rel.source_id)
-            if source_ent is None:
+            source_rel = entity_file_index.get(rel.source_id)
+            if source_rel is None or source_rel not in changed_rel_paths:
                 continue
-            source_rel = _rel(source_ent.file)
-            if source_rel not in changed_rel_paths:
-                continue
-            target_ent = graph.get_entity(rel.target_id)
-            raw_target = target_ent.file if target_ent else rel.target_id
-            target_rel = (
-                _rel(raw_target) if raw_target.startswith("/") else raw_target
-            )
+            target_rel_raw = entity_file_index.get(rel.target_id)
+            if target_rel_raw is not None:
+                target_rel = target_rel_raw
+            else:
+                raw = rel.target_id
+                target_rel = _rel(raw) if raw.startswith("/") else raw
             if source_rel != target_rel:
                 new_deps.setdefault(source_rel, set()).add(target_rel)
 
@@ -121,7 +120,10 @@ class BSGMap:
         self._relationships = list(graph.relationships)
         self._serialized_bsg = None
 
-        # Update _opaque_snapshots
+        # Update _opaque_snapshots.
+        # Use new_by_file (already built above) for O(1) has-entities check
+        # instead of re-scanning all graph.entities for every changed file.
+        files_with_entities: set[str] = set(new_by_file.keys())
         FileChangeType = _get_file_change_type()
         local_cache: BathoCache | None = None
         cache_created = False
@@ -140,12 +142,7 @@ class BSGMap:
                 if change.change_type == FileChangeType.DELETED:
                     self._opaque_snapshots.pop(change_rel, None)
                 elif change.change_type in (FileChangeType.ADDED, FileChangeType.MODIFIED):
-                    has_entities = False
-                    for entity in graph.entities.values():
-                        entity_rel = _rel(entity.file)
-                        if entity_rel == change_rel:
-                            has_entities = True
-                            break
+                    has_entities = change_rel in files_with_entities
                     if not has_entities:
                         try:
                             abs_path = change.path
@@ -314,14 +311,6 @@ class BSGMap:
             _opaque_snapshots=opaque_map,
         )
 
-    def render_full(self) -> str:
-        from .render_bsg import render_full as _render
-        return _render(self)
-
-    def render_hierarchical(self, include_entities: bool = True) -> str:
-        from .render_bsg import render_hierarchical as _render
-        return _render(self, include_entities=include_entities)
-
     def render_compressed(self, budget: int, fail_on_overflow: bool = True) -> tuple[str, dict[str, int]]:
         from .render_agent import render_compressed as _render
         return _render(self, budget, fail_on_overflow=fail_on_overflow)
@@ -440,20 +429,6 @@ class BSGMap:
             }
         }
 
-    # Internal helper methods for rendering
-    def group_by_directory(self) -> dict[str, list[tuple[str, list[Entity]]]]:
-        grouped = defaultdict(list)
-        for rel_path, entities in self._by_file.items():
-            path_obj = PurePosixPath(rel_path)
-            dir_path = str(path_obj.parent)
-            if dir_path == ".":
-                dir_path = ""
-            file_name = path_obj.name
-            grouped[dir_path].append((file_name, entities))
-        for dir_path in grouped:
-            grouped[dir_path].sort(key=lambda x: x[0])
-        return dict(sorted(grouped.items()))
-
     def _get_directory_label(self, dir_path: str) -> str:
         if not dir_path:
             return "Root"
@@ -462,38 +437,6 @@ class BSGMap:
         if "docs" in dir_path.lower():
             return "Documentation"
         return "Source Code"
-
-    def _derive_scope_tier(self, entity: Entity) -> str:
-        if entity.type in (EntityType.CLASS, EntityType.INTERFACE, EntityType.MODULE):
-            return "public"
-        return "internal"
-
-    def _derive_category(self, file_path: str) -> str:
-        if "test" in file_path.lower():
-            return "TEST"
-        if file_path.endswith((".yaml", ".yml", ".json", ".toml")):
-            return "CONFIG"
-        if "doc" in file_path.lower() or file_path.endswith(".md"):
-            return "DOC"
-        return "SOURCE"
-
-    def _normalize_category(self, cat: str) -> str:
-        c = cat.strip().upper()
-        if c in ("TESTS", "TESTING"): return "TEST"
-        if c in ("DOCS", "DOCUMENTATION"): return "DOC"
-        if c == "INFRASTRUCTURE": return "INFRA"
-        if c == "SRC": return "SOURCE"
-        return c
-
-    def _derive_language(self, entity: Entity, file_path: str) -> str:
-        ext = Path(file_path).suffix.lower()
-        return EXT_TO_LANGUAGE_ID.get(ext, "unknown")
-
-    def _derive_service_tag(self, file_path: str) -> str | None:
-        parts = Path(file_path).parts
-        if len(parts) > 1:
-            return parts[0]
-        return None
 
     def _build_render_components(self, **kwargs: Any) -> dict[str, Any]:
         """Build reusable render components for JSON outputs."""
@@ -739,113 +682,10 @@ class BSGMap:
                 "errors": [str(exc)],
             }
 
-    def estimate_tokens(self) -> int:
-        """Estimate the token count of the full render_full() output."""
-        if not self._by_file:
-            return 0
-        text = self.render_full()
-        return max(1, len(text.encode("utf-8")) // 4)
-
     @property
     def entity_count(self) -> int:
         """Return the total number of entities across all files."""
         return sum(len(entities) for entities in self._by_file.values())
-
-    def render_overview(
-        self,
-        stack_info: dict[str, Any] | None = None,
-        repo_name: str | None = None,
-        timestamp: str | None = None,
-        evolution_rules: list[dict[str, Any]] | None = None,
-    ) -> str:
-        """Render a markdown overview of the repository."""
-        lines: list[str] = []
-
-        # Header
-        if repo_name:
-            lines.append(f"# {repo_name} Context Overview")
-        else:
-            lines.append("# Repository Context Overview")
-
-        if timestamp:
-            lines.append(f"\n*Generated: {timestamp}*")
-
-        # Summary stats
-        total_files = len(self._by_file)
-        total_entities = sum(len(entities) for entities in self._by_file.values())
-
-        lines.append(f"\n## Summary")
-        lines.append(f"- **Files indexed:** {total_files}")
-        lines.append(f"- **Total entities:** {total_entities}")
-
-        # Stack info
-        if stack_info:
-            lines.append(f"\n## Stack")
-            for key, value in stack_info.items():
-                lines.append(f"- **{key}:** {value}")
-
-        # Evolution rules / Ledger Insights
-        if evolution_rules:
-            # Check if these are evolution ledger entries (have dont_rule)
-            ledger_entries = [r for r in evolution_rules if r.get("dont_rule")]
-            if ledger_entries:
-                lines.append(f"\n## Evolution Ledger Insights")
-                for entry in ledger_entries[:5]:
-                    dont_rule = entry.get("dont_rule", "")
-                    if dont_rule:
-                        lines.append(f"- {dont_rule}")
-            else:
-                lines.append(f"\n## Recent Evolution")
-                for rule in evolution_rules[:5]:
-                    rule_name = rule.get("name", "unknown")
-                    lines.append(f"- {rule_name}")
-
-        # File breakdown
-        categorized = self.categorize_files()
-        if categorized:
-            lines.append(f"\n## File Breakdown")
-            for category, files in categorized.items():
-                lines.append(f"- **{category}:** {len(files)} files")
-
-        return "\n".join(lines)
-
-    def render_files_md(
-        self,
-        repo_name: str | None = None,
-        timestamp: str | None = None,
-    ) -> str:
-        """Render a markdown list of all files organized by category."""
-        lines: list[str] = []
-
-        # Header
-        if repo_name:
-            lines.append(f"# {repo_name} Files")
-        else:
-            lines.append("# Repository Files")
-
-        if timestamp:
-            lines.append(f"\n*Generated: {timestamp}*")
-
-        # Categorize files
-        categorized = self.categorize_files()
-
-        if not categorized:
-            lines.append("\n*No files indexed*")
-            return "\n".join(lines)
-
-        # Render each category
-        for category in ("SOURCE", "TEST", "DOC", "CONFIG"):
-            files = categorized.get(category, {})
-            if not files:
-                continue
-
-            lines.append(f"\n## {category}")
-            for file_path in sorted(files.keys()):
-                entities = files[file_path]
-                entity_count = len(entities)
-                lines.append(f"- `{file_path}` ({entity_count} entities)")
-
-        return "\n".join(lines)
 
     def _get_agent_view_config(self) -> dict[str, Any]:
         return self._view_config.get("agent", {})

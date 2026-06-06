@@ -32,3 +32,4 @@ artifact_*.batho-shm
 # Documentation
 docs/
 .specs/
+.batho/

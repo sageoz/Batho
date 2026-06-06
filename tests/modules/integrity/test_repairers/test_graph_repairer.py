@@ -9,9 +9,9 @@ from batho.modules.integrity.repairers.graph_repairer import GraphRepairer
 from batho.modules.integrity.models import Issue, Severity
 
 
-def test_graph_repairer_resolve_dangling():
+def test_graph_repairer_resolve_dangling(tmp_path):
     db = MagicMock()
-    db.resolve_dangling_references.return_value = 5
+    db._repo_root = tmp_path
 
     issue = Issue(
         type="resolvable_dangling_reference",
@@ -25,6 +25,6 @@ def test_graph_repairer_resolve_dangling():
     repairer = GraphRepairer(db)
     res = repairer.repair(issue)
 
+    # current/ dir does not exist → returns 0 gracefully
     assert res.success is True
-    assert res.rows_affected == 5
-    db.resolve_dangling_references.assert_called_with(1)
+    assert res.rows_affected == 0

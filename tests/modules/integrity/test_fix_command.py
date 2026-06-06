@@ -72,7 +72,7 @@ class TestReportGenerator:
             started_at="2024-01-01T00:00:00",
             completed_at="2024-01-01T00:00:01",
             root="/test",
-            db_path="/test/artifact_test.batho",
+            bundle_dir="/test/.batho/artifact",
             mode="quick",
             summary=summary,
             check_results=[],
@@ -98,7 +98,7 @@ class TestReportGenerator:
             started_at="2024-01-01T00:00:00",
             completed_at="2024-01-01T00:00:01",
             root="/test",
-            db_path="/test/artifact_test.batho",
+            bundle_dir="/test/.batho/artifact",
             mode="quick",
             summary=summary,
             check_results=[],
@@ -125,7 +125,7 @@ class TestReportGenerator:
             started_at="2024-01-01T00:00:00",
             completed_at="2024-01-01T00:00:01",
             root="/test",
-            db_path="/test/artifact_test.batho",
+            bundle_dir="/test/.batho/artifact",
             mode="quick",
             summary=summary,
             check_results=[],
@@ -171,4 +171,4 @@ class TestCliFix:
 
         assert exit_code == 1
         captured = capsys.readouterr()
-        assert "No artifact database found" in captured.err
+        assert "No artifact bundle found" in captured.err or "no artifact bundle" in captured.err.lower()

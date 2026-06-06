@@ -11,13 +11,11 @@ from batho.modules.integrity.models import CheckStatus, Severity
 
 def test_state_checker_passed():
     db = MagicMock()
-    conn = MagicMock()
-    conn.execute.return_value.fetchall.side_effect = [
-        [],  # stuck runs query
-        [],  # orphaned string_dict query
-        [],  # file tracking desync query
+    db._reader.get_all_runs.return_value = [
+        {"run_uuid": "abc", "status": "completed", "started_at": "2024-01-01T00:00:00+00:00"},
     ]
-    db.connection.return_value.__enter__.return_value = conn
+    db.get_latest_run_id.return_value = "abc"
+    db.get_all_file_tracking.return_value = {}
 
     checker = StateConsistencyChecker(db, dry_run=True)
     report = checker.run()
@@ -29,13 +27,11 @@ def test_state_checker_passed():
 
 def test_state_checker_stuck_runs():
     db = MagicMock()
-    conn = MagicMock()
-    conn.execute.return_value.fetchall.side_effect = [
-        [(1, "run-uuid-1", "2020-01-01T00:00:00Z")],  # stuck runs query
-        [],  # orphaned string_dict query
-        [],  # file tracking desync query
+    db._reader.get_all_runs.return_value = [
+        {"run_uuid": "run-uuid-1", "status": "running", "started_at": "2020-01-01T00:00:00Z"},
     ]
-    db.connection.return_value.__enter__.return_value = conn
+    db.get_latest_run_id.return_value = "run-uuid-1"
+    db.get_all_file_tracking.return_value = {}
 
     checker = StateConsistencyChecker(db, dry_run=True)
     report = checker.run()

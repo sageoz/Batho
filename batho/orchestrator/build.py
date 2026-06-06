@@ -1,7 +1,7 @@
 """Orchestrator for `batho build` — full index build for new working directories.
 
-Creates an `artifact_<dirname>.batho` SQLite database with: code graph, BSG map, context outputs,
-baseline snapshot, and file tracking records. If the artifact database already exists,
+Creates an Arrow Bundle artifact in .batho/artifact/ with: code graph, BSG map, context outputs,
+baseline snapshot, and file tracking records. If the artifact already exists,
 exits early directing the user to `batho patch`.
 """
 
@@ -21,6 +21,41 @@ from batho.utils.logging import get_logger
 from batho.modules.graph.incremental import get_head_commit, get_current_branch, is_git_repo
 
 LOGGER = get_logger(__name__, component="orchestrator.build")
+
+
+def _decode_precompiled_batch(batch: list[dict]) -> list[dict]:
+    """Decode msgpack+zstd blobs into agent/storage/rels dicts for BathoBundleWriter."""
+    import msgpack
+    import zstandard as zstd
+    from batho.modules.storage.arrow_bundle.helpers import _expand_graph_payload
+
+    dctx = zstd.ZstdDecompressor()
+    result = []
+    for b in batch:
+        try:
+            agent_view = _expand_graph_payload(msgpack.unpackb(dctx.decompress(b["agent_blob"])))
+        except Exception:
+            agent_view = {"entities": []}
+        try:
+            storage_view = _expand_graph_payload(msgpack.unpackb(dctx.decompress(b["storage_blob"])))
+            for ent in storage_view.get("entities", []):
+                ent.setdefault("leading_whitespace", "")
+                ent.setdefault("trailing_whitespace", "")
+        except Exception:
+            storage_view = {"entities": []}
+        try:
+            rels_raw = msgpack.unpackb(dctx.decompress(b["rels_blob"]))
+            rels = rels_raw if isinstance(rels_raw, list) else []
+        except Exception:
+            rels = []
+        result.append({
+            "file_path": b["file_path"],
+            "content_hash": b["content_hash"],
+            "agent_view_data": agent_view,
+            "storage_delta_data": storage_view,
+            "relationships_data": rels,
+        })
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -103,10 +138,10 @@ def run_build(options: BuildOptions) -> BuildResult:
     If the database already exists and force_full is False, returns early
     with success=True and a warning indicating patch should be used.
     """
-    from batho.modules.storage.sqlite_registry.engine import resolve_db_path
+    from batho.modules.storage.arrow_bundle import resolve_bundle_dir, BathoBundle
     t0 = time.monotonic()
     root = options.root.resolve()
-    
+
     if not root.exists():
         return BuildResult(
             success=False,
@@ -119,12 +154,13 @@ def run_build(options: BuildOptions) -> BuildResult:
         )
 
     set_active_root(root)
-    db_path = resolve_db_path(root)
+    bundle_dir = resolve_bundle_dir(root)
+    meta_path = bundle_dir / "meta.json"
 
-    # --- Guard: existing database ---
-    if db_path.exists() and not options.force_full:
+    # --- Guard: existing bundle ---
+    if meta_path.exists() and not options.force_full:
         msg = (
-            f"Database already exists at {db_path}.\n"
+            f"Artifact bundle already exists at {bundle_dir}.\n"
             f"To update incrementally, run: batho patch --root {root}\n"
             f"To force a full rebuild, run: batho build --root {root} --full"
         )
@@ -134,9 +170,11 @@ def run_build(options: BuildOptions) -> BuildResult:
             warnings=["already_built", msg],
         )
 
-    if options.force_full and db_path.exists():
-        LOGGER.info("build_force_full_clearing", path=str(db_path))
-        db_path.unlink()
+    if options.force_full and bundle_dir.exists():
+        import shutil as _shutil
+        LOGGER.info("build_force_full_clearing", path=str(bundle_dir))
+        _shutil.rmtree(bundle_dir, ignore_errors=True)
+        bundle_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Load config ---
     cfg = get_config_cached()
@@ -154,7 +192,7 @@ def run_build(options: BuildOptions) -> BuildResult:
 
     cache_cfg = dict(bsg_cfg.get("cache", {}))
     cache_cfg["enabled"] = True
-    cache_cfg["path"] = str(db_path)
+    cache_cfg["path"] = str(bundle_dir)
     bsg_cfg["cache"] = cache_cfg
 
     if options.max_workers:
@@ -162,10 +200,21 @@ def run_build(options: BuildOptions) -> BuildResult:
         parallel_cfg["max_workers"] = options.max_workers
         bsg_cfg["parallel"] = parallel_cfg
 
-    # --- Initialize database ---
-    from batho.modules.storage.sqlite_registry.engine import BathoDatabase
+    # --- Extraction AST cache configuration ---
+    extraction_cfg = cfg.get("extraction", {})
+    if isinstance(extraction_cfg, BaseModel):
+        extraction_cfg = extraction_cfg.model_dump()
+    extraction_cache_cfg = extraction_cfg.get("cache", {})
+    ast_cache_dir = None
+    if extraction_cache_cfg.get("enabled", True):
+        cache_dir = cfg.get("paths", {}).get("cache_dir")
+        if cache_dir:
+            ast_cache_dir = str(Path(cache_dir))
+        else:
+            ast_cache_dir = str(root / ".batho" / "cache")
 
-    db = BathoDatabase(db_path, repo_root=root)
+    # --- Initialize Arrow Bundle ---
+    db = BathoBundle(root)
     run_uuid = _generate_run_id()
     git_commit: str | None = None
     git_branch: str | None = None
@@ -181,12 +230,10 @@ def run_build(options: BuildOptions) -> BuildResult:
     run_id = run_uuid
     LOGGER.info("build_started", root=str(root), run_id=run_id)
     from batho.modules.graph.builder.codegraph import CodeGraphIndexer
+    from batho.modules.storage.arrow_store import BsgScratchStore
 
-    # Drop query table indexes for bulk write performance
-    try:
-        db.drop_query_indexes()
-    except Exception as exc:
-        LOGGER.warning("failed_to_drop_query_indexes", error=str(exc))
+    batho_dir = root / ".batho"
+    store = BsgScratchStore(run_uuid=run_uuid, batho_dir=batho_dir, run_internal_id=run_internal_id)
 
     t_batch_prep_ms = 0.0
     t_batch_write_ms = 0.0
@@ -242,24 +289,15 @@ def run_build(options: BuildOptions) -> BuildResult:
         batch_bytes_threshold = cfg.get("persistence", {}).get("batch_bytes_threshold", 15_728_640)
         if len(precompiled_write_batch) >= batch_size or precompiled_current_batch_bytes >= batch_bytes_threshold:
             t_write_0 = time.monotonic()
-            precompiled_file_paths = [b["file_path"] for b in precompiled_write_batch]
-            resolved_ids = db.bulk_get_or_create_string_ids(precompiled_file_paths)
-            precompiled_batch = []
-            for b in precompiled_write_batch:
-                file_id = resolved_ids[b["file_path"]]
-                precompiled_batch.append({
-                    "file_id": file_id,
-                    "content_hash": b["content_hash"],
-                    "agent_blob": b["agent_blob"],
-                    "storage_blob": b["storage_blob"],
-                    "rels_blob": b.get("rels_blob", b""),
-                })
-            db._insert_precompiled_batch(run_internal_id, precompiled_batch)
+            arrow_batch = _decode_precompiled_batch(precompiled_write_batch)
+            db.insert_file_artifacts_batch(run_internal_id, arrow_batch)
             t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
             precompiled_write_batch.clear()
             precompiled_current_batch_bytes = 0
 
-    with CodeGraphIndexer(cache_path=str(db_path), root=str(root)) as indexer:
+    with CodeGraphIndexer(
+        cache_path=str(root), root=str(root), ast_cache_dir=ast_cache_dir
+    ) as indexer:
         graph = indexer.build_graph(
             root=str(root),
             max_workers=options.max_workers or 0,
@@ -277,7 +315,7 @@ def run_build(options: BuildOptions) -> BuildResult:
 
         if indexer.build_stats["files_parsed"] + indexer.build_stats["files_cached"] == 0:
             LOGGER.warning("build_no_entities", root=str(root))
-            db.fail_run(run_id, error_message="No indexable files found")
+            db.fail_run(run_uuid, error_message="No indexable files found")
             return BuildResult(
                 success=False,
                 run_id=run_id,
@@ -315,28 +353,20 @@ def run_build(options: BuildOptions) -> BuildResult:
 
         # --- Build BSG map ---
         from batho.modules.compression.bsg_map import BSGMap
-        from batho.modules.storage.sqlite_registry.engine import _minify_graph_payload
+        from batho.modules.storage.arrow_bundle.helpers import _minify_graph_payload
 
         bsg_map = BSGMap.build(graph, str(root), opaque_snapshots=opaque_snapshots)
         bsg_file_count = len(bsg_map._by_file)
         LOGGER.info("build_bsg_complete", files=bsg_file_count)
 
+        # Global entity ID set: lets cross-file rels resolve immediately instead of going to dangling
+        all_entity_ids: set[str] = set(graph.entities.keys())
+
         # Flush any remaining precompiled files from the callback buffer
         if precompiled_write_batch:
             t_write_0 = time.monotonic()
-            precompiled_file_paths = [b["file_path"] for b in precompiled_write_batch]
-            resolved_ids = db.bulk_get_or_create_string_ids(precompiled_file_paths)
-            precompiled_batch = []
-            for b in precompiled_write_batch:
-                file_id = resolved_ids[b["file_path"]]
-                precompiled_batch.append({
-                    "file_id": file_id,
-                    "content_hash": b["content_hash"],
-                    "agent_blob": b["agent_blob"],
-                    "storage_blob": b["storage_blob"],
-                    "rels_blob": b.get("rels_blob", b""),
-                })
-            db._insert_precompiled_batch(run_internal_id, precompiled_batch)
+            legacy_precompiled = _decode_precompiled_batch(precompiled_write_batch)
+            db.insert_file_artifacts_batch(run_internal_id, legacy_precompiled, store=store, entity_ids_global=all_entity_ids)
             t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
             precompiled_write_batch.clear()
             precompiled_current_batch_bytes = 0
@@ -359,14 +389,16 @@ def run_build(options: BuildOptions) -> BuildResult:
 
         all_file_paths = set(bsg_map._by_file.keys()) | set(indexed_rels) | set(precompiled_blobs.keys())
         legacy_files = all_file_paths - set(precompiled_blobs.keys())
+        # store_files: all files that need Arrow scratch accumulation (includes precompiled)
+        store_files = all_file_paths
 
-        if legacy_files:
+        if legacy_files or store_files:
             from collections import defaultdict
             entities_by_file = defaultdict(list)
             for entity in graph.entities.values():
                 filepath = entity.file
                 rel = filepath[len(root_str)+1:] if filepath.startswith(root_str) else filepath
-                if rel in legacy_files:
+                if rel in store_files:
                     entities_by_file[rel].append(entity.to_dict())
 
             rels_by_source_file = defaultdict(list)
@@ -374,7 +406,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                 source_ent = graph.get_entity(rel.source_id)
                 rel_file = source_ent.file if source_ent else rel.source_id
                 rel_file_rel = rel_file[len(root_str)+1:] if rel_file.startswith(root_str) else rel_file
-                if rel_file_rel in legacy_files:
+                if rel_file_rel in store_files:
                     rels_by_source_file[rel_file_rel].append(rel.to_dict())
 
             legacy_write_batch = []
@@ -441,31 +473,57 @@ def run_build(options: BuildOptions) -> BuildResult:
                 batch_bytes_threshold = cfg.get("persistence", {}).get("batch_bytes_threshold", 15_728_640)
                 if len(legacy_write_batch) >= batch_size or legacy_current_batch_bytes >= batch_bytes_threshold:
                     t_write_0 = time.monotonic()
-                    db.insert_file_artifacts_batch(run_internal_id, legacy_write_batch)
+                    db.insert_file_artifacts_batch(run_internal_id, legacy_write_batch, store=store, entity_ids_global=all_entity_ids)
                     t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
                     legacy_write_batch.clear()
                     legacy_current_batch_bytes = 0
 
             if legacy_write_batch:
                 t_write_0 = time.monotonic()
-                db.insert_file_artifacts_batch(run_internal_id, legacy_write_batch)
+                db.insert_file_artifacts_batch(run_internal_id, legacy_write_batch, store=store, entity_ids_global=all_entity_ids)
                 t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
 
-        # Recreate search indexes for queries
+        # --- Accumulate precompiled-path files into BSG Arrow store ---
+        if precompiled_blobs and store_files:
+            from batho.modules.storage.arrow_bundle.helpers import _accumulate_scratch_rows
+            for file_rel in precompiled_blobs:
+                avd = {"entities": [
+                    {
+                        "id": e.get("id"),
+                        "name": e.get("name"),
+                        "type": e.get("type") or e.get("entity_type"),
+                        "start_line": e.get("start_line"),
+                        "fqn": e.get("fqn"),
+                        "signature": e.get("signature"),
+                        "is_exported": e.get("is_exported", False),
+                    }
+                    for e in entities_by_file.get(file_rel, [])
+                ]}
+                rds = rels_by_source_file.get(file_rel, [])
+                _accumulate_scratch_rows(
+                    store=store,
+                    run_internal_id=run_internal_id,
+                    file_path=file_rel,
+                    agent_view_data=avd,
+                    relationships_data=rds,
+                    entity_ids_in_batch=all_entity_ids,
+                )
+
+        # Compact Arrow scratch store
         try:
-            db.recreate_query_indexes()
+            store.compact()
         except Exception as exc:
-            LOGGER.warning("failed_to_recreate_query_indexes", error=str(exc))
+            LOGGER.warning("failed_to_compact_bsg_store", error=str(exc))
 
         LOGGER.info("batch_performance_breakdown", prep_ms=round(t_batch_prep_ms, 2), write_ms=round(t_batch_write_ms, 2))
 
-        # --- Resolve dangling cross-file references via SQL JOIN ---
+        # --- Resolve dangling cross-file references via Arrow store ---
         try:
             t_join_0 = time.monotonic()
-            resolved_joined = db.resolve_dangling_references(run_internal_id)
-            LOGGER.info("cross_file_relationships_resolved_via_sql_join", count=resolved_joined, time_ms=round((time.monotonic() - t_join_0) * 1000, 2))
+            resolved_joined = store.resolve_dangling(None)
+            LOGGER.info("cross_file_relationships_resolved", count=resolved_joined, time_ms=round((time.monotonic() - t_join_0) * 1000, 2))
         except Exception as exc:
-            LOGGER.warning("cross_file_relationships_sql_join_failed", error=str(exc))
+            LOGGER.warning("cross_file_relationships_failed", error=str(exc))
 
         # --- Persist file tracking ---
         file_tracking_records = _build_file_tracking(graph, root, indexer, run_id=run_id)
@@ -475,18 +533,22 @@ def run_build(options: BuildOptions) -> BuildResult:
         if indexer is not None:
             indexer.clear_unindexed_files()
 
+        stored_entity_count = store.entity_count
+        stored_rel_count = store.rel_count
+
         # --- Complete run ---
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         db.complete_run(
             run_uuid,
-            entity_count=entity_count,
-            rel_count=rel_count,
+            entity_count=stored_entity_count,
+            rel_count=stored_rel_count,
             file_count=bsg_file_count,
             duration_ms=elapsed_ms,
         )
 
         # --- Finalize Run Artifacts ---
-        metrics = _compute_run_metrics(db, run_internal_id, root)
+        store.finalize()
+        metrics = _compute_run_metrics(store, db, root)
         telemetry = {
             "duration_ms": elapsed_ms,
             "batch_prep_ms": t_batch_prep_ms,
@@ -522,19 +584,16 @@ def run_build(options: BuildOptions) -> BuildResult:
                 "artifact_payload": metrics["artifact_payload"],
                 "delta_stats": None,
             },
-            blob_config=artifact_blobs_cfg
+            blob_config=artifact_blobs_cfg,
         )
 
-        try:
-            db.cleanup_query_tables()
-        except Exception as exc:
-            LOGGER.warning("failed_to_cleanup_query_tables", error=str(exc))
+        store.cleanup_streams()
 
         LOGGER.info(
             "build_complete",
             run_id=run_id,
-            entities=entity_count,
-            relationships=rel_count,
+            entities=stored_entity_count,
+            relationships=stored_rel_count,
             files=bsg_file_count,
             duration_ms=elapsed_ms,
         )
@@ -542,8 +601,8 @@ def run_build(options: BuildOptions) -> BuildResult:
         return BuildResult(
             success=True,
             run_id=run_id,
-            entity_count=entity_count,
-            relationship_count=rel_count,
+            entity_count=stored_entity_count,
+            relationship_count=stored_rel_count,
             file_count=bsg_file_count,
             bsg_file_count=bsg_file_count,
             snapshot_id="",
@@ -556,132 +615,10 @@ def run_build(options: BuildOptions) -> BuildResult:
 # ---------------------------------------------------------------------------
 
 
-def _compute_run_metrics(db, run_internal_id: int, root: Path) -> dict:
-    # Compute metrics via efficient SQL queries directly in SQLite
-    with db.connection(read_only=True) as conn:
-        # 1. Total entities & relationships
-        total_entities = conn.execute(
-            "SELECT COUNT(*) FROM query_entities WHERE run_id = ?", (run_internal_id,)
-        ).fetchone()[0]
-        
-        total_relationships = conn.execute(
-            "SELECT COUNT(*) FROM query_relationships WHERE run_id = ?", (run_internal_id,)
-        ).fetchone()[0]
-        
-        # 2. Files
-        files_rows = conn.execute(
-            "SELECT val FROM string_dict WHERE id IN (SELECT file_id FROM file_artifacts WHERE run_id = ?)",
-            (run_internal_id,)
-        ).fetchall()
-        file_paths = [r["val"] for r in files_rows]
-        total_files = len(file_paths)
-        
-        # 3. Entity types distribution
-        entity_types_rows = conn.execute(
-            "SELECT entity_type, COUNT(*) as c FROM query_entities WHERE run_id = ? GROUP BY entity_type ORDER BY c DESC",
-            (run_internal_id,)
-        ).fetchall()
-        entity_types = {r["entity_type"]: r["c"] for r in entity_types_rows}
-        
-        # 4. File distribution (top 100)
-        file_dist_rows = conn.execute(
-            "SELECT file_path, COUNT(*) as c FROM query_entities WHERE run_id = ? GROUP BY file_path ORDER BY c DESC LIMIT 100",
-            (run_internal_id,)
-        ).fetchall()
-        file_distribution = [{"file_path": r["file_path"], "entity_count": r["c"]} for r in file_dist_rows]
-        
-        # 5. File categories (computed in Python, fast for < 1000 files)
-        from collections import defaultdict
-        by_ext = defaultdict(list)
-        for fp in file_paths:
-            ext = Path(fp).suffix.lower() or "(no extension)"
-            by_ext[ext].append(fp)
-            
-        categories = [
-            {"extension": ext, "files": sorted(files), "count": len(files)}
-            for ext, files in sorted(by_ext.items(), key=lambda x: -len(x[1]))
-        ]
-        
-        # 6. Top coupled files (SQL CTE)
-        top_coupled_rows = conn.execute(
-            """
-            WITH rel_files AS (
-                SELECT 
-                    e_src.file_path AS src_file,
-                    e_tgt.file_path AS tgt_file
-                FROM query_relationships r
-                LEFT JOIN query_entities e_src ON r.source_key = e_src.entity_key AND r.run_id = e_src.run_id
-                LEFT JOIN query_entities e_tgt ON r.target_key = e_tgt.entity_key AND r.run_id = e_tgt.run_id
-                WHERE r.run_id = ?
-            ),
-            coupled_files AS (
-                SELECT src_file AS file_path FROM rel_files WHERE src_file IS NOT NULL AND tgt_file IS NOT NULL AND src_file != tgt_file
-                UNION ALL
-                SELECT tgt_file AS file_path FROM rel_files WHERE src_file IS NOT NULL AND tgt_file IS NOT NULL AND src_file != tgt_file
-            )
-            SELECT file_path, COUNT(*) AS coupling 
-            FROM coupled_files 
-            GROUP BY file_path 
-            ORDER BY coupling DESC 
-            LIMIT 50
-            """,
-            (run_internal_id,)
-        ).fetchall()
-        top_coupled = [{"file_path": r["file_path"], "coupling": r["coupling"]} for r in top_coupled_rows]
-        
-        # 7. Top 200 entities
-        top_entities_rows = conn.execute(
-            "SELECT entity_name, entity_type, fqn, file_path, line_number FROM query_entities WHERE run_id = ? ORDER BY COALESCE(fqn, entity_name) LIMIT 200",
-            (run_internal_id,)
-        ).fetchall()
-        top_entities = [
-            {
-                "name": r["entity_name"],
-                "type": r["entity_type"],
-                "fqn": r["fqn"],
-                "file": r["file_path"],
-                "start_line": r["line_number"],
-            }
-            for r in top_entities_rows
-        ]
-        
-        # 8. Relationship count per file (originating)
-        rel_counts_rows = conn.execute(
-            """
-            SELECT e.file_path, COUNT(*) as c
-            FROM query_relationships r
-            JOIN query_entities e ON r.source_key = e.entity_key AND r.run_id = e.run_id
-            WHERE r.run_id = ?
-            GROUP BY e.file_path
-            """,
-            (run_internal_id,)
-        ).fetchall()
-        rel_count_per_file = {r["file_path"]: r["c"] for r in rel_counts_rows}
-        
-    context_overview = {
-        "total_entities": total_entities,
-        "total_relationships": total_relationships,
-        "total_files": total_files,
-        "entity_types": entity_types,
-        "file_distribution": file_distribution,
-        "categories": categories,
-    }
-    
-    structural_metrics = {
-        "entity_type_distribution": entity_types,
-        "top_coupled_files": top_coupled,
-    }
-    
-    artifact_payload = {
-        "entities": top_entities,
-        "rel_count_per_file": rel_count_per_file,
-    }
-    
-    return {
-        "context_overview": context_overview,
-        "structural_metrics": structural_metrics,
-        "artifact_payload": artifact_payload,
-    }
+def _compute_run_metrics(store: Any, db: Any, root: Path) -> dict:
+    """Compute run metrics from the Arrow scratch store (replaces 8 SQL queries)."""
+    from batho.modules.storage.arrow_store.metrics import compute_run_metrics
+    return compute_run_metrics(store, db, root)
 
 
 

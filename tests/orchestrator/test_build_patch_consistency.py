@@ -63,21 +63,22 @@ def test_build_then_patch_reports_no_changes(test_repo_with_mixed_files):
     """Verify patch reports 0 changes immediately after build."""
     from batho.orchestrator.build import BuildOptions, run_build
     from batho.orchestrator.patch import PatchOptions, run_patch
-    from batho.modules.storage.sqlite_registry.engine import artifact_filename
+    from batho.modules.storage.arrow_bundle import resolve_bundle_dir
+    import shutil
 
     root = test_repo_with_mixed_files
 
-    # Clean up any existing database
-    db_path = root / artifact_filename(root)
-    if db_path.exists():
-        db_path.unlink()
+    # Clean up any existing bundle
+    bundle_dir = resolve_bundle_dir(root)
+    if bundle_dir.exists():
+        shutil.rmtree(bundle_dir, ignore_errors=True)
 
     # Run build
     build_options = BuildOptions(root=root, force_full=True, verbose=False)
     build_result = run_build(build_options)
 
     assert build_result.success, f"Build failed: {build_result.warnings}"
-    assert db_path.exists(), "Database should exist after build"
+    assert (bundle_dir / "meta.json").exists(), "Bundle should exist after build"
 
     # Immediately run patch - should report no changes
     patch_options = PatchOptions(root=root, verbose=False)
@@ -106,14 +107,15 @@ def test_build_then_patch_hash_scan_mode(test_repo_with_mixed_files):
     """Verify patch with hash scan mode works correctly after build."""
     from batho.orchestrator.build import BuildOptions, run_build
     from batho.orchestrator.patch import PatchOptions, run_patch
-    from batho.modules.storage.sqlite_registry.engine import artifact_filename
+    from batho.modules.storage.arrow_bundle import resolve_bundle_dir
+    import shutil
 
     root = test_repo_with_mixed_files
 
     # Clean up
-    db_path = root / artifact_filename(root)
-    if db_path.exists():
-        db_path.unlink()
+    bundle_dir = resolve_bundle_dir(root)
+    if bundle_dir.exists():
+        shutil.rmtree(bundle_dir, ignore_errors=True)
 
     # Run build
     build_options = BuildOptions(root=root, force_full=True, verbose=False)
@@ -196,10 +198,11 @@ def test_text_file_hash_consistency():
 
 
 def test_build_git_metadata_and_file_tracking_run_id(test_repo_with_mixed_files):
-    """Verify that build correctly records git metadata and populates last_run_id in file_tracking."""
+    """Verify that build correctly records run metadata and populates file_tracking."""
     import subprocess
+    import shutil
     from batho.orchestrator.build import BuildOptions, run_build
-    from batho.modules.storage.sqlite_registry.engine import artifact_filename, get_database
+    from batho.modules.storage.arrow_bundle import resolve_bundle_dir, get_bundle
     from batho.modules.graph.incremental import is_git_repo
 
     root = test_repo_with_mixed_files
@@ -210,48 +213,42 @@ def test_build_git_metadata_and_file_tracking_run_id(test_repo_with_mixed_files)
         subprocess.run(["git", "init"], cwd=str(root), check=True, capture_output=True)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=str(root), check=True, capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(root), check=True, capture_output=True)
-        # We need a commit to have get_head_commit/get_current_branch be non-null
         subprocess.run(["git", "add", "main.py"], cwd=str(root), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "initial commit"], cwd=str(root), check=True, capture_output=True)
         is_git = is_git_repo(root)
     except Exception:
-        # If git command is not available or fails, we just don't have git
         pass
 
-    # Clean up any existing database
-    db_path = root / artifact_filename(root)
-    if db_path.exists():
-        db_path.unlink()
+    # Clean up any existing bundle
+    bundle_dir = resolve_bundle_dir(root)
+    if bundle_dir.exists():
+        shutil.rmtree(bundle_dir, ignore_errors=True)
 
     # Run build
     build_options = BuildOptions(root=root, force_full=True, verbose=False)
     build_result = run_build(build_options)
 
     assert build_result.success, f"Build failed: {build_result.warnings}"
-    assert db_path.exists(), "Database should exist after build"
+    assert (resolve_bundle_dir(root) / "meta.json").exists(), "Bundle should exist after build"
 
-    # Query index_runs and file_tracking
-    db = get_database(root)
-    with db.connection(read_only=True) as conn:
-        # Check index_runs
-        run_row = conn.execute(
-            "SELECT git_commit, git_branch FROM index_runs WHERE run_uuid = ?",
-            (build_result.run_id,)
-        ).fetchone()
-        assert run_row is not None, f"No run found with uuid {build_result.run_id}"
+    # Query via BathoBundle reader
+    db = get_bundle(root)
 
-        if is_git:
-            assert run_row["git_commit"] is not None, "git_commit should not be null when inside a git repo"
-            assert run_row["git_branch"] is not None, "git_branch should not be null when inside a git repo"
-        else:
-            assert run_row["git_commit"] is None, "git_commit should be null when not in a git repo"
-            assert run_row["git_branch"] is None, "git_branch should be null when not in a git repo"
+    run_row = db._reader.get_run(build_result.run_id)
+    assert run_row is not None, f"No run found with uuid {build_result.run_id}"
 
-        # Check file_tracking
-        tracking_records = db.get_all_file_tracking()
-        assert len(tracking_records) > 0, "file_tracking should have records populated after build"
-        for file_path, record in tracking_records.items():
-            assert record["last_run_id"] == build_result.run_id, (
-                f"file {file_path} has last_run_id {record['last_run_id']}, expected {build_result.run_id}"
-            )
+    if is_git:
+        assert run_row.get("git_commit") is not None, "git_commit should not be null when inside a git repo"
+        assert run_row.get("git_branch") is not None, "git_branch should not be null when inside a git repo"
+    else:
+        assert run_row.get("git_commit") is None, "git_commit should be null when not in a git repo"
+        assert run_row.get("git_branch") is None, "git_branch should be null when not in a git repo"
+
+    # Check file_tracking
+    tracking_records = db.get_all_file_tracking()
+    assert len(tracking_records) > 0, "file_tracking should have records populated after build"
+    for file_path, record in tracking_records.items():
+        assert record["last_run_uuid"] == build_result.run_id, (
+            f"file {file_path} has last_run_uuid {record['last_run_uuid']}, expected {build_result.run_id}"
+        )
 

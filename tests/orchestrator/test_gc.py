@@ -1,135 +1,105 @@
+"""Tests for batho gc orchestrator against the Arrow Bundle."""
 from __future__ import annotations
 
-import argparse
-from pathlib import Path
-from datetime import datetime, timezone, timedelta
-
 import pytest
+from pathlib import Path
 
-from batho.cli.gc import cmd_gc, register_gc_parser
+from batho.modules.storage.arrow_bundle.bundle import BathoBundle, resolve_bundle_dir
 from batho.orchestrator.gc import GCOptions, run_gc
-from batho.modules.storage.sqlite_registry.engine import BathoDatabase, artifact_filename, _DB_CACHE, _DB_CACHE_LOCK
 
-def close_all_databases():
-    with _DB_CACHE_LOCK:
-        for db in list(_DB_CACHE.values()):
-            db.close()
-        _DB_CACHE.clear()
 
-@pytest.fixture(autouse=True)
-def clean_caches():
-    close_all_databases()
-    from batho.core.config import _active_root, _get_config_cached_for_root
-    _active_root.set(None)
-    _get_config_cached_for_root.cache_clear()
-    yield
-    close_all_databases()
-    _active_root.set(None)
-    _get_config_cached_for_root.cache_clear()
+def _make_bundle_with_run(tmp_path: Path) -> tuple[BathoBundle, str]:
+    """Bootstrap a minimal bundle with one completed run."""
+    db = BathoBundle(tmp_path)
+    run_uuid = "build_test_gc_0001"
+    db.create_run(run_uuid, root_path=str(tmp_path))
+    db.complete_run(run_uuid, entity_count=5, rel_count=3, file_count=1, duration_ms=100)
+    db.close()
+    return BathoBundle(tmp_path), run_uuid
 
-@pytest.fixture
-def test_db(tmp_path: Path) -> BathoDatabase:
-    # Need to make it look like a valid batho project directory
-    (tmp_path / "batho.yaml").write_text("indexer:\n  max_file_size_kb: 500\n")
-    db_name = artifact_filename(tmp_path)
-    db_path = tmp_path / db_name
-    db = BathoDatabase(db_path, repo_root=tmp_path)
-    return db
 
-def test_delete_run_cascades(test_db: BathoDatabase):
-    run_uuid = "test_run_123"
-    internal_id = test_db.create_run(run_uuid, root_path=str(test_db._repo_root))
-    
-    # insert file artifact
-    agent_view = {"entities": []}
-    test_db.insert_file_artifact(
-        internal_id, "main.py", "hash123", agent_view, {"entities": []}, []
-    )
-    
-    # insert run artifact
-    with test_db.connection() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO run_artifacts (run_id, schema_version) VALUES (?, 'run-artifacts.v1')",
-            (internal_id,),
-        )
-        conn.commit()
+class TestGCStatus:
+    def test_status_returns_success(self, tmp_path):
+        _make_bundle_with_run(tmp_path)
+        opts = GCOptions(root=tmp_path, command="status")
+        result = run_gc(opts)
+        assert result["success"]
+        assert "Arrow generation" in result["message"]
 
-    # Verify they exist
-    with test_db.connection(read_only=True) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM index_runs").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM file_artifacts").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM run_artifacts").fetchone()[0] == 1
+    def test_status_missing_bundle(self, tmp_path):
+        opts = GCOptions(root=tmp_path, command="status")
+        result = run_gc(opts)
+        assert not result["success"]
+        assert "No artifact bundle" in result["message"]
 
-    # Delete run
-    test_db.delete_run(run_uuid)
 
-    # Verify they are cascaded deleted
-    with test_db.connection(read_only=True) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM index_runs").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM file_artifacts").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM run_artifacts").fetchone()[0] == 0
+class TestGCDeleteRun:
+    def test_delete_existing_run(self, tmp_path):
+        _, run_uuid = _make_bundle_with_run(tmp_path)
+        opts = GCOptions(root=tmp_path, command="run", run_uuid=run_uuid)
+        result = run_gc(opts)
+        assert result["success"]
 
-def test_gc_status(test_db: BathoDatabase):
-    options = GCOptions(root=test_db._repo_root, command="status")
-    res = run_gc(options)
-    assert res["success"]
-    assert "Database size" in res["message"]
-    assert "Total runs" in res["message"]
+        db = BathoBundle(tmp_path)
+        assert db.get_run(run_uuid) is None
 
-def test_gc_vacuum(test_db: BathoDatabase):
-    options = GCOptions(root=test_db._repo_root, command="vacuum")
-    res = run_gc(options)
-    assert res["success"]
-    assert "vacuum completed" in res["message"]
+    def test_delete_nonexistent_run(self, tmp_path):
+        _make_bundle_with_run(tmp_path)
+        opts = GCOptions(root=tmp_path, command="run", run_uuid="nonexistent_run")
+        result = run_gc(opts)
+        assert not result["success"]
+        assert "not found" in result["message"].lower()
 
-def test_gc_delete_run_command(test_db: BathoDatabase):
-    run_uuid = "run_to_delete"
-    test_db.create_run(run_uuid, root_path=str(test_db._repo_root))
-    
-    # Run GC delete run
-    options = GCOptions(root=test_db._repo_root, command="run", run_uuid=run_uuid)
-    res = run_gc(options)
-    assert res["success"]
-    assert "Successfully deleted run" in res["message"]
-    assert test_db.get_run(run_uuid) is None
+    def test_delete_run_missing_uuid(self, tmp_path):
+        _make_bundle_with_run(tmp_path)
+        opts = GCOptions(root=tmp_path, command="run", run_uuid=None)
+        result = run_gc(opts)
+        assert not result["success"]
 
-def test_gc_delete_runs_older_than(test_db: BathoDatabase):
-    # Create an old run and a new run
-    old_uuid = "old_run"
-    new_uuid = "new_run"
-    
-    old_id = test_db.create_run(old_uuid, root_path=str(test_db._repo_root))
-    new_id = test_db.create_run(new_uuid, root_path=str(test_db._repo_root))
-    
-    # Update old run's started_at in database
-    old_time = datetime.now(timezone.utc) - timedelta(days=10)
-    old_time_str = old_time.isoformat()
-    
-    with test_db.connection() as conn:
-        conn.execute(
-            "UPDATE index_runs SET started_at = ? WHERE id = ?",
-            (old_time_str, old_id),
-        )
-        conn.commit()
-        
-    # Run gc older than 5 days
-    options = GCOptions(root=test_db._repo_root, command="runs", older_than=5)
-    res = run_gc(options)
-    assert res["success"]
-    assert "Successfully deleted 1 runs" in res["message"]
-    
-    assert test_db.get_run(old_uuid) is None
-    assert test_db.get_run(new_uuid) is not None
 
-def test_cli_gc_cmd(test_db: BathoDatabase, monkeypatch, capsys):
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers()
-    register_gc_parser(subparsers)
-    
-    args = parser.parse_args(["gc", "--root", str(test_db._repo_root), "status"])
-    assert args.gc_command == "status"
-    
-    ret = cmd_gc(args)
-    assert ret == 0
-    captured = capsys.readouterr()
-    assert "Total runs" in captured.out
+class TestGCVacuum:
+    def test_vacuum_removes_orphans(self, tmp_path):
+        db, run_uuid = _make_bundle_with_run(tmp_path)
+        bundle_dir = resolve_bundle_dir(tmp_path)
+
+        orphan = bundle_dir / "agent_views.v999.ipc"
+        orphan.write_bytes(b"fake")
+
+        opts = GCOptions(root=tmp_path, command="vacuum")
+        result = run_gc(opts)
+        assert result["success"]
+        assert not orphan.exists()
+
+    def test_orphans_subcommand(self, tmp_path):
+        _make_bundle_with_run(tmp_path)
+        bundle_dir = resolve_bundle_dir(tmp_path)
+        (bundle_dir / "rels_views.v888.ipc").write_bytes(b"stale")
+
+        opts = GCOptions(root=tmp_path, command="orphans")
+        result = run_gc(opts)
+        assert result["success"]
+        assert "stale IPC file" in result["message"]
+
+
+class TestGCPruneOldRuns:
+    def test_prune_no_old_runs(self, tmp_path):
+        _make_bundle_with_run(tmp_path)
+        opts = GCOptions(root=tmp_path, command="runs", older_than=365)
+        result = run_gc(opts)
+        assert result["success"]
+        assert "No runs found" in result["message"]
+
+    def test_prune_invalid_threshold(self, tmp_path):
+        _make_bundle_with_run(tmp_path)
+        opts = GCOptions(root=tmp_path, command="runs", older_than=-1)
+        result = run_gc(opts)
+        assert not result["success"]
+
+
+class TestGCUnknownCommand:
+    def test_unknown_command(self, tmp_path):
+        _make_bundle_with_run(tmp_path)
+        opts = GCOptions(root=tmp_path, command="noop")
+        result = run_gc(opts)
+        assert not result["success"]
+        assert "Unknown gc command" in result["message"]

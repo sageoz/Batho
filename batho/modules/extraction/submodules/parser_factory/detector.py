@@ -248,8 +248,6 @@ _MAGIC_BYTES_PATTERNS: list[tuple[bytes, str, float]] = [
     (b"\x7fELF", "c", 0.8),
     # Java class files
     (b"\xca\xfe\xba\xbe", "java", 0.8),
-    # Python bytecode (PEP 3147)
-    (b"#!\x00", "python", 0.7),  # Python bytecode file
     # PDF
     (b"%PDF", "html", 0.5),  # Could be embedded HTML
     # ZIP (used by many formats including docx, xlsx, odt)

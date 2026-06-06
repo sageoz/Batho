@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from .models import Config, DEFAULT_DB_PATH
+from .models import Config
 
 logger = None
 
@@ -166,12 +166,9 @@ def get_config_with_root(root_dir: Path) -> dict[str, Any]:
         _safe_set_nested(base_cfg, ["logging", "file"], env_log_file)
 
     # Paths overrides
-    _safe_set_nested(
-        base_cfg,
-        ["paths", "db_path"],
-        _env("BATHO_DB_PATH", _safe_get_nested(base_cfg, ["paths", "db_path"], "{root}"))
-        or _safe_get_nested(base_cfg, ["paths", "db_path"], "{root}"),
-    )
+    env_artifact_dir = _env("BATHO_ARTIFACT_DIR")
+    if env_artifact_dir is not None:
+        _safe_set_nested(base_cfg, ["paths", "artifact_dir"], env_artifact_dir)
 
     # Indexer overrides
     _safe_set_nested(
@@ -442,5 +439,3 @@ def get_config_cached() -> dict[str, Any]:
 def reload_config() -> dict[str, Any]:
     _get_config_cached_for_root.cache_clear()
     return get_config_cached()
-
-

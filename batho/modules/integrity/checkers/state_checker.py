@@ -5,8 +5,6 @@ from __future__ import annotations
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
-import sqlite3
-
 from ..models import CheckReport, CheckStatus, Issue, Severity
 from ..repairers.state_repairer import StateRepairer
 
@@ -19,20 +17,17 @@ class StateConsistencyChecker:
         self.dry_run = dry_run
         self.repairer = StateRepairer(db)
 
-    def check_stuck_runs(self, conn: sqlite3.Connection) -> list[Issue]:
+    def check_stuck_runs(self) -> list[Issue]:
         """Find runs that are marked 'running' but started more than 24 hours ago."""
         issues = []
         now = datetime.now(timezone.utc)
         threshold = now - timedelta(hours=24)
 
-        rows = conn.execute(
-            "SELECT id, run_uuid, started_at FROM index_runs WHERE status = 'running'"
-        ).fetchall()
-
-        for row in rows:
-            run_id, run_uuid, started_at_str = row
+        for run in self.db._reader.get_all_runs():
+            if run.get("status") != "running":
+                continue
+            started_at_str = run.get("started_at", "")
             try:
-                # Handle potential timezone offsets
                 dt_str = started_at_str
                 if dt_str.endswith("Z"):
                     dt_str = dt_str[:-1] + "+00:00"
@@ -40,80 +35,38 @@ class StateConsistencyChecker:
                 if started_at.tzinfo is None:
                     started_at = started_at.replace(tzinfo=timezone.utc)
             except Exception:
-                # If timestamp is unparseable, mark it as stuck anyway
                 started_at = threshold - timedelta(seconds=1)
 
             if started_at < threshold:
-                issues.append(
-                    Issue(
-                        type="stuck_run",
-                        severity=Severity.WARNING,
-                        table="index_runs",
-                        identifier={"run_uuid": run_uuid},
-                        description=f"Run {run_uuid} has been 'running' since {started_at_str}.",
-                        repair_strategy="fail_stuck_run",
-                    )
-                )
+                issues.append(Issue(
+                    type="stuck_run",
+                    severity=Severity.WARNING,
+                    table="runs",
+                    identifier={"run_uuid": run.get("run_uuid")},
+                    description=f"Run {run.get('run_uuid')} has been 'running' since {started_at_str}.",
+                    repair_strategy="fail_stuck_run",
+                ))
         return issues
 
-    def check_string_dict_orphans(self, conn: sqlite3.Connection) -> list[Issue]:
-        """Find strings with no referencing file_id or root_path_id."""
+    def check_file_tracking_consistency(self) -> list[Issue]:
+        """Spot-check: file_tracking entries with is_indexed=True have a known run."""
         issues = []
-        query = """
-            SELECT id, val FROM string_dict
-            WHERE id NOT IN (SELECT root_path_id FROM index_runs)
-              AND id NOT IN (SELECT file_id FROM file_artifacts)
-              AND id NOT IN (SELECT file_id FROM file_tracking)
-              AND id NOT IN (SELECT file_id FROM file_changelog)
-        """
-        rows = conn.execute(query).fetchall()
-        for row in rows:
-            sid, val = row
-            issues.append(
-                Issue(
-                    type="orphaned_string",
+        latest_run_id = self.db.get_latest_run_id()
+        if not latest_run_id:
+            return issues
+        tracking = self.db.get_all_file_tracking()
+        for file_path, row in tracking.items():
+            if row.get("is_indexed") and row.get("last_run_id") and row["last_run_id"] != latest_run_id:
+                issues.append(Issue(
+                    type="tracking_stale_run_ref",
                     severity=Severity.INFO,
-                    table="string_dict",
-                    identifier={"id": sid},
-                    description=f"Orphaned string ID {sid}: '{val}'",
-                    repair_strategy="delete_orphaned_string",
-                )
-            )
-        return issues
-
-    def check_file_tracking_consistency(self, conn: sqlite3.Connection) -> list[Issue]:
-        """Verify file_tracking vs file_artifacts consistency."""
-        issues = []
-        query = """
-            SELECT ft.file_id, sd.val, ft.last_run_id
-            FROM file_tracking ft
-            JOIN string_dict sd ON ft.file_id = sd.id
-            WHERE ft.is_indexed = 1
-              AND (
-                  ft.file_id NOT IN (SELECT file_id FROM file_artifacts)
-                  OR (
-                      ft.last_run_id IS NOT NULL
-                      AND NOT EXISTS (
-                          SELECT 1 FROM file_artifacts fa
-                          JOIN index_runs ir ON fa.run_id = ir.id
-                          WHERE fa.file_id = ft.file_id AND ir.run_uuid = ft.last_run_id
-                      )
-                  )
-              )
-        """
-        rows = conn.execute(query).fetchall()
-        for row in rows:
-            file_id, file_path, last_run_id = row
-            issues.append(
-                Issue(
-                    type="tracking_desync",
-                    severity=Severity.ERROR,
                     table="file_tracking",
-                    identifier={"file_id": file_id},
-                    description=f"File '{file_path}' (ID {file_id}) is marked indexed but has no artifacts in latest run.",
-                    repair_strategy="reset_file_tracking",
-                )
-            )
+                    identifier={"file_path": file_path},
+                    description=(
+                        f"File '{file_path}' last indexed in {row['last_run_id']!r}, "
+                        f"but current run is {latest_run_id!r}"
+                    ),
+                ))
         return issues
 
     def run(self) -> CheckReport:
@@ -122,20 +75,16 @@ class StateConsistencyChecker:
         issues = []
 
         try:
-            with self.db.connection() as conn:
-                issues.extend(self.check_stuck_runs(conn))
-                issues.extend(self.check_string_dict_orphans(conn))
-                issues.extend(self.check_file_tracking_consistency(conn))
+            issues.extend(self.check_stuck_runs())
+            issues.extend(self.check_file_tracking_consistency())
         except Exception as e:
-            issues.append(
-                Issue(
-                    type="state_check_error",
-                    severity=Severity.ERROR,
-                    table="sqlite_master",
-                    identifier={},
-                    description=f"Error executing state consistency checks: {e}",
-                )
-            )
+            issues.append(Issue(
+                type="state_check_error",
+                severity=Severity.ERROR,
+                table="arrow_bundle",
+                identifier={},
+                description=f"Error executing state consistency checks: {e}",
+            ))
 
         repairs = []
         if not self.dry_run:

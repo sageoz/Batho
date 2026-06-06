@@ -16,10 +16,10 @@ def register_build_parser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser(
         "build",
         parents=[create_base_parser()],
-        help="Full index build for a repository (creates artifact_<dirname>.batho database)",
+        help="Full index build for a repository (creates Arrow Bundle in .batho/artifact/)",
         description=(
             "Build a complete code graph, BSG map, and baseline snapshot for a "
-            "repository. If the artifact database already exists, exits with guidance to use "
+            "repository. If the artifact bundle already exists, exits with guidance to use "
             "`batho patch` for incremental updates."
         ),
     )

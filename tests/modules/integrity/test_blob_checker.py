@@ -11,13 +11,12 @@ from batho.modules.integrity.models import CheckStatus, Severity
 
 def test_blob_checker_passed():
     db = MagicMock()
-    conn = MagicMock()
-    conn.execute.return_value.fetchall.side_effect = [
-        [],  # file_artifacts
-        [],  # run_artifacts
-        [],  # file_changelog
+    db._reader.get_all_runs.return_value = [
+        {"run_uuid": "abc", "status": "completed"},
     ]
-    db.connection.return_value.__enter__.return_value = conn
+    db._reader.get_file_changelog_raw.return_value = [
+        {"entity_id": "e1", "change_kind": "added", "run_uuid": "abc"},
+    ]
 
     checker = BlobIntegrityChecker(db, dry_run=True)
     report = checker.run()
@@ -27,21 +26,17 @@ def test_blob_checker_passed():
     assert len(report.issues) == 0
 
 
-def test_blob_checker_corrupt():
+def test_blob_checker_invalid_run_status():
     db = MagicMock()
-    conn = MagicMock()
-    # Return file_artifacts with an invalid blob (missing valid zstd header)
-    conn.execute.return_value.fetchall.side_effect = [
-        [(1, 1, b"invalid_zstd_blob", b"abc", b"def")],  # file_artifacts
-        [],  # run_artifacts
-        [],  # file_changelog
+    db._reader.get_all_runs.return_value = [
+        {"run_uuid": "xyz", "status": "zombie"},  # invalid status
     ]
-    db.connection.return_value.__enter__.return_value = conn
+    db._reader.get_file_changelog_raw.return_value = []
 
     checker = BlobIntegrityChecker(db, dry_run=True)
     report = checker.run()
 
     assert report.status == CheckStatus.FAILED
     assert len(report.issues) == 1
-    assert report.issues[0].type == "corrupt_file_artifact"
-    assert report.issues[0].severity == Severity.ERROR
+    assert report.issues[0].type == "invalid_run_status"
+    assert report.issues[0].severity == Severity.WARNING

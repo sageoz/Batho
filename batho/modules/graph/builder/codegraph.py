@@ -711,11 +711,18 @@ class CodeGraphIndexer:
     """
 
     def __init__(
-        self, cache_path: str | None = None, root: str | None = None
+        self,
+        cache_path: str | None = None,
+        root: str | None = None,
+        ast_cache_dir: str | None = None,
     ) -> None:
         self.logger = get_logger(__name__, operation="index")
         root_path = Path(root).resolve() if root else None
-        self._cache = BathoCache(cache_path=cache_path, repo_root=root_path)
+        self._cache = BathoCache(
+            cache_path=cache_path,
+            repo_root=root_path,
+            ast_cache_dir=ast_cache_dir,
+        )
         self._root: Path | None = root_path
         self.build_stats: dict[str, Any] = {}  # populated after build_graph(); distinct from stats() method
         self._last_reconstruction: Any = None  # set after reconstruct_file
@@ -1194,6 +1201,18 @@ class CodeGraphIndexer:
             bsg_cfg_payload = dict(bsg_cfg)
             bsg_cfg_payload["root_path"] = str(root_path)
             bsg_cfg_payload["rules"] = cfg.get("rules", {})
+
+            # Ensure cache path is present so workers can initialize BathoCache
+            _cache_cfg = dict(bsg_cfg_payload.get("cache", {}))
+            if not _cache_cfg.get("path") and self._cache._db is not None:
+                _cache_cfg["path"] = str(self._cache._db.repo_root)
+                bsg_cfg_payload["cache"] = _cache_cfg
+
+            ast_cache_dir_str = (
+                str(self._cache._ast_cache.cache_dir)
+                if self._cache._ast_cache is not None
+                else None
+            )
             results, extract_errors, merged_audit = extract_and_emit_parallel(
                 candidates,
                 configured_max_file_size_kb,
@@ -1202,6 +1221,7 @@ class CodeGraphIndexer:
                 index_id=index_id,
                 include_gaps=include_gaps_flag,
                 result_callback=on_result_extracted,
+                ast_cache_dir=ast_cache_dir_str,
             )
 
             errors += extract_errors
@@ -1231,6 +1251,7 @@ class CodeGraphIndexer:
 
             total_rules_applied = 0
             total_entities_tagged = 0
+            total_rules_loaded = 0
 
             for result in results:
                 try:
@@ -1238,6 +1259,8 @@ class CodeGraphIndexer:
                     filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, _, local_hits = result
                     total_rules_applied += local_hits.get("rules_applied", 0)
                     total_entities_tagged += local_hits.get("entities_tagged", 0)
+                    if not total_rules_loaded:
+                        total_rules_loaded = local_hits.get("rules_loaded", 0)
 
                     # Deserialize hollow topology (lightweight - not compressed)
                     hollow_topology = msgpack.unpackb(hollow_bytes)
@@ -1322,28 +1345,14 @@ class CodeGraphIndexer:
             }
 
             if rules_cfg and rules_cfg.get("enabled", False):
-                try:
-                    from batho.modules.compression.rules import load_effective_rules
-                    # Load the rules to determine rules_loaded count, but do NOT execute apply_rule_plugins on the graph.
-                    effective_rules, load_stats = load_effective_rules(rules_cfg, Path(root_path))
-                    rule_stats = {
-                        "enabled": True,
-                        "rules_loaded": len(effective_rules),
-                        "rules_applied": total_rules_applied,
-                        "entities_updated": total_entities_tagged,
-                        "security_audit": merged_audit,
-                        "errors": [],
-                    }
-                except Exception as exc:
-                    self.logger.warning("bsg_rules_telemetry_failed", error=str(exc))
-                    rule_stats = {
-                        "enabled": True,
-                        "rules_loaded": 0,
-                        "rules_applied": total_rules_applied,
-                        "entities_updated": total_entities_tagged,
-                        "security_audit": merged_audit,
-                        "errors": [str(exc)],
-                    }
+                rule_stats = {
+                    "enabled": True,
+                    "rules_loaded": total_rules_loaded,
+                    "rules_applied": total_rules_applied,
+                    "entities_updated": total_entities_tagged,
+                    "security_audit": merged_audit,
+                    "errors": [],
+                }
             else:
                 rule_stats = {
                     "enabled": bool(rules_cfg),

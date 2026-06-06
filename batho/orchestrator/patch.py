@@ -103,12 +103,13 @@ def _estimate_batch_size_bytes(batch_item: dict) -> int:
 
 
 def run_patch(options: PatchOptions) -> PatchResult:
-    """Incremental patch of an existing .batho database."""
-    from batho.modules.storage.sqlite_registry.engine import resolve_db_path, get_database
+    """Incremental patch of an existing .batho artifact bundle."""
+    from batho.modules.storage.arrow_bundle import resolve_bundle_dir, get_bundle
+    from batho.modules.storage.arrow_bundle.incremental import IncrementalEngine, FileChangeType, FileChange
 
     t0 = time.monotonic()
     root = options.root.resolve()
-    
+
     if not root.exists():
         return PatchResult(
             success=False,
@@ -121,18 +122,19 @@ def run_patch(options: PatchOptions) -> PatchResult:
         )
 
     set_active_root(root)
-    db_path = resolve_db_path(root)
+    bundle_dir = resolve_bundle_dir(root)
+    meta_path = bundle_dir / "meta.json"
 
-    if not db_path.exists():
-        msg = f"No artifact database found at {root}. Run: batho build --root {root}"
-        LOGGER.error("patch_failed_no_db", root=str(root))
+    if not meta_path.exists():
+        msg = f"No artifact bundle found at {root}. Run: batho build --root {root}"
+        LOGGER.error("patch_failed_no_bundle", root=str(root))
         return PatchResult(success=False, warnings=[msg])
 
     db = None
     run_uuid = ""
     base_run_uuid = ""
     try:
-        db = get_database(root)
+        db = get_bundle(root)
         base_run_uuid = db.get_latest_run_id() or ""
         if not base_run_uuid:
             msg = f"No completed run found. Run: batho build --root {root}"
@@ -144,13 +146,9 @@ def run_patch(options: PatchOptions) -> PatchResult:
         max_file_size_kb = options.max_file_size_kb or cfg.get("indexer", {}).get("max_file_size_kb", 500)
 
         # --- Detect changes natively (Batho's Local Git Model) ---
-        # Strict hashing is the safe default; users can opt in to the
-        # mtime_ns/inode/size fast-path via config (indexer.strict_hashing=false).
         strict_hashing = bool(cfg.get("indexer", {}).get("strict_hashing", True))
-        
-        from batho.modules.extraction.incremental_engine import IncrementalEngine, FileChangeType, FileChange
+
         incremental_engine = IncrementalEngine(db, base_run_uuid)
-        
         changes = incremental_engine.scan_changes(
             root=root,
             max_file_size_kb=max_file_size_kb,
@@ -184,50 +182,26 @@ def run_patch(options: PatchOptions) -> PatchResult:
         )
         LOGGER.info("patch_started", root=str(root), run_id=run_uuid, base_run=base_run_uuid)
 
+        from batho.modules.storage.arrow_store import BsgScratchStore
+        batho_dir = root / ".batho"
+
         # --- Blob-level copy-on-write for unchanged files ---
-        # INVARIANT: c.path must be a relative path (relative to root) because:
-        #   - file_artifacts uses integer file_id (looked up from string_dict by relative path)
-        #   - query_entities.file_path stores the same relative path string
-        # `_hash_scan_changes` produces relative paths.
-        # If this invariant breaks, query_entities for changed files won't be excluded and
-        # stale entities from the base run will bleed into the new run.
+        # INVARIANT: c.path must be a relative path (relative to root)
         changed_file_paths = {c.path for c in changes}
-        # Enforce relative path invariant — absolute paths would silently break
-        # the query_entities copy-on-write filter.
         for _p in changed_file_paths:
             if Path(_p).is_absolute():
                 raise ValueError(
                     f"FileChange.path must be relative to root, got absolute: {_p!r}"
                 )
-        if base_run_internal_id is not None:
-            with db.transaction() as conn:
-                # Use temporary tables to prevent exceeding SQLITE_MAX_VARIABLE_NUMBER (default 999)
-                conn.execute("CREATE TEMP TABLE IF NOT EXISTS temp_changed_file_paths (file_path TEXT PRIMARY KEY)")
-                conn.execute("DELETE FROM temp_changed_file_paths")
-                conn.executemany("INSERT OR IGNORE INTO temp_changed_file_paths (file_path) VALUES (?)", [(p,) for p in changed_file_paths])
 
-                changed_ids_rows = conn.execute(
-                    """SELECT id FROM string_dict
-                       WHERE val IN (SELECT file_path FROM temp_changed_file_paths)"""
-                ).fetchall()
-                changed_file_ids = {row["id"] for row in changed_ids_rows}
-
-                conn.execute("CREATE TEMP TABLE IF NOT EXISTS temp_changed_file_ids (file_id INTEGER PRIMARY KEY)")
-                conn.execute("DELETE FROM temp_changed_file_ids")
-                if changed_file_ids:
-                    conn.executemany("INSERT OR IGNORE INTO temp_changed_file_ids (file_id) VALUES (?)", [(fid,) for fid in changed_file_ids])
-
-                # 1. Copy file_artifacts for unchanged files
-                conn.execute(
-                    f"""INSERT INTO file_artifacts(run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash)
-                        SELECT ?, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view, content_hash
-                        FROM file_artifacts
-                        WHERE run_id = ? AND file_id NOT IN (SELECT file_id FROM temp_changed_file_ids)""",
-                    [run_internal_id, base_run_internal_id],
-                )
-
-            # Recreate query tables and populate them from the unchanged files
-            db.populate_query_tables_for_unchanged_files(run_internal_id, base_run_internal_id, changed_file_paths)
+        # Open BSG scratch store for patch (Arrow store, unchanged from before)
+        store, delta_store = BsgScratchStore.open_for_patch(
+            batho_dir=batho_dir,
+            new_run_uuid=run_uuid,
+            new_run_internal_id=run_internal_id,
+            changed_paths=changed_file_paths,
+            db=None,
+        )
 
         # --- Re-parse changed (non-deleted) files ---
         added_or_modified = [c for c in changes if c.change_type != FileChangeType.DELETED]
@@ -246,8 +220,21 @@ def run_patch(options: PatchOptions) -> PatchResult:
             bsg_cfg = dict(cfg.get("bsg", {}))
             cache_cfg = dict(bsg_cfg.get("cache", {}))
             cache_cfg["enabled"] = True
-            cache_cfg["path"] = str(db_path)
+            cache_cfg["path"] = str(bundle_dir)
             bsg_cfg["cache"] = cache_cfg
+
+            # --- Extraction AST cache configuration ---
+            extraction_cfg = cfg.get("extraction", {})
+            if isinstance(extraction_cfg, BaseModel):
+                extraction_cfg = extraction_cfg.model_dump()
+            extraction_cache_cfg = extraction_cfg.get("cache", {})
+            ast_cache_dir = None
+            if extraction_cache_cfg.get("enabled", True):
+                cache_dir = cfg.get("paths", {}).get("cache_dir")
+                if cache_dir:
+                    ast_cache_dir = str(Path(cache_dir))
+                else:
+                    ast_cache_dir = str(root / ".batho" / "cache")
 
             # --- Dependency Indexing (CDEU) for Patch ---
             from batho.modules.dependency import build_dependency_index
@@ -268,10 +255,12 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 )
 
             from batho.modules.graph.builder.codegraph import CodeGraphIndexer
-            from batho.modules.storage.sqlite_registry.engine import _minify_graph_payload
+            from batho.modules.storage.arrow_bundle.helpers import _minify_graph_payload
             from collections import defaultdict
 
-            with CodeGraphIndexer(cache_path=str(db_path), root=str(root)) as indexer:
+            with CodeGraphIndexer(
+                cache_path=str(root), root=str(root), ast_cache_dir=ast_cache_dir
+            ) as indexer:
                 # Invalidate AST cache for changed/deleted files in unified cache
                 for change in changes:
                     try:
@@ -374,7 +363,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     batch_bytes_threshold = cfg.get("persistence", {}).get("batch_bytes_threshold", 15_728_640)
                     if len(write_batch) >= batch_size or current_batch_bytes >= batch_bytes_threshold:
                         t_write_0 = time.monotonic()
-                        db.insert_file_artifacts_batch(run_internal_id, write_batch)
+                        db.insert_file_artifacts_batch(run_internal_id, write_batch, store=store, delta_store=delta_store)
                         t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
                         write_batch = []
                         current_batch_bytes = 0
@@ -399,7 +388,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 # Flush any remaining files in batch
                 if write_batch:
                     t_write_0 = time.monotonic()
-                    db.insert_file_artifacts_batch(run_internal_id, write_batch)
+                    db.insert_file_artifacts_batch(run_internal_id, write_batch, store=store, delta_store=delta_store)
                     t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
 
         # --- Update file tracking ---
@@ -442,31 +431,31 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     pass
         incremental_engine.update_state(fingerprints)
 
-        # --- Resolve dangling cross-file references via SQL JOIN ---
+        # --- Compact Arrow store, then resolve dangling cross-file references ---
         try:
-            resolved_joined = db.resolve_dangling_references(run_internal_id)
-            LOGGER.info("cross_file_relationships_resolved_via_sql_join", count=resolved_joined)
+            store.compact()
         except Exception as exc:
-            LOGGER.warning("cross_file_relationships_sql_join_failed", error=str(exc))
+            LOGGER.warning("failed_to_compact_bsg_store_patch", error=str(exc))
+
+        try:
+            resolved_joined = store.resolve_dangling(None)
+            LOGGER.info("cross_file_relationships_resolved", count=resolved_joined)
+        except Exception as exc:
+            LOGGER.warning("cross_file_relationships_failed", error=str(exc))
+
+        # Compact delta sidecar (writes bsg/<patch_uuid>/)
+        try:
+            delta_store.compact()
+        except Exception as exc:
+            LOGGER.warning("failed_to_compact_delta_store", error=str(exc))
+
+        store.finalize()
 
         # --- Complete run ---
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        with db.connection(read_only=True) as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) as cnt FROM file_artifacts WHERE run_id = ?",
-                (run_internal_id,),
-            ).fetchone()
-            file_count = row["cnt"] if row else 0
-            entity_row = conn.execute(
-                "SELECT COUNT(*) as cnt FROM query_entities WHERE run_id = ?",
-                (run_internal_id,),
-            ).fetchone()
-            rel_row = conn.execute(
-                "SELECT COUNT(*) as cnt FROM query_relationships WHERE run_id = ?",
-                (run_internal_id,),
-            ).fetchone()
-            total_entities = entity_row["cnt"] if entity_row else 0
-            total_rels = rel_row["cnt"] if rel_row else 0
+        file_count = len(db.get_all_file_hashes())
+        total_entities = store.entity_count
+        total_rels = store.rel_count
 
         db.complete_run(
             run_uuid,
@@ -478,7 +467,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
 
         # --- Finalize Run Artifacts ---
         from batho.orchestrator.build import _compute_run_metrics
-        metrics = _compute_run_metrics(db, run_internal_id, root)
+        metrics = _compute_run_metrics(store, db, root)
         
         telemetry = {
             "duration_ms": elapsed_ms,
@@ -491,7 +480,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
             "git_branch": git_branch,
         }
         
-        total_base_files = len(incremental_engine.db.get_all_file_tracking())
+        total_base_files = len(db.get_all_file_tracking())
         files_changed = len(changes)
         churn_pct = (files_changed / total_base_files * 100.0) if total_base_files > 0 else 0.0
         churn_pct = float(min(max(churn_pct, 0.0), 100.0))
@@ -526,10 +515,8 @@ def run_patch(options: PatchOptions) -> PatchResult:
             blob_config=artifact_blobs_cfg
         )
 
-        try:
-            db.cleanup_query_tables()
-        except Exception as exc:
-            LOGGER.warning("failed_to_cleanup_query_tables", error=str(exc))
+        store.cleanup_streams()
+        delta_store.cleanup_streams()
 
         LOGGER.info(
             "patch_complete",

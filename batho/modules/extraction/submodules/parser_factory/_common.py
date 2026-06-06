@@ -12,8 +12,6 @@ Language-specific customizations remain in individual extractor files.
 
 from __future__ import annotations
 
-from abc import ABC
-from typing import ClassVar
 
 # ---------------------------------------------------------------------------
 # Common Query Fragments
@@ -134,48 +132,6 @@ class CommonQueries:
 
 
 # ---------------------------------------------------------------------------
-# Base Class for Programming Language Extractors
-# ---------------------------------------------------------------------------
-
-
-class ProgrammingLanguageExtractor(ABC):
-    """
-    Base class for programming language extractors.
-
-    Provides common functionality and structure for language-specific extractors.
-    Language-specific extractors should inherit from ASTExtractor directly,
-    but can use this class for common patterns.
-
-    Note: This class is a mixin/utility class. Actual extractors inherit from
-    ASTExtractor in extractor.py.
-    """
-
-    # Common entity types that most programming languages support
-    COMMON_ENTITY_TYPES: ClassVar[list[str]] = [
-        "function",
-        "method",
-        "class",
-        "struct",
-        "interface",
-        "module",
-    ]
-
-    @staticmethod
-    def combine_queries(*queries: str) -> str:
-        """
-        Combine multiple query strings into one.
-
-        Args:
-            *queries: Variable number of query strings to combine
-
-        Returns:
-            Combined query string with proper separators
-        """
-        non_empty = [q.strip() for q in queries if q.strip()]
-        return "\n\n".join(non_empty)
-
-
-# ---------------------------------------------------------------------------
 # Shared Query Patterns by Category
 # ---------------------------------------------------------------------------
 
@@ -256,16 +212,3 @@ def build_query(segments: list[str]) -> str:
     return "\n\n".join(segment.strip() for segment in segments if segment.strip())
 
 
-def comment_block(title: str, width: int = 70) -> str:
-    """
-    Create a formatted comment block for query documentation.
-
-    Args:
-        title: Title of the comment block
-        width: Total width of the separator
-
-    Returns:
-        Formatted comment string
-    """
-    separator = "─" * (width - len(title) - 3)
-    return f"; ── {title} {separator}"

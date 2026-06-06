@@ -17,7 +17,6 @@ from batho.modules.extraction.scope_manager import ScopeManager
 from batho.modules.extraction.symbol_table import FileSymbolTable, SymbolDefinition, ImportStatement
 from batho.modules.extraction.extractor import ASTExtractor
 from batho.modules.graph.builder.codegraph import CodeGraphIndexer
-from batho.modules.storage.sqlite_registry.engine import BathoDatabase
 
 
 def test_scope_manager_basic():

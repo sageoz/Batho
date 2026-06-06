@@ -22,18 +22,29 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from tree_sitter import Language, Node, Query, QueryCursor
 from tree_sitter_language_pack import get_language, get_parser
 
 _TS_PARSER_CACHE: dict[str, Any] = {}
+_TS_PARSER_LOCK = threading.Lock()
 
 def get_pooled_parser(language: str) -> Any:
-    """Retrieve or initialize a pooled tree-sitter Parser instance for a language."""
-    if language not in _TS_PARSER_CACHE:
-        _TS_PARSER_CACHE[language] = get_parser(language)  # type: ignore[arg-type]
-    return _TS_PARSER_CACHE[language]
+    """Retrieve or initialize a pooled tree-sitter Parser instance for a language.
+
+    Thread-safe: uses a lock to prevent race conditions during cache initialization.
+    """
+    # Fast path: check without lock
+    if language in _TS_PARSER_CACHE:
+        return _TS_PARSER_CACHE[language]
+
+    # Slow path: acquire lock and double-check
+    with _TS_PARSER_LOCK:
+        if language not in _TS_PARSER_CACHE:
+            _TS_PARSER_CACHE[language] = get_parser(language)  # type: ignore[arg-type]
+        return _TS_PARSER_CACHE[language]
 
 
 from batho.utils.encoding import normalize_to_utf8
@@ -139,16 +150,19 @@ _BUILTINS_BY_LANG: dict[str, set[str]] = {
 }
 
 
-def _should_prune_unresolved(ref_text: str, rel_type: RelationshipType, file_imports: list, language: str, filepath: str) -> bool:
+def _should_prune_unresolved(ref_text: str, rel_type: RelationshipType, file_imports: list, language: str, filepath: str, prune_enabled: bool = True) -> bool:
+    """Check if an unresolved reference should be pruned.
+
+    Args:
+        ref_text: The reference text to check
+        rel_type: The relationship type
+        file_imports: List of imports in the file
+        language: The programming language
+        filepath: The file path
+        prune_enabled: Whether pruning is enabled (cached from config to avoid repeated lookups)
+    """
     if "/" not in filepath and "\\" not in filepath:
         return False
-
-    from batho.core.config import get_config_cached
-    try:
-        cfg = get_config_cached()
-        prune_enabled = cfg.get("bsg", {}).get("symbol_resolution", {}).get("prune_unresolved", True)
-    except Exception:
-        prune_enabled = True
 
     if not prune_enabled:
         return False
@@ -309,9 +323,6 @@ def _expand_import_targets(raw: str) -> list[str]:
     return candidates
 
 
-# File reading is now handled in batho.utils.file_io
-
-
 # ---------------------------------------------------------------------------
 # ASTExtractor — base class for tree-sitter extractors
 # ---------------------------------------------------------------------------
@@ -440,7 +451,7 @@ class ASTExtractor(abc.ABC):
 
         try:
             tree = self._ts_parser.parse(content)
-        except (TypeError, ValueError, Exception) as exc:
+        except (TypeError, ValueError, RuntimeError) as exc:
             self.logger.warning(
                 "parse_failed_triggering_fallback",
                 filepath=filepath,
@@ -558,11 +569,11 @@ class ASTExtractor(abc.ABC):
             elif len(parts) == 2 and parts[0] in ("def", "ref"):
                 definition_nodes.setdefault(cap_name, []).extend(nodes)
 
-        entities = self._build_entities(
+        entities, def_name_bytes = self._build_entities(
             definition_nodes, auxiliary_nodes, source, filepath, index_id=index_id, package=package
         )
         unresolved_entities, relationships = self._build_relationships(
-            captures, entities, source, filepath, package=package
+            captures, entities, source, filepath, def_name_bytes, package=package
         )
         entities.extend(unresolved_entities)
         return entities, relationships
@@ -590,19 +601,32 @@ class ASTExtractor(abc.ABC):
         filepath: str,
         index_id: str | None = None,
         package: PackageMetadata | None = None,
-    ) -> list[Entity]:
-        """Instantiate Entity models from grouped capture nodes."""
-        from pathlib import Path
+    ) -> tuple[list[Entity], set[int]]:
+        """Instantiate Entity models from grouped capture nodes.
+
+        Returns:
+            Tuple of (entities, def_name_bytes) where def_name_bytes is a set of
+            byte offsets for definition name nodes (used to filter self-references).
+        """
         entities: list[Entity] = []
 
-        # Pre-decode source lines once for the whole file to avoid repeated
-        # decode+splitlines in _extract_leading_doc_comment (EXT-04).
-        try:
-            _source_lines: list[str] = source.decode("utf-8", errors="replace").splitlines()
-        except Exception:
-            _source_lines = []
+        # LAZY source line decoding: Only decode when actually needed for docstring extraction.
+        # This avoids O(n) memory allocation for large files (500KB+) when 99% of entities
+        # already have docstrings from tree-sitter captures. (OPT-2A)
+        _source_lines: list[str] | None = None
 
-        self._def_name_bytes = set()
+        def _get_source_lines() -> list[str]:
+            nonlocal _source_lines
+            if _source_lines is None:
+                try:
+                    _source_lines = source.decode("utf-8", errors="replace").splitlines()
+                except Exception:
+                    _source_lines = []
+            return _source_lines
+
+        # Local variable instead of instance attribute to prevent state leakage
+        # between files when extractor is reused or when exceptions occur
+        _def_name_bytes: set[int] = set()
 
         # 1. Collect flat list of all captured definitions with their node bounds
         flat_definitions = []
@@ -614,7 +638,7 @@ class ASTExtractor(abc.ABC):
                 name = _node_text(name_node, source)
                 if not name:
                     continue
-                self._def_name_bytes.add(name_node.start_byte)
+                _def_name_bytes.add(name_node.start_byte)
                 decl_node = name_node.parent if name_node.parent is not None else name_node
                 flat_definitions.append((
                     decl_node.start_byte,
@@ -679,7 +703,7 @@ class ASTExtractor(abc.ABC):
                 scope_stack.append((end_byte, fqn_name, descriptors))
 
             metadata = self._collect_metadata_with_source(
-                base_key, decl_node, auxiliary_nodes, source, source_lines=_source_lines
+                base_key, decl_node, auxiliary_nodes, source, source_lines=_get_source_lines()
             )
             signature = self._build_signature(
                 raw_name, base_key, decl_node, auxiliary_nodes, source
@@ -763,7 +787,7 @@ class ASTExtractor(abc.ABC):
                 entities.append(doc_entity)
 
         entities.sort(key=lambda e: e.start_byte)
-        return entities
+        return entities, _def_name_bytes
 
     def _get_enclosing_range(
         self, decl_node: Node, entity_type: EntityType
@@ -803,12 +827,21 @@ class ASTExtractor(abc.ABC):
         entities: list[Entity],
         source: bytes,
         filepath: str,
+        def_name_bytes: set[int],
         package: PackageMetadata | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Build Relationship models from reference captures.
 
-        Returns unresolved entities alongside relationships so callers can merge
-        them into the main entity list.
+        Args:
+            captures: Dictionary of capture names to tree-sitter nodes
+            entities: List of entities built from definitions
+            source: Raw source bytes
+            filepath: Path to the file being processed
+            def_name_bytes: Set of byte offsets for definition names (to filter self-refs)
+            package: Optional package metadata
+
+        Returns:
+            Tuple of (unresolved_entities, relationships)
         """
         relationships: list[Relationship] = []
         unresolved_entities: list[Entity] = []
@@ -818,6 +851,14 @@ class ASTExtractor(abc.ABC):
         # Compute timestamp once per _build_relationships call rather than per
         # unresolved entity.
         now_ts = datetime.now(timezone.utc).isoformat()
+
+        # Cache config lookup once per file to avoid O(n) config calls in hot loop (OPT-2C)
+        from batho.core.config import get_config_cached
+        try:
+            cfg = get_config_cached()
+            prune_enabled = cfg.get("bsg", {}).get("symbol_resolution", {}).get("prune_unresolved", True)
+        except Exception:
+            prune_enabled = True
 
         def _make_contextual_stub(
             ref_text: str, line: int, rel_type: RelationshipType, caller_scope: str
@@ -922,24 +963,45 @@ class ASTExtractor(abc.ABC):
                     definition_end_byte=child.end_byte,
                 )
             # Only push if this entity can contain future entities.
-            if not parent_stack or child.end_byte <= parent_stack[-1].end_byte:
-                parent_stack.append(child)
-            elif child.end_byte > parent_stack[-1].end_byte:
+            # Pop until we find an ancestor that properly contains this child.
+            while parent_stack and not (
+                parent_stack[-1].start_byte <= child.start_byte
+                and child.end_byte <= parent_stack[-1].end_byte
+            ):
                 parent_stack.pop()
-                parent_stack.append(child)
+            parent_stack.append(child)
 
         by_name: dict[str, Entity] = {e.name: e for e in entities}
         by_id: dict[str, Entity] = {e.id: e for e in entities}
-        sorted_ents = entities
+        # Sort entities by start_byte for O(log N) enclosing lookup via bisect.
+        sorted_ents = sorted(entities, key=lambda e: e.start_byte)
+        sorted_starts = [e.start_byte for e in sorted_ents]
 
         def _find_enclosing(byte_offset: int) -> Entity | None:
+            """Find the smallest entity enclosing the given byte offset using bisect.
+            
+            Time complexity: O(log N) for bisect + O(k) for walking back,
+            where k is small (usually 1-2) since nested scopes are limited.
+            """
+            # Find the rightmost entity with start_byte <= byte_offset
+            idx = bisect.bisect_right(sorted_starts, byte_offset) - 1
+            if idx < 0:
+                return None
+            
+            # Walk backwards to find the smallest enclosing entity
             best: Entity | None = None
-            for ent in sorted_ents:
+            while idx >= 0:
+                ent = sorted_ents[idx]
                 if ent.start_byte <= byte_offset <= ent.end_byte:
                     if best is None or (
                         ent.end_byte - ent.start_byte < best.end_byte - best.start_byte
                     ):
                         best = ent
+                        # Keep looking for a smaller (more specific) enclosing entity
+                # If this entity starts before our best candidate, stop searching
+                if best and ent.start_byte < best.start_byte:
+                    break
+                idx -= 1
             return best
 
         for cap_name, nodes in captures.items():
@@ -949,7 +1011,6 @@ class ASTExtractor(abc.ABC):
             if rel_type == RelationshipType.CONTAINS:
                 continue
 
-            def_name_bytes = getattr(self, "_def_name_bytes", set())
             for node in nodes:
                 if node.start_byte in def_name_bytes:
                     continue
@@ -1010,7 +1071,7 @@ class ASTExtractor(abc.ABC):
                             confidence=1.0,
                         )
                     elif target_id is None:
-                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath):
+                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath, prune_enabled):
                             unres = _make_contextual_stub(ref_to_use, line_no, rel_type, caller_scope=source_id)
                             if unres.id not in unresolved_emitted:
                                 unresolved_emitted.add(unres.id)
@@ -1058,7 +1119,7 @@ class ASTExtractor(abc.ABC):
                                 confidence=1.0,
                             )
                         elif target_id is None:
-                            if not _should_prune_unresolved(target_ref, rel_type, file_imports, self._language_name, filepath):
+                            if not _should_prune_unresolved(target_ref, rel_type, file_imports, self._language_name, filepath, prune_enabled):
                                 unres = _make_contextual_stub(target_ref, line_no, rel_type, caller_scope=source_id)
                                 if unres.id not in unresolved_emitted:
                                     unresolved_emitted.add(unres.id)
@@ -1121,7 +1182,7 @@ class ASTExtractor(abc.ABC):
                             confidence=1.0,
                         )
                     else:
-                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath):
+                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath, prune_enabled):
                             unres = _make_contextual_stub(ref_to_use, line_no, rel_type, caller_scope=source_ent.id)
                             if unres.id not in unresolved_emitted:
                                 unresolved_emitted.add(unres.id)
@@ -1339,23 +1400,6 @@ class ASTExtractor(abc.ABC):
                 current = current.parent
         return nodes[0]
 
-    def _enrich_entity(
-        self,
-        entity: Entity,
-        decl_node: Node,
-        auxiliary_nodes: dict[tuple[str, str], list[Node]],
-        source: bytes,
-    ) -> Entity:
-        """Optional hook for subclasses to enrich an entity after construction."""
-        base_key = f"def.{entity.type}"
-        full_metadata = self._collect_metadata_with_source(
-            base_key,
-            decl_node,
-            auxiliary_nodes,
-            source,
-        )
-        return entity.model_copy(update={"metadata": full_metadata})
-
     # ------------------------------------------------------------------
     # UTF-8 decoding helpers
     # ------------------------------------------------------------------
@@ -1417,7 +1461,7 @@ class ASTExtractor(abc.ABC):
         if re.match(r"^[=\-*]{3,}$", stripped):
             return "separator"
         # Check for comment prefixes
-        first_line = stripped.split("\n")[0].strip()
+        first_line = stripped.partition("\n")[0].strip()
         if any(first_line.startswith(p) for p in self._COMMENT_PREFIXES):
             return "comment"
         # Check for import statements
@@ -1566,15 +1610,27 @@ class ASTExtractor(abc.ABC):
             if e.type != EntityType.SYNTAX_GLUE:
                 semantic_indices.append(idx)
 
-        # Precompute limits for leading whitespace
+        # Precompute limits for leading whitespace using sorted single-pass approach.
+        # Sort by end_byte to find the nearest previous entity ending before each entity starts.
         leading_ws_bytes: list[bytes] = [b""] * len(entities)
+        sorted_by_end = sorted(semantic_indices, key=lambda idx: entities[idx].end_byte)
+        
         for idx in semantic_indices:
             e = entities[idx]
+            # Find the entity with the highest end_byte that is <= e.start_byte
             limit_left = 0
-            for other_idx in semantic_indices:
-                other = entities[other_idx]
-                if other.end_byte <= e.start_byte and other.end_byte > limit_left:
-                    limit_left = other.end_byte
+            # Binary search for the rightmost entity ending at or before e.start_byte
+            lo, hi = 0, len(sorted_by_end)
+            while lo < hi:
+                mid = (lo + hi) // 2
+                mid_idx = sorted_by_end[mid]
+                if entities[mid_idx].end_byte <= e.start_byte:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            # lo is now the insertion point; the entity before it is the last one ending <= e.start_byte
+            if lo > 0:
+                limit_left = entities[sorted_by_end[lo - 1]].end_byte
             
             i = e.start_byte - 1
             while i >= limit_left and content[i] in ws_set:
@@ -1583,19 +1639,38 @@ class ASTExtractor(abc.ABC):
             leading_ws_bytes[idx] = leading_bytes
             leading_list[idx] = leading_bytes.decode("utf-8", errors="replace")
 
-        # Second pass: compute trailing whitespace with limits to avoid double counting
+        # Compute trailing whitespace limits using sorted approach.
+        # For each entity, find the entity with the smallest start_byte that is >= e.end_byte,
+        # then use its leading whitespace start as the limit.
+        limit_right_arr: list[int] = [content_len] * len(entities)
+        sorted_by_start = sorted(semantic_indices, key=lambda idx: entities[idx].start_byte)
+        
+        # Precompute leading whitespace start positions
+        leading_ws_start: dict[int, int] = {
+            idx: entities[idx].start_byte - len(leading_ws_bytes[idx])
+            for idx in semantic_indices
+        }
+        
         for idx in semantic_indices:
             e = entities[idx]
-            # Find the min start of leading whitespace of any semantic entity starting at or after e.end_byte
-            limit_right = content_len
-            for other_idx in semantic_indices:
-                other = entities[other_idx]
-                if other.start_byte >= e.end_byte:
-                    other_leading_start = other.start_byte - len(leading_ws_bytes[other_idx])
-                    if other_leading_start < limit_right:
-                        limit_right = other_leading_start
-            
+            # Find the leftmost entity starting at or after e.end_byte
+            lo, hi = 0, len(sorted_by_start)
+            while lo < hi:
+                mid = (lo + hi) // 2
+                mid_idx = sorted_by_start[mid]
+                if entities[mid_idx].start_byte < e.end_byte:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            # lo is now the first entity with start_byte >= e.end_byte
+            if lo < len(sorted_by_start):
+                other_idx = sorted_by_start[lo]
+                limit_right_arr[idx] = leading_ws_start[other_idx]
+        
+        for idx in semantic_indices:
+            e = entities[idx]
             j = e.end_byte
+            limit_right = limit_right_arr[idx]
             while j < limit_right and content[j] in ws_set:
                 j += 1
             trailing_list[idx] = content[e.end_byte:j].decode("utf-8", errors="replace")
@@ -1649,9 +1724,16 @@ class ASTExtractor(abc.ABC):
 
             # Only evolve if any attribute actually changed to avoid unnecessary
             # model_copy() overhead on already-correct entities
+            # Compare c_order with children_order using tuple() to avoid list creation
+            current_children = e.children_order
+            children_changed = (
+                c_order != current_children
+                if isinstance(current_children, list)
+                else c_order != list(current_children)
+            )
             if (
                 p_id != e.parent_id
-                or c_order != list(e.children_order)
+                or children_changed
                 or leading != e.leading_whitespace
                 or trailing != e.trailing_whitespace
             ):
@@ -1729,9 +1811,9 @@ class MarkupConfigExtractor(ASTExtractor):
         try:
             entities = self._extract_elements(content, filepath)
 
-            # Enrich extracted elements with raw content, content hash, and raw bytes sliced from content
-            enriched_entities = []
-            for entity in entities:
+            # Enrich extracted elements with raw content, content hash, and raw bytes.
+            # Use model_copy to avoid manual field-by-field reconstruction.
+            for i, entity in enumerate(entities):
                 raw_content = entity.raw_content
                 content_hash = entity.content_hash
                 raw_bytes = entity.raw_bytes
@@ -1753,54 +1835,20 @@ class MarkupConfigExtractor(ASTExtractor):
                     if raw_bytes is None:
                         raw_bytes = stored_raw_bytes
 
-                enriched_entity = Entity(
-                    type=entity.type,
-                    name=entity.name,
-                    file=entity.file,
-                    start_line=entity.start_line,
-                    end_line=entity.end_line,
-                    start_byte=entity.start_byte,
-                    end_byte=entity.end_byte,
-                    signature=entity.signature,
-                    metadata=entity.metadata,
-                    parent_id=entity.parent_id,
-                    raw_content=raw_content,
-                    content_hash=content_hash,
-                    raw_bytes=raw_bytes,
-                    leading_whitespace=entity.leading_whitespace,
-                    trailing_whitespace=entity.trailing_whitespace,
-                    ast_node_type=entity.ast_node_type,
-                    children_order=entity.children_order,
-                )
-                enriched_entities.append(enriched_entity)
-            entities = enriched_entities
+                    # Only update if we computed new values
+                    if raw_content != entity.raw_content or content_hash != entity.content_hash or raw_bytes != entity.raw_bytes:
+                        entities[i] = entity.model_copy(update={
+                            "raw_content": raw_content,
+                            "content_hash": content_hash,
+                            "raw_bytes": raw_bytes,
+                        })
 
+            # Stamp entities with index_id in metadata using model_copy.
             if index_id:
-                stamped_entities = []
-                for entity in entities:
+                for i, entity in enumerate(entities):
                     metadata = dict(entity.metadata or {})
                     metadata["bsg.index_id"] = index_id
-                    stamped_entity = Entity(
-                        type=entity.type,
-                        name=entity.name,
-                        file=entity.file,
-                        start_line=entity.start_line,
-                        end_line=entity.end_line,
-                        start_byte=entity.start_byte,
-                        end_byte=entity.end_byte,
-                        signature=entity.signature,
-                        metadata=metadata,
-                        parent_id=entity.parent_id,
-                        raw_content=entity.raw_content,
-                        content_hash=entity.content_hash,
-                        raw_bytes=entity.raw_bytes,
-                        leading_whitespace=entity.leading_whitespace,
-                        trailing_whitespace=entity.trailing_whitespace,
-                        ast_node_type=entity.ast_node_type,
-                        children_order=entity.children_order,
-                    )
-                    stamped_entities.append(stamped_entity)
-                entities = stamped_entities
+                    entities[i] = entity.model_copy(update={"metadata": metadata})
             entities = self._enrich_bidirectional_attributes(entities, content)
             relationships = self._extract_references(content, filepath, entities)
             entities.sort(key=lambda e: e.start_byte)

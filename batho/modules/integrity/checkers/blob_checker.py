@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 from typing import Any
-import sqlite3
 import orjson
 import zstandard as zstd
 
@@ -41,106 +40,69 @@ class BlobIntegrityChecker:
                 return False, f"JSON decoding failed: {e}"
         return True, None
 
-    def check_file_artifacts(self, conn: sqlite3.Connection) -> list[Issue]:
-        """Check all file artifacts views."""
+    def check_run_artifacts(self) -> list[Issue]:
+        """Check run artifact IPC table entries for structural validity."""
         issues = []
-        rows = conn.execute(
-            "SELECT run_id, file_id, bsg_agent_view, bsg_storage_view, bsg_rel_view FROM file_artifacts"
-        ).fetchall()
-
-        for row in rows:
-            run_id, file_id, agent_view, storage_view, rel_view = row
-            views = {
-                "bsg_agent_view": agent_view,
-                "bsg_storage_view": storage_view,
-                "bsg_rel_view": rel_view,
-            }
-            for view_name, blob in views.items():
-                ok, err = self._check_blob(blob)
-                if not ok:
-                    issues.append(
-                        Issue(
-                            type="corrupt_file_artifact",
-                            severity=Severity.ERROR,
-                            table="file_artifacts",
-                            identifier={"run_id": run_id, "file_id": file_id},
-                            description=f"Corrupted blob '{view_name}' for run_id {run_id}, file_id {file_id}: {err}",
-                            repair_strategy="delete_corrupt_file_artifact",
-                        )
-                    )
-                    # Break to avoid duplicating issues for the same file artifact row
-                    break
+        try:
+            rows = self.db._reader.get_all_runs()
+            for run in rows:
+                run_uuid = run.get("run_uuid", "?")
+                if run.get("status") not in ("completed", "failed", "running"):
+                    issues.append(Issue(
+                        type="invalid_run_status",
+                        severity=Severity.WARNING,
+                        table="runs",
+                        identifier={"run_uuid": run_uuid},
+                        description=f"Run {run_uuid} has unexpected status: {run.get('status')!r}",
+                    ))
+        except Exception as exc:
+            issues.append(Issue(
+                type="run_artifacts_check_error",
+                severity=Severity.ERROR,
+                table="runs",
+                identifier={},
+                description=f"Error checking run artifacts: {exc}",
+            ))
         return issues
 
-    def check_run_artifacts(self, conn: sqlite3.Connection) -> list[Issue]:
-        """Check all run artifacts views."""
+    def check_file_changelog(self) -> list[Issue]:
+        """Check file changelog IPC table for missing fields."""
         issues = []
-        columns = [
-            "context_overview",
-            "telemetry_metrics",
-            "structural_metrics",
-            "security_audit",
-            "artifact_payload",
-            "delta_stats",
-        ]
-        query = f"SELECT run_id, {', '.join(columns)} FROM run_artifacts"
-        rows = conn.execute(query).fetchall()
-
-        for row in rows:
-            run_id = row[0]
-            for i, col in enumerate(columns, start=1):
-                blob = row[i]
-                ok, err = self._check_blob(blob)
-                if not ok:
-                    issues.append(
-                        Issue(
-                            type="corrupt_run_artifact",
-                            severity=Severity.ERROR,
-                            table="run_artifacts",
-                            identifier={"run_id": run_id, "column": col},
-                            description=f"Corrupted blob column '{col}' for run_id {run_id}: {err}",
-                            repair_strategy="clear_corrupt_run_artifact",
-                        )
-                    )
-        return issues
-
-    def check_file_changelog(self, conn: sqlite3.Connection) -> list[Issue]:
-        """Check file changelog node changes blobs."""
-        issues = []
-        rows = conn.execute("SELECT id, run_id, file_id, node_changes FROM file_changelog").fetchall()
-
-        for row in rows:
-            row_id, run_id, file_id, node_changes = row
-            ok, err = self._check_blob(node_changes)
-            if not ok:
-                issues.append(
-                    Issue(
+        try:
+            rows = self.db._reader.get_file_changelog_raw()
+            for row in rows:
+                if not row.get("entity_id") or not row.get("change_kind"):
+                    issues.append(Issue(
                         type="corrupt_changelog",
-                        severity=Severity.ERROR,
+                        severity=Severity.WARNING,
                         table="file_changelog",
-                        identifier={"id": row_id},
-                        description=f"Corrupted node_changes blob in file_changelog (ID {row_id}, run_id {run_id}, file_id {file_id}): {err}",
-                        repair_strategy="delete_corrupt_changelog",
-                    )
-                )
+                        identifier={"run_uuid": row.get("run_uuid", "?")},
+                        description="Changelog row missing entity_id or change_kind",
+                    ))
+        except Exception as exc:
+            issues.append(Issue(
+                type="changelog_check_error",
+                severity=Severity.ERROR,
+                table="file_changelog",
+                identifier={},
+                description=f"Error checking changelog: {exc}",
+            ))
         return issues
 
     def run(self) -> CheckReport:
-        """Run all Phase 3 checks and apply repairs if not dry_run."""
+        """Run all Phase 3 checks."""
         start_time = time.time()
         issues = []
 
         try:
-            with self.db.connection() as conn:
-                issues.extend(self.check_file_artifacts(conn))
-                issues.extend(self.check_run_artifacts(conn))
-                issues.extend(self.check_file_changelog(conn))
+            issues.extend(self.check_run_artifacts())
+            issues.extend(self.check_file_changelog())
         except Exception as e:
             issues.append(
                 Issue(
                     type="blob_check_error",
                     severity=Severity.ERROR,
-                    table="sqlite_master",
+                    table="arrow_bundle",
                     identifier={},
                     description=f"Error executing blob integrity checks: {e}",
                 )

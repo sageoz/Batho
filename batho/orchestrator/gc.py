@@ -1,7 +1,7 @@
-"""Orchestrator for `batho gc` — garbage collection and database maintenance.
+"""Orchestrator for `batho gc` — garbage collection and bundle maintenance.
 
-Deletes specific runs/artifacts, prunes runs older than N days, vacuums,
-and provides status reports on SQLite database size and counts.
+Deletes specific runs/artifacts, prunes runs older than N days, vacuums
+orphaned Arrow IPC generations, and provides status reports.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from batho.core.config import set_active_root
-from batho.modules.storage.sqlite_registry.engine import get_database, resolve_db_path
+from batho.modules.storage.arrow_bundle import get_bundle, resolve_bundle_dir
 from batho.utils.logging import get_logger
 
 LOGGER = get_logger(__name__, component="orchestrator.gc")
@@ -36,11 +36,11 @@ def run_gc(options: GCOptions) -> dict[str, Any]:
         return {"success": False, "message": f"Repository root is not a directory: {root}"}
 
     set_active_root(root)
-    db_path = resolve_db_path(root)
-    if not db_path.exists():
-        return {"success": False, "message": f"No artifact database found at {root}."}
+    bundle_dir = resolve_bundle_dir(root)
+    if not (bundle_dir / "meta.json").exists():
+        return {"success": False, "message": f"No artifact bundle found at {root}."}
 
-    db = get_database(root)
+    db = get_bundle(root)
 
     if options.command == "run":
         if not options.run_uuid:
@@ -57,44 +57,49 @@ def run_gc(options: GCOptions) -> dict[str, Any]:
         if options.older_than is None or options.older_than < 0:
             return {"success": False, "message": "Invalid older-than threshold"}
 
-        # started_at in index_runs is ISO 8601 string, e.g. 2026-05-26T18:15:22.123456
         threshold_date = datetime.now(timezone.utc) - timedelta(days=options.older_than)
         threshold_str = threshold_date.isoformat()
 
-        with db.connection() as conn:
-            rows = conn.execute(
-                "SELECT run_uuid FROM index_runs WHERE started_at < ?",
-                (threshold_str,),
-            ).fetchall()
+        all_runs = db._reader.get_all_runs()
+        old_uuids = [
+            r["run_uuid"] for r in all_runs
+            if r.get("started_at", "") < threshold_str
+        ]
 
-            run_uuids = [row["run_uuid"] for row in rows]
-
-        if not run_uuids:
+        if not old_uuids:
             return {"success": True, "message": f"No runs found older than {options.older_than} days."}
 
-        for run_uuid in run_uuids:
+        for run_uuid in old_uuids:
             db.delete_run(run_uuid)
 
         return {
             "success": True,
-            "message": f"Successfully deleted {len(run_uuids)} runs older than {options.older_than} days: {', '.join(run_uuids)}.",
+            "message": f"Successfully deleted {len(old_uuids)} runs older than {options.older_than} days: {', '.join(old_uuids)}.",
         }
 
     elif options.command == "vacuum":
-        db.full_vacuum()
-        return {"success": True, "message": "Database vacuum completed successfully."}
+        deleted = db.garbage_collect()
+        return {"success": True, "message": f"GC complete — {deleted} orphaned IPC generation(s) removed."}
+
+    elif options.command == "orphans":
+        deleted = db.garbage_collect()
+        return {"success": True, "message": f"Orphan sweep complete — {deleted} stale IPC file(s) removed."}
 
     elif options.command == "status":
         stats = db.get_stats()
-        db_size_mb = stats.get("file_size_bytes", 0) / (1024 * 1024)
+        tables = stats.get("tables", {})
+        total_mb = sum(t.get("size_bytes", 0) for t in tables.values()) / (1024 * 1024)
+        runs_count = tables.get("runs", {}).get("rows", 0)
+        tracking_count = tables.get("file_tracking", {}).get("rows", 0)
+        artifacts_count = tables.get("run_artifacts", {}).get("rows", 0)
         msg = (
-            f"Storage Status for {db_path.name}:\n"
-            f"  Database size: {db_size_mb:.2f} MB\n"
-            f"  Total runs: {stats.get('index_runs_count', 0)}\n"
-            f"  File artifacts: {stats.get('file_artifacts_count', 0)}\n"
-            f"  File tracking entries: {stats.get('file_tracking_count', 0)}\n"
-            f"  Run artifacts: {stats.get('run_artifacts_count', 0)}\n"
-            f"  Query entities: {stats.get('query_entities_count', 0)}"
+            f"Storage Status for {bundle_dir.name}:\n"
+            f"  Total artifact size: {total_mb:.2f} MB\n"
+            f"  Arrow generation:    {stats.get('generation', 0)}\n"
+            f"  Total runs:          {runs_count}\n"
+            f"  File tracking:       {tracking_count}\n"
+            f"  Run artifacts:       {artifacts_count}\n"
+            f"  Last run:            {stats.get('last_run_uuid', 'none')}"
         )
         return {"success": True, "message": msg}
 

@@ -20,7 +20,7 @@ class FixReport:
     started_at: str
     completed_at: str
     root: str
-    db_path: str
+    bundle_dir: str
     mode: str
     summary: FixSummary
     check_results: list[CheckReport]
@@ -49,7 +49,7 @@ class ReportGenerator:
             started_at=result.started_at,
             completed_at=result.completed_at,
             root=result.root,
-            db_path=result.db_path,
+            bundle_dir=result.bundle_dir,
             mode=result.mode,
             summary=result.summary,
             check_results=result.check_results,
@@ -69,7 +69,7 @@ class ReportGenerator:
             "started_at": report.started_at,
             "completed_at": report.completed_at,
             "root": report.root,
-            "db_path": report.db_path,
+            "bundle_dir": report.bundle_dir,
             "mode": report.mode,
             "summary": {
                 "checks_passed": report.summary.checks_passed,
@@ -163,7 +163,7 @@ class ReportGenerator:
         # Header
         lines.append("🔍 Batho Fix Report")
         lines.append("━" * 50)
-        lines.append(f"Database:    {report.db_path}")
+        lines.append(f"Database:    {report.bundle_dir}")
         lines.append(f"Mode:        {report.mode} {'(use --deep for full scan)' if report.mode == 'quick' else ''}")
         lines.append(f"Duration:    {self._format_duration(report.summary.duration_ms)}")
         lines.append("")

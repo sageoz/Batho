@@ -10,6 +10,7 @@ import fnmatch
 import hashlib
 import json
 import re
+import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -36,17 +37,9 @@ _LOGGER = get_logger(__name__, component="bsg_rules")
 _SCHEMA_VERSION = "bsg-plugin.v2"
 _CACHE_SCHEMA_VERSION = "bsg-rules-cache.v2"
 _CACHE_FILENAME = "rules_cache.bin"
-_PERF_SCHEMA_VERSION = "bsg-perf.v1"
 
 _PLUGIN_ALIASES: dict[str, str] = {
     "bsg_core": "bsg_graph_foundation",
-}
-
-_ENTITY_TYPE_ALIASES: dict[str, str] = {
-    "SYNTAX_GLUE": "SYNTAX_GLUE",
-    "GLOBAL_STATEMENT": "GLOBAL_STATEMENT",
-    "IMPORT_BLOCK": "IMPORT_BLOCK",
-    "COMMENT_BLOCK": "COMMENT_BLOCK",
 }
 
 _EDGE_ALIASES: dict[str, str] = {
@@ -444,6 +437,7 @@ class RuleDefinition:
 
 _PLUGIN_SCHEMA_CACHE: dict[str, dict[str, Any]] = {}
 _PLUGIN_VALIDATORS: dict[str, Any] = {}
+_PLUGIN_VALIDATOR_LOCK: threading.Lock = threading.Lock()
 
 
 def _schema_path() -> Path:
@@ -467,7 +461,11 @@ def _plugins_root() -> Path:
 
 
 def _get_plugin_validator(schema_version: str = _SCHEMA_VERSION) -> Any:
-    """Return a cached JSON Schema validator for the plugin schema."""
+    """Return a cached JSON Schema validator for the plugin schema.
+
+    Thread-safe: uses double-checked locking so the validator is built at most
+    once per schema version even under concurrent BSG build calls.
+    """
 
     if schema_version not in (_SCHEMA_VERSION, "bsg-plugin.v1"):
         raise ValueError(
@@ -479,26 +477,30 @@ def _get_plugin_validator(schema_version: str = _SCHEMA_VERSION) -> Any:
     if validator is not None:
         return validator
 
-    if Draft202012Validator is None:
-        raise RuntimeError(
-            "jsonschema is required for BSG plugin validation; install the 'jsonschema' package"
-        )
+    with _PLUGIN_VALIDATOR_LOCK:
+        validator = _PLUGIN_VALIDATORS.get(schema_version)
+        if validator is not None:
+            return validator
 
-    # Use v1 schema for v1 plugins, v2 for v2
-    schema_file = _schema_v1_path() if schema_version == "bsg-plugin.v1" else _schema_path()
-    try:
-        schema_doc = json.loads(schema_file.read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise RuntimeError(f"Failed to read plugin schema: {schema_file}") from exc
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"Invalid plugin schema JSON at {schema_file}: {exc}"
-        ) from exc
+        if Draft202012Validator is None:
+            raise RuntimeError(
+                "jsonschema is required for BSG plugin validation; install the 'jsonschema' package"
+            )
 
-    _PLUGIN_SCHEMA_CACHE[schema_version] = schema_doc
-    validator = Draft202012Validator(schema_doc)
-    _PLUGIN_VALIDATORS[schema_version] = validator
-    return validator
+        schema_file = _schema_v1_path() if schema_version == "bsg-plugin.v1" else _schema_path()
+        try:
+            schema_doc = json.loads(schema_file.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise RuntimeError(f"Failed to read plugin schema: {schema_file}") from exc
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Invalid plugin schema JSON at {schema_file}: {exc}"
+            ) from exc
+
+        _PLUGIN_SCHEMA_CACHE[schema_version] = schema_doc
+        validator = Draft202012Validator(schema_doc)
+        _PLUGIN_VALIDATORS[schema_version] = validator
+        return validator
 
 
 def _detect_plugin_schema_version(raw_data: Any) -> str:
@@ -553,9 +555,20 @@ def _read_cache(cache_path: Path) -> dict[str, Any] | None:
 
 
 def _write_cache(cache_path: Path, payload: dict[str, Any]) -> None:
-    tmp_path = cache_path.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    tmp_path.replace(cache_path)
+    """Write cache atomically using tempfile + os.replace to avoid race conditions.
+
+    Uses batho.utils.file_io.write_atomically for proper multiprocessing safety.
+    """
+    from batho.utils.file_io import write_atomically
+    success = write_atomically(
+        cache_path,
+        payload,
+        is_json=True,
+        indent=None,  # Compact JSON for cache
+        ensure_parent=True,
+    )
+    if not success:
+        raise OSError(f"Failed to write cache atomically to {cache_path}")
 
 
 def _plugin_display_name(plugin_id: str) -> str:
@@ -2879,6 +2892,152 @@ def _derive_service_tag(rel_file_path: str) -> str | None:
     return None
 
 
+def _apply_rule_actions(
+    rule: "RuleDefinition",
+    entity: "Entity",
+    rel_file_path: str,
+    metadata: dict[str, Any],
+    entity_tags_cache: dict[str, set[str]],
+) -> tuple[bool, set[str]]:
+    """Apply all actions of a matched rule to *metadata* in-place.
+
+    Returns ``(changed, updated_entity_tags)`` so callers can propagate tag
+    cache updates without re-deriving them.  ``entity_tags_cache`` is mutated
+    when ``add_usn_tags`` fires.
+    """
+    changed = False
+    entity_id = entity.id
+    entity_tags = entity_tags_cache.get(entity_id, set())
+
+    for key, value in rule.actions.metadata.items():
+        if metadata.get(key) != value:
+            metadata[key] = value
+            changed = True
+
+    if rule.actions.add_usn_tags:
+        current_tags = metadata.get("bsg.usn")
+        existing = current_tags if isinstance(current_tags, list) else []
+        merged_tags = sorted(
+            {str(item) for item in existing} | set(rule.actions.add_usn_tags)
+        )
+        if existing != merged_tags:
+            metadata["bsg.usn"] = merged_tags
+            changed = True
+            entity_tags = {str(t).strip().lower() for t in merged_tags if str(t).strip()}
+            entity_tags_cache[entity_id] = entity_tags
+
+    if rule.actions.derive_scope_tier:
+        scope_tier = _derive_scope_tier(entity)
+        if metadata.get("bsg.scope_tier") != scope_tier:
+            metadata["bsg.scope_tier"] = scope_tier
+            changed = True
+
+    if rule.actions.derive_service_tag:
+        service_tag = _derive_service_tag(rel_file_path)
+        if service_tag and metadata.get("bsg.service_tag") != service_tag:
+            metadata["bsg.service_tag"] = service_tag
+            changed = True
+
+    if rule.actions.truncate_docstring:
+        docstring = metadata.get("docstring")
+        if docstring and isinstance(docstring, str):
+            max_len = rule.actions.max_docstring_length
+            if max_len > 0 and len(docstring) > max_len:
+                metadata["docstring"] = docstring[:max_len] + "..."
+                changed = True
+
+    if (
+        rule.actions.normalize_entry_point
+        and entity.type == EntityType.ENTRY_POINT
+    ):
+        raw_value = metadata.get("invocation_snippet")
+        raw_snippet = (
+            str(raw_value)
+            if isinstance(raw_value, str) and raw_value.strip()
+            else entity.name
+        )
+        normalized_snippet = raw_snippet.replace("'", '"')
+        if (
+            (
+                "__name__" in normalized_snippet
+                and '"__main__"' in normalized_snippet
+            )
+            or raw_snippet == "__name__"
+        ) and entity.name != "__main__":
+            metadata["invocation_snippet"] = raw_snippet
+            metadata["bsg.normalized_name"] = "__main__"
+            changed = True
+
+    if rule.actions.detect_language:
+        language = rule.actions.detect_language.get("language")
+        if language and metadata.get("bsg.language") != language:
+            metadata["bsg.language"] = language
+            changed = True
+
+    if rule.actions.detect_framework:
+        framework = rule.actions.detect_framework.get("framework")
+        language = rule.actions.detect_framework.get("language")
+        if framework:
+            current_frameworks = metadata.get("bsg.frameworks", [])
+            if not isinstance(current_frameworks, list):
+                current_frameworks = []
+            framework_added = False
+            if framework not in current_frameworks:
+                metadata["bsg.frameworks"] = current_frameworks + [framework]
+                framework_added = True
+            if language and metadata.get("bsg.language") != language:
+                metadata["bsg.language"] = language
+                changed = True
+            elif framework_added:
+                changed = True
+
+    if rule.actions.detect_package_manager:
+        package_manager = rule.actions.detect_package_manager.get("package_manager")
+        if package_manager and metadata.get("bsg.package_manager") != package_manager:
+            metadata["bsg.package_manager"] = package_manager
+            changed = True
+
+    if rule.actions.detect_infra:
+        infra_type = rule.actions.detect_infra.get("infra_type")
+        if infra_type:
+            current_infra = metadata.get("bsg.infra", [])
+            if not isinstance(current_infra, list):
+                current_infra = []
+            if infra_type not in current_infra:
+                metadata["bsg.infra"] = current_infra + [infra_type]
+                changed = True
+
+    if rule.actions.assign_category:
+        category = rule.actions.assign_category.get("category")
+        if category and metadata.get("bsg.category") != category:
+            metadata["bsg.category"] = category
+            changed = True
+
+    if rule.actions.verify_coverage:
+        metadata["bsg.verify_coverage"] = True
+        changed = True
+
+    if rule.actions.verify_integrity:
+        metadata["bsg.verify_integrity"] = True
+        changed = True
+
+    if rule.actions.add_reconstruction_metadata:
+        for key, value in rule.actions.add_reconstruction_metadata.items():
+            if metadata.get(f"bsg.reconstruction.{key}") != value:
+                metadata[f"bsg.reconstruction.{key}"] = value
+                changed = True
+
+    if rule.actions.flag_for_reconstruction:
+        metadata["bsg.flag_for_reconstruction"] = True
+        changed = True
+
+    if rule.actions.apply_token_budget is not None:
+        metadata["bsg.token_budget"] = rule.actions.apply_token_budget
+        changed = True
+
+    return changed, entity_tags
+
+
 def apply_semantic_overlay(
     graph: InMemoryGraph,
     root_path: Path,
@@ -3080,142 +3239,10 @@ def apply_rule_plugins(
                     }
                 )
 
-            for key, value in rule.actions.metadata.items():
-                if metadata.get(key) != value:
-                    metadata[key] = value
-                    changed = True
-
-            if rule.actions.add_usn_tags:
-                current_tags = metadata.get("bsg.usn")
-                existing = current_tags if isinstance(current_tags, list) else []
-                merged_tags = sorted(
-                    {str(item) for item in existing} | set(rule.actions.add_usn_tags)
-                )
-                if existing != merged_tags:
-                    metadata["bsg.usn"] = merged_tags
-                    changed = True
-                    entity_tags_cache[entity_id] = {str(item).strip().lower() for item in merged_tags if str(item).strip()}
-                    entity_tags = entity_tags_cache[entity_id]
-
-            if rule.actions.derive_scope_tier:
-                scope_tier = _derive_scope_tier(entity)
-                if metadata.get("bsg.scope_tier") != scope_tier:
-                    metadata["bsg.scope_tier"] = scope_tier
-                    changed = True
-
-            if rule.actions.derive_service_tag:
-                service_tag = _derive_service_tag(rel_file_path)
-                if service_tag and metadata.get("bsg.service_tag") != service_tag:
-                    metadata["bsg.service_tag"] = service_tag
-                    changed = True
-
-            # BSG Optimization: Truncate docstring
-            if rule.actions.truncate_docstring:
-                docstring = metadata.get("docstring")
-                if docstring and isinstance(docstring, str):
-                    max_len = rule.actions.max_docstring_length
-                    if max_len > 0 and len(docstring) > max_len:
-                        metadata["docstring"] = docstring[:max_len] + "..."
-                        changed = True
-
-            # BSG Optimization: Normalize entry point
-            if (
-                rule.actions.normalize_entry_point
-                and entity.type == EntityType.ENTRY_POINT
-            ):
-                raw_value = metadata.get("invocation_snippet")
-                raw_snippet = (
-                    str(raw_value)
-                    if isinstance(raw_value, str) and raw_value.strip()
-                    else entity.name
-                )
-                normalized_snippet = raw_snippet.replace("'", '"')
-                if (
-                    (
-                        "__name__" in normalized_snippet
-                        and '"__main__"' in normalized_snippet
-                    )
-                    or raw_snippet == "__name__"
-                ) and entity.name != "__main__":
-                    metadata["invocation_snippet"] = raw_snippet
-                    metadata["bsg.normalized_name"] = "__main__"
-                    changed = True
-
-            # Detection actions
-            if rule.actions.detect_language:
-                language = rule.actions.detect_language.get("language")
-                if language and metadata.get("bsg.language") != language:
-                    metadata["bsg.language"] = language
-                    changed = True
-
-            if rule.actions.detect_framework:
-                framework = rule.actions.detect_framework.get("framework")
-                language = rule.actions.detect_framework.get("language")
-                if framework:
-                    current_frameworks = metadata.get("bsg.frameworks", [])
-                    if not isinstance(current_frameworks, list):
-                        current_frameworks = []
-
-                    framework_added = False
-                    if framework not in current_frameworks:
-                        metadata["bsg.frameworks"] = current_frameworks + [framework]
-                        framework_added = True
-
-                    # Always validate language consistency, not just when adding framework
-                    if language and metadata.get("bsg.language") != language:
-                        metadata["bsg.language"] = language
-                        changed = True
-                    elif framework_added:
-                        changed = True
-
-            if rule.actions.detect_package_manager:
-                package_manager = rule.actions.detect_package_manager.get(
-                    "package_manager"
-                )
-                if (
-                    package_manager
-                    and metadata.get("bsg.package_manager") != package_manager
-                ):
-                    metadata["bsg.package_manager"] = package_manager
-                    changed = True
-
-            if rule.actions.detect_infra:
-                infra_type = rule.actions.detect_infra.get("infra_type")
-                if infra_type:
-                    current_infra = metadata.get("bsg.infra", [])
-                    if not isinstance(current_infra, list):
-                        current_infra = []
-                    if infra_type not in current_infra:
-                        metadata["bsg.infra"] = current_infra + [infra_type]
-                        changed = True
-
-            if rule.actions.assign_category:
-                category = rule.actions.assign_category.get("category")
-                if category and metadata.get("bsg.category") != category:
-                    metadata["bsg.category"] = category
-                    changed = True
-
-            # Bidirectional actions (v2)
-            if rule.actions.verify_coverage:
-                metadata["bsg.verify_coverage"] = True
-                changed = True
-
-            if rule.actions.verify_integrity:
-                metadata["bsg.verify_integrity"] = True
-                changed = True
-
-            if rule.actions.add_reconstruction_metadata:
-                for key, value in rule.actions.add_reconstruction_metadata.items():
-                    if metadata.get(f"bsg.reconstruction.{key}") != value:
-                        metadata[f"bsg.reconstruction.{key}"] = value
-                        changed = True
-
-            if rule.actions.flag_for_reconstruction:
-                metadata["bsg.flag_for_reconstruction"] = True
-                changed = True
-
-            if rule.actions.apply_token_budget is not None:
-                metadata["bsg.token_budget"] = rule.actions.apply_token_budget
+            action_changed, entity_tags = _apply_rule_actions(
+                rule, entity, rel_file_path, metadata, entity_tags_cache
+            )
+            if action_changed:
                 changed = True
 
         if matched_rules:
@@ -3308,7 +3335,7 @@ def apply_rule_plugins(
             }
 
         perf_payload = {
-            "schema_version": _PERF_SCHEMA_VERSION,
+            "schema_version": "bsg-perf.v1",
             "total_elapsed_ns": int(overall_elapsed_ns),
             "entities_scanned": len(graph.entities),
             "rule_count": len(rules),
@@ -3629,101 +3656,11 @@ def apply_bsg_rules_to_entities(
             matched_rules.append(rule.name)
             plugin_hits[rule.plugin] = plugin_hits.get(rule.plugin, 0) + 1
 
-            # Apply actions
-            for key, value in rule.actions.metadata.items():
-                if metadata.get(key) != value:
-                    metadata[key] = value
-                    changed = True
-
-            if rule.actions.add_usn_tags:
-                current_tags = metadata.get("bsg.usn")
-                existing = current_tags if isinstance(current_tags, list) else []
-                merged_tags = sorted(
-                    {str(item) for item in existing} | set(rule.actions.add_usn_tags)
-                )
-                if existing != merged_tags:
-                    metadata["bsg.usn"] = merged_tags
-                    changed = True
-                    entity_tags_cache[entity_id] = {
-                        str(item).strip().lower() for item in merged_tags if str(item).strip()
-                    }
-                    entity_tags = entity_tags_cache[entity_id]
-
-            if rule.actions.derive_scope_tier:
-                scope_tier = _derive_scope_tier(entity)
-                if metadata.get("bsg.scope_tier") != scope_tier:
-                    metadata["bsg.scope_tier"] = scope_tier
-                    changed = True
-
-            if rule.actions.derive_service_tag:
-                service_tag = _derive_service_tag(rel_file_path)
-                if service_tag and metadata.get("bsg.service_tag") != service_tag:
-                    metadata["bsg.service_tag"] = service_tag
-                    changed = True
-
-            if rule.actions.truncate_docstring:
-                docstring = metadata.get("docstring")
-                if docstring and isinstance(docstring, str):
-                    max_len = rule.actions.max_docstring_length
-                    if max_len > 0 and len(docstring) > max_len:
-                        metadata["docstring"] = docstring[:max_len] + "..."
-                        changed = True
-
-            if rule.actions.normalize_entry_point and entity.type == EntityType.ENTRY_POINT:
-                raw_value = metadata.get("invocation_snippet")
-                raw_snippet = (
-                    str(raw_value) if isinstance(raw_value, str) and raw_value.strip() else entity.name
-                )
-                normalized_snippet = raw_snippet.replace("'", '"')
-                if (
-                    ("__name__" in normalized_snippet and '"__main__"' in normalized_snippet)
-                    or raw_snippet == "__name__"
-                ) and entity.name != "__main__":
-                    metadata["invocation_snippet"] = raw_snippet
-                    metadata["bsg.normalized_name"] = "__main__"
-                    changed = True
-
-            if rule.actions.detect_language:
-                language = rule.actions.detect_language.get("language")
-                if language and metadata.get("bsg.language") != language:
-                    metadata["bsg.language"] = language
-                    changed = True
-
-            if rule.actions.detect_framework:
-                framework = rule.actions.detect_framework.get("framework")
-                language = rule.actions.detect_framework.get("language")
-                if framework:
-                    current_frameworks = metadata.get("bsg.frameworks", [])
-                    if not isinstance(current_frameworks, list):
-                        current_frameworks = []
-                    if framework not in current_frameworks:
-                        metadata["bsg.frameworks"] = current_frameworks + [framework]
-                        changed = True
-                if language and metadata.get("bsg.language") != language:
-                    metadata["bsg.language"] = language
-                    changed = True
-
-            if rule.actions.detect_package_manager:
-                package_manager = rule.actions.detect_package_manager.get("package_manager")
-                if package_manager and metadata.get("bsg.package_manager") != package_manager:
-                    metadata["bsg.package_manager"] = package_manager
-                    changed = True
-
-            if rule.actions.detect_infra:
-                infra_type = rule.actions.detect_infra.get("infra_type")
-                if infra_type:
-                    current_infra = metadata.get("bsg.infra", [])
-                    if not isinstance(current_infra, list):
-                        current_infra = []
-                    if infra_type not in current_infra:
-                        metadata["bsg.infra"] = current_infra + [infra_type]
-                        changed = True
-
-            if rule.actions.assign_category:
-                category = rule.actions.assign_category.get("category")
-                if category and metadata.get("bsg.category") != category:
-                    metadata["bsg.category"] = category
-                    changed = True
+            action_changed, entity_tags = _apply_rule_actions(
+                rule, entity, rel_file_path, metadata, entity_tags_cache
+            )
+            if action_changed:
+                changed = True
 
         if matched_rules:
             existing_rules = metadata.get("bsg.rules")

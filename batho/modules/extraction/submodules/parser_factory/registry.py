@@ -445,7 +445,7 @@ def get_extractor(extension: str) -> ASTExtractor | None:
     Examples::
 
         >>> get_extractor(".py")
-        <PythonExtractor language='python'>
+        <ConfigurableExtractor language='python'>
         >>> get_extractor(".xyz")
         None
         >>> get_extractor(".php")  # if tree-sitter-php not installed

@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import re
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set, Iterator
+
+from batho.core.config import get_active_root
+
+# Pre-compiled regex for removing parameter hash suffixes from symbol names
+_PARAM_HASH_PATTERN = re.compile(r'_\[[a-fA-F0-9]+\]')
 
 
 @dataclass
@@ -177,8 +184,7 @@ class ScopeManager:
             is_external=False
         )
 
-        import re
-        clean_name = re.sub(r'_\[[a-fA-F0-9]+\]', '', name)
+        clean_name = _PARAM_HASH_PATTERN.sub('', name)
 
         if is_global or not current_scope:
             partition = self._get_partition_key(name)
@@ -208,9 +214,6 @@ class ScopeManager:
         
         # Calculate qualified names relative to the package root
         if is_global:
-            from pathlib import Path
-            from batho.core.config import get_active_root
-            
             root = get_active_root()
             module_parts = []
             if root:
@@ -281,7 +284,8 @@ class ScopeManager:
 
     def resolve_symbol_strict(self, name: str) -> Optional[SymbolInfo]:
         """
-        Resolve symbol strictly. No fuzzy fallback, no scanning other partitions.
+        Resolve symbol with exact match only — no fuzzy fallback.
+        Currently equivalent to resolve_symbol as fuzzy matching is not implemented.
         """
         return self.resolve_symbol(name)
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 import time
 import hashlib
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from batho.modules.extraction.scope_manager import ScopeManager
 from batho.core.schemas import PackageManager
@@ -12,6 +14,8 @@ from .stdlib_tables import StdlibSymbolTable
 from .popular_packages import PopularPackagesDB
 from .introspector import ThirdPartyIntrospector
 from .resolution_cache import ResolutionCache
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class DependencyIndexStats:
@@ -53,8 +57,7 @@ class DependencyIndexer:
             timeout_seconds=cfg.get("introspection", {}).get("timeout_seconds", 5)
         )
 
-        cache_dir = cache_dir
-        cache_path = root / cache_dir
+        cache_path = root / cache_dir if cache_dir else root / ".batho" / "cache"
         self.cache = ResolutionCache(cache_path)
 
     def run(self) -> DependencyIndexStats:
@@ -72,12 +75,12 @@ class DependencyIndexer:
             # 2. Index Standard Libraries
             self._index_stdlib()
             
-            # 3. Index Third-party Dependencies
-            for dep in manifests:
-                self._index_dependency(dep)
+            # 3. Index Third-party Dependencies (parallelized)
+            self._index_dependencies_parallel(manifests)
                 
         except Exception as e:
-            self.stats.errors.append(str(e))
+            logger.exception("Dependency indexing failed")
+            self.stats.errors.append(f"{type(e).__name__}: {e}")
             
         self.stats.duration_ms = (time.monotonic() - t0) * 1000
         return self.stats
@@ -88,90 +91,146 @@ class DependencyIndexer:
         if not self.cfg.get("stdlib", {}).get("enabled", True):
             return
 
+        # Batch add symbols to minimize lock contention
+        symbols_to_add: List[tuple[str, str, str]] = []
+        registered_modules: Set[str] = set()
+
         for lang in enabled_langs:
             modules = self.stdlib.get_all_modules(lang)
             for mod_name, symbols in modules.items():
                 self.stats.stdlib_modules_indexed += 1
+                
+                # Register module once per language
+                module_key = f"{lang}:{mod_name}"
+                if module_key not in registered_modules:
+                    registered_modules.add(module_key)
+                    symbols_to_add.append((
+                        mod_name,
+                        f"batho stdlib {lang} {lang} {mod_name}/",
+                        "module"
+                    ))
+                
                 for sym in symbols:
-                    # Synthetic ID for stdlib
-                    # batho <manager> <name> <version> <path>
-                    # For stdlib, we use 'stdlib' as manager and version
                     qualified_name = f"{mod_name}.{sym}"
-                    symbol_id = f"batho stdlib {lang} {lang} {mod_name}/{sym}."
+                    
+                    # Language-specific symbol ID format
                     if lang == "python":
                         symbol_id = f"batho pip python 3.x {mod_name}/{sym}()."
                     elif lang == "javascript":
                         symbol_id = f"batho npm nodejs 20.x {mod_name}/{sym}#"
+                    else:
+                        symbol_id = f"batho stdlib {lang} {lang} {mod_name}/{sym}."
                         
-                    self.scope_manager.add_external_symbol(
-                        name=qualified_name,
-                        symbol_id=symbol_id,
-                        symbol_type="function" # default
-                    )
-                    # Register the module itself to enable dot-path resolution
-                    if not self.scope_manager.resolve_symbol_strict(mod_name):
-                        self.scope_manager.add_external_symbol(
-                            name=mod_name,
-                            symbol_id=f"batho stdlib {lang} {lang} {mod_name}/",
-                            symbol_type="module"
-                        )
+                    symbols_to_add.append((qualified_name, symbol_id, "function"))
                     self.stats.symbols_indexed += 1
 
-    def _index_dependency(self, dep: DependencySpec):
-        """Index a single third-party dependency."""
-        # Check cache first
-        cached_symbols = self.cache.get_symbols(dep.name, dep.version_spec, dep.manager.value)
-        if cached_symbols:
-            self.stats.deps_cached += 1
-            self._add_symbols_to_scope(dep, cached_symbols)
+        # Batch add all symbols at once
+        for name, symbol_id, sym_type in symbols_to_add:
+            self.scope_manager.add_external_symbol(
+                name=name,
+                symbol_id=symbol_id,
+                symbol_type=sym_type
+            )
+
+    def _index_dependencies_parallel(self, manifests: List[DependencySpec]) -> None:
+        """Index dependencies in parallel using thread pool."""
+        if not manifests:
             return
 
-        # Check if we should introspect
+        # Filter to unique deps that need introspection
+        unique_deps: Dict[str, DependencySpec] = {}
+        for dep in manifests:
+            key = f"{dep.manager.value}:{dep.name}:{dep.version_spec}"
+            if key not in unique_deps:
+                unique_deps[key] = dep
+
+        deps_to_introspect = []
         full_scan = self.cfg.get("introspection", {}).get("full_scan", False)
-        if not self.popular_db.should_introspect(dep.language, dep.name, full_scan):
+        
+        for dep in unique_deps.values():
+            # Check cache first
+            cached = self.cache.get_symbols(dep.name, dep.version_spec, dep.manager.value)
+            if cached:
+                self.stats.deps_cached += 1
+                self._add_symbols_to_scope(dep, cached)
+                continue
+            
+            # Check if we should introspect
+            if self.popular_db.should_introspect(dep.language, dep.name, full_scan):
+                deps_to_introspect.append(dep)
+
+        if not deps_to_introspect:
             return
 
-        # Introspect
-        symbols_map = {}
-        if dep.language == "python" and self.cfg.get("introspection", {}).get("enabled", True):
-            # Try to find venv
-            venv_path = self.root / ".venv"
-            if not venv_path.exists(): venv_path = None
-            
-            symbols_map = self.introspector.introspect_python(dep.name, venv_path)
-            if symbols_map:
-                self.stats.deps_introspected += 1
-                self.cache.put_symbols(dep.name, dep.version_spec, dep.manager.value, symbols_map)
-                self._add_symbols_to_scope(dep, symbols_map)
+        # Introspect in parallel (I/O bound - safe to use threads)
+        max_workers = min(4, len(deps_to_introspect))
+        venv_path = self._find_venv()
         
-        # Placeholder for other languages introspection
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._introspect_dep, dep, venv_path): dep 
+                for dep in deps_to_introspect
+            }
+            
+            for future in as_completed(futures):
+                dep = futures[future]
+                try:
+                    symbols_map = future.result()
+                    if symbols_map:
+                        self.stats.deps_introspected += 1
+                        self.cache.put_symbols(dep.name, dep.version_spec, dep.manager.value, symbols_map)
+                        self._add_symbols_to_scope(dep, symbols_map)
+                except Exception as e:
+                    logger.warning(f"Failed to introspect {dep.name}: {e}")
+
+    def _find_venv(self) -> Path | None:
+        """Find virtual environment path."""
+        venv_paths = [
+            self.root / ".venv",
+            self.root / "venv",
+            self.root / ".env",
+            self.root / "env",
+        ]
+        for venv_path in venv_paths:
+            if venv_path.exists():
+                return venv_path
+        return None
+
+    def _introspect_dep(self, dep: DependencySpec, venv_path: Path | None) -> Dict[str, List[str]]:
+        """Introspect a single dependency."""
+        if dep.language == "python" and self.cfg.get("introspection", {}).get("enabled", True):
+            return self.introspector.introspect_python(dep.name, venv_path)
+        return {}
 
     def _add_symbols_to_scope(self, dep: DependencySpec, symbols_map: Dict[str, List[str]]):
-        """Add symbols from a package to the scope manager."""
+        """Add symbols from a package to the scope manager (batched for performance)."""
+        symbols_to_add: List[tuple[str, str, str]] = []
+        registered_modules: Set[str] = set()
+        suffix = "()." if dep.language == "python" else "#"
+        
         for mod_path, symbols in symbols_map.items():
+            # Register module once
+            if mod_path not in registered_modules:
+                registered_modules.add(mod_path)
+                symbols_to_add.append((
+                    mod_path,
+                    f"batho {dep.manager.value} {dep.name} {dep.version_spec} {mod_path}/",
+                    "module"
+                ))
+            
             for sym in symbols:
                 qualified_name = f"{mod_path}.{sym}"
-                
-                # Synthetic ID format (SCIP-compatible):
-                # batho pip requests 2.31.0 requests/Session().
-                # batho npm express 4.18.2 express/Router#
-                
-                suffix = "()." if dep.language == "python" else "#"
                 symbol_id = f"batho {dep.manager.value} {dep.name} {dep.version_spec} {mod_path}/{sym}{suffix}"
-                
-                self.scope_manager.add_external_symbol(
-                    name=qualified_name,
-                    symbol_id=symbol_id,
-                    symbol_type="external"
-                )
-                # Register the module itself to enable dot-path resolution
-                if not self.scope_manager.resolve_symbol_strict(mod_path):
-                    self.scope_manager.add_external_symbol(
-                        name=mod_path,
-                        symbol_id=f"batho {dep.manager.value} {dep.name} {dep.version_spec} {mod_path}/",
-                        symbol_type="module"
-                    )
+                symbols_to_add.append((qualified_name, symbol_id, "external"))
                 self.stats.symbols_indexed += 1
+
+        # Batch add all symbols
+        for name, symbol_id, sym_type in symbols_to_add:
+            self.scope_manager.add_external_symbol(
+                name=name,
+                symbol_id=symbol_id,
+                symbol_type=sym_type
+            )
 
 def build_dependency_index(
     root: Path,

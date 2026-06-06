@@ -10,7 +10,7 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
 authors = [
-    { name = "Batho", email = "hello@batho.dev" },
+    { name = "Batho", email = "hello@sageoz.org" },
 ]
 keywords = ["code-indexer", "bsg", "ast", "tree-sitter", "code-graph", "static-analysis", "code-intelligence", "hypergraph"]
 classifiers = [
@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: Build Tools",
 ]
-urls = { homepage = "https://batho.dev", repository = "https://github.com/batho/batho", issues = "https://github.com/batho/batho/issues" }
+urls = { homepage = "https://batho.sageoz.org", repository = "https://github.com/sageoz/batho", issues = "https://github.com/sageoz/batho/issues" }
 dependencies = [
     "tree-sitter>=0.25.0",
     "tree-sitter-language-pack>=0.6.0,<1.0.0",
@@ -38,6 +38,8 @@ dependencies = [
     "orjson>=3.10.0",
     "zstandard>=0.22.0",
     "psutil>=7.2.2",
+    "pyarrow>=14.0",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]

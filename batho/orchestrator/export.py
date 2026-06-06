@@ -1,8 +1,9 @@
 """Orchestrator for `batho export` — multi-view JSON export of BSG artifacts.
 
-Loads the latest BSG artifact from the `artifact_<dirname>.batho` SQLite database and serializes
+Loads the latest BSG artifact from the Arrow Bundle in .batho/artifact/ and serializes
 it into one of several JSON views (storage, agent, overview, files, symbols,
 dependencies, delta) with optional streaming for large repositories.
+Use --pack to produce a transport artifact_<dir>.batho ZIP.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ class ExportOptions:
     token_budget: int | None = None
     baseline_path: Path | None = None
     include_relationships: bool = False
+    pack: bool = False
 
 
 @dataclass
@@ -71,27 +73,26 @@ VALID_CATEGORIES = frozenset(["source", "test", "doc", "config", "infra", "all"]
 # ---------------------------------------------------------------------------
 
 
-def _find_db_path(root: Path) -> Path | None:
-    """Locate the database for the given root using config or fallback."""
-    from batho.modules.storage.sqlite_registry.engine import resolve_db_path
+def _find_bundle_dir(root: Path) -> Path | None:
+    """Locate the Arrow bundle artifact dir for the given root."""
+    from batho.modules.storage.arrow_bundle import resolve_bundle_dir
 
-    db_path = resolve_db_path(root)
-    if db_path.exists():
-        return db_path
+    bundle_dir = resolve_bundle_dir(root)
+    if (bundle_dir / "meta.json").exists():
+        return bundle_dir
     return None
 
 
-def _load_bsg_map_from_db(
-    db_path: Path, run_id: str | None, root: Path
+def _load_bsg_map_from_bundle(
+    bundle_dir: Path, run_id: str | None, root: Path
 ) -> "BSGMap | None":
-    """Load and reconstruct a BSGMap from file artifacts in the database."""
-    from batho.modules.storage.sqlite_registry.engine import BathoDatabase
+    """Load and reconstruct a BSGMap from file artifacts in the Arrow Bundle."""
+    from batho.modules.storage.arrow_bundle import get_bundle
     from batho.modules.compression.bsg_map import BSGMap
     from batho.core.schemas import Entity, EntityType, FileSnapshot, Relationship
 
-    db = BathoDatabase(db_path, repo_root=root)
+    db = get_bundle(root)
 
-    # Resolve run_id to internal ID
     if run_id is None:
         run_id = db.get_latest_run_id()
     if run_id is None:
@@ -101,7 +102,6 @@ def _load_bsg_map_from_db(
     if run_internal_id is None:
         return None
 
-    # Get file artifacts with BSG data
     artifacts = db.get_file_artifacts(run_internal_id, include_storage=True)
     if not artifacts:
         return None
@@ -433,6 +433,34 @@ def run_export(options: ExportOptions) -> ExportResult:
         )
 
     set_active_root(root)
+
+    # --- Pack mode: produce transport ZIP and return early ---
+    if options.pack:
+        from batho.modules.storage.arrow_bundle.manager import BathoBundleManager
+        from batho.modules.storage.arrow_bundle import resolve_bundle_dir
+
+        bundle_dir = resolve_bundle_dir(root)
+        if not (bundle_dir / "meta.json").exists():
+            return ExportResult(
+                success=False,
+                errors=[f"No artifact bundle found at {root}. Run: batho build --root {root}"],
+            )
+
+        root_name = root.resolve().name
+        sanitized = __import__("re").sub(r"[^a-z0-9_-]", "-", root_name.lower()).strip("-")
+        default_zip = root / f"artifact_{sanitized}.batho"
+        zip_path = options.output or default_zip
+
+        try:
+            manager = BathoBundleManager(bundle_dir)
+            bsg_current_dir = options.root / ".batho" / "bsg" / "current"
+            manager.export_artifact(zip_path, bsg_current_dir=bsg_current_dir)
+        except Exception as exc:
+            return ExportResult(success=False, errors=[f"Pack failed: {exc}"])
+
+        LOGGER.info("export_pack_complete", dest=str(zip_path))
+        return ExportResult(success=True, output_path=zip_path)
+
     output_path = options.output or (root / "batho_export.json")
 
     # --- Validate view ---
@@ -455,9 +483,9 @@ def run_export(options: ExportOptions) -> ExportResult:
             ],
         )
 
-    # --- Locate database ---
-    db_path = _find_db_path(root)
-    if db_path is None:
+    # --- Locate artifact bundle ---
+    bundle_dir = _find_bundle_dir(root)
+    if bundle_dir is None:
         return ExportResult(
             success=False,
             errors=[
@@ -470,12 +498,12 @@ def run_export(options: ExportOptions) -> ExportResult:
         "export_started",
         root=str(root),
         view=view,
-        db_path=str(db_path),
+        bundle_dir=str(bundle_dir),
     )
 
     # --- Load BSGMap ---
     try:
-        bsg_map = _load_bsg_map_from_db(db_path, options.index_id, root)
+        bsg_map = _load_bsg_map_from_bundle(bundle_dir, options.index_id, root)
     except Exception as exc:
         LOGGER.error("export_load_failed", error=str(exc))
         return ExportResult(success=False, errors=[f"Failed to load BSG data: {exc}"])

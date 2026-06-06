@@ -18,7 +18,7 @@ def register_gc_parser(subparsers: argparse._SubParsersAction) -> None:
         "gc",
         parents=[create_base_parser()],
         help="Garbage collection and database maintenance commands",
-        description="Clean up old runs and optimize SQLite database storage size.",
+        description="Clean up old runs and orphaned Arrow IPC generations.",
     )
     
     gc_subparsers = gc_parser.add_subparsers(dest="gc_command", required=True)
@@ -48,14 +48,20 @@ def register_gc_parser(subparsers: argparse._SubParsersAction) -> None:
 
     # gc vacuum
     gc_subparsers.add_parser(
-        "vacuum", 
-        help="Reclaim disk space via SQLite VACUUM"
+        "vacuum",
+        help="Sweep orphaned Arrow IPC generations"
+    )
+
+    # gc orphans
+    gc_subparsers.add_parser(
+        "orphans",
+        help="Remove stale IPC files not referenced by active generation"
     )
 
     # gc status
     gc_subparsers.add_parser(
-        "status", 
-        help="Show storage stats (db size, run count, artifact counts)"
+        "status",
+        help="Show storage stats (bundle size, generation, run count)"
     )
 
     gc_parser.set_defaults(func=cmd_gc)

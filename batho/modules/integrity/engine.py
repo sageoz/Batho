@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 import concurrent.futures
 
-from batho.modules.storage.sqlite_registry.engine import BathoDatabase, get_database
+from batho.modules.storage.arrow_bundle.bundle import BathoBundle as BathoDatabase, get_bundle as get_database
 from batho.utils.logging import get_logger
 from .models import CheckReport, CheckStatus, Issue, RepairResult, Severity
 
@@ -34,13 +34,9 @@ class FixContext:
     _latest_run: dict | None = None
 
     def get_index_runs(self) -> list[dict]:
-        """Get all index runs from database."""
+        """Get all index runs from bundle."""
         if self._index_runs is None:
-            with self.db.connection(read_only=True) as conn:
-                rows = conn.execute(
-                    "SELECT * FROM index_runs ORDER BY started_at DESC"
-                ).fetchall()
-                self._index_runs = [dict(row) for row in rows]
+            self._index_runs = self.db._reader.get_all_runs()
         return self._index_runs
 
     def get_latest_run(self) -> dict | None:
@@ -65,48 +61,10 @@ class FixContext:
         LOGGER.info("audit_log_entry", **entry)
 
     def persist_audit_log(self) -> None:
-        """Persist audit log entries to database."""
-        if not self.audit_log:
-            return
-
-        try:
-            with self.db.connection() as conn:
-                conn.execute(
-                    """CREATE TABLE IF NOT EXISTS fix_audit_log (
-                        log_id          TEXT PRIMARY KEY NOT NULL,
-                        run_id          TEXT NOT NULL,
-                        timestamp       TEXT NOT NULL,
-                        action          TEXT NOT NULL,
-                        check_name      TEXT,
-                        severity        TEXT,
-                        message         TEXT,
-                        details_json    TEXT NOT NULL DEFAULT '{}',
-                        success         INTEGER NOT NULL DEFAULT 1
-                    ) WITHOUT ROWID"""
-                )
-                for entry in self.audit_log:
-                    conn.execute(
-                        """INSERT INTO fix_audit_log (
-                            log_id, run_id, timestamp, action, check_name,
-                            severity, message, details_json, success
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            str(uuid.uuid4()),
-                            entry["run_id"],
-                            entry["timestamp"],
-                            entry["action"],
-                            entry["details"].get("check_name"),
-                            entry["details"].get("severity"),
-                            entry["details"].get("message"),
-                            entry["details"].get("details_json", "{}"),
-                            1 if entry["details"].get("success", True) else 0,
-                        ),
-                    )
-                conn.commit()
-        except Exception as e:
-            LOGGER.error("failed_to_persist_audit_log", error=str(e))
-        finally:
-            self.audit_log.clear()
+        """Log audit entries (Arrow bundle has no writable audit table; log only)."""
+        for entry in self.audit_log:
+            LOGGER.info("audit_log_entry", **entry)
+        self.audit_log.clear()
 
 
 @dataclass
@@ -156,7 +114,7 @@ class FixResult:
     started_at: str
     completed_at: str
     root: str
-    db_path: str
+    bundle_dir: str
     mode: str
     summary: FixSummary
     check_results: list[CheckReport] = field(default_factory=list)
@@ -189,7 +147,7 @@ class FixEngine:
 
     @property
     def db(self) -> BathoDatabase:
-        """Get or create database connection."""
+        """Get or create Arrow bundle handle."""
         if self._db is None:
             self._db = get_database(self.root)
         return self._db
@@ -209,11 +167,11 @@ class FixEngine:
             parallel=self.parallel,
         )
 
-        # Check database file exists
-        from batho.modules.storage.sqlite_registry.engine import resolve_db_path
-        db_path = resolve_db_path(self.root)
-        if not db_path.exists():
-            raise FileNotFoundError(f"No artifact database found in {self.root}")
+        # Check bundle exists
+        from batho.modules.storage.arrow_bundle import resolve_bundle_dir
+        bundle_dir = resolve_bundle_dir(self.root)
+        if not (bundle_dir / "meta.json").exists():
+            raise FileNotFoundError(f"No artifact bundle found in {self.root}")
 
         ctx = FixContext(
             root=self.root,
@@ -223,22 +181,22 @@ class FixEngine:
         )
 
         # Instantiate checkers
-        from .checkers.sqlite_checker import SQLiteHealthChecker
+        from .checkers.bundle_checker import BundleHealthChecker
         from .checkers.state_checker import StateConsistencyChecker
         from .checkers.blob_checker import BlobIntegrityChecker
         from .checkers.graph_checker import GraphSyncChecker
 
-        c_db = SQLiteHealthChecker(self.db, self.dry_run)
+        c_db = BundleHealthChecker(self.db, self.dry_run)
         c_state = StateConsistencyChecker(self.db, self.dry_run)
         c_blobs = BlobIntegrityChecker(self.db, self.dry_run, self.deep_mode)
         c_graph = GraphSyncChecker(self.db, self.dry_run, self.deep_mode)
 
         # Filter which phases should run based on CLI target/phase flags
         scheduled: dict[int, Any] = {}
-        
+
         # Mapping phase to checker
         all_phases = {
-            1: ("db", c_db),
+            1: ("bundle", c_db),
             2: ("state", c_state),
             3: ("blobs", c_blobs),
             4: ("graph", c_graph),
@@ -398,7 +356,7 @@ class FixEngine:
             started_at=started_at,
             completed_at=completed_at,
             root=str(self.root),
-            db_path=str(db_path),
+            bundle_dir=str(bundle_dir),
             mode="deep" if self.deep_mode else "quick",
             summary=summary,
             check_results=check_reports,

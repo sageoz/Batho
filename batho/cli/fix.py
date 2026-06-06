@@ -24,17 +24,13 @@ def cmd_fix(args: argparse.Namespace) -> int:
 
     root = args.root.resolve()
 
-    # Check database exists
-    from batho.modules.storage.sqlite_registry.engine import resolve_db_path
-    db_path = resolve_db_path(root)
-    if not db_path.exists():
-        # Try alternate naming
-        candidates = list(root.glob("artifact_*.batho"))
-        if not candidates:
-            print(f"error: No artifact database found in {root}", file=sys.stderr)
-            print("       Run 'batho build --root {}' first.".format(root), file=sys.stderr)
-            return 1
-        db_path = candidates[0]
+    # Check bundle exists
+    from batho.modules.storage.arrow_bundle import resolve_bundle_dir
+    bundle_dir = resolve_bundle_dir(root)
+    if not (bundle_dir / "meta.json").exists():
+        print(f"error: No artifact bundle found in {root}", file=sys.stderr)
+        print("       Run 'batho build --root {}' first.".format(root), file=sys.stderr)
+        return 1
 
     # Run fix engine
     try:

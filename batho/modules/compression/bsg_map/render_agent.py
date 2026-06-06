@@ -11,8 +11,12 @@ if TYPE_CHECKING:
 
 
 def _text_tokens(text: str) -> int:
-    """Estimate token count using 4-bytes-per-token heuristic."""
-    return max(1, len(text.encode("utf-8")) // 4)
+    """Estimate token count using 4-chars-per-token heuristic.
+
+    Uses character length instead of byte encoding for speed; the difference
+    is negligible for typical symbol names and file paths (mostly ASCII).
+    """
+    return max(1, len(text) >> 2)
 
 
 def render_compressed(
@@ -26,11 +30,12 @@ def render_compressed(
     truncated_files = 0
 
     file_items = list(bsg._by_file.items())
+    n_files = len(file_items)
     for idx, (file_path, entities) in enumerate(file_items):
         file_header = f"{file_path}:"
         header_cost = _text_tokens(file_header)
         if tokens_used + header_cost > budget:
-            truncated_files += len(file_items) - idx
+            truncated_files += n_files - idx
             break
 
         lines.append(file_header)
@@ -40,7 +45,7 @@ def render_compressed(
             entry = f"  {entity.name} ({entity.type})"
             cost = _text_tokens(entry)
             if tokens_used + cost > budget:
-                truncated_files += len(file_items) - idx
+                truncated_files += n_files - idx
                 break
             lines.append(entry)
             tokens_used += cost

@@ -7,8 +7,6 @@ from .loader import (
     reload_config,
     set_active_root,
     get_active_root,
-    _active_root,
-    _get_config_cached_for_root,
 )
 from .models import Config, SCHEMA_VERSIONS
 
@@ -18,8 +16,6 @@ __all__ = [
     "reload_config",
     "set_active_root",
     "get_active_root",
-    "_active_root",
-    "_get_config_cached_for_root",
     "Config",
     "SCHEMA_VERSIONS",
 ]

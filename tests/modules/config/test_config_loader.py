@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from batho.core.config import (
-    set_active_root,
-    _get_config_cached_for_root,
-)
+from batho.core.config import set_active_root
+from batho.core.config.loader import _get_config_cached_for_root
 
 
 class TestSetActiveRoot:

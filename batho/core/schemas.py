@@ -1,5 +1,5 @@
 """
-backend/context/schema.py — Shared type definitions, Entity and Relationship models.
+batho/core/schemas.py — Shared type definitions, Entity and Relationship models.
 
 All outputs from the AST engine are frozen Pydantic models — no raw dicts
 leak out of this layer.
@@ -10,9 +10,9 @@ from __future__ import annotations
 from enum import Enum, auto, IntFlag
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field, computed_field
 
 from batho.utils.hash import compute_bytes_hash
 
@@ -106,7 +106,7 @@ class GraphConsistencyError(Exception):
 # Type aliases
 # --------------------------------------------------------------------------
 
-EntityMetadata = Dict[str, Any]
+EntityMetadata = dict[str, Any]
 
 
 class PackageManager(str, Enum):
@@ -223,9 +223,9 @@ def build_descriptor(name: str, suffix: DescriptorSuffix) -> str:
     return f"{name}{suffix.value}"
 
 def generate_hierarchical_id(
-    package: Optional[PackageMetadata],
-    descriptors: List[Tuple[str, DescriptorSuffix]],
-    commit_hash: Optional[str] = None,
+    package: PackageMetadata | None,
+    descriptors: list[tuple[str, DescriptorSuffix]],
+    commit_hash: str | None = None,
 ) -> str:
     """
     Generate a hierarchical symbol ID.
@@ -252,7 +252,7 @@ def generate_hierarchical_id(
 
     return prefix + descriptor_str
 
-def parse_hierarchical_id(id: str) -> Tuple[Optional[PackageMetadata], List[Tuple[str, DescriptorSuffix]]]:
+def parse_hierarchical_id(id: str) -> tuple[PackageMetadata | None, list[tuple[str, DescriptorSuffix]]]:
     """
     Parse a hierarchical ID back into components.
 
@@ -426,12 +426,10 @@ class BSGViewType(Enum):
 
     STORAGE: Full-fidelity view with raw_content and hashes for reconstruction.
     AGENT: Compressed view optimized for LLM context, excluding SYNTAX_GLUE.
-    HUMAN: Human-readable view reserved for future use.
     """
 
     STORAGE = auto()
     AGENT = auto()
-    HUMAN = auto()
 
     def __str__(self) -> str:
         return self.name.lower()

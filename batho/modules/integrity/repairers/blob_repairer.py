@@ -1,4 +1,4 @@
-"""Blob Repairer."""
+"""Blob Repairer — Arrow Bundle edition."""
 
 from __future__ import annotations
 
@@ -6,9 +6,18 @@ from typing import Any
 
 from ..models import Issue, RepairResult
 
+_ALLOWED_RUN_ARTIFACT_COLUMNS = {
+    "context_overview_json",
+    "telemetry_json",
+    "structural_json",
+    "security_audit_json",
+    "artifact_payload_json",
+    "delta_stats_json",
+}
+
 
 class BlobRepairer:
-    """Repairer for corrupted zstd-compressed blobs."""
+    """Repairer for corrupted Arrow IPC data."""
 
     def __init__(self, db: Any):
         self.db = db
@@ -29,83 +38,83 @@ class BlobRepairer:
             )
 
     def repair_file_artifact(self, issue: Issue) -> RepairResult:
-        """Delete corrupted file artifacts and update tracking to require re-indexing."""
-        run_id = issue.identifier.get("run_id")
-        file_id = issue.identifier.get("file_id")
-        if run_id is None or file_id is None:
-            return RepairResult(issue=issue, success=False, error="Missing run_id or file_id in identifier")
+        """Mark the file as not indexed so it is re-processed on next patch."""
+        file_path = issue.identifier.get("file_path")
+        if not file_path:
+            return RepairResult(issue=issue, success=False, error="Missing file_path in identifier")
 
         try:
-            with self.db.transaction() as conn:
-                # 1. Delete from query_entities/relationships/dangling first if any cascades are missing
-                conn.execute(
-                    "DELETE FROM query_entities WHERE run_id = ? AND file_path = (SELECT val FROM string_dict WHERE id = ?)",
-                    (run_id, file_id),
-                )
-                conn.execute(
-                    "DELETE FROM query_relationships WHERE run_id = ? AND (source_key IN (SELECT entity_key FROM query_entities WHERE file_path = (SELECT val FROM string_dict WHERE id = ?)) OR target_key IN (SELECT entity_key FROM query_entities WHERE file_path = (SELECT val FROM string_dict WHERE id = ?)))",
-                    (run_id, file_id, file_id),
-                )
-                # 2. Delete the artifact row
-                cursor = conn.execute(
-                    "DELETE FROM file_artifacts WHERE run_id = ? AND file_id = ?",
-                    (run_id, file_id),
-                )
-                rows_deleted = cursor.rowcount
-                # 3. Mark file as not indexed
-                conn.execute(
-                    "UPDATE file_tracking SET is_indexed = 0, last_run_id = NULL WHERE file_id = ?",
-                    (file_id,),
-                )
-                conn.commit()
-            return RepairResult(issue=issue, success=True, rows_affected=rows_deleted)
+            tracking = self.db.get_file_tracking(file_path)
+            if tracking is None:
+                return RepairResult(issue=issue, success=False, error=f"No tracking record for {file_path!r}")
+            tracking["is_indexed"] = False
+            tracking["last_run_uuid"] = None
+            self.db.upsert_file_tracking([tracking])
+            return RepairResult(issue=issue, success=True, rows_affected=1)
         except Exception as e:
             return RepairResult(issue=issue, success=False, error=str(e))
 
     def repair_run_artifact(self, issue: Issue) -> RepairResult:
-        """Set corrupted column in run_artifacts to NULL."""
-        run_id = issue.identifier.get("run_id")
+        """Clear a specific JSON column in run_artifacts by nulling it out."""
+        run_uuid = issue.identifier.get("run_uuid")
         column = issue.identifier.get("column")
-        if run_id is None or not column:
-            return RepairResult(issue=issue, success=False, error="Missing run_id or column in identifier")
+        if not run_uuid or not column:
+            return RepairResult(issue=issue, success=False, error="Missing run_uuid or column in identifier")
 
-        # Allowlist columns dynamically from the database schema to prevent SQL injection
-        try:
-            with self.db.connection() as conn:
-                cursor = conn.execute("PRAGMA table_info(run_artifacts)")
-                columns_info = cursor.fetchall()
-                allowed_columns = {row["name"] for row in columns_info}
-        except Exception as e:
-            return RepairResult(issue=issue, success=False, error=f"Failed to query database schema: {e}")
-
-        # Exclude key/non-blob columns that must not be set to NULL
-        forbidden_columns = {"run_id", "schema_version", "created_at"}
-        if column not in allowed_columns or column in forbidden_columns:
-            return RepairResult(issue=issue, success=False, error=f"Invalid or forbidden column name: {column}")
+        if column not in _ALLOWED_RUN_ARTIFACT_COLUMNS:
+            return RepairResult(issue=issue, success=False, error=f"Invalid or forbidden column name: {column!r}")
 
         try:
-            with self.db.connection() as conn:
-                cursor = conn.execute(
-                    f"UPDATE run_artifacts SET {column} = NULL WHERE run_id = ?",
-                    (run_id,),
-                )
-                rows_updated = cursor.rowcount
-                conn.commit()
-            return RepairResult(issue=issue, success=True, rows_affected=rows_updated)
+            import pyarrow.compute as pc
+            from batho.modules.storage.arrow_bundle.schemas import RUN_ARTIFACTS_SCHEMA
+            from batho.modules.storage.arrow_bundle.writer import write_simple_ipc, read_ipc_table
+
+            table = read_ipc_table(self.db._active_or_empty("run_artifacts"))
+            if table.num_rows == 0:
+                return RepairResult(issue=issue, success=False, error="run_artifacts table is empty")
+
+            rows = table.to_pylist()
+            affected = 0
+            for row in rows:
+                if row.get("run_uuid") == run_uuid:
+                    row[column] = None
+                    affected += 1
+
+            if affected == 0:
+                return RepairResult(issue=issue, success=False, error=f"Run {run_uuid!r} not found in run_artifacts")
+
+            tmp = self.db._artifact_dir / "run_artifacts.tmp.ipc"
+            write_simple_ipc(rows, RUN_ARTIFACTS_SCHEMA, tmp)
+            self.db._manager.commit_patch({"run_artifacts": tmp}, run_uuid)
+            self.db._reader.invalidate("run_artifacts")
+            return RepairResult(issue=issue, success=True, rows_affected=affected)
         except Exception as e:
             return RepairResult(issue=issue, success=False, error=str(e))
 
     def repair_changelog(self, issue: Issue) -> RepairResult:
-        """Delete corrupted changelog row."""
-        row_id = issue.identifier.get("id")
-        if row_id is None:
-            return RepairResult(issue=issue, success=False, error="Missing id in identifier")
+        """Delete corrupted changelog rows for a given run_uuid."""
+        run_uuid = issue.identifier.get("run_uuid")
+        if not run_uuid:
+            return RepairResult(issue=issue, success=False, error="Missing run_uuid in identifier")
 
         try:
-            with self.db.connection() as conn:
-                cursor = conn.execute("DELETE FROM file_changelog WHERE id = ?", (row_id,))
-                rows_deleted = cursor.rowcount
-                conn.commit()
-            return RepairResult(issue=issue, success=True, rows_affected=rows_deleted)
+            import pyarrow.compute as pc
+            from batho.modules.storage.arrow_bundle.schemas import FILE_CHANGELOG_SCHEMA
+            from batho.modules.storage.arrow_bundle.writer import write_simple_ipc, read_ipc_table
+
+            table = read_ipc_table(self.db._active_or_empty("file_changelog"))
+            if table.num_rows == 0:
+                return RepairResult(issue=issue, success=True, rows_affected=0)
+
+            original_count = table.num_rows
+            mask = pc.invert(pc.equal(table.column("run_uuid"), run_uuid))
+            filtered = table.filter(mask)
+            deleted = original_count - filtered.num_rows
+
+            tmp = self.db._artifact_dir / "file_changelog.tmp.ipc"
+            write_simple_ipc(filtered.to_pylist(), FILE_CHANGELOG_SCHEMA, tmp)
+            self.db._manager.commit_patch({"file_changelog": tmp}, run_uuid)
+            self.db._reader.invalidate("file_changelog")
+            return RepairResult(issue=issue, success=True, rows_affected=deleted)
         except Exception as e:
             return RepairResult(issue=issue, success=False, error=str(e))

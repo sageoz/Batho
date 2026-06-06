@@ -1,27 +1,26 @@
-"""Unified cache service — pure in-memory implementation (v2.0).
+"""Unified cache service — disk-persistent AST cache (v3.0).
 
-AST caching and file snapshot operations are held in-memory only.
-File tracking delegates to BathoDatabase for persistence.
+AST caching delegates to AstCache (flat-file msgpack on disk).
+File tracking delegates to BathoBundle for persistence.
+File snapshots remain in-memory (session-local).
 """
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from pathlib import Path
 import hashlib
 import json
 import threading
-import time
 from typing import Any
 
 from batho.core.schemas import Entity, FileSnapshot, Relationship
-from batho.modules.storage.sqlite_registry.engine import get_database
+from batho.modules.storage.arrow_bundle.bundle import get_bundle
 from batho.utils.logging import get_logger
 
 logger = get_logger(__name__, component="cache")
 
 
-CACHE_SCHEMA_VERSION = "v2"
+CACHE_SCHEMA_VERSION = "v3"
 
 
 def build_ast_cache_variant(
@@ -40,90 +39,53 @@ def build_ast_cache_variant(
 
 
 class BathoCache:
-    """In-memory cache for AST results and file snapshots.
+    """Cache service with disk-persistent AST and Arrow Bundle file tracking.
 
-    File tracking (hashes, mtimes) delegates to BathoDatabase for
-    cross-process persistence. AST and snapshot data is session-local.
+    AST results are stored in AstCache (flat-file msgpack) for cross-session
+    persistence and reduced memory usage. File snapshots remain in-memory.
+    File tracking (hashes, mtimes) delegates to BathoBundle.
     """
 
-    def __init__(self, cache_path: str | None = None, repo_root: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        cache_path: str | None = None,
+        repo_root: Path | str | None = None,
+        ast_cache_dir: Path | str | None = None,
+    ) -> None:
         self._db = None
         self._repo_root = Path(repo_root).resolve() if repo_root else None
         if cache_path:
             path = Path(cache_path).resolve()
-            if path.suffix == ".batho":
-                db_repo_root = path.parent
-                db_path: Path | None = path
-            elif path.is_file():
-                db_repo_root = path.parent
-                db_path = path
+            # cache_path may be bundle_dir or repo_root; derive repo root
+            if path.is_dir():
+                bundle_root = path.parent if path.name in ("artifact",) else path
             else:
-                db_repo_root = path
-                db_path = None
-            self._db = get_database(db_repo_root, db_path=db_path)
+                bundle_root = path.parent
+            self._db = get_bundle(bundle_root)
             if not self._repo_root and self._db is not None:
                 self._repo_root = self._db.repo_root
         self.logger = logger
 
-        # In-memory stores (session-local, not persisted)
+        # Disk-persistent AST cache
+        self._ast_cache = None
+        if ast_cache_dir is not None:
+            from batho.modules.extraction.ast_cache import AstCache
+            self._ast_cache = AstCache(Path(ast_cache_dir))
+
+        # In-memory file snapshots (session-local)
         self._lock = threading.Lock()
-        self._max_ast_size = 2000
-        self._ast: OrderedDict[
-            tuple[str, str, str],
-            tuple[list[Entity], list[Relationship], float | None],
-        ] = OrderedDict()
         self._snapshots: dict[str, FileSnapshot] = {}
 
     # ------------------------------------------------------------------
-    # AST cache methods (in-memory)
+    # AST cache methods (delegates to AstCache)
     # ------------------------------------------------------------------
-
-    def _purge_expired(self) -> None:
-        # Note: caller should hold self._lock
-        now = time.time()
-        expired = []
-        for key, value in self._ast.items():
-            if len(value) < 3:
-                continue
-            if value[2] is not None and value[2] <= now:
-                expired.append(key)
-        for key in expired:
-            self._ast.pop(key, None)
-
-    def _normalize_ast_path(self, file_path: str) -> str:
-        path = Path(file_path)
-        repo_root = None
-        if self._db is not None:
-            repo_root = self._db.repo_root
-        elif getattr(self, "_repo_root", None) is not None:
-            repo_root = self._repo_root
-
-        if not path.is_absolute() and repo_root is not None:
-            path = repo_root / path
-        try:
-            return str(path.resolve())
-        except OSError:
-            return str(path)
-
-    def _ast_key(
-        self, file_path: str, file_hash: str, variant: str | None = None
-    ) -> tuple[str, str, str]:
-        return (self._normalize_ast_path(file_path), file_hash, variant or "")
 
     def get_ast(
         self, file_path: str, file_hash: str, variant: str | None = None
     ) -> tuple[list[Entity], list[Relationship]] | None:
-        with self._lock:
-            key = self._ast_key(file_path, file_hash, variant)
-            if key in self._ast:
-                entry = self._ast[key]
-                if len(entry) >= 3 and entry[2] is not None and entry[2] <= time.time():
-                    self._ast.pop(key)
-                    return None
-                self._ast.move_to_end(key)
-                if len(entry) >= 2:
-                    return entry[0], entry[1]
+        if self._ast_cache is None:
             return None
+        return self._ast_cache.get_ast(file_path, file_hash, variant)
 
     def set_ast(
         self,
@@ -136,57 +98,36 @@ class BathoCache:
         ttl_days: int = 30,
         variant: str | None = None,
     ) -> None:
-        expires_at = None
-        if ttl_days > 0:
-            expires_at = time.time() + (ttl_days * 86400)
-        
-        key = self._ast_key(file_path, file_hash, variant)
-        with self._lock:
-            if key in self._ast:
-                self._ast.pop(key)
-            self._ast[key] = (
-                entities,
-                relationships,
-                expires_at,
-            )
-            if len(self._ast) > self._max_ast_size:
-                self._purge_expired()
-            while len(self._ast) > self._max_ast_size:
-                self._ast.popitem(last=False)
+        if self._ast_cache is None:
+            return
+        self._ast_cache.set_ast(
+            file_path, file_hash, variant, entities, relationships, mtime, size, ttl_days
+        )
 
     def delete_ast(
         self, file_path: str, file_hash: str, variant: str | None = None
     ) -> None:
-        with self._lock:
-            self._ast.pop(self._ast_key(file_path, file_hash, variant), None)
+        if self._ast_cache is None:
+            return
+        self._ast_cache.delete_ast(file_path)
 
     def delete_ast_by_path(self, file_path: str) -> int:
         """Delete AST entries for a file path across all cache variants."""
-        normalized_paths = {file_path, self._normalize_ast_path(file_path)}
-        if self._db is not None:
-            try:
-                if not Path(file_path).is_absolute():
-                    normalized_paths.add(str((self._db.repo_root / file_path).resolve()))
-            except OSError:
-                pass
-
-        with self._lock:
-            keys_to_delete = [
-                key for key in self._ast.keys() if key[0] in normalized_paths
-            ]
-            for key in keys_to_delete:
-                self._ast.pop(key, None)
-            return len(keys_to_delete)
+        if self._ast_cache is None:
+            return 0
+        return self._ast_cache.delete_by_path_prefix(file_path)
 
     def clear_ast_cache(self, older_than_days: int | None = None) -> int:
-        with self._lock:
-            count = len(self._ast)
-            self._ast.clear()
-            return count
+        if self._ast_cache is None:
+            return 0
+        # AstCache.clear() removes all entries unconditionally
+        self._ast_cache.clear()
+        return 0
 
     def invalidate_cache(self, pattern: str | None = None) -> None:
-        with self._lock:
-            self._ast.clear()
+        if self._ast_cache is None:
+            return
+        self._ast_cache.clear()
         self.logger.info("cache_invalidated", pattern=pattern or "*", deleted_count=0)
 
     # ------------------------------------------------------------------
@@ -233,7 +174,8 @@ class BathoCache:
     def get_unindexed_files(self) -> dict[str, str]:
         if self._db is None:
             return {}
-        return self._db.get_unindexed_files()
+        rows = self._db.get_unindexed_files_with_details()
+        return {r["file_path"]: r["content_hash"] for r in rows}
 
     def save_all(
         self, file_hashes: dict[str, str], root: Path, is_indexed: bool = False
@@ -282,13 +224,14 @@ class BathoCache:
     # ------------------------------------------------------------------
 
     def get_stats(self) -> dict[str, Any]:
-        self._purge_expired()
         db_stats = self._db.get_stats() if self._db is not None else {}
+        tables = db_stats.get("tables", {})
+        tracking_rows = tables.get("file_tracking", {}).get("rows", 0)
         return {
-            "ast_entry_count": len(self._ast),
+            "ast_cache_enabled": self._ast_cache is not None,
             "snapshot_count": len(self._snapshots),
-            "file_tracking_count": db_stats.get("file_tracking_count", 0),
-            "db_path": str(self._db.path) if self._db is not None else "",
+            "file_tracking_count": tracking_rows,
+            "bundle_dir": str(self._db.artifact_dir) if self._db is not None else "",
         }
 
 
@@ -302,7 +245,6 @@ class BathoCache:
         return False
 
     def close(self) -> None:
-        self._ast.clear()
         self._snapshots.clear()
         # Note: Do NOT close self._db here - it's shared via _DB_CACHE in engine.py
         # and may be used by other components (e.g., patch operations after build)

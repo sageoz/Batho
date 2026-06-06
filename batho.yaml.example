@@ -136,3 +136,10 @@ bsg:
     include_gaps: true      # Emit SYNTAX_GLUE entities for 100% byte coverage
     verify_integrity: false # Enforce hash verification during reconstruction
     storage_view: false     # Persist raw_content in storage view (larger artifact)
+
+# Extraction module — AST caching and parser configuration
+extraction:
+  cache:
+    enabled: true           # Persist parsed AST to disk for cross-session reuse
+    ttl_days: 30             # Days before cached AST entries expire
+    max_entries: 5000        # Maximum cached files (oldest evicted first)

@@ -10,16 +10,10 @@ from pydantic import BaseModel, Field, field_validator
 
 SCHEMA_VERSIONS: dict[str, str] = {
     "config": "batho-config.v1",
-    "graph": "graph.v1",
     "bsg": "bsg.v1",
-    "snapshot": "snapshot.v1",
-    "run_artifacts": "run-artifacts.v1",
-    "file_artifacts": "file-artifacts.v1",
-    "ignore_patterns": "ignore-patterns.v1",
 }
 
 DEFAULT_LOG_LEVEL = "ERROR"
-DEFAULT_DB_PATH = "{root}"
 DEFAULT_MAX_FILE_SIZE_KB = 500
 DEFAULT_MAX_INDEXED_FILES = 200_000
 DEFAULT_INDEX_WORKERS = 0
@@ -75,20 +69,9 @@ class LoggingConfig(BaseModel):
 
 
 class PathsConfig(BaseModel):
-    db_path: str = Field(default=DEFAULT_DB_PATH)
+    artifact_dir: str = Field(default=".batho/artifact")
     cache_dir: str = Field(default=".batho/cache")
-
-    @field_validator("db_path", mode="before")
-    @classmethod
-    def _normalize_db_path(cls, value: Any) -> str:
-        if isinstance(value, dict) and "root" in value:
-            return "{root}"
-        if value is None:
-            return "{root}"
-        if not isinstance(value, str):
-            return str(value)
-        return value
-
+    bsg_dir: str = Field(default=".batho/bsg")
 
 
 class IndexerConfig(BaseModel):
@@ -247,6 +230,16 @@ class DependencyConfig(BaseModel):
     max_deps_per_manifest: int = Field(default=500, ge=1)
 
 
+class ExtractionCacheConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    ttl_days: int = Field(default=30)
+    max_entries: int = Field(default=5000, ge=1)
+
+
+class ExtractionConfig(BaseModel):
+    cache: ExtractionCacheConfig = Field(default_factory=ExtractionCacheConfig)
+
+
 class Config(BaseModel):
     schema_version: str = Field(default=SCHEMA_VERSIONS["config"])
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
@@ -260,6 +253,7 @@ class Config(BaseModel):
     persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
     bsg: BsgConfig = Field(default_factory=BsgConfig)
     dependency: DependencyConfig = Field(default_factory=DependencyConfig)
+    extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
 
     @field_validator("logging")
     @classmethod

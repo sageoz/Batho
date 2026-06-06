@@ -6,7 +6,9 @@ logging:
   file: null
   format: '%(message)s'
 paths:
-  db_path: '{root}'
+  artifact_dir: .batho/artifact
+  cache_dir: .batho/cache
+  bsg_dir: .batho/bsg
 indexer:
   max_file_size_kb: 500
   max_indexed_files: 200000
@@ -60,7 +62,7 @@ artifact_blobs:
     telemetry_metrics: true
     structural_metrics: true
     security_audit: false
-    artifact_payload: false
+    artifact_payload: true
     delta_stats: true
 persistence:
   batch_size: 500
@@ -78,8 +80,8 @@ bsg:
     enabled: true
     fuzzy_matching: false
     cache_symbols: true
-    prune_unresolved: false
-    max_unresolved_attempts: 3
+    prune_unresolved: true
+    max_unresolved_attempts: 10
     unresolved_tracking: true
   parsing:
     error_recovery: true
@@ -109,3 +111,8 @@ dependency:
     enabled: true
     ttl_days: 90
   max_deps_per_manifest: 500
+extraction:
+  cache:
+    enabled: true
+    ttl_days: 30
+    max_entries: 5000
