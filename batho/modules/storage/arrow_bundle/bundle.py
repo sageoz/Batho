@@ -15,6 +15,7 @@ import hashlib
 import json
 import re
 import threading
+import weakref
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,7 +45,7 @@ from .helpers import (
 
 LOGGER = get_logger(__name__, component="arrow_bundle")
 
-_BUNDLE_CACHE: dict[str, "BathoBundle"] = {}
+_BUNDLE_CACHE: weakref.WeakValueDictionary[str, "BathoBundle"] = weakref.WeakValueDictionary()
 _BUNDLE_CACHE_LOCK = threading.RLock()
 
 

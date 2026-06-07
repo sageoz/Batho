@@ -7,10 +7,11 @@ File snapshots remain in-memory (session-local).
 
 from __future__ import annotations
 
-from pathlib import Path
+import fnmatch
 import hashlib
 import json
 import threading
+from pathlib import Path
 from typing import Any
 
 from batho.core.schemas import Entity, FileSnapshot, Relationship
@@ -127,8 +128,26 @@ class BathoCache:
     def invalidate_cache(self, pattern: str | None = None) -> None:
         if self._ast_cache is None:
             return
-        self._ast_cache.clear()
-        self.logger.info("cache_invalidated", pattern=pattern or "*", deleted_count=0)
+        if pattern is None or pattern in ("*", ""):
+            self._ast_cache.clear()
+            self.logger.info("cache_invalidated", pattern="*", deleted_count=-1)
+            return
+        # Prefix glob: e.g. "src/" or "src/**"
+        prefix = pattern.rstrip("*").rstrip("/")
+        if "*" not in pattern and "?" not in pattern:
+            # Exact file path — delete single entry
+            deleted = self._ast_cache.delete_ast(pattern)
+        elif pattern.endswith(("/**", "/*")) or pattern == prefix + "/":
+            # Directory prefix pattern
+            deleted = self._ast_cache.delete_by_path_prefix(prefix + "/")
+        else:
+            # Generic fnmatch pattern — scan manifest and delete matching entries
+            manifest = self._ast_cache._load_manifest_for_gc()
+            matching = [k for k in list(manifest) if fnmatch.fnmatch(k, pattern)]
+            deleted = 0
+            for file_path in matching:
+                deleted += self._ast_cache.delete_ast(file_path)
+        self.logger.info("cache_invalidated", pattern=pattern, deleted_count=deleted)
 
     # ------------------------------------------------------------------
     # File tracking methods (delegates to BathoDatabase)

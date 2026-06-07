@@ -70,7 +70,18 @@ class GraphSyncChecker:
             from batho.modules.storage.arrow_store.store import BsgScratchStore
             from batho.modules.storage.arrow_store.compaction import read_ipc
 
-            current_dir = self.db._repo_root / ".batho" / "bsg" / "current"
+            from batho.core.config.loader import _get_config_cached_for_root
+            from pathlib import Path
+
+            cfg = _get_config_cached_for_root(self.db._repo_root)
+            bsg_dir_val = cfg.get("paths", {}).get("bsg_dir", ".batho/bsg")
+
+            bsg_dir = Path(bsg_dir_val)
+            if not bsg_dir.is_absolute():
+                bsg_dir = self.db._repo_root / bsg_dir
+
+            current_dir = bsg_dir.resolve() / "current"
+
             if not current_dir.exists():
                 pass  # No store yet — nothing to check
             else:

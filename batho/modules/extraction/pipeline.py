@@ -669,6 +669,11 @@ def extract_and_emit_parallel(
 
     if not parallel_enabled or len(candidates) == 0:
         logger.info("parallel_disabled_or_empty_candidates")
+        # Initialize the global worker variables for the current (main) process
+        from batho.core.config import get_config_cached
+        worker_log_config = dict(get_config_cached().get("logging", {}))
+        _initialize_worker(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir)
+
         for file_path, filepath in candidates:
             try:
                 stat_info = file_path.stat()
@@ -695,6 +700,8 @@ def extract_and_emit_parallel(
                 index_id=index_id,
                 include_gaps=include_gaps,
                 package=package_dict,
+                rules_config=rules_config,
+                root_path=root_path,
                 ast_cache_dir=ast_cache_dir,
             )
             if res is None:
@@ -735,6 +742,8 @@ def extract_and_emit_parallel(
                 index_id,
                 include_gaps,
                 package_dict,
+                rules_config,
+                root_path,
                 ast_cache_dir,
             ))
         
@@ -767,6 +776,11 @@ def extract_and_emit_parallel(
             logger.warning("parallel_extract_and_emit_failed_fallback_sequential", error=str(exc))
             raw_results = []
             error_count = 0
+            # Initialize the global worker variables for the current (main) process
+            from batho.core.config import get_config_cached
+            worker_log_config = dict(get_config_cached().get("logging", {}))
+            _initialize_worker(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir)
+
             for item in work_items:
                 res = process_file_single_pass_worker(*item)
                 if res is None:

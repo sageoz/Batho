@@ -310,19 +310,19 @@ class BsgScratchStore:
             return []
         try:
             tbl = _read_stream_zst(path)
+            entity_key = tbl.column("entity_key").to_pylist()
+            run_id = tbl.column("run_id").to_pylist()
+            entity_name = tbl.column("entity_name").to_pylist()
+            entity_type = tbl.column("entity_type").to_pylist()
+            fqn = tbl.column("fqn").to_pylist()
+            file_path = tbl.column("file_path").to_pylist()
+            line_number = tbl.column("line_number").to_pylist()
+            signature = tbl.column("signature").to_pylist()
+            is_exported = tbl.column("is_exported").to_pylist()
             return [
-                (
-                    tbl.column("entity_key")[i].as_py(),
-                    tbl.column("run_id")[i].as_py(),
-                    tbl.column("entity_name")[i].as_py(),
-                    tbl.column("entity_type")[i].as_py(),
-                    tbl.column("fqn")[i].as_py(),
-                    tbl.column("file_path")[i].as_py(),
-                    tbl.column("line_number")[i].as_py(),
-                    tbl.column("signature")[i].as_py(),
-                    bool(tbl.column("is_exported")[i].as_py()),
-                )
-                for i in range(len(tbl))
+                (ek, ri, en, et, fq, fp, ln, sg, bool(ie))
+                for ek, ri, en, et, fq, fp, ln, sg, ie
+                in zip(entity_key, run_id, entity_name, entity_type, fqn, file_path, line_number, signature, is_exported)
             ]
         except Exception:
             return []
@@ -590,9 +590,9 @@ class BsgScratchStore:
                 with self._lock:
                     self._rel_rows.extend(new_rels)
                     self.rel_count += len(new_rels)
-                self._flush_relationships()
-                # Re-compact relationships to merge resolved rels
-                self._recompact_relationships_only()
+                    self._flush_relationships()
+                    # Re-compact relationships to merge resolved rels
+                    self._recompact_relationships_only()
 
         # Patch bsg_rel_view blobs in SQLite file_artifacts
         if resolution_map and db is not None:

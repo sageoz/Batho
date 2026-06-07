@@ -11,6 +11,7 @@ Subsequent get_file_artifacts(file_id) calls use the index for O(1) table.slice(
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -32,29 +33,31 @@ class BathoBundleReader:
         self._manager = BathoBundleManager(self.artifact_dir)
         self._tables: dict[str, pa.Table] = {}
         self._indices: dict[str, dict[int, slice]] = {}
+        self._lock = threading.Lock()
 
     def _get_table(self, logical_name: str) -> pa.Table:
         """Lazily memory-map the active IPC file for a logical table."""
-        if logical_name in self._tables:
-            return self._tables[logical_name]
+        with self._lock:
+            if logical_name in self._tables:
+                return self._tables[logical_name]
 
-        active_path = self._manager.active_path(logical_name)
-        if active_path is None:
-            return pa.table({})
+            active_path = self._manager.active_path(logical_name)
+            if active_path is None:
+                return pa.table({})
 
-        try:
-            with pa.memory_map(str(active_path), "r") as mmap:
-                with ipc.open_file(mmap) as reader:
-                    table = reader.read_all()
-            self._tables[logical_name] = table
+            try:
+                with pa.memory_map(str(active_path), "r") as mmap:
+                    with ipc.open_file(mmap) as reader:
+                        table = reader.read_all()
+                self._tables[logical_name] = table
 
-            if "file_id" in table.schema.names:
-                self._indices[logical_name] = self._build_offset_index(table)
+                if "file_id" in table.schema.names:
+                    self._indices[logical_name] = self._build_offset_index(table)
 
-            return table
-        except Exception as exc:
-            LOGGER.error("bundle_reader_mmap_failed", table=logical_name, error=str(exc))
-            return pa.table({})
+                return table
+            except Exception as exc:
+                LOGGER.error("bundle_reader_mmap_failed", table=logical_name, error=str(exc))
+                return pa.table({})
 
     def _build_offset_index(self, table: pa.Table) -> dict[int, slice]:
         """Build dict[file_id → slice] using numpy for O(1) row lookup.
@@ -252,9 +255,10 @@ class BathoBundleReader:
 
     def invalidate(self, logical_name: str | None = None) -> None:
         """Drop cached table so next access re-mmaps the new generation."""
-        if logical_name is None:
-            self._tables.clear()
-            self._indices.clear()
-        else:
-            self._tables.pop(logical_name, None)
-            self._indices.pop(logical_name, None)
+        with self._lock:
+            if logical_name is None:
+                self._tables.clear()
+                self._indices.clear()
+            else:
+                self._tables.pop(logical_name, None)
+                self._indices.pop(logical_name, None)

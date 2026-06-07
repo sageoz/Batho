@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any, Union
 
@@ -23,6 +24,8 @@ from batho.utils.hash import _is_binary, compute_bytes_hash
 from batho.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
+
+_UMASK_LOCK = threading.Lock()
 
 
 def read_file_bytes(
@@ -173,9 +176,10 @@ def write_atomically(
                 pass
         else:
             try:
-                current_umask = os.umask(0)
-                os.umask(current_umask)
-                original_mode = 0o666 & ~current_umask
+                with _UMASK_LOCK:
+                    current_umask = os.umask(0)
+                    os.umask(current_umask)
+                    original_mode = 0o666 & ~current_umask
             except Exception:
                 original_mode = 0o666
 

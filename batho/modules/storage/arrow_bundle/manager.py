@@ -144,13 +144,26 @@ class BathoBundleManager:
 
         Returns number of files deleted.
         """
+        import re
+        version_pattern = re.compile(r"\.v(\d+)\.ipc$")
+
         manifest = self.load_manifest()
+        current_gen = manifest.get("generation", 0)
         active = set(manifest.get("active_files", {}).values())
         active.add("meta.json")
         cleaned = 0
 
         for p in self.artifact_dir.glob("*.ipc"):
             if p.name not in active:
+                # Check version to prevent deleting files from a committing generation
+                match = version_pattern.search(p.name)
+                if match:
+                    try:
+                        file_gen = int(match.group(1))
+                        if file_gen == current_gen + 1:
+                            continue  # Skip files from the currently committing generation
+                    except ValueError:
+                        pass
                 try:
                     p.unlink()
                     cleaned += 1

@@ -21,31 +21,40 @@ class BlobIntegrityChecker:
         self.dctx = zstd.ZstdDecompressor()
         self.repairer = BlobRepairer(db)
 
-    def _check_blob(self, blob: bytes | None) -> tuple[bool, str | None]:
-        """Verify zstd header in quick mode, or decompress and JSON parse in deep mode."""
-        if blob is None:
+    def _check_blob(self, val: Any) -> tuple[bool, str | None]:
+        """Verify zstd header/decompress if bytes, or validate JSON if string."""
+        if val is None:
             return True, None
-        if len(blob) < 4:
-            return False, "Blob is too short to contain zstd archive."
-        # Zstd magic header: 0xFD2FB528 (little-endian: 28 b5 2f fd)
-        if blob[:4] != b"\x28\xb5\x2f\xfd":
-            return False, "Blob is missing valid zstd magic header."
-        if self.deep:
-            try:
-                decompressed = self.dctx.decompress(blob)
-                orjson.loads(decompressed)
-            except zstd.ZstdError as e:
-                return False, f"zstd decompression failed: {e}"
-            except Exception as e:
-                return False, f"JSON decoding failed: {e}"
+            
+        if isinstance(val, bytes):
+            if len(val) < 4:
+                return False, "Blob is too short to contain zstd archive."
+            # Zstd magic header: 0xFD2FB528 (little-endian: 28 b5 2f fd)
+            if val[:4] != b"\x28\xb5\x2f\xfd":
+                return False, "Blob is missing valid zstd magic header."
+            if self.deep:
+                try:
+                    decompressed = self.dctx.decompress(val)
+                    orjson.loads(decompressed)
+                except zstd.ZstdError as e:
+                    return False, f"zstd decompression failed: {e}"
+                except Exception as e:
+                    return False, f"JSON decoding failed: {e}"
+        elif isinstance(val, str):
+            if self.deep:
+                try:
+                    orjson.loads(val.encode("utf-8"))
+                except Exception as e:
+                    return False, f"JSON decoding failed: {e}"
         return True, None
 
     def check_run_artifacts(self) -> list[Issue]:
         """Check run artifact IPC table entries for structural validity."""
         issues = []
         try:
-            rows = self.db._reader.get_all_runs()
-            for run in rows:
+            # 1. Check run status structural validity
+            runs = self.db._reader.get_all_runs()
+            for run in runs:
                 run_uuid = run.get("run_uuid", "?")
                 if run.get("status") not in ("completed", "failed", "running"):
                     issues.append(Issue(
@@ -55,11 +64,34 @@ class BlobIntegrityChecker:
                         identifier={"run_uuid": run_uuid},
                         description=f"Run {run_uuid} has unexpected status: {run.get('status')!r}",
                     ))
+
+                # 2. Check JSON/blob integrity of run_artifacts columns
+                row = self.db._reader.get_run_artifacts(run_uuid)
+                if row and isinstance(row, dict):
+                    for col in [
+                        "context_overview_json",
+                        "telemetry_json",
+                        "structural_json",
+                        "security_audit_json",
+                        "artifact_payload_json",
+                        "delta_stats_json",
+                    ]:
+                        val = row.get(col)
+                        if val is not None:
+                            ok, err = self._check_blob(val)
+                            if not ok:
+                                issues.append(Issue(
+                                    type="corrupt_artifact_blob",
+                                    severity=Severity.ERROR,
+                                    table="run_artifacts",
+                                    identifier={"run_uuid": run_uuid, "column": col},
+                                    description=f"Blob verification failed for {col} in run {run_uuid}: {err}",
+                                ))
         except Exception as exc:
             issues.append(Issue(
                 type="run_artifacts_check_error",
                 severity=Severity.ERROR,
-                table="runs",
+                table="run_artifacts",
                 identifier={},
                 description=f"Error checking run artifacts: {exc}",
             ))
