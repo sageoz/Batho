@@ -33,15 +33,22 @@ class BathoBundleReader:
         self._manager = BathoBundleManager(self.artifact_dir)
         self._tables: dict[str, pa.Table] = {}
         self._indices: dict[str, dict[int, slice]] = {}
-        self._lock = threading.Lock()
+        self._cached_paths: dict[str, Path | None] = {}
+        self._lock = threading.RLock()
 
     def _get_table(self, logical_name: str) -> pa.Table:
         """Lazily memory-map the active IPC file for a logical table."""
         with self._lock:
-            if logical_name in self._tables:
+            active_path = self._manager.active_path(logical_name)
+            
+            if logical_name in self._tables and self._cached_paths.get(logical_name) == active_path:
                 return self._tables[logical_name]
 
-            active_path = self._manager.active_path(logical_name)
+            # Invalidate old cache
+            self._tables.pop(logical_name, None)
+            self._indices.pop(logical_name, None)
+            self._cached_paths[logical_name] = active_path
+
             if active_path is None:
                 return pa.table({})
 
@@ -49,6 +56,13 @@ class BathoBundleReader:
                 with pa.memory_map(str(active_path), "r") as mmap:
                     with ipc.open_file(mmap) as reader:
                         table = reader.read_all()
+
+                # Ensure the table is globally sorted by file_id if present to support NP point lookup slices
+                if "file_id" in table.schema.names and table.num_rows > 0:
+                    import pyarrow.compute as pc
+                    indices = pc.sort_indices(table, sort_keys=[("file_id", "ascending")])
+                    table = table.take(indices)
+
                 self._tables[logical_name] = table
 
                 if "file_id" in table.schema.names:
@@ -81,14 +95,15 @@ class BathoBundleReader:
         return index
 
     def _slice_for_file(self, logical_name: str, file_id: int) -> list[dict[str, Any]]:
-        table = self._get_table(logical_name)
-        if table.num_rows == 0:
-            return []
-        row_slice = self._indices.get(logical_name, {}).get(file_id)
-        if row_slice is None:
-            return []
-        sliced = table.slice(row_slice.start, row_slice.stop - row_slice.start)
-        return sliced.to_pylist()
+        with self._lock:
+            table = self._get_table(logical_name)
+            if table.num_rows == 0:
+                return []
+            row_slice = self._indices.get(logical_name, {}).get(file_id)
+            if row_slice is None:
+                return []
+            sliced = table.slice(row_slice.start, row_slice.stop - row_slice.start)
+            return sliced.to_pylist()
 
     # ------------------------------------------------------------------
     # File artifact reads
@@ -259,6 +274,8 @@ class BathoBundleReader:
             if logical_name is None:
                 self._tables.clear()
                 self._indices.clear()
+                self._cached_paths.clear()
             else:
                 self._tables.pop(logical_name, None)
                 self._indices.pop(logical_name, None)
+                self._cached_paths.pop(logical_name, None)

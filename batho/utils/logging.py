@@ -126,7 +126,12 @@ def configure_logging(
     root_logger = logging.getLogger()
     root_logger.setLevel(effective_level)
 
-    # Remove existing handlers to avoid duplicates on re-configuration
+    # Close and remove existing handlers to avoid duplicates and leaks on re-configuration
+    for handler in list(root_logger.handlers):
+        try:
+            handler.close()
+        except Exception:
+            pass
     root_logger.handlers.clear()
 
     stderr_handler = logging.StreamHandler(sys.stderr)

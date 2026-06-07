@@ -62,6 +62,7 @@ def artifact_dirname(root: Path) -> str:
 def resolve_bundle_dir(root: Path | str) -> Path:
     """Return the artifact dir for repo root, from config or the default .batho/artifact/."""
     root_path = Path(root).resolve()
+    from batho.utils.path_sanitizer import PathSecurityError
     try:
         from batho.core.config.loader import _get_config_cached_for_root
         cfg = _get_config_cached_for_root(root_path)
@@ -70,7 +71,14 @@ def resolve_bundle_dir(root: Path | str) -> Path:
             p = Path(artifact_dir)
             if not p.is_absolute():
                 p = root_path / p
-            return p.resolve()
+            resolved_p = p.resolve()
+            try:
+                resolved_p.relative_to(root_path)
+            except ValueError:
+                raise PathSecurityError(f"Unsafe artifact_dir configured: {artifact_dir}")
+            return resolved_p
+    except PathSecurityError:
+        raise
     except Exception:
         pass
     return root_path / ".batho" / "artifact"
@@ -109,11 +117,12 @@ class BathoBundle:
         self._file_tracking_rows: list[dict[str, Any]] = []
         self._changelog_rows: list[dict[str, Any]] = []
         self._run_artifact_rows: list[dict[str, Any]] = []
+        self._run_uuid_by_internal_id: dict[int, str] = {}
 
         self._next_file_id: int = self._compute_next_file_id()
         self._file_id_cache: dict[str, int] = self._load_file_id_cache()
 
-        self._writer: BathoBundleWriter | None = None
+        self._writers: dict[int, BathoBundleWriter] = {}
         self._current_run_internal_id: int = 0
 
     @property
@@ -135,7 +144,11 @@ class BathoBundle:
         table = read_ipc_table(p)
         if table.num_rows == 0 or "file_id" not in table.schema.names:
             return 1
-        return int(table.column("file_id").to_pylist()[-1]) + 1
+        import pyarrow.compute as pc
+        max_id = pc.max(table.column("file_id")).as_py()
+        if max_id is None:
+            return 1
+        return int(max_id) + 1
 
     def _load_file_id_cache(self) -> dict[str, int]:
         p = self._active_or_empty("file_tracking")
@@ -275,10 +288,11 @@ class BathoBundle:
         }
         with self._lock:
             self._run_rows.append(row)
-            internal_id = len(self._run_rows)
+            persisted_count = len(self._reader.get_all_runs())
+            internal_id = persisted_count + len(self._run_rows)
+            self._run_uuid_by_internal_id[internal_id] = run_uuid
             self._current_run_internal_id = internal_id
-
-        self._writer = BathoBundleWriter(self._artifact_dir, internal_id)
+            self._writers[internal_id] = BathoBundleWriter(self._artifact_dir, internal_id)
         return internal_id
 
     def get_run_internal_id(self, run_uuid: str) -> int | None:
@@ -305,10 +319,18 @@ class BathoBundle:
                     row["duration_ms"] = duration_ms
                     break
 
+            run_internal_id = None
+            for k, v in self._run_uuid_by_internal_id.items():
+                if v == run_uuid:
+                    run_internal_id = k
+                    break
+            if run_internal_id is None:
+                run_internal_id = self.get_run_internal_id(run_uuid)
+
             streams: dict[str, Path] = {}
-            if self._writer is not None:
-                streams = self._writer.finalize()
-                self._writer = None
+            if run_internal_id is not None and run_internal_id in self._writers:
+                writer = self._writers.pop(run_internal_id)
+                streams = writer.finalize()
 
             self._flush_file_tracking(run_uuid)
             if streams:
@@ -332,6 +354,17 @@ class BathoBundle:
                     row["completed_at"] = now
                     row["error_message"] = error_message
                     break
+            run_internal_id = None
+            for k, v in self._run_uuid_by_internal_id.items():
+                if v == run_uuid:
+                    run_internal_id = k
+                    break
+            if run_internal_id is None:
+                run_internal_id = self.get_run_internal_id(run_uuid)
+
+            if run_internal_id is not None:
+                self._writers.pop(run_internal_id, None)
+            self._flush_file_tracking(run_uuid)
             self._flush_runs(run_uuid)
 
     def get_latest_run_id(self) -> str | None:
@@ -341,18 +374,19 @@ class BathoBundle:
         return self._reader.get_run(run_uuid)
 
     def delete_run(self, run_uuid: str) -> None:
-        table = read_ipc_table(self._active_or_empty("runs"))
-        if table.num_rows == 0:
-            return
-        import pyarrow.compute as pc
-        mask = pc.invert(pc.equal(table.column("run_uuid"), run_uuid))
-        filtered = table.filter(mask)
-        tmp = self._artifact_dir / "runs.tmp.ipc"
-        with ipc.new_file(str(tmp), RUNS_SCHEMA) as w:
-            for batch in filtered.to_batches():
-                w.write_batch(batch)
-        self._manager.commit_patch({"runs": tmp}, run_uuid)
-        self._reader.invalidate("runs")
+        with self._lock:
+            table = read_ipc_table(self._active_or_empty("runs"))
+            if table.num_rows == 0:
+                return
+            import pyarrow.compute as pc
+            mask = pc.invert(pc.equal(table.column("run_uuid"), run_uuid))
+            filtered = table.filter(mask)
+            tmp = self._artifact_dir / "runs.tmp.ipc"
+            with ipc.new_file(str(tmp), RUNS_SCHEMA) as w:
+                for batch in filtered.to_batches():
+                    w.write_batch(batch)
+            self._manager.commit_patch({"runs": tmp}, run_uuid)
+            self._reader.invalidate("runs")
 
     def get_entity_count(self, run_uuid: str) -> int:
         run = self.get_run(run_uuid)
@@ -388,35 +422,38 @@ class BathoBundle:
                     if eid:
                         entity_ids_in_batch.add(eid)
 
-        if self._writer is None:
-            self._writer = BathoBundleWriter(self._artifact_dir, run_internal_id)
+        with self._lock:
+            writer = self._writers.get(run_internal_id)
+            if writer is None:
+                writer = BathoBundleWriter(self._artifact_dir, run_internal_id)
+                self._writers[run_internal_id] = writer
 
-        for item in batch_items:
-            file_path = item["file_path"]
-            content_hash = item.get("content_hash", "")
-            agent_view = item.get("agent_view_data") or {}
-            storage_view = item.get("storage_delta_data") or {}
-            rels = item.get("relationships_data") or []
-            file_id = self._get_or_create_file_id(file_path)
+            for item in batch_items:
+                file_path = item["file_path"]
+                content_hash = item.get("content_hash", "")
+                agent_view = item.get("agent_view_data") or {}
+                storage_view = item.get("storage_delta_data") or {}
+                rels = item.get("relationships_data") or []
+                file_id = self._get_or_create_file_id(file_path)
 
-            self._writer.write_file_artifact(
-                file_id=file_id,
-                agent=agent_view,
-                storage=storage_view,
-                rels=rels,
-                content_hash=content_hash,
-            )
-
-            if store is not None:
-                _accumulate_scratch_rows(
-                    store=store,
-                    run_internal_id=run_internal_id,
-                    file_path=file_path,
-                    agent_view_data=agent_view,
-                    relationships_data=rels,
-                    entity_ids_in_batch=entity_ids_in_batch,
-                    delta_store=delta_store,
+                writer.write_file_artifact(
+                    file_id=file_id,
+                    agent=agent_view,
+                    storage=storage_view,
+                    rels=rels,
+                    content_hash=content_hash,
                 )
+
+                if store is not None:
+                    _accumulate_scratch_rows(
+                        store=store,
+                        run_internal_id=run_internal_id,
+                        file_path=file_path,
+                        agent_view_data=agent_view,
+                        relationships_data=rels,
+                        entity_ids_in_batch=entity_ids_in_batch,
+                        delta_store=delta_store,
+                    )
 
     def get_file_artifacts(
         self,
@@ -577,61 +614,76 @@ class BathoBundle:
         return self._reader.get_unindexed_files_with_details()
 
     def delete_file_tracking(self, file_path: str) -> None:
-        table = read_ipc_table(self._active_or_empty("file_tracking"))
-        if table.num_rows == 0:
-            return
-        import pyarrow.compute as pc
-        mask = pc.invert(pc.equal(table.column("file_path"), file_path))
-        filtered = table.filter(mask)
-        tmp = self._artifact_dir / "file_tracking.tmp.ipc"
-        with ipc.new_file(str(tmp), FILE_TRACKING_SCHEMA) as w:
-            for batch in filtered.to_batches():
-                w.write_batch(batch)
-        self._manager.commit_patch({"file_tracking": tmp}, "delete_tracking")
-        self._file_id_cache.pop(file_path, None)
-        self._reader.invalidate("file_tracking")
+        with self._lock:
+            table = read_ipc_table(self._active_or_empty("file_tracking"))
+            if table.num_rows == 0:
+                return
+            import pyarrow.compute as pc
+            mask = pc.invert(pc.equal(table.column("file_path"), file_path))
+            filtered = table.filter(mask)
+            tmp = self._artifact_dir / "file_tracking.tmp.ipc"
+            with ipc.new_file(str(tmp), FILE_TRACKING_SCHEMA) as w:
+                for batch in filtered.to_batches():
+                    w.write_batch(batch)
+            self._manager.commit_patch({"file_tracking": tmp}, "delete_tracking")
+            self._file_id_cache.pop(file_path, None)
+            self._reader.invalidate("file_tracking")
 
     def delete_file_tracking_batch(self, file_paths: list[str]) -> int:
         if not file_paths:
             return 0
         path_set = set(file_paths)
-        table = read_ipc_table(self._active_or_empty("file_tracking"))
-        if table.num_rows == 0:
-            return 0
-        import pyarrow.compute as pc
-        existing = table.column("file_path").to_pylist()
-        mask = pa.array([p not in path_set for p in existing])
-        filtered = table.filter(mask)
-        removed = table.num_rows - filtered.num_rows
-        tmp = self._artifact_dir / "file_tracking.tmp.ipc"
-        with ipc.new_file(str(tmp), FILE_TRACKING_SCHEMA) as w:
-            for batch in filtered.to_batches():
-                w.write_batch(batch)
-        self._manager.commit_patch({"file_tracking": tmp}, "delete_tracking_batch")
-        for fp in file_paths:
-            self._file_id_cache.pop(fp, None)
-        self._reader.invalidate("file_tracking")
-        return removed
+        with self._lock:
+            table = read_ipc_table(self._active_or_empty("file_tracking"))
+            if table.num_rows == 0:
+                return 0
+            import pyarrow.compute as pc
+            existing = table.column("file_path").to_pylist()
+            mask = pa.array([p not in path_set for p in existing])
+            filtered = table.filter(mask)
+            removed = table.num_rows - filtered.num_rows
+            tmp = self._artifact_dir / "file_tracking.tmp.ipc"
+            with ipc.new_file(str(tmp), FILE_TRACKING_SCHEMA) as w:
+                for batch in filtered.to_batches():
+                    w.write_batch(batch)
+            self._manager.commit_patch({"file_tracking": tmp}, "delete_tracking_batch")
+            for fp in file_paths:
+                self._file_id_cache.pop(fp, None)
+            self._reader.invalidate("file_tracking")
+            return removed
 
     # ------------------------------------------------------------------
     # File Changelog
     # ------------------------------------------------------------------
 
+    def _resolve_run_uuid(self, rid: Any) -> str:
+        if not rid:
+            return ""
+        if isinstance(rid, str):
+            return rid
+        # It's an int. Check in-memory mapping first.
+        with self._lock:
+            if rid in self._run_uuid_by_internal_id:
+                return self._run_uuid_by_internal_id[rid]
+        # Fallback to position-based indexing across persisted + in-flight runs
+        # (Needed for backwards compatibility and test mocks that bypass create_run)
+        persisted_runs = self._reader.get_all_runs()
+        all_runs = persisted_runs + self._run_rows
+        if 0 < rid <= len(all_runs):
+            return all_runs[rid - 1].get("run_uuid", "")
+        return ""
+
     def record_file_changelog(
         self,
-        run_id: int,
-        base_run_id: int,
+        run_id: int | str,
+        base_run_id: int | str | None,
         diffs: list[Any],
     ) -> None:
         if not diffs:
             return
-        run_uuid = ""
-        base_run_uuid = ""
-        for row in self._run_rows:
-            if row.get("run_uuid"):
-                run_uuid = row["run_uuid"]
-            if base_run_id and row.get("run_uuid"):
-                base_run_uuid = row["run_uuid"]
+
+        run_uuid = self._resolve_run_uuid(run_id)
+        base_run_uuid = self._resolve_run_uuid(base_run_id)
 
         now = datetime.now(timezone.utc).isoformat()
         def _gv(obj: Any, key: str, default: Any = "") -> Any:
@@ -711,10 +763,7 @@ class BathoBundle:
             except Exception:
                 return None
 
-        run_uuid = ""
-        for row in self._run_rows:
-            if row.get("run_uuid"):
-                run_uuid = row["run_uuid"]
+        run_uuid = self._resolve_run_uuid(run_internal_id)
         if not run_uuid:
             run_uuid = self._reader.get_latest_run_id() or str(run_internal_id)
 
@@ -733,7 +782,9 @@ class BathoBundle:
             self._flush_run_artifacts(run_uuid)
 
     def get_run_artifacts(self, run_internal_id: int) -> dict[str, Any] | None:
-        run_uuid = self._reader.get_latest_run_id()
+        run_uuid = self._resolve_run_uuid(run_internal_id)
+        if not run_uuid:
+            run_uuid = self._reader.get_latest_run_id()
         if run_uuid is None:
             return None
 

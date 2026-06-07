@@ -398,7 +398,7 @@ def get_config_with_root(root_dir: Path) -> dict[str, Any]:
     try:
         cfg = Config.model_validate(base_cfg)
     except ValidationError as exc:
-        _get_logger().info(
+        _get_logger().warning(
             "config_validation_failed_regenerating",
             config_file=cfg_path.name,
             error=str(exc),
@@ -408,6 +408,15 @@ def get_config_with_root(root_dir: Path) -> dict[str, Any]:
             cfg = Config()
             if cfg_path.exists():
                 try:
+                    # Back up the invalid config file to prevent silent data destruction
+                    backup_path = cfg_path.with_suffix(".yaml.bak")
+                    import shutil
+                    shutil.copyfile(cfg_path, backup_path)
+                    _get_logger().warning(
+                        "config_validation_failed_backup_created",
+                        config_file=str(cfg_path),
+                        backup_file=str(backup_path),
+                    )
                     cfg_path.write_text(
                         yaml.safe_dump(cfg.model_dump(), default_flow_style=False, sort_keys=False),
                         encoding="utf-8",
@@ -424,6 +433,23 @@ def get_config_with_root(root_dir: Path) -> dict[str, Any]:
 
     cfg_dict = cfg.model_dump()
     cfg_dict["logging"]["level"] = cfg.logging.std_level
+
+    # Sanitize and validate paths configuration to prevent traversal attacks
+    paths = cfg_dict.setdefault("paths", {})
+    from batho.utils.path_sanitizer import PathSecurityError
+    for path_key in ("artifact_dir", "cache_dir", "bsg_dir"):
+        val = paths.get(path_key)
+        if val:
+            p = Path(val)
+            if not p.is_absolute():
+                p = root_dir / p
+            resolved = p.resolve()
+            try:
+                resolved.relative_to(root_dir)
+            except ValueError:
+                raise PathSecurityError(f"Unsafe config path {path_key} escaping repository root: {val}")
+            paths[path_key] = str(resolved)
+
     return cfg_dict
 
 

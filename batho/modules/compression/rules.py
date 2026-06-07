@@ -305,6 +305,10 @@ class RuleMatch:
         object.__setattr__(self, "_file_patterns_lower", tuple(p.lower() for p in self.file_patterns))
         object.__setattr__(self, "_gap_entity_types_lower", tuple(t.lower() for t in self.gap_entity_types))
         if self.content_hash_pattern is not None:
+            if not _is_safe_regex(self.content_hash_pattern):
+                raise ValueError(
+                    f"Dangerous/complex content_hash_pattern regex rejected to prevent ReDoS: {self.content_hash_pattern!r}"
+                )
             try:
                 compiled = re.compile(self.content_hash_pattern)
                 object.__setattr__(self, "_compiled_hash_pattern", compiled)
@@ -1114,9 +1118,148 @@ def _metadata_conditions_from_list(raw_list: Any) -> tuple[MetadataCondition, ..
     return tuple(conditions)
 
 
+def _split_alternatives(text: str) -> list[str]:
+    alts = []
+    current = []
+    depth = 0
+    in_class = False
+    skip = False
+    for c in text:
+        if skip:
+            current.append(c)
+            skip = False
+            continue
+        if c == '\\':
+            current.append(c)
+            skip = True
+            continue
+        if in_class:
+            if c == ']':
+                in_class = False
+            current.append(c)
+            continue
+        if c == '[':
+            in_class = True
+            current.append(c)
+            continue
+        if c == '(':
+            depth += 1
+            current.append(c)
+            continue
+        if c == ')':
+            depth -= 1
+            current.append(c)
+            continue
+        if c == '|' and depth == 0:
+            alts.append("".join(current))
+            current = []
+        else:
+            current.append(c)
+    alts.append("".join(current))
+    return alts
+
+
+def _is_safe_regex(pattern: str) -> bool:
+    if len(pattern) > 250:
+        return False
+
+    stack = []
+    skip_next = False
+    in_char_class = False
+    
+    i = 0
+    while i < len(pattern):
+        char = pattern[i]
+        if skip_next:
+            skip_next = False
+            i += 1
+            continue
+        if char == '\\':
+            # Skip the next character — it is the escaped literal, not a metachar.
+            skip_next = True
+            i += 1
+            continue
+
+        if in_char_class:
+            if char == ']':
+                in_char_class = False
+            i += 1
+            continue
+
+        if char == '[':
+            in_char_class = True
+            i += 1
+            continue
+
+        if char == '(':
+            stack.append({'has_quantifier': False, 'start_idx': i})
+        elif char == ')':
+            if stack:
+                group_info = stack.pop()
+                next_char = None
+                if i + 1 < len(pattern):
+                    next_char = pattern[i+1]
+
+                is_group_quantified = next_char in ('*', '+', '?') or (next_char == '{')
+
+                if group_info['has_quantifier'] and is_group_quantified:
+                    return False
+
+                if is_group_quantified:
+                    group_text = pattern[group_info['start_idx'] + 1 : i]
+                    alts = _split_alternatives(group_text)
+                    if len(alts) > 1:
+                        cleaned_alts = []
+                        for alt in alts:
+                            alt_stripped = alt.lstrip('^$()[]\\')
+                            if alt_stripped:
+                                cleaned_alts.append(alt_stripped)
+                        for idx1, alt1 in enumerate(cleaned_alts):
+                            for idx2, alt2 in enumerate(cleaned_alts):
+                                if idx1 != idx2 and (alt2.startswith(alt1) or alt1.startswith(alt2)):
+                                    return False
+
+                if stack and (group_info['has_quantifier'] or is_group_quantified):
+                    stack[-1]['has_quantifier'] = True
+        elif char in ('*', '+', '?', '{'):
+            if stack:
+                stack[-1]['has_quantifier'] = True
+
+        i += 1
+
+    # Count overall quantifiers (non-escaped, outside char classes)
+    quantifier_count = 0
+    skip_next = False
+    in_char_class = False
+    for char in pattern:
+        if skip_next:
+            skip_next = False
+            continue
+        if char == '\\':
+            skip_next = True
+            continue
+        if in_char_class:
+            if char == ']':
+                in_char_class = False
+            continue
+        if char == '[':
+            in_char_class = True
+            continue
+        if char in ('*', '+', '?', '{'):
+            quantifier_count += 1
+
+    if quantifier_count > 8:
+        return False
+
+    return True
+
+
 def _regex_matcher_from_dict(raw: dict[str, Any]) -> RegexMatcher:
+    pattern = str(raw.get("pattern", ""))
+    if not _is_safe_regex(pattern):
+        raise ValueError(f"Dangerous/complex regex pattern rejected to prevent ReDoS: {pattern!r}")
     return RegexMatcher(
-        pattern=str(raw.get("pattern", "")),
+        pattern=pattern,
         target=str(raw.get("target", "name") or "name"),
         metadata_key=(
             str(raw.get("metadata_key")).strip()

@@ -22,6 +22,18 @@ from typing import Any
 
 import msgpack
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+
+import contextlib
+
 from batho.core.schemas import Entity, Relationship
 
 logger = logging.getLogger(__name__)
@@ -46,61 +58,135 @@ class AstCache:
         self.ast_dir = self.cache_dir / "ast"
         # Manifest is now only for lazy GC, not for hot-path staleness checks
         self._manifest_index: dict[str, Any] | None = None
+        self._lock = threading.RLock()
+        self._lock_file_path = self.cache_dir / "ast_manifests.lock"
         self._ensure_dirs()
+
+    @contextlib.contextmanager
+    def _lock_manifest(self):
+        """Acquire both process-level file lock and thread lock.
+
+        Order: file lock first (blocking I/O outside RLock), then RLock.
+        This prevents holding the in-process RLock while blocked waiting
+        for a cross-process flock, which would deadlock other threads.
+        """
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        lock_file = None
+        try:
+            lock_file = open(self._lock_file_path, "w")
+            try:
+                if fcntl:
+                    fcntl.flock(lock_file, fcntl.LOCK_EX)
+                elif msvcrt:
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            except Exception:
+                lock_file.close()
+                raise
+
+            with self._lock:
+                # Force reload of the manifest from disk
+                self._manifest_index = None
+                try:
+                    yield
+                finally:
+                    pass
+        finally:
+            if lock_file is not None:
+                try:
+                    if fcntl:
+                        fcntl.flock(lock_file, fcntl.LOCK_UN)
+                    elif msvcrt:
+                        lock_file.seek(0)
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                except Exception:
+                    pass
+                lock_file.close()
 
     def _ensure_dirs(self) -> None:
         self.ast_dir.mkdir(parents=True, exist_ok=True)
 
     def _load_manifest_for_gc(self) -> dict[str, Any]:
         """Load manifest only when needed for GC operations."""
-        if self._manifest_index is not None:
-            return self._manifest_index
-        index_file = self.cache_dir / "ast_manifests.idx"
-        if index_file.exists():
-            try:
-                with open(index_file, "rb") as f:
-                    self._manifest_index = msgpack.unpackb(f.read()) or {}
-            except Exception as e:
-                logger.debug("ast_cache_manifest_load_failed", error=str(e))
+        with self._lock:
+            if self._manifest_index is not None:
+                return self._manifest_index
+            index_file = self.cache_dir / "ast_manifests.idx"
+            if index_file.exists():
+                try:
+                    with open(index_file, "rb") as f:
+                        self._manifest_index = msgpack.unpackb(f.read()) or {}
+                except Exception as e:
+                    logger.debug("ast_cache_manifest_load_failed", error=str(e))
+                    self._manifest_index = {}
+            else:
                 self._manifest_index = {}
-        else:
-            self._manifest_index = {}
-        return self._manifest_index
+            return self._manifest_index
 
     def _save_manifest_for_gc(self) -> None:
         """Save manifest for GC operations atomically via temp file + replace."""
-        if self._manifest_index is None:
-            return
-        index_file = self.cache_dir / "ast_manifests.idx"
-        try:
-            fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, prefix="ast_manifests.", suffix=".tmp")
+        with self._lock:
+            if self._manifest_index is None:
+                return
+            index_file = self.cache_dir / "ast_manifests.idx"
             try:
-                with os.fdopen(fd, "wb") as f:
-                    f.write(msgpack.packb(self._manifest_index))
-                os.replace(tmp_path, index_file)
-            except Exception:
+                fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, prefix="ast_manifests.", suffix=".tmp")
                 try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-        except Exception as e:
-            logger.debug("ast_cache_manifest_save_failed", error=str(e))
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(msgpack.packb(self._manifest_index))
+                    os.replace(tmp_path, index_file)
+                except Exception:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise
+            except Exception as e:
+                logger.debug("ast_cache_manifest_save_failed", error=str(e))
 
     def _compute_key(self, file_path: str, content_hash: str, variant: str) -> str:
         key = f"{file_path}:{content_hash}:{variant}"
-        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
 
-    def _add_to_manifest(self, file_path: str, cache_hash: str) -> None:
-        try:
-            manifest = self._load_manifest_for_gc()
-            if file_path not in manifest:
-                manifest[file_path] = []
-            if cache_hash not in manifest[file_path]:
-                manifest[file_path].append(cache_hash)
-            self._save_manifest_for_gc()
-        except Exception as e:
-            logger.debug("ast_cache_manifest_add_failed", file=file_path, error=str(e))
+    def _add_to_manifest(self, file_path: str, cache_hash: str, content_hash: str) -> None:
+        with self._lock_manifest():
+            try:
+                manifest = self._load_manifest_for_gc()
+                if file_path not in manifest:
+                    manifest[file_path] = []
+                
+                # Identify and clean up stale cache files (different content_hash)
+                updated_hashes = []
+                for existing_hash in manifest[file_path]:
+                    if existing_hash == cache_hash:
+                        updated_hashes.append(existing_hash)
+                        continue
+                    
+                    cache_file = self.ast_dir / f"{existing_hash}.msgpack"
+                    if cache_file.exists():
+                        try:
+                            with open(cache_file, "rb") as f:
+                                data = msgpack.unpackb(f.read())
+                            if data.get("content_hash") != content_hash:
+                                cache_file.unlink()
+                                logger.debug("ast_cache_cleanup_stale", file=file_path, cache_file=str(cache_file))
+                            else:
+                                updated_hashes.append(existing_hash)
+                        except Exception:
+                            # Only delete if this is a stale/corrupt entry, never the
+                            # freshly written cache_hash entry (already skipped above).
+                            if existing_hash != cache_hash:
+                                try:
+                                    cache_file.unlink()
+                                except OSError:
+                                    pass
+                
+                if cache_hash not in updated_hashes:
+                    updated_hashes.append(cache_hash)
+                    
+                manifest[file_path] = updated_hashes
+                self._save_manifest_for_gc()
+            except Exception as e:
+                logger.debug("ast_cache_manifest_add_failed", file=file_path, error=str(e))
 
     def get_ast(
         self,
@@ -177,8 +263,6 @@ class AstCache:
         """
         cache_hash = self._compute_key(file_path, content_hash, variant or "")
         cache_file = self.ast_dir / f"{cache_hash}.msgpack"
-        # Unique temp file per process+thread to avoid collisions in multiprocessing and threading
-        tmp_file = self.ast_dir / f"{cache_hash}.tmp.{os.getpid()}.{threading.get_ident()}"
 
         expires_at = None
         if ttl_days > 0:
@@ -195,21 +279,27 @@ class AstCache:
             "expires_at": expires_at,
         }
 
+        # Atomic write: write to temp file, then replace
+        import tempfile
+        tmp_path = None
         try:
-            # Atomic write: write to temp file, then replace
-            with open(tmp_file, "wb") as f:
+            fd, tmp_path_str = tempfile.mkstemp(dir=self.ast_dir, prefix=f"{cache_hash}.tmp.", suffix=".tmp")
+            tmp_path = Path(tmp_path_str)
+            with os.fdopen(fd, "wb") as f:
                 f.write(msgpack.packb(payload))
-            os.replace(tmp_file, cache_file)  # Atomic operation
+            os.replace(tmp_path, cache_file)  # Atomic operation
+            tmp_path = None
             logger.debug("ast_cache_write", file=file_path, variant=variant or "")
-            self._add_to_manifest(file_path, cache_hash)
+            self._add_to_manifest(file_path, cache_hash, content_hash)
         except Exception as e:
             logger.debug("ast_cache_write_failed", file=file_path, error=str(e))
             # Clean up temp file if it exists
-            try:
-                if tmp_file.exists():
-                    tmp_file.unlink()
-            except OSError:
-                pass
+            if tmp_path is not None:
+                try:
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+                except OSError:
+                    pass
 
     def is_stale(self, file_path: str, current_hash: str) -> bool:
         """Check if cached AST for a file is stale (content changed).
@@ -237,75 +327,115 @@ class AstCache:
             Number of cache files deleted.
         """
         deleted_count = 0
-        manifest = self._load_manifest_for_gc()
+        with self._lock_manifest():
+            manifest = self._load_manifest_for_gc()
 
-        # O(1) deletion using manifest index
-        if file_path in manifest:
-            cache_hashes = manifest.pop(file_path, [])
-            for cache_hash in cache_hashes:
-                cache_file = self.ast_dir / f"{cache_hash}.msgpack"
-                try:
-                    if cache_file.exists():
-                        cache_file.unlink()
-                        deleted_count += 1
-                        logger.debug("ast_cache_deleted", file=file_path, cache_file=str(cache_file))
-                except OSError as e:
-                    logger.debug("ast_cache_delete_failed", file=file_path, cache_file=str(cache_file), error=str(e))
-            self._save_manifest_for_gc()
-            return deleted_count
-
-        # Fallback to directory scan
-        for cache_file in self.ast_dir.glob("*.msgpack"):
-            try:
-                with open(cache_file, "rb") as f:
-                    data = msgpack.unpackb(f.read())
-
-                if data.get("file_path") == file_path:
+            # O(1) deletion using manifest index
+            if file_path in manifest:
+                cache_hashes = manifest.pop(file_path, [])
+                for cache_hash in cache_hashes:
+                    cache_file = self.ast_dir / f"{cache_hash}.msgpack"
                     try:
-                        cache_file.unlink()
-                        deleted_count += 1
-                        logger.debug("ast_cache_deleted", file=file_path, cache_file=str(cache_file))
+                        if cache_file.exists():
+                            cache_file.unlink()
+                            deleted_count += 1
+                            logger.debug("ast_cache_deleted", file=file_path, cache_file=str(cache_file))
                     except OSError as e:
                         logger.debug("ast_cache_delete_failed", file=file_path, cache_file=str(cache_file), error=str(e))
-            except Exception as e:
-                logger.debug("ast_cache_read_failed_during_delete", cache_file=str(cache_file), error=str(e))
-                continue
+                self._save_manifest_for_gc()
+                return deleted_count
 
-        return deleted_count
+            # Trust the manifest if the index file exists or manifest has other entries.
+            # Bypasses expensive glob scans on non-cached paths.
+            index_file = self.cache_dir / "ast_manifests.idx"
+            if index_file.exists() or len(manifest) > 0:
+                return 0
+
+            # Fallback to directory scan
+            for cache_file in self.ast_dir.glob("*.msgpack"):
+                try:
+                    with open(cache_file, "rb") as f:
+                        data = msgpack.unpackb(f.read())
+
+                    if data.get("file_path") == file_path:
+                        try:
+                            cache_file.unlink()
+                            deleted_count += 1
+                            logger.debug("ast_cache_deleted", file=file_path, cache_file=str(cache_file))
+                        except OSError as e:
+                            logger.debug("ast_cache_delete_failed", file=file_path, cache_file=str(cache_file), error=str(e))
+                except Exception as e:
+                    logger.debug("ast_cache_read_failed_during_delete", cache_file=str(cache_file), error=str(e))
+                    continue
+
+            return deleted_count
 
     def delete_by_path_prefix(self, path_prefix: str) -> int:
         """Delete all AST entries whose file path starts with the given prefix.
 
         Returns the number of entries deleted from the manifest and disk.
         """
-        manifest = self._load_manifest_for_gc()
-        keys_to_delete = [
-            k for k in manifest if k.startswith(path_prefix)
-        ]
-        
+        # Guard against empty, root, or path traversal prefix to prevent unintended bulk deletion
+        if not path_prefix or path_prefix.strip() in ("", "/"):
+            return 0
+
         deleted_count = 0
-        for key in keys_to_delete:
-            cache_hashes = manifest.pop(key, [])
-            for cache_hash in cache_hashes:
-                cache_file = self.ast_dir / f"{cache_hash}.msgpack"
+        with self._lock_manifest():
+            manifest = self._load_manifest_for_gc()
+            keys_to_delete = [
+                k for k in manifest if k.startswith(path_prefix)
+            ]
+            
+            for key in keys_to_delete:
+                cache_hashes = manifest.pop(key, [])
+                for cache_hash in cache_hashes:
+                    cache_file = self.ast_dir / f"{cache_hash}.msgpack"
+                    try:
+                        if cache_file.exists():
+                            cache_file.unlink()
+                            deleted_count += 1
+                    except OSError:
+                        pass
+            if keys_to_delete:
+                self._save_manifest_for_gc()
+            return deleted_count
+
+    def clear(self, older_than_days: int | None = None) -> int:
+        """Clear cached AST entries.
+
+        If older_than_days is provided, only entries older than that (based on cache file mtime)
+        are cleared. Otherwise, all entries are cleared.
+        Returns the number of files deleted.
+        """
+        deleted_count = 0
+        cutoff = None
+        if older_than_days is not None:
+            cutoff = time.time() - (older_than_days * 86400)
+
+        with self._lock_manifest():
+            manifest = self._load_manifest_for_gc()
+            for f in self.ast_dir.glob("*.msgpack"):
                 try:
-                    if cache_file.exists():
-                        cache_file.unlink()
+                    stat = f.stat()
+                    if cutoff is None or stat.st_mtime < cutoff:
+                        f.unlink()
                         deleted_count += 1
                 except OSError:
                     pass
-        if keys_to_delete:
+
+            if cutoff is None:
+                manifest.clear()
+            else:
+                for file_path in list(manifest.keys()):
+                    updated_hashes = []
+                    for cache_hash in manifest[file_path]:
+                        cache_file = self.ast_dir / f"{cache_hash}.msgpack"
+                        if cache_file.exists():
+                            updated_hashes.append(cache_hash)
+                    if updated_hashes:
+                        manifest[file_path] = updated_hashes
+                    else:
+                        manifest.pop(file_path, None)
+
             self._save_manifest_for_gc()
         return deleted_count
-
-    def clear(self) -> None:
-        """Clear all cached AST entries."""
-        for f in self.ast_dir.glob("*.msgpack"):
-            try:
-                f.unlink()
-            except OSError:
-                pass
-        # Also clear manifest if loaded
-        if self._manifest_index is not None:
-            self._manifest_index.clear()
-            self._save_manifest_for_gc()

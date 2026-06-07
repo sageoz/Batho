@@ -121,14 +121,12 @@ class BathoCache:
     def clear_ast_cache(self, older_than_days: int | None = None) -> int:
         if self._ast_cache is None:
             return 0
-        # AstCache.clear() removes all entries unconditionally
-        self._ast_cache.clear()
-        return 0
+        return self._ast_cache.clear(older_than_days)
 
     def invalidate_cache(self, pattern: str | None = None) -> None:
         if self._ast_cache is None:
             return
-        if pattern is None or pattern in ("*", ""):
+        if pattern is None or pattern in ("*", "**", ""):
             self._ast_cache.clear()
             self.logger.info("cache_invalidated", pattern="*", deleted_count=-1)
             return
@@ -141,12 +139,26 @@ class BathoCache:
             # Directory prefix pattern
             deleted = self._ast_cache.delete_by_path_prefix(prefix + "/")
         else:
-            # Generic fnmatch pattern — scan manifest and delete matching entries
-            manifest = self._ast_cache._load_manifest_for_gc()
-            matching = [k for k in list(manifest) if fnmatch.fnmatch(k, pattern)]
+            # Generic fnmatch pattern — scan manifest and delete matching entries.
+            # The entire read+delete sequence is kept inside _lock_manifest to prevent
+            # a TOCTOU race where a freshly written entry could be deleted after the
+            # manifest snapshot but before the per-file delete acquires the lock.
             deleted = 0
-            for file_path in matching:
-                deleted += self._ast_cache.delete_ast(file_path)
+            with self._ast_cache._lock_manifest():
+                manifest = self._ast_cache._load_manifest_for_gc()
+                matching = [k for k in list(manifest) if fnmatch.fnmatch(k, pattern)]
+                for file_path in matching:
+                    cache_hashes = manifest.pop(file_path, [])
+                    for cache_hash in cache_hashes:
+                        cache_file = self._ast_cache.ast_dir / f"{cache_hash}.msgpack"
+                        try:
+                            if cache_file.exists():
+                                cache_file.unlink()
+                                deleted += 1
+                        except OSError:
+                            pass
+                if matching:
+                    self._ast_cache._save_manifest_for_gc()
         self.logger.info("cache_invalidated", pattern=pattern, deleted_count=deleted)
 
     # ------------------------------------------------------------------
@@ -227,16 +239,28 @@ class BathoCache:
     # ------------------------------------------------------------------
 
     def set_file_snapshot(self, snapshot: FileSnapshot) -> None:
-        self._snapshots[snapshot.file_path] = snapshot
+        with self._lock:
+            self._snapshots.pop(snapshot.file_path, None)
+            self._snapshots[snapshot.file_path] = snapshot
+            if len(self._snapshots) > 1000:
+                first_key = next(iter(self._snapshots))
+                self._snapshots.pop(first_key, None)
 
     def get_file_snapshot(self, file_path: str) -> FileSnapshot | None:
-        return self._snapshots.get(file_path)
+        with self._lock:
+            snapshot = self._snapshots.get(file_path)
+            if snapshot is not None:
+                self._snapshots.pop(file_path)
+                self._snapshots[file_path] = snapshot
+            return snapshot
 
     def delete_file_snapshot(self, file_path: str) -> None:
-        self._snapshots.pop(file_path, None)
+        with self._lock:
+            self._snapshots.pop(file_path, None)
 
     def get_all_file_snapshots(self) -> dict[str, FileSnapshot]:
-        return dict(self._snapshots)
+        with self._lock:
+            return dict(self._snapshots)
 
     # ------------------------------------------------------------------
     # Cache management
@@ -246,9 +270,11 @@ class BathoCache:
         db_stats = self._db.get_stats() if self._db is not None else {}
         tables = db_stats.get("tables", {})
         tracking_rows = tables.get("file_tracking", {}).get("rows", 0)
+        with self._lock:
+            snapshot_count = len(self._snapshots)
         return {
             "ast_cache_enabled": self._ast_cache is not None,
-            "snapshot_count": len(self._snapshots),
+            "snapshot_count": snapshot_count,
             "file_tracking_count": tracking_rows,
             "bundle_dir": str(self._db.artifact_dir) if self._db is not None else "",
         }
@@ -264,6 +290,10 @@ class BathoCache:
         return False
 
     def close(self) -> None:
-        self._snapshots.clear()
+        with self._lock:
+            self._snapshots.clear()
+            if self._ast_cache is not None:
+                self._ast_cache._manifest_index = None
+                self._ast_cache = None
         # Note: Do NOT close self._db here - it's shared via _DB_CACHE in engine.py
         # and may be used by other components (e.g., patch operations after build)

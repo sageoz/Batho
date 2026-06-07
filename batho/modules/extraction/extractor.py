@@ -28,23 +28,16 @@ from typing import Any
 from tree_sitter import Language, Node, Query, QueryCursor
 from tree_sitter_language_pack import get_language, get_parser
 
-_TS_PARSER_CACHE: dict[str, Any] = {}
-_TS_PARSER_LOCK = threading.Lock()
+_TS_THREAD_LOCAL = threading.local()
+
 
 def get_pooled_parser(language: str) -> Any:
-    """Retrieve or initialize a pooled tree-sitter Parser instance for a language.
-
-    Thread-safe: uses a lock to prevent race conditions during cache initialization.
-    """
-    # Fast path: check without lock
-    if language in _TS_PARSER_CACHE:
-        return _TS_PARSER_CACHE[language]
-
-    # Slow path: acquire lock and double-check
-    with _TS_PARSER_LOCK:
-        if language not in _TS_PARSER_CACHE:
-            _TS_PARSER_CACHE[language] = get_parser(language)  # type: ignore[arg-type]
-        return _TS_PARSER_CACHE[language]
+    """Retrieve or initialize a thread-local tree-sitter Parser instance for a language."""
+    if not hasattr(_TS_THREAD_LOCAL, "parsers"):
+        _TS_THREAD_LOCAL.parsers = {}
+    if language not in _TS_THREAD_LOCAL.parsers:
+        _TS_THREAD_LOCAL.parsers[language] = get_parser(language)  # type: ignore[arg-type]
+    return _TS_THREAD_LOCAL.parsers[language]
 
 
 from batho.utils.encoding import normalize_to_utf8
@@ -1143,6 +1136,7 @@ class ASTExtractor(abc.ABC):
                     if source_ent is None:
                         continue
 
+                    normalized_ref = None
                     target_id = None
                     target_ent = by_name.get(ref_text)
                     if target_ent is not None:

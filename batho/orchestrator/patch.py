@@ -133,7 +133,14 @@ def run_patch(options: PatchOptions) -> PatchResult:
     db = None
     run_uuid = ""
     base_run_uuid = ""
+    lock = None
     try:
+        from batho.utils.file_io import InterProcessLock
+        batho_dir = root / ".batho"
+        batho_dir.mkdir(parents=True, exist_ok=True)
+        lock = InterProcessLock(batho_dir / "batho.lock")
+        lock.__enter__()
+
         db = get_bundle(root)
         base_run_uuid = db.get_latest_run_id() or ""
         if not base_run_uuid:
@@ -551,6 +558,17 @@ def run_patch(options: PatchOptions) -> PatchResult:
     except Exception as e:
         # Mark run as failed on any unhandled exception
         LOGGER.error("patch_unhandled_exception", error=str(e))
+        # Ensure scratch stores are cleaned up on exception (leak prevention)
+        try:
+            if 'store' in locals() and store is not None:
+                store.cleanup_streams()
+        except Exception:
+            pass
+        try:
+            if 'delta_store' in locals() and delta_store is not None:
+                delta_store.cleanup_streams()
+        except Exception:
+            pass
         if run_uuid and db is not None:
             try:
                 db.fail_run(run_uuid, error_message=str(e))
@@ -562,3 +580,9 @@ def run_patch(options: PatchOptions) -> PatchResult:
             base_snapshot_id=base_run_uuid,
             warnings=[f"Unhandled exception: {e}"],
         )
+    finally:
+        if lock is not None:
+            try:
+                lock.__exit__(None, None, None)
+            except Exception:
+                pass

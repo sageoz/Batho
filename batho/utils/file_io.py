@@ -25,7 +25,7 @@ from batho.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
 
-_UMASK_LOCK = threading.Lock()
+
 
 
 def read_file_bytes(
@@ -167,33 +167,24 @@ def write_atomically(
         else:
             bytes_content = str(content).encode(encoding)
 
-        # Check target permissions to preserve them or apply default mode using umask
+        # Check target permissions to preserve them
         original_mode = None
         if path.exists():
             try:
                 original_mode = path.stat().st_mode & 0o7777
             except OSError:
                 pass
-        else:
-            try:
-                with _UMASK_LOCK:
-                    current_umask = os.umask(0)
-                    os.umask(current_umask)
-                    original_mode = 0o666 & ~current_umask
-            except Exception:
-                original_mode = 0o666
 
-        # Write to temporary file
-        import tempfile
-        fd, tmp_path_str = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-        tmp_path = Path(tmp_path_str)
+        # Write to temporary file with a unique name
+        import uuid
+        tmp_path = path.with_suffix(f".tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
         
-        with os.fdopen(fd, 'wb') as f:
+        with open(tmp_path, "wb") as f:
             f.write(bytes_content)
 
         if original_mode is not None:
             try:
-                os.chmod(tmp_path_str, original_mode)
+                os.chmod(tmp_path, original_mode)
             except OSError:
                 pass
 
@@ -220,4 +211,83 @@ def write_atomically(
         return False
 
 
-# Legacy wrappers removed in v2.0 - use read_file_bytes directly
+
+
+
+class InterProcessLock:
+    """An advisory file lock to prevent concurrent build/patch runs on the same repository."""
+
+    def __init__(self, lock_file_path: Path | str) -> None:
+        self.lock_file_path = Path(lock_file_path)
+        self.fd: Any = None
+
+    def __enter__(self) -> InterProcessLock:
+        try:
+            import fcntl
+            self.fd = open(self.lock_file_path, "w")
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                self.fd.close()
+                self.fd = None
+                raise RuntimeError("Another Batho process is already running on this repository.")
+            except BaseException:
+                self.fd.close()
+                self.fd = None
+                raise
+        except ImportError:
+            # Fallback for Windows
+            try:
+                import msvcrt
+                self.fd = open(self.lock_file_path, "w")
+                try:
+                    msvcrt.locking(self.fd.fileno(), msvcrt.LK_NBLCK, 1)
+                except (OSError, IOError):
+                    self.fd.close()
+                    self.fd = None
+                    raise RuntimeError("Another Batho process is already running on this repository.")
+                except BaseException:
+                    self.fd.close()
+                    self.fd = None
+                    raise
+            except ImportError:
+                # Basic lock-file checking fallback if neither is available
+                if self.lock_file_path.exists():
+                    raise RuntimeError("Another Batho process is already running on this repository.")
+                self.lock_file_path.touch()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        try:
+            import fcntl
+            if self.fd:
+                try:
+                    fcntl.flock(self.fd, fcntl.LOCK_UN)
+                except Exception:
+                    pass
+                try:
+                    self.fd.close()
+                except Exception:
+                    pass
+                self.fd = None
+        except ImportError:
+            try:
+                import msvcrt
+                if self.fd:
+                    try:
+                        self.fd.seek(0)
+                        msvcrt.locking(self.fd.fileno(), msvcrt.LK_UNLCK, 1)
+                    except Exception:
+                        pass
+                    try:
+                        self.fd.close()
+                    except Exception:
+                        pass
+                    self.fd = None
+            except ImportError:
+                try:
+                    if self.lock_file_path.exists():
+                        self.lock_file_path.unlink()
+                except Exception:
+                    pass
+

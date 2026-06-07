@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,7 @@ from batho.utils.logging import get_logger
 from .schemas import BUNDLE_SCHEMA_VERSION, ALL_SCHEMAS
 
 LOGGER = get_logger(__name__, component="arrow_bundle_manager")
+MAX_DECOMPRESS_SIZE = 500 * 1024 * 1024  # 500 MB
 
 
 class BathoBundleManager:
@@ -39,33 +41,63 @@ class BathoBundleManager:
         self.artifact_dir = artifact_dir.resolve()
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_path = self.artifact_dir / "meta.json"
+        self._manifest_cache: dict[str, Any] | None = None
+        self._manifest_mtime: int | None = None
+        self._manifest_size: int | None = None
+        self._manifest_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Manifest
     # ------------------------------------------------------------------
 
     def load_manifest(self) -> dict[str, Any]:
-        if not self.manifest_path.exists():
-            return {
-                "schema_version": BUNDLE_SCHEMA_VERSION,
-                "generation": 0,
-                "active_files": {},
-                "last_run_uuid": None,
-            }
-        try:
-            return json.loads(self.manifest_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {
-                "schema_version": BUNDLE_SCHEMA_VERSION,
-                "generation": 0,
-                "active_files": {},
-                "last_run_uuid": None,
-            }
+        with self._manifest_lock:
+            if not self.manifest_path.exists():
+                self._manifest_cache = None
+                self._manifest_mtime = None
+                self._manifest_size = None
+                return {
+                    "schema_version": BUNDLE_SCHEMA_VERSION,
+                    "generation": 0,
+                    "active_files": {},
+                    "last_run_uuid": None,
+                }
+            try:
+                stat_res = self.manifest_path.stat()
+                mtime = stat_res.st_mtime_ns
+                size = stat_res.st_size
+                if (
+                    self._manifest_cache is not None 
+                    and self._manifest_mtime == mtime
+                    and self._manifest_size == size
+                ):
+                    return self._manifest_cache
+
+                manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+                self._manifest_cache = manifest
+                self._manifest_mtime = mtime
+                self._manifest_size = size
+                return manifest
+            except (json.JSONDecodeError, OSError):
+                self._manifest_cache = None
+                self._manifest_mtime = None
+                self._manifest_size = None
+                return {
+                    "schema_version": BUNDLE_SCHEMA_VERSION,
+                    "generation": 0,
+                    "active_files": {},
+                    "last_run_uuid": None,
+                }
 
     def _write_manifest_atomic(self, manifest: dict[str, Any]) -> None:
-        tmp = self.manifest_path.with_suffix(".tmp")
+        import uuid
+        tmp = self.manifest_path.with_suffix(f".tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
         tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         os.replace(str(tmp), str(self.manifest_path))
+        with self._manifest_lock:
+            self._manifest_cache = None
+            self._manifest_mtime = None
+            self._manifest_size = None
 
     # ------------------------------------------------------------------
     # Commit
@@ -219,12 +251,16 @@ class BathoBundleManager:
             zf.writestr("manifest.json", json.dumps(export_manifest, indent=2))
 
             for logical_name, local_path in active.items():
-                compressed = cctx.compress(local_path.read_bytes())
-                zf.writestr(f"{logical_name}.ipc.zst", compressed)
+                size = local_path.stat().st_size
+                with local_path.open("rb") as f_in:
+                    with zf.open(f"{logical_name}.ipc.zst", "w") as f_out:
+                        cctx.copy_stream(f_in, f_out, size=size)
 
             for logical_name, ipc_path in bsg_ipc_paths.items():
-                compressed = cctx.compress(ipc_path.read_bytes())
-                zf.writestr(f"bsg/{logical_name}.ipc.zst", compressed)
+                size = ipc_path.stat().st_size
+                with ipc_path.open("rb") as f_in:
+                    with zf.open(f"bsg/{logical_name}.ipc.zst", "w") as f_out:
+                        cctx.copy_stream(f_in, f_out, size=size)
 
         LOGGER.info(
             "artifact_exported",
@@ -271,20 +307,46 @@ class BathoBundleManager:
                 if not member.endswith(".ipc.zst"):
                     continue
 
-                raw_ipc = dctx.decompress(zf.read(member))
+                from batho.utils.path_sanitizer import is_safe_filename, safe_join, PathSecurityError
+
+                if member.startswith("bsg/"):
+                    logical = member[len("bsg/"):].replace(".ipc.zst", "")
+                    if not is_safe_filename(logical):
+                        raise PathSecurityError(f"Unsafe ZIP member path detected: {member}")
+                else:
+                    logical_name = member.replace(".ipc.zst", "")
+                    if not is_safe_filename(logical_name):
+                        raise PathSecurityError(f"Unsafe ZIP member path detected: {member}")
+
+                try:
+                    chunks = []
+                    total_size = 0
+                    with zf.open(member) as compressed_stream:
+                        with dctx.stream_reader(compressed_stream) as reader:
+                            while True:
+                                chunk = reader.read(65536)
+                                if not chunk:
+                                    break
+                                total_size += len(chunk)
+                                if total_size > MAX_DECOMPRESS_SIZE:
+                                    raise RuntimeError(
+                                        f"Decompressed size exceeded maximum limit of {MAX_DECOMPRESS_SIZE} bytes"
+                                    )
+                                chunks.append(chunk)
+                    raw_ipc = b"".join(chunks)
+                except Exception as exc:
+                    raise RuntimeError(f"Failed to decompress ZIP member {member}: {exc}") from exc
 
                 if member.startswith("bsg/"):
                     # bsg/current/ plain .ipc files
                     if bsg_target_dir is not None:
                         bsg_target_dir.mkdir(parents=True, exist_ok=True)
-                        logical = member[len("bsg/"):].replace(".ipc.zst", "")
-                        dest = bsg_target_dir / f"{logical}.ipc"
+                        dest = safe_join(bsg_target_dir, f"{logical}.ipc")
                         dest.write_bytes(raw_ipc)
                         bsg_extracted.append(logical)
                 else:
-                    logical_name = member.replace(".ipc.zst", "")
                     stamped_name = f"{logical_name}.v{generation}.ipc"
-                    dest = self.artifact_dir / stamped_name
+                    dest = safe_join(self.artifact_dir, stamped_name)
                     dest.write_bytes(raw_ipc)
                     active_files[logical_name] = stamped_name
 

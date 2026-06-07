@@ -535,13 +535,6 @@ def process_file_single_pass_worker(
                     root_path=_WORKER_ROOT_PATH or str(file_path.parent),
                     file_path=filepath,
                 )
-                rules_applied_set = set()
-                for ent in entities:
-                    if ent.metadata and ent.metadata.get("bsg.rules"):
-                        local_hits["entities_tagged"] += 1
-                        for rule_name in ent.metadata["bsg.rules"]:
-                            rules_applied_set.add(rule_name)
-                local_hits["rules_applied"] = len(rules_applied_set)
             except Exception as exc:
                 logger.warning(
                     "worker_bsg_rules_failed",
