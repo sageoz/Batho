@@ -4,12 +4,12 @@
 
 Batho's CI/CD integration provides automated code graph indexing for fleet-scale repositories. The workflows maintain an up-to-date Arrow IPC bundle (`.batho`) on every push or pull request, enabling AI agents to download pre-built code graphs without local indexing.
 
-**Storage format**: Batho uses Apache Arrow IPC File format for its at-rest graph store (`bsg/current/*.ipc`) — plain, memory-mappable files with zero decompression overhead. The transport artifact (`artifact_*.batho`) is a ZIP of zstd-compressed IPC files, produced by `batho export --pack` and consumed by `batho load`.
+**Storage format**: Batho uses Apache Arrow IPC File format for its at-rest graph store (`bsg/current/*.ipc`) — plain, memory-mappable files with zero decompression overhead. The transport artifact (`artifact_*.batho`) is a ZIP of zstd-compressed IPC files, produced by `batho export` and consumed by `batho load`.
 
 Two platform-specific configurations are provided: GitHub Actions and GitLab CI. Both implement the same incremental patching strategy:
 1. Download previous artifact → `batho load` to restore the graph store
 2. `batho patch` to re-index only changed files
-3. `batho export --pack` to produce the new transport artifact
+3. `batho export` to produce the new transport artifact
 4. Upload for subsequent runs and AI agent access
 
 ## Files Covered
@@ -37,7 +37,7 @@ Two platform-specific configurations are provided: GitHub Actions and GitLab CI.
 | **Step 4** | `dawidd6/action-download-artifact@v6` | `batho-database` | Download previous `.batho` artifact |
 | **Step 5** | `batho load / build` | conditional | Restore graph or full index |
 | **Step 5** | `batho patch` | if artifact existed | Incremental re-index |
-| **Step 5** | `batho export --pack` | always | Pack Arrow IPC graph into transport artifact |
+| **Step 5** | `batho export` | always | Export Arrow IPC graph into transport artifact |
 | **Step 6** | `actions/upload-artifact@v4` | `batho-database` | Upload transport artifact |
 | **Retention** | `retention-days` | `90` | Keep artifact for 90 days |
 
@@ -56,7 +56,7 @@ Two platform-specific configurations are provided: GitHub Actions and GitLab CI.
 | **Script** | `unzip` extraction | conditional | Extract downloaded artifact |
 | **Script** | `batho load / build` | conditional | Restore graph or full index |
 | **Script** | `batho patch` | if artifact existed | Incremental re-index |
-| **Script** | `batho export --pack` | always | Pack Arrow IPC graph into transport artifact |
+| **Script** | `batho export` | always | Export Arrow IPC graph into transport artifact |
 | **Artifacts** | `paths` | `artifact_*.batho` | Upload transport artifact |
 | **Expiration** | `expire_in` | `90 days` | Keep artifact for 90 days |
 
@@ -75,7 +75,7 @@ flowchart TD
     E --> F{Artifact exists?}
     F -- "Yes" --> G["batho load --root . artifact_*.batho --force"]
     G --> H["batho patch --root . --verbose"]
-    H --> I["batho export --pack --root ."]
+    H --> I["batho export --root ."]
     F -- "No" --> J["batho build --root . --full --verbose"]
     J --> I
     I --> K["Upload artifact_*.batho"]
@@ -96,7 +96,7 @@ flowchart TD
     G --> H
     H -- "Yes" --> I["batho load --root . artifact_*.batho --force"]
     I --> J["batho patch --root . --verbose"]
-    J --> K["batho export --pack --root ."]
+    J --> K["batho export --root ."]
     H -- "No" --> L["batho build --root . --full --verbose"]
     L --> K
     K --> M["Upload artifact_*.batho"]
@@ -137,14 +137,14 @@ fi
 - **`batho patch`**: Computes file hashes, compares against snapshot metadata, and only re-indexes changed files
 - **`batho build --full`**: Creates the Arrow IPC graph from scratch, parsing all files in the repository
 
-### Phase 3: Pack Transport Artifact
+### Phase 3: Export Transport Artifact
 
 ```bash
 # Always run after build or patch
-batho export --pack --root .
+batho export --root .
 ```
 
-`batho export --pack` produces `artifact_<dirname>.batho` — a ZIP containing:
+`batho export` produces `artifact_<dirname>.batho` — a ZIP containing:
 - `<table>.ipc.zst` — zstd-compressed Arrow IPC for each active bundle table (`agent_views`, `rels_views`, `file_tracking`, etc.)
 - `bsg/<name>.ipc.zst` — zstd-compressed `bsg/current/` plain IPC files (`entities`, `relationships`, `entity_dict`, `dangling`)
 

@@ -15,6 +15,7 @@ def tmp_batho_dir():
 
 
 def test_store_init_creates_current_dir(tmp_batho_dir):
+    """Verify that BsgScratchStore initialization creates the bsg/current directory and meta.json."""
     from batho.modules.storage.arrow_store import BsgScratchStore
 
     store = BsgScratchStore(run_uuid="test-run-001", batho_dir=tmp_batho_dir, run_internal_id=1)
@@ -25,6 +26,7 @@ def test_store_init_creates_current_dir(tmp_batho_dir):
 
 
 def test_store_delta_init_creates_uuid_dir(tmp_batho_dir):
+    """Verify that delta store initialization creates a UUID-named directory."""
     from batho.modules.storage.arrow_store import BsgScratchStore
 
     store = BsgScratchStore(
@@ -36,6 +38,7 @@ def test_store_delta_init_creates_uuid_dir(tmp_batho_dir):
 
 
 def test_entity_dict_roundtrip(tmp_batho_dir):
+    """Verify that entity key assignment and value retrieval roundtrip correctly."""
     from batho.modules.storage.arrow_store import BsgScratchStore
 
     store = BsgScratchStore(run_uuid="test-run-002", batho_dir=tmp_batho_dir, run_internal_id=1)
@@ -53,6 +56,7 @@ def test_entity_dict_roundtrip(tmp_batho_dir):
 
 
 def test_append_and_compact_entities(tmp_batho_dir):
+    """Verify that appended entities are preserved after compaction."""
     from batho.modules.storage.arrow_store import BsgScratchStore
     from batho.modules.storage.arrow_store.compaction import read_ipc
 
@@ -76,6 +80,7 @@ def test_append_and_compact_entities(tmp_batho_dir):
 
 
 def test_append_and_compact_relationships(tmp_batho_dir):
+    """Verify that appended relationships are preserved after compaction."""
     from batho.modules.storage.arrow_store import BsgScratchStore
     from batho.modules.storage.arrow_store.compaction import read_ipc
 
@@ -92,6 +97,7 @@ def test_append_and_compact_relationships(tmp_batho_dir):
 
 
 def test_compact_removes_stream_dir(tmp_batho_dir):
+    """Verify that compaction removes the temporary stream directory."""
     from batho.modules.storage.arrow_store import BsgScratchStore
 
     store = BsgScratchStore(run_uuid="test-run-005", batho_dir=tmp_batho_dir, run_internal_id=1)
@@ -105,6 +111,7 @@ def test_compact_removes_stream_dir(tmp_batho_dir):
 
 
 def test_cleanup_streams_leaves_compacted_files(tmp_batho_dir):
+    """Verify that cleanup removes stream files while leaving compacted IPC files intact."""
     from batho.modules.storage.arrow_store import BsgScratchStore
 
     store = BsgScratchStore(run_uuid="test-run-006", batho_dir=tmp_batho_dir, run_internal_id=1)
@@ -118,6 +125,7 @@ def test_cleanup_streams_leaves_compacted_files(tmp_batho_dir):
 
 
 def test_entity_dict_compacted_correctly(tmp_batho_dir):
+    """Verify that the entity dictionary IPC is correctly compacted with all entries."""
     from batho.modules.storage.arrow_store import BsgScratchStore
     from batho.modules.storage.arrow_store.compaction import read_ipc
 
@@ -132,6 +140,7 @@ def test_entity_dict_compacted_correctly(tmp_batho_dir):
 
 
 def test_open_for_patch_filters_changed_files(tmp_batho_dir):
+    """Verify that open_for_patch splits data into current/ (unchanged) and delta/ (changed) stores."""
     from batho.modules.storage.arrow_store import BsgScratchStore
     from batho.modules.storage.arrow_store.compaction import read_ipc
 
@@ -173,6 +182,7 @@ def test_open_for_patch_filters_changed_files(tmp_batho_dir):
 
 
 def test_resolve_dangling_no_entities(tmp_batho_dir):
+    """Verify that resolving dangling relationships with no entities returns zero."""
     from batho.modules.storage.arrow_store import BsgScratchStore
 
     store = BsgScratchStore(run_uuid="test-run-008", batho_dir=tmp_batho_dir, run_internal_id=1)
@@ -182,6 +192,7 @@ def test_resolve_dangling_no_entities(tmp_batho_dir):
 
 
 def test_resolve_dangling_simple(tmp_batho_dir):
+    """Verify that dangling relationships are resolved and the dangling table is cleared."""
     from batho.modules.storage.arrow_store import BsgScratchStore
     from batho.modules.storage.arrow_store.compaction import read_ipc
 
@@ -205,6 +216,7 @@ def test_resolve_dangling_simple(tmp_batho_dir):
 
 
 def test_from_run_dir(tmp_batho_dir):
+    """Verify that a store can be reloaded from its run directory."""
     from batho.modules.storage.arrow_store import BsgScratchStore
     from batho.modules.storage.arrow_store.store import BsgScratchStore as _StoreClass
 
@@ -219,6 +231,7 @@ def test_from_run_dir(tmp_batho_dir):
 
 
 def test_meta_json_written(tmp_batho_dir):
+    """Verify that meta.json is written with the correct fields after compaction."""
     import json
     from batho.modules.storage.arrow_store import BsgScratchStore
 
@@ -233,6 +246,7 @@ def test_meta_json_written(tmp_batho_dir):
 
 
 def test_delta_meta_json_has_extra_fields(tmp_batho_dir):
+    """Verify that delta store meta.json includes base_run_uuid and changed_files."""
     import json
     from batho.modules.storage.arrow_store import BsgScratchStore
 
@@ -253,6 +267,7 @@ def test_delta_meta_json_has_extra_fields(tmp_batho_dir):
 
 
 def test_deduplication_on_compact(tmp_batho_dir):
+    """Verify that duplicate entity rows are deduplicated during compaction."""
     from batho.modules.storage.arrow_store import BsgScratchStore
     from batho.modules.storage.arrow_store.compaction import read_ipc
 

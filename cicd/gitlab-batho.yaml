@@ -3,7 +3,7 @@ stages:
 
 batho-indexer:
   stage: index
-  image: python:3.11
+  image: python:3.12
   rules:
     # Run on changes to main, or on any Merge Request
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -44,8 +44,8 @@ batho-indexer:
         batho build --root . --full --verbose
       fi
 
-      # Pack the updated .batho/ bundle into a transport artifact (Arrow IPC + zstd)
-      batho export --pack --root .
+      # Export the updated .batho/ bundle into a transport artifact (Arrow IPC + zstd)
+      batho export --root .
 
   artifacts:
     name: "batho-database-$CI_COMMIT_SHORT_SHA"

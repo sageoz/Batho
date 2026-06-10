@@ -12,6 +12,21 @@ from batho.modules.integrity.models import CheckStatus, Severity
 
 
 def test_state_checker_passed():
+    """Verify that StateConsistencyChecker passes when runs and file tracking are in a consistent state.
+
+    Scenario:
+        A database mock provides one completed run and no tracked files.
+
+    Execution Flow:
+        1. Set up a MagicMock database with a completed run and an empty file tracking dict.
+        2. Instantiate StateConsistencyChecker with dry_run=True.
+        3. Execute the checker's run method.
+        4. Assert that phase is "state", status is CheckStatus.PASSED, and no issues are found.
+
+    Expectations:
+        - The integrity check completes successfully.
+        - Check status is PASSED with zero issues.
+    """
     db = MagicMock()
     db._reader.get_all_runs.return_value = [
         {"run_uuid": "abc", "status": "completed", "started_at": "2024-01-01T00:00:00+00:00"},
@@ -28,6 +43,21 @@ def test_state_checker_passed():
 
 
 def test_state_checker_stuck_runs():
+    """Verify that StateConsistencyChecker flags runs that have been running for a long time as stuck.
+
+    Scenario:
+        A database mock provides a run in the "running" state that started a long time ago.
+
+    Execution Flow:
+        1. Set up a MagicMock database with a run in "running" status starting in year 2020.
+        2. Instantiate StateConsistencyChecker with dry_run=True.
+        3. Execute the checker's run method.
+        4. Assert that the status is CheckStatus.FAILED, and exactly one issue of type "stuck_run" with WARNING severity is reported.
+
+    Expectations:
+        - The integrity check status is FAILED.
+        - Exactly one WARNING level issue is returned indicating a stuck run.
+    """
     db = MagicMock()
     db._reader.get_all_runs.return_value = [
         {"run_uuid": "run-uuid-1", "status": "running", "started_at": "2020-01-01T00:00:00Z"},

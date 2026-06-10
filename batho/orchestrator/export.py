@@ -1,9 +1,9 @@
-"""Orchestrator for `batho export` — multi-view JSON export of BSG artifacts.
+"""Orchestrator for `batho export` — pack artifact export with optional JSON views.
 
-Loads the latest BSG artifact from the Arrow Bundle in .batho/artifact/ and serializes
-it into one of several JSON views (storage, agent, overview, files, symbols,
-dependencies, delta) with optional streaming for large repositories.
-Use --pack to produce a transport artifact_<dir>.batho ZIP.
+By default, loads the latest BSG artifact from the Arrow Bundle in .batho/artifact/
+and produces a transportable ZIP (artifact_<dir>.batho). Set pack=False to export
+one of several JSON views (storage, agent, overview, files, symbols, dependencies,
+delta) with optional streaming for large repositories.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ class ExportOptions:
     token_budget: int | None = None
     baseline_path: Path | None = None
     include_relationships: bool = False
-    pack: bool = False
+    pack: bool = True
 
 
 @dataclass
@@ -409,12 +409,15 @@ def _write_output(content: str, output_path: Path) -> None:
 def run_export(options: ExportOptions) -> ExportResult:
     """Execute the export command.
 
+    By default produces a transport ZIP (artifact_<dir>.batho).
+    Set options.pack=False to export a JSON view instead.
+
     Steps:
       1. Validate options.
-      2. Locate artifact_<dirname>.batho database.
-      3. Load BSGMap from DB bsg_entries.
-      4. Apply filters (glob pattern, category).
-      5. Route to streaming or batch export.
+      2. Locate artifact bundle in .batho/artifact/.
+      3. Either pack the bundle into a ZIP, or load BSGMap for JSON export.
+      4. Apply filters (glob pattern, category) for JSON mode.
+      5. Route to streaming or batch export for JSON mode.
       6. Write output to file or stdout.
       7. Return ExportResult.
     """

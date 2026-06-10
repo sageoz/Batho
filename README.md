@@ -197,25 +197,6 @@ bsg:
     enabled: true
 ```
 
-See [`docs/config.md`](docs/config.md) for the complete configuration reference.
-
-## 📖 Documentation
-
-| Doc | Description |
-|-----|-------------|
-| [`docs/config.md`](docs/config.md) | Full configuration reference, env vars, schema versions |
-| [`docs/BATHO_BUILD_FLOW.md`](docs/BATHO_BUILD_FLOW.md) | Deep-dive into build orchestration phases A–H |
-| [`docs/STORAGE_ENGINE.md`](docs/STORAGE_ENGINE.md) | Arrow IPC storage layout, `BathoBundle`, `BsgScratchStore` |
-| [`docs/COMPRESSION_MODULE_SPEC.md`](docs/COMPRESSION_MODULE_SPEC.md) | BSGMap, render views, rule engine architecture |
-| [`docs/EXTRACTION_MODULE_SPEC.md`](docs/EXTRACTION_MODULE_SPEC.md) | AST extraction pipeline, caching, multiprocessing |
-| [`docs/DEPENDENCY_MODULE_SPEC.md`](docs/DEPENDENCY_MODULE_SPEC.md) | Dependency indexing (CDEU), manifest parsing, introspection |
-| [`docs/GRAPH_MODULE_SPEC.md`](docs/GRAPH_MODULE_SPEC.md) | `InMemoryGraph`, post-processing passes, cycle detection |
-| [`docs/INTEGRITY_MODULE_SPEC.md`](docs/INTEGRITY_MODULE_SPEC.md) | `batho fix` checkers and repair routines |
-| [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) | Full CLI flag reference for all commands |
-| [`docs/CICD_INTEGRATION_GUIDE.md`](docs/CICD_INTEGRATION_GUIDE.md) | CI/CD export/load artifact caching patterns |
-
-For hosted guides and API reference, visit **[batho.sageoz.org](https://batho.sageoz.org)**
-
 ## �️ Roadmap & Backlog
 
 ### Backlog (Future Releases)

@@ -20,6 +20,22 @@ from batho.modules.graph.builder.codegraph import CodeGraphIndexer
 
 
 def test_scope_manager_basic():
+    """Verify that ScopeManager correctly pushes and pops nested scopes.
+
+    Scenario:
+        A ScopeManager is used to enter and exit class and method scopes sequentially.
+        The current scope path must reflect the nested hierarchy.
+
+    Execution Flow:
+        1. Initialize a ScopeManager and assert the initial scope is empty.
+        2. Push a class scope "MyClass" and verify the current scope.
+        3. Push a method scope "my_method" and verify the concatenated scope path.
+        4. Pop the method scope and verify the scope returns to "MyClass".
+        5. Pop the class scope and verify the scope returns to empty.
+
+    Expectations:
+        - Scope push/pop operations maintain a correct hierarchical path string.
+    """
     sm = ScopeManager()
     
     # Test local scopes pushing and popping
@@ -43,6 +59,25 @@ def test_scope_manager_basic():
 
 
 def test_scope_manager_resolution():
+    """Verify that ScopeManager resolves symbols with correct scope precedence.
+
+    Scenario:
+        Global and local symbols are defined in a ScopeManager. Local symbols must shadow
+        globals within their scope, and after exiting the scope, global resolution must resume.
+
+    Execution Flow:
+        1. Define a global symbol "Database".
+        2. Push a class scope and define a local symbol "local_var".
+        3. Resolve "local_var" and assert it maps to the local definition.
+        4. Resolve "Database" and assert it maps to the global definition.
+        5. Shadow "Database" with a local variable in the class scope.
+        6. Resolve "Database" again and assert it now returns the shadowed local.
+        7. Pop the class scope and resolve "Database" — assert it returns the global again.
+
+    Expectations:
+        - Local symbols shadow globals within their scope.
+        - Global symbols are restored after exiting the local scope.
+    """
     sm = ScopeManager()
     
     # 1. Define global symbol
@@ -89,6 +124,22 @@ def test_scope_manager_resolution():
 
 
 def test_file_symbol_table_serialization():
+    """Verify that FileSymbolTable serializes to and deserializes from a dictionary correctly.
+
+    Scenario:
+        A FileSymbolTable is constructed with symbols, imports, and package metadata.
+        Its dictionary representation must be fully reversible.
+
+    Execution Flow:
+        1. Create a PackageMetadata instance and a SymbolDefinition with a descriptor chain.
+        2. Create an ImportStatement and construct a FileSymbolTable.
+        3. Serialize the table to a dict and verify all keys are present.
+        4. Deserialize back to a FileSymbolTable object.
+        5. Assert all fields (file_path, symbols, imports, package) match the originals.
+
+    Expectations:
+        - FileSymbolTable.to_dict and from_dict are exact inverses.
+    """
     pkg = PackageMetadata(
         manager=PackageManager.PIP,
         name="my_app",
@@ -134,6 +185,26 @@ def test_file_symbol_table_serialization():
 
 
 def test_dual_pass_indexing():
+    """Verify that dual-pass indexing resolves cross-file references and generates expected entities.
+
+    Scenario:
+        A small Python project with a utils module and a main module importing from it
+        is indexed. The graph must contain the correct entities, hierarchical IDs,
+        and CALLS relationships including unresolved contextual stubs.
+
+    Execution Flow:
+        1. Create a temp directory with utils.py (Database class + connect method) and main.py (imports and calls).
+        2. Run CodeGraphIndexer.build_graph on the root.
+        3. Assert the Database class entity exists with a correct hierarchical ID.
+        4. Assert the connect method entity exists.
+        5. Assert at least two CALLS relationships exist.
+        6. Verify one CALLS relationship targets the Database class and another targets an unresolved connect stub.
+        7. Assert the unresolved stub has the correct format and entity type.
+
+    Expectations:
+        - Cross-file class and method references are indexed with correct hierarchical IDs.
+        - Unresolved cross-file method calls generate contextual stub entities.
+    """
     with tempfile.TemporaryDirectory() as tmp_dir:
         root = Path(tmp_dir)
         
@@ -215,6 +286,22 @@ def run():
 
 
 def test_scope_manager_strict_resolution():
+    """Verify that ScopeManager.strict resolution only matches exact symbol names.
+
+    Scenario:
+        A global symbol is defined. Strict resolution must match the exact name,
+        while fuzzy, short, or ignored names must return None.
+
+    Execution Flow:
+        1. Define a global symbol with a long descriptive name.
+        2. Use resolve_symbol_strict with the exact name and assert a match.
+        3. Use resolve_symbol_strict with a partial/substring name and assert None.
+        4. Use resolve_symbol_strict with a common short keyword ("self") and assert None.
+
+    Expectations:
+        - resolve_symbol_strict returns the symbol only for exact-name matches.
+        - Fuzzy or short names are rejected to prevent false-positive resolutions.
+    """
     # Strict resolver only
     sm = ScopeManager()
     symbol_id = "batho local project 0.0.0 app/StateChecker#test_state_checker_passed()."

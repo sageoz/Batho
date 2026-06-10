@@ -25,12 +25,30 @@ Thumbs.db
 .vscode/
 .idea/
 *.iml
+# Batho artifacts
+.batho/
+.batho-config/
 artifact_*.batho
 artifact_*.batho-wal
 artifact_*.batho-shm
-.batho-config/
-# Documentation
-docs/
-.batho/
 adaptors/
 tests/bridge/
+# Secrets / environment
+.env
+.env.*
+!.env.example
+# Logs
+*.log
+logs/
+# Test / coverage artifacts
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+.tox/
+.hypothesis/
+.pytest_cache/
+# Node.js / docs-site
+node_modules/
+.docusaurus/
+.cache/

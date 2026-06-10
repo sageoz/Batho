@@ -39,6 +39,19 @@ def _run_row(uuid: str) -> dict:
 
 class TestManifest:
     def test_load_manifest_missing_returns_default(self, tmp_path):
+        """Verify load_manifest returns default values when meta.json is missing.
+
+        Scenario:
+            A BathoBundleManager is initialized in a directory without any meta.json file.
+
+        Execution Flow:
+            1. Initialize BathoBundleManager.
+            2. Call load_manifest.
+            3. Verify generation is 0, active_files is empty, and schema_version matches default.
+
+        Expectations:
+            - A default manifest structure is returned gracefully without raising errors.
+        """
         mgr = BathoBundleManager(tmp_path)
         manifest = mgr.load_manifest()
         assert manifest["generation"] == 0
@@ -46,6 +59,19 @@ class TestManifest:
         assert manifest["schema_version"] == BUNDLE_SCHEMA_VERSION
 
     def test_load_manifest_roundtrip(self, tmp_path):
+        """Verify load_manifest correctly reads and parses an existing meta.json file.
+
+        Scenario:
+            A valid meta.json exists on disk with specific manifest values.
+
+        Execution Flow:
+            1. Write a valid JSON object to meta.json with generation 5 and runs file mapping.
+            2. Initialize BathoBundleManager.
+            3. Load manifest and verify the generation and runs path are returned correctly.
+
+        Expectations:
+            - The returned dictionary matches the values in the JSON file.
+        """
         mgr = BathoBundleManager(tmp_path)
         data = {"schema_version": BUNDLE_SCHEMA_VERSION, "generation": 5,
                 "active_files": {"runs": "runs.v5.ipc"}, "last_run_uuid": "r5"}
@@ -55,6 +81,19 @@ class TestManifest:
         assert manifest["active_files"]["runs"] == "runs.v5.ipc"
 
     def test_load_manifest_corrupted_returns_default(self, tmp_path):
+        """Verify load_manifest returns default values when meta.json is corrupted.
+
+        Scenario:
+            An invalid/corrupted JSON file is written as meta.json.
+
+        Execution Flow:
+            1. Write invalid JSON content to meta.json.
+            2. Initialize BathoBundleManager and call load_manifest.
+            3. Verify generation is 0, returning default manifest.
+
+        Expectations:
+            - The manager handles JSON parsing errors gracefully and defaults the manifest.
+        """
         (tmp_path / "meta.json").write_text("not valid json{{")
         mgr = BathoBundleManager(tmp_path)
         manifest = mgr.load_manifest()
@@ -63,6 +102,21 @@ class TestManifest:
 
 class TestCommitPatch:
     def test_first_commit_generation_1(self, tmp_path):
+        """Verify the first committed patch has generation 1 and moves files correctly.
+
+        Scenario:
+            A new patch is committed in a fresh BathoBundleManager repository.
+
+        Execution Flow:
+            1. Write temporary IPC data for "runs".
+            2. Call commit_patch with the temp file mapping.
+            3. Assert the returned generation is 1.
+            4. Verify the file is renamed to `runs.v1.ipc` and the temporary file is deleted.
+
+        Expectations:
+            - The patch is successfully committed with generation 1.
+            - Temporary files are correctly cleaned up/renamed.
+        """
         mgr = BathoBundleManager(tmp_path)
         tmp = _write_tmp_ipc(tmp_path, "runs", [_run_row("r1")], RUNS_SCHEMA)
         gen = mgr.commit_patch({"runs": tmp}, "r1")
@@ -71,6 +125,18 @@ class TestCommitPatch:
         assert not (tmp_path / "runs.tmp.ipc").exists()
 
     def test_manifest_updated_atomically(self, tmp_path):
+        """Verify the manifest is updated atomically when committing a patch.
+
+        Scenario:
+            A patch is committed and we inspect the resulting meta.json file.
+
+        Execution Flow:
+            1. Write temporary IPC data and call commit_patch.
+            2. Load the manifest and assert generation is 1, last_run_uuid matches the run, and the active files dictionary points to `runs.v1.ipc`.
+
+        Expectations:
+            - meta.json is updated with correct metadata reflecting the committed patch.
+        """
         mgr = BathoBundleManager(tmp_path)
         tmp = _write_tmp_ipc(tmp_path, "runs", [_run_row("r1")], RUNS_SCHEMA)
         mgr.commit_patch({"runs": tmp}, "r1")
@@ -81,6 +147,21 @@ class TestCommitPatch:
         assert manifest["active_files"]["runs"] == "runs.v1.ipc"
 
     def test_second_commit_increments_generation(self, tmp_path):
+        """Verify a second commit increments the generation count.
+
+        Scenario:
+            Two successive patches are committed.
+
+        Execution Flow:
+            1. Commit the first patch for "r1" and verify it completes.
+            2. Commit a second patch for "r2".
+            3. Assert the returned generation is 2.
+            4. Verify `runs.v2.ipc` exists and is referenced as the active file.
+
+        Expectations:
+            - Generations increment sequentially.
+            - The manifest's active files point to the latest generation version.
+        """
         mgr = BathoBundleManager(tmp_path)
         tmp1 = _write_tmp_ipc(tmp_path, "runs", [_run_row("r1")], RUNS_SCHEMA)
         mgr.commit_patch({"runs": tmp1}, "r1")
@@ -93,6 +174,19 @@ class TestCommitPatch:
         assert manifest["active_files"]["runs"] == "runs.v2.ipc"
 
     def test_multi_stream_commit(self, tmp_path):
+        """Verify committing multiple streams in a single patch updates manifest references for all.
+
+        Scenario:
+            A patch contains modifications for both "runs" and "file_tracking" streams.
+
+        Execution Flow:
+            1. Write temporary files for both "runs" and "file_tracking".
+            2. Call commit_patch with both files mapped.
+            3. Verify both streams are recorded in the active files dictionary of the loaded manifest.
+
+        Expectations:
+            - Multiple files/tables can be updated and committed atomically.
+        """
         mgr = BathoBundleManager(tmp_path)
         runs_tmp = _write_tmp_ipc(tmp_path, "runs", [_run_row("r1")], RUNS_SCHEMA)
         ft_tmp = _write_tmp_ipc(tmp_path, "file_tracking", [], FILE_TRACKING_SCHEMA)
@@ -103,6 +197,19 @@ class TestCommitPatch:
         assert "file_tracking" in manifest["active_files"]
 
     def test_active_path_returns_correct_file(self, tmp_path):
+        """Verify active_path returns the path to the currently active generation's file.
+
+        Scenario:
+            A stream has been committed and is active.
+
+        Execution Flow:
+            1. Commit a patch for "runs".
+            2. Call active_path for "runs".
+            3. Assert the returned path matches `runs.v1.ipc`.
+
+        Expectations:
+            - The active file path is successfully resolved.
+        """
         mgr = BathoBundleManager(tmp_path)
         tmp = _write_tmp_ipc(tmp_path, "runs", [_run_row("r1")], RUNS_SCHEMA)
         mgr.commit_patch({"runs": tmp}, "r1")
@@ -112,12 +219,40 @@ class TestCommitPatch:
         assert path.name == "runs.v1.ipc"
 
     def test_active_path_missing_table_returns_none(self, tmp_path):
+        """Verify active_path returns None if the table is not tracked.
+
+        Scenario:
+            Querying the active file path for a non-existent or untracked table.
+
+        Execution Flow:
+            1. Initialize BathoBundleManager.
+            2. Call active_path with "agent_views".
+            3. Assert that the returned path is None.
+
+        Expectations:
+            - Returns None for tables with no active committed files.
+        """
         mgr = BathoBundleManager(tmp_path)
         assert mgr.active_path("agent_views") is None
 
 
 class TestGarbageCollect:
     def test_gc_deletes_orphaned_ipc(self, tmp_path):
+        """Verify garbage_collect deletes old, unreferenced IPC generations.
+
+        Scenario:
+            Two sequential commits exist, leaving the first commit's IPC files orphaned.
+
+        Execution Flow:
+            1. Commit generation 1, creating `runs.v1.ipc`.
+            2. Commit generation 2, creating `runs.v2.ipc` (manifest is updated to generation 2).
+            3. Call garbage_collect.
+            4. Assert that `runs.v1.ipc` is deleted while `runs.v2.ipc` remains on disk.
+
+        Expectations:
+            - Only files not referenced by the current manifest are deleted.
+            - Exactly one orphaned file is removed.
+        """
         mgr = BathoBundleManager(tmp_path)
         tmp1 = _write_tmp_ipc(tmp_path, "runs", [_run_row("r1")], RUNS_SCHEMA)
         mgr.commit_patch({"runs": tmp1}, "r1")
@@ -134,6 +269,19 @@ class TestGarbageCollect:
         assert (tmp_path / "runs.v2.ipc").exists()
 
     def test_gc_no_orphans_returns_zero(self, tmp_path):
+        """Verify garbage_collect returns 0 and deletes nothing when no orphaned files exist.
+
+        Scenario:
+            Only the active files are present on disk.
+
+        Execution Flow:
+            1. Commit generation 1.
+            2. Call garbage_collect.
+            3. Assert that it returns 0.
+
+        Expectations:
+            - No active files are deleted.
+        """
         mgr = BathoBundleManager(tmp_path)
         tmp = _write_tmp_ipc(tmp_path, "runs", [_run_row("r1")], RUNS_SCHEMA)
         mgr.commit_patch({"runs": tmp}, "r1")
@@ -142,6 +290,19 @@ class TestGarbageCollect:
         assert deleted == 0
 
     def test_gc_empty_dir_returns_zero(self, tmp_path):
+        """Verify garbage_collect returns 0 when the directory is empty.
+
+        Scenario:
+            GC is called on a fresh manager directory.
+
+        Execution Flow:
+            1. Initialize manager.
+            2. Call garbage_collect.
+            3. Assert that it returns 0.
+
+        Expectations:
+            - No operations/errors occur when no files exist.
+        """
         mgr = BathoBundleManager(tmp_path)
         assert mgr.garbage_collect() == 0
 
@@ -154,6 +315,19 @@ class TestExportUnpack:
         return mgr
 
     def test_export_creates_zip(self, tmp_path):
+        """Verify export_artifact packages active files into a ZIP archive.
+
+        Scenario:
+            A bundle with committed files is ready to be exported.
+
+        Execution Flow:
+            1. Set up a bundle and commit a "runs" table.
+            2. Call export_artifact pointing to a target zip path.
+            3. Verify the zip file exists and is not empty.
+
+        Expectations:
+            - A zip file is created successfully.
+        """
         artifact_dir = tmp_path / "artifact"
         artifact_dir.mkdir()
         mgr = self._build_bundle(artifact_dir)
@@ -164,6 +338,19 @@ class TestExportUnpack:
         assert zip_path.stat().st_size > 0
 
     def test_export_zip_contains_manifest_and_ipc_zst(self, tmp_path):
+        """Verify the exported ZIP contains manifest.json and compressed zstd files.
+
+        Scenario:
+            An export has been successfully performed.
+
+        Execution Flow:
+            1. Export active bundle files to a zip.
+            2. Open the ZIP archive and read its file list.
+            3. Assert `manifest.json` and `.ipc.zst` files exist in the archive.
+
+        Expectations:
+            - Exported archive conforms to the specified file list format.
+        """
         artifact_dir = tmp_path / "artifact"
         artifact_dir.mkdir()
         mgr = self._build_bundle(artifact_dir)
@@ -177,11 +364,38 @@ class TestExportUnpack:
         assert any(n.endswith(".ipc.zst") for n in names)
 
     def test_export_empty_bundle_raises(self, tmp_path):
+        """Verify export_artifact raises RuntimeError when trying to export an empty bundle.
+
+        Scenario:
+            Attempting to export a bundle with zero active files.
+
+        Execution Flow:
+            1. Initialize an empty BathoBundleManager.
+            2. Call export_artifact.
+            3. Assert that a RuntimeError is raised matching "No active artifact files".
+
+        Expectations:
+            - Aborts export with an appropriate error message.
+        """
         mgr = BathoBundleManager(tmp_path)
         with pytest.raises(RuntimeError, match="No active artifact files"):
             mgr.export_artifact(tmp_path / "out.batho")
 
     def test_unpack_roundtrip(self, tmp_path):
+        """Verify unpack_artifact extracts and registers files back into another manager directory.
+
+        Scenario:
+            A bundle is exported to a zip file, and then unpacked into a new destination directory.
+
+        Execution Flow:
+            1. Create a bundle, commit a run, and export it.
+            2. Initialize a destination manager.
+            3. Call unpack_artifact with the exported zip.
+            4. Verify the unpacked manifest is returned and the active path of "runs" is resolved.
+
+        Expectations:
+            - The round-trip export and unpack operations reconstruct the bundle successfully.
+        """
         src_dir = tmp_path / "src"
         src_dir.mkdir()
         mgr = self._build_bundle(src_dir)
@@ -199,6 +413,20 @@ class TestExportUnpack:
         assert dst_mgr.active_path("runs") is not None
 
     def test_unpack_restores_readable_ipc(self, tmp_path):
+        """Verify that unpacked IPC tables are valid and readable.
+
+        Scenario:
+            An export zip is unpacked and the resulting IPC files must be read.
+
+        Execution Flow:
+            1. Export a bundle containing a run "r1".
+            2. Unpack the zip in a destination directory.
+            3. Resolve the active "runs" path.
+            4. Read the IPC table and verify it has 1 row containing "r1".
+
+        Expectations:
+            - Extracted IPC files are uncorrupted and can be loaded back into memory.
+        """
         src_dir = tmp_path / "src"
         src_dir.mkdir()
         mgr = self._build_bundle(src_dir)
@@ -218,6 +446,20 @@ class TestExportUnpack:
         assert table.column("run_uuid").to_pylist() == ["r1"]
 
     def test_unpack_wrong_schema_version_raises(self, tmp_path):
+        """Verify unpack_artifact raises a schema mismatch error if the ZIP version is incompatible.
+
+        Scenario:
+            An archive with a different/incompatible bundle version is being unpacked.
+
+        Execution Flow:
+            1. Export a valid bundle.
+            2. Rebuild the ZIP with a modified, incompatible schema version in manifest.json.
+            3. Attempt to unpack the modified zip in a destination directory.
+            4. Assert that a RuntimeError matching "schema mismatch" is raised.
+
+        Expectations:
+            - Rejects incompatible/unsupported bundle schema versions.
+        """
         artifact_dir = tmp_path / "artifact"
         artifact_dir.mkdir()
         mgr = self._build_bundle(artifact_dir)

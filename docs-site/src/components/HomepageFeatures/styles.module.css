@@ -1,0 +1,167 @@
+/* ------------------------------------------------------------------
+   Features Section
+   ------------------------------------------------------------------ */
+.features {
+  display: flex;
+  align-items: center;
+  padding: var(--batho-space-16) 0 var(--batho-space-20);
+  width: 100%;
+  background: var(--batho-surface-1);
+  border-top: 1px solid var(--batho-surface-3);
+}
+
+[data-theme='dark'] .features {
+  background: var(--batho-surface-1);
+}
+
+/* ------------------------------------------------------------------
+   Feature Card
+   ------------------------------------------------------------------ */
+.featureCol {
+  margin-bottom: var(--batho-space-6);
+}
+
+.featureCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  padding: var(--batho-space-8) var(--batho-space-4);
+  background: var(--batho-surface-0);
+  border: 1px solid var(--batho-surface-3);
+  border-radius: 16px;
+  height: 100%;
+  transition: transform var(--batho-duration-base) var(--batho-ease-out),
+              box-shadow var(--batho-duration-base) var(--batho-ease-out),
+              border-color var(--batho-duration-fast) var(--batho-ease-out);
+}
+
+[data-theme='dark'] .featureCard {
+  background: var(--batho-surface-0);
+}
+
+.featureCard:hover {
+  transform: translateY(-4px);
+  box-shadow:
+    0 20px 40px -12px rgba(0, 0, 0, 0.12),
+    0 0 0 1px rgba(37, 99, 235, 0.15),
+    0 0 30px rgba(37, 99, 235, 0.06);
+  border-color: var(--ifm-color-primary);
+}
+
+.featureCard:hover .featureDesc::after {
+  opacity: 1;
+  transform: translateX(4px);
+}
+
+/* ------------------------------------------------------------------
+   Feature Icon
+   ------------------------------------------------------------------ */
+.featureIconWrap {
+  height: 48px;
+  width: 48px;
+  max-width: 100%;
+  margin-bottom: var(--batho-space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%);
+  border-radius: 12px;
+  border: 1px solid rgba(37, 99, 235, 0.15);
+  transition: background 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+}
+
+.featureIconWrap svg {
+  height: 24px;
+  width: 24px;
+  stroke: var(--ifm-color-primary);
+  stroke-width: 1.5;
+}
+
+.featureCard:hover .featureIconWrap {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.15) 0%, rgba(59, 130, 246, 0.1) 100%);
+  border-color: rgba(37, 99, 235, 0.3);
+  transform: scale(1.05);
+}
+
+/* ------------------------------------------------------------------
+   Feature Typography
+   ------------------------------------------------------------------ */
+.featureTitle {
+  font-family: var(--ifm-heading-font-family);
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: var(--batho-space-2);
+  color: var(--ifm-font-color-base);
+}
+
+.featureDesc {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-600);
+  margin: 0;
+  max-width: 320px;
+  position: relative;
+}
+
+.featureDesc::after {
+  content: '';
+}
+
+/* Feature Link */
+.featureLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: var(--batho-space-3);
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--ifm-color-primary);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.featureLink:hover {
+  color: var(--ifm-color-primary-dark);
+  text-decoration: none;
+}
+
+.featureLinkArrow {
+  transition: transform 0.2s ease;
+}
+
+.featureLink:hover .featureLinkArrow {
+  transform: translateX(4px);
+}
+
+[data-theme='dark'] .featureCard:hover {
+  box-shadow:
+    0 20px 40px -12px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(96, 165, 250, 0.15),
+    0 0 30px rgba(96, 165, 250, 0.06);
+}
+
+/* ------------------------------------------------------------------
+   Responsive
+   ------------------------------------------------------------------ */
+@media screen and (max-width: 768px) {
+  .features {
+    padding: var(--batho-space-12) 0 var(--batho-space-16);
+  }
+
+  .features .row {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .features .col {
+    margin-bottom: var(--batho-space-4);
+    width: 100%;
+  }
+
+  .featureCard {
+    padding: var(--batho-space-6) var(--batho-space-4);
+  }
+}

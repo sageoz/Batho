@@ -41,6 +41,7 @@ def _make_agent_entity(file_id: int, entity_id: str) -> dict:
 
 class TestWriteReadIpc:
     def test_roundtrip_nonempty(self, tmp_path):
+        """Verify that write_simple_ipc and read_ipc_table roundtrip a non-empty schema correctly."""
         rows = [
             {"file_id": 1, "file_path": "a.py", "content_hash": "h1",
              "mtime_ns": 0, "inode": None, "size": 10, "is_indexed": True,
@@ -55,6 +56,7 @@ class TestWriteReadIpc:
         assert table.column("file_path").to_pylist() == ["a.py"]
 
     def test_roundtrip_empty(self, tmp_path):
+        """Verify that writing and reading an empty list produces an empty table with the correct schema."""
         path = tmp_path / "empty.ipc"
         write_simple_ipc([], FILE_TRACKING_SCHEMA, path)
         table = read_ipc_table(path)
@@ -62,20 +64,24 @@ class TestWriteReadIpc:
         assert table.schema == FILE_TRACKING_SCHEMA
 
     def test_read_ipc_none_path(self):
+        """Verify that passing None to read_ipc_table returns an empty table."""
         table = read_ipc_table(None)
         assert table.num_rows == 0
 
     def test_read_ipc_missing_file(self, tmp_path):
+        """Verify that reading a non-existent IPC file returns an empty table."""
         table = read_ipc_table(tmp_path / "nonexistent.ipc")
         assert table.num_rows == 0
 
     def test_read_ipc_zero_byte_file(self, tmp_path):
+        """Verify that reading a zero-byte IPC file returns an empty table."""
         p = tmp_path / "zero.ipc"
         p.write_bytes(b"")
         table = read_ipc_table(p)
         assert table.num_rows == 0
 
     def test_multiple_rows_preserved(self, tmp_path):
+        """Verify that multiple rows are preserved correctly through an IPC roundtrip."""
         rows = [
             {"file_id": i, "file_path": f"f{i}.py", "content_hash": f"h{i}",
              "mtime_ns": i, "inode": None, "size": i * 10, "is_indexed": False,
@@ -95,11 +101,13 @@ class TestWriteReadIpc:
 
 class TestBathoBundleWriter:
     def test_init_creates_dir(self, tmp_path):
+        """Verify that BathoBundleWriter initialization creates the artifact directory."""
         bundle_dir = tmp_path / "artifact"
         writer = BathoBundleWriter(bundle_dir, run_id=1)
         assert bundle_dir.exists()
 
     def test_write_single_agent_entity(self, tmp_path):
+        """Verify that writing a single agent entity buffers it correctly."""
         writer = BathoBundleWriter(tmp_path, run_id=1)
         writer.write_file_artifact(
             file_id=1,
@@ -113,6 +121,7 @@ class TestBathoBundleWriter:
         assert writer._agent_buf["entity_id"][0] == "e1"
 
     def test_write_multiple_files_accumulates(self, tmp_path):
+        """Verify that writing artifacts for multiple files accumulates them in the internal buffer."""
         writer = BathoBundleWriter(tmp_path, run_id=1)
         for fid in range(3):
             writer.write_file_artifact(
@@ -126,6 +135,7 @@ class TestBathoBundleWriter:
         assert len(writer._agent_buf["file_id"]) == 3
 
     def test_finalize_writes_tmp_ipc_files(self, tmp_path):
+        """Verify that finalize writes non-empty streams to temporary IPC files on disk."""
         writer = BathoBundleWriter(tmp_path, run_id=1)
         writer.write_file_artifact(
             file_id=2,
@@ -141,11 +151,13 @@ class TestBathoBundleWriter:
         assert streams["agent_views"].stat().st_size > 0
 
     def test_finalize_empty_produces_no_streams(self, tmp_path):
+        """Verify that finalizing an empty writer produces no output streams."""
         writer = BathoBundleWriter(tmp_path, run_id=1)
         streams = writer.finalize()
         assert streams == {}
 
     def test_rels_written_correctly(self, tmp_path):
+        """Verify that relationship data is written correctly to the rels_views stream."""
         writer = BathoBundleWriter(tmp_path, run_id=1)
         writer.write_file_artifact(
             file_id=10,

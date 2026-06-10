@@ -16,7 +16,20 @@ class TestFallbackParserDeduplication:
     """BUG-06: Entities must be deduplicated by (name, type, start_line)."""
 
     def test_distinct_types_same_name_preserved(self):
-        """A class and function with the same name are distinct entities."""
+        """Verify that entities of different types with the same name are both preserved.
+
+        Scenario:
+            A class and a function in a Python source file share the exact same name.
+
+        Execution Flow:
+            1. Define file content with class 'Foo' and function 'Foo'.
+            2. Run the fallback parser.
+            3. Retrieve entities and check names and types.
+
+        Expectations:
+            - Both entities are preserved (name 'Foo' occurs twice).
+            - One entity is classified as CLASS and the other as FUNCTION.
+        """
         content = "\n".join([
             "class Foo:",
             "    pass",
@@ -34,7 +47,20 @@ class TestFallbackParserDeduplication:
         assert EntityType.FUNCTION in types
 
     def test_same_name_different_lines_preserved(self):
-        """Two functions with the same name on different lines are distinct."""
+        """Verify that entities with the same name but declared on different lines are both preserved.
+
+        Scenario:
+            Two functions sharing the same name are declared on different lines of a file.
+
+        Execution Flow:
+            1. Define content with two 'helper' function definitions.
+            2. Run fallback parser to parse the file.
+            3. Verify both helper definitions are returned and have distinct start lines.
+
+        Expectations:
+            - Two entities named 'helper' are returned.
+            - Their start line values are not equal.
+        """
         # Synthetic case: two def blocks with the same name on separate lines
         content = "\n".join([
             "def helper():",
@@ -50,10 +76,19 @@ class TestFallbackParserDeduplication:
         assert helpers[0].start_line != helpers[1].start_line
 
     def test_duplicate_exact_match_deduplicated(self):
-        """An entity with identical (name, type, line) should be deduplicated."""
-        # Python class pattern will match class Foo twice if we had two identical
-        # lines, but we only have one line. Instead, test with JS-style class
-        # and Python-style class both matching the same line.
+        """Verify that duplicate entities with identical name, type, and start line are deduplicated.
+
+        Scenario:
+            A single line triggers multiple regex patterns (e.g. JS class patterns) resulting in duplicate extractions.
+
+        Execution Flow:
+            1. Define content with a single class definition.
+            2. Run fallback parser on Javascript file.
+            3. Verify the number of class entities matches 1.
+
+        Expectations:
+            - Exact duplicate entity records are filtered out, leaving exactly one.
+        """
         content = "class Foo {}\n"
         parser = FallbackParser()
         result = parser.parse_file(Path("test.js"), content.encode("utf-8"))
@@ -66,6 +101,19 @@ class TestFallbackParserDeduplication:
         )
 
     def test_empty_content_returns_no_entities(self):
+        """Verify parsing empty file content returns no entities.
+
+        Scenario:
+            An empty python file is analyzed by FallbackParser.
+
+        Execution Flow:
+            1. Call parse_file() with empty byte content.
+            2. Assert that the returned entity list is empty and status is partial.
+
+        Expectations:
+            - Returned entities list is empty.
+            - Parse status evaluates to 'partial'.
+        """
         parser = FallbackParser()
         result = parser.parse_file(Path("empty.py"), b"")
         assert result.entities == []

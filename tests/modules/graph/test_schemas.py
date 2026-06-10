@@ -9,6 +9,20 @@ class TestEntityFromDict:
     """BUG-08: Serialized ID must be preserved unconditionally when non-None."""
 
     def test_from_dict_preserves_regular_id(self):
+        """Verify that a regular serialized entity ID is preserved during deserialization.
+
+        Scenario:
+            A valid entity dict with a standard compound ID string is passed to Entity.from_dict.
+            The resulting entity must retain that exact ID.
+
+        Execution Flow:
+            1. Construct an entity dict with a standard compound ID.
+            2. Call Entity.from_dict.
+            3. Assert both id_override and id match the original serialized value.
+
+        Expectations:
+            - Non-None serialized IDs are unconditionally preserved.
+        """
         data = {
             "id": "ent|FUNCTION|foo.py|0|10|1|1|bar",
             "type": "function",

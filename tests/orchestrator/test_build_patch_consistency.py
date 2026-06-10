@@ -60,7 +60,23 @@ def test_repo_with_mixed_files():
 
 
 def test_build_then_patch_reports_no_changes(test_repo_with_mixed_files):
-    """Verify patch reports 0 changes immediately after build."""
+    """Verify patch reports 0 changes immediately after build.
+
+    Scenario:
+        A repository with mixed text, binary, and archive files is built. Immediately after building,
+        a patch operation is run to detect changes.
+
+    Execution Flow:
+        1. Clean up existing bundle directories under the repository root.
+        2. Execute `run_build` with force_full set to True.
+        3. Verify the build is successful and the metadata file exists.
+        4. Execute `run_patch` and assert it is successful.
+        5. Verify that no changes are detected by the patch.
+
+    Expectations:
+        - The build completes successfully and produces a bundle meta.json.
+        - The subsequent patch operation reports 0 changes applied (or raises a 'No changes detected' warning).
+    """
     from batho.orchestrator.build import BuildOptions, run_build
     from batho.orchestrator.patch import PatchOptions, run_patch
     from batho.modules.storage.arrow_bundle import resolve_bundle_dir
@@ -104,7 +120,22 @@ def test_build_then_patch_reports_no_changes(test_repo_with_mixed_files):
 
 
 def test_build_then_patch_hash_scan_mode(test_repo_with_mixed_files):
-    """Verify patch with hash scan mode works correctly after build."""
+    """Verify patch with hash scan mode works correctly after build.
+
+    Scenario:
+        A repository is built, and then patch is run using the fallback hash scan mode (for non-git repositories).
+
+    Execution Flow:
+        1. Clean up existing bundle directories.
+        2. Run build on the mixed-files test repository.
+        3. Run patch in a non-git environment (which falls back to hash scan mode).
+        4. Verify patch completes successfully.
+        5. Verify no changes are detected.
+
+    Expectations:
+        - The build and patch operations complete successfully.
+        - The patch command reports 0 changes applied under hash scan mode.
+    """
     from batho.orchestrator.build import BuildOptions, run_build
     from batho.orchestrator.patch import PatchOptions, run_patch
     from batho.modules.storage.arrow_bundle import resolve_bundle_dir
@@ -137,7 +168,22 @@ def test_build_then_patch_hash_scan_mode(test_repo_with_mixed_files):
 
 
 def test_binary_file_hash_consistency():
-    """Verify binary files get consistent SHA256 hashes from both functions."""
+    """Verify binary files get consistent SHA256 hashes from both functions.
+
+    Scenario:
+        A temporary binary file is created containing a mock PNG header and null bytes.
+
+    Execution Flow:
+        1. Create a binary temporary file.
+        2. Compute the file's hash using `compute_file_hash`.
+        3. Compute the file's expected SHA256 hash using the standard hashlib module.
+        4. Compare the two computed hashes.
+        5. Assert that the returned hash is not in size_mtime format.
+
+    Expectations:
+        - The hash returned by `compute_file_hash` exactly matches the expected SHA256 hash.
+        - The hash does not contain size/mtime indicators (e.g. "_" or "T").
+    """
     import tempfile
     from batho.utils.hash import compute_file_hash
 
@@ -171,7 +217,20 @@ def test_binary_file_hash_consistency():
 
 
 def test_text_file_hash_consistency():
-    """Verify text files get consistent SHA256 hashes."""
+    """Verify text files get consistent SHA256 hashes.
+
+    Scenario:
+        A temporary text file containing simple string data is created.
+
+    Execution Flow:
+        1. Create a temporary text file.
+        2. Compute the file's hash using `compute_file_hash`.
+        3. Compute the expected SHA256 hash using hashlib.
+        4. Assert that the two hashes match.
+
+    Expectations:
+        - The calculated hash from `compute_file_hash` is the exact SHA256 hex digest of the file's contents.
+    """
     import tempfile
     from batho.utils.hash import compute_file_hash
 
@@ -198,7 +257,24 @@ def test_text_file_hash_consistency():
 
 
 def test_build_git_metadata_and_file_tracking_run_id(test_repo_with_mixed_files):
-    """Verify that build correctly records run metadata and populates file_tracking."""
+    """Verify that build correctly records run metadata and populates file_tracking.
+
+    Scenario:
+        A test repository is initialized as a git repo (if git is available) and built.
+
+    Execution Flow:
+        1. Attempt to initialize git, configure user identity, and commit files in the test repository.
+        2. Clean up any existing bundle directory.
+        3. Run build to create a bundle.
+        4. Retrieve the bundle object and query the run metadata matching the build's run_id.
+        5. Assert that git metadata fields (git_commit, git_branch) are populated correctly based on whether it is a git repository.
+        6. Query the file_tracking records and assert they exist and reference the correct run_id.
+
+    Expectations:
+        - The build completes successfully.
+        - Git metadata (commit and branch) is captured if built inside a git repository, and is None otherwise.
+        - Every file in file_tracking is mapped to the current run's UUID as the last_run_uuid.
+    """
     import subprocess
     import shutil
     from batho.orchestrator.build import BuildOptions, run_build

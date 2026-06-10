@@ -1,6 +1,9 @@
 name: Publish to TestPyPI
 
 on:
+  push:
+    tags:
+      - 'v*-test*'
   workflow_dispatch:  # Allow manual trigger
 
 permissions:

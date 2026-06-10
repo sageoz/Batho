@@ -24,6 +24,21 @@ def detect_package_from_config(root_path):
 
 
 def test_package_metadata_serialization():
+    """Verify that PackageMetadata serializes to string and dict correctly.
+
+    Scenario:
+        A PackageMetadata object is created with known fields. Its string representation,
+        dictionary export, and round-trip deserialization must all be consistent.
+
+    Execution Flow:
+        1. Create a PackageMetadata instance with manager PIP, name, version, and source.
+        2. Assert its string representation matches the expected format.
+        3. Export to dict and verify all fields are present.
+        4. Reconstruct from dict and assert equality with the original.
+
+    Expectations:
+        - PackageMetadata supports correct serialization, dict export, and round-trip deserialization.
+    """
     meta = PackageMetadata(
         manager=PackageManager.PIP,
         name="test-pkg",
@@ -45,6 +60,23 @@ def test_package_metadata_serialization():
 
 
 def test_package_detector():
+    """Verify that the package detector recognizes project metadata files across ecosystems.
+
+    Scenario:
+        Temporary directories are set up with various package manager config files
+        (package.json, pyproject.toml, Cargo.toml, go.mod, pom.xml, build.gradle/settings.gradle).
+        The detector must identify the correct manager, name, and version for each.
+
+    Execution Flow:
+        1. Create a temp directory with no config and assert detection returns None.
+        2. For each package manager (NPM, Poetry, Cargo, Go, Maven, Gradle):
+           a. Write the corresponding config file(s).
+           b. Run detect_project_metadata.
+           c. Assert the returned metadata matches the expected manager, name, and version.
+
+    Expectations:
+        - All supported package ecosystems are correctly detected with accurate metadata.
+    """
     with tempfile.TemporaryDirectory() as tmp_dir:
         root = Path(tmp_dir)
         
@@ -119,6 +151,22 @@ def test_package_detector():
 
 
 def test_symbol_role():
+    """Verify that SymbolRole enum behaviors and string representations are correct.
+
+    Scenario:
+        Various SymbolRole combinations are created to test definition, reference,
+        import detection, and combined flag string output.
+
+    Execution Flow:
+        1. Create a Definition role and assert it is a definition, not a reference or import.
+        2. Create a combined ReadAccess+WriteAccess role and assert it is a reference.
+        3. Create an Import+Generated role and assert it is an import.
+        4. Verify string outputs for each combination.
+
+    Expectations:
+        - is_definition, is_reference, is_import behave correctly for single and combined flags.
+        - String representation lists combined flags in expected order.
+    """
     role1 = SymbolRole.Definition
     assert role1.is_definition()
     assert not role1.is_reference()
@@ -136,6 +184,22 @@ def test_symbol_role():
 
 
 def test_descriptor_suffix():
+    """Verify that build_descriptor applies correct suffixes and rejects invalid inputs.
+
+    Scenario:
+        Various valid and invalid descriptor names are passed to build_descriptor
+        with different suffix types.
+
+    Execution Flow:
+        1. Build descriptors with TERM, TYPE, METHOD, and NAMESPACE suffixes.
+        2. Assert each produces the expected formatted string.
+        3. Pass an empty name and an invalid name with hyphens.
+        4. Assert both raise ValueError.
+
+    Expectations:
+        - Valid descriptors are formatted with the correct suffix.
+        - Empty and invalid names trigger ValueError.
+    """
     assert build_descriptor("my_var", DescriptorSuffix.TERM) == "my_var."
     assert build_descriptor("MyClass", DescriptorSuffix.TYPE) == "MyClass#"
     assert build_descriptor("my_func", DescriptorSuffix.METHOD) == "my_func()."
@@ -149,6 +213,23 @@ def test_descriptor_suffix():
 
 
 def test_hierarchical_id_round_trip():
+    """Verify that hierarchical ID generation and parsing are inverse operations.
+
+    Scenario:
+        A package metadata and descriptor chain are used to generate a hierarchical ID,
+        which is then parsed back to reconstruct the original metadata and descriptors.
+
+    Execution Flow:
+        1. Create a PackageMetadata instance and a list of descriptors.
+        2. Generate a hierarchical ID and assert it matches the expected format.
+        3. Parse the hierarchical ID back into package metadata and descriptors.
+        4. Assert all parsed fields match the originals.
+        5. Repeat with None package metadata to test local-project fallback.
+
+    Expectations:
+        - generate_hierarchical_id and parse_hierarchical_id are exact inverses.
+        - Local project fallback generates the expected default package metadata.
+    """
     pkg = PackageMetadata(
         manager=PackageManager.PIP,
         name="my_app",
@@ -183,6 +264,24 @@ def test_hierarchical_id_round_trip():
 
 
 def test_enclosing_range_python():
+    """Verify that the Python extractor captures correct enclosing ranges and relationships.
+
+    Scenario:
+        A Python source snippet containing a decorated class with a method and docstring
+        is parsed. The extractor must identify correct byte ranges, documentation entities,
+        and CONTAINS relationships.
+
+    Execution Flow:
+        1. Obtain the Python extractor.
+        2. Parse a source snippet with a class, method, and docstring.
+        3. Verify the class entity's enclosing_start_byte points to the decorator.
+        4. Verify the method's enclosing range covers its body.
+        5. Verify the docstring is detected as a COMMENT_BLOCK with a CONTAINS relationship from the class.
+
+    Expectations:
+        - Enclosing byte ranges are accurate for classes and methods.
+        - Docstrings are extracted as documentation entities linked via CONTAINS.
+    """
     extractor = get_extractor("python")
     assert extractor is not None
     
@@ -222,6 +321,22 @@ class MyClass:
 
 
 def test_read_write_states_python():
+    """Verify that the Python extractor identifies read and write symbol access roles.
+
+    Scenario:
+        A Python function with variable assignments and reads is parsed.
+        The resulting relationships must be tagged with WriteAccess and ReadAccess roles.
+
+    Execution Flow:
+        1. Obtain the Python extractor.
+        2. Parse a function with assignments (a = 1, a += 1) and a read (b = a + 2).
+        3. Filter relationships by WriteAccess and ReadAccess roles.
+        4. Assert at least one write relationship and at least one read relationship exist.
+
+    Expectations:
+        - Variable assignments are flagged with WriteAccess.
+        - Variable reads are flagged with ReadAccess.
+    """
     extractor = get_extractor("python")
     assert extractor is not None
     
@@ -250,6 +365,22 @@ def test_func():
 
 
 def test_read_write_states_javascript():
+    """Verify that the JavaScript extractor identifies read and write symbol access roles.
+
+    Scenario:
+        A JavaScript function with variable declarations, reads, and reassignments is parsed.
+        The resulting relationships must be tagged with WriteAccess and ReadAccess roles.
+
+    Execution Flow:
+        1. Obtain the JavaScript extractor.
+        2. Parse a function with let declarations, a read, and a reassignment.
+        3. Filter relationships by WriteAccess and ReadAccess roles.
+        4. Assert at least one write relationship and at least one read relationship exist.
+
+    Expectations:
+        - Variable declarations/reassignments are flagged with WriteAccess.
+        - Variable reads are flagged with ReadAccess.
+    """
     extractor = get_extractor("javascript")
     assert extractor is not None
     

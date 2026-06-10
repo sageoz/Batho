@@ -14,7 +14,22 @@ class TestSetActiveRoot:
     """BUG-01: Verify cache is busted when active root changes."""
 
     def test_set_active_root_clears_config_cache(self, tmp_path: Path):
-        """Calling set_active_root must clear the lru_cache so config is reloaded."""
+        """Verify that calling set_active_root clears the configuration lru_cache.
+
+        Scenario:
+            An active root is set, populating the config cache. Then, the active root is changed.
+
+        Execution Flow:
+            1. Clear the config cache and populate it with initial tmp_path.
+            2. Verify the cache size is at least 1.
+            3. Switch active root by calling set_active_root(new_root).
+            4. Verify the cache size is cleared (currsize == 0).
+            5. Access cache with new root and verify it is re-populated.
+
+        Expectations:
+            - The lru_cache for _get_config_cached_for_root is cleared on active root changes.
+            - Cache size goes down to 0 after set_active_root, and increases on subsequent reads.
+        """
         # Populate the cache first
         _get_config_cached_for_root.cache_clear()
         initial = _get_config_cached_for_root(tmp_path)
@@ -40,23 +55,73 @@ class TestSafeNestedHelpers:
     """BUG-10: _safe_get_nested and _safe_set_nested guard against invalid keys."""
 
     def test_safe_get_nested_missing_key_returns_default(self):
+        """Verify _safe_get_nested returns the default value when a nested key is missing.
+
+        Scenario:
+            A dictionary with path `["a", "b"]` is queried for missing path `["a", "c"]` or non-existent path `["x", "y"]`.
+
+        Execution Flow:
+            1. Initialize dictionary d = {"a": {"b": 1}}.
+            2. Call _safe_get_nested for ["a", "c"] with default "default".
+            3. Call _safe_get_nested for ["x", "y"] with default None.
+
+        Expectations:
+            - Querying ["a", "c"] returns "default".
+            - Querying ["x", "y"] returns None.
+        """
         from batho.core.config.loader import _safe_get_nested
         d = {"a": {"b": 1}}
         assert _safe_get_nested(d, ["a", "c"], "default") == "default"
         assert _safe_get_nested(d, ["x", "y"], None) is None
 
     def test_safe_get_nested_non_dict_path_returns_default(self):
+        """Verify _safe_get_nested returns default if resolving hits a non-dictionary intermediate value.
+
+        Scenario:
+            A dictionary d has a non-dict value under key "a", but path query is `["a", "b"]`.
+
+        Execution Flow:
+            1. Initialize dictionary d = {"a": 42}.
+            2. Query path ["a", "b"] with default "default".
+
+        Expectations:
+            - Resolving intermediate non-dict "42" gracefully returns the default value "default".
+        """
         from batho.core.config.loader import _safe_get_nested
         d = {"a": 42}
         assert _safe_get_nested(d, ["a", "b"], "default") == "default"
 
     def test_safe_set_nested_creates_missing_intermediates(self):
+        """Verify _safe_set_nested dynamically creates dicts for missing intermediate keys.
+
+        Scenario:
+            An empty dictionary is updated at a deeply nested path `["a", "b", "c"]`.
+
+        Execution Flow:
+            1. Initialize empty dictionary.
+            2. Call _safe_set_nested for ["a", "b", "c"] with value 42.
+
+        Expectations:
+            - The final dictionary matches {"a": {"b": {"c": 42}}}.
+        """
         from batho.core.config.loader import _safe_set_nested
         d: dict = {}
         _safe_set_nested(d, ["a", "b", "c"], 42)
         assert d == {"a": {"b": {"c": 42}}}
 
     def test_safe_set_nested_overwrites_non_dict_intermediate(self):
+        """Verify _safe_set_nested overwrites non-dictionary values when creating intermediate keys.
+
+        Scenario:
+            A dictionary has key "a" pointing to integer 42, but a nested path `["a", "b"]` is written.
+
+        Execution Flow:
+            1. Initialize dictionary {"a": 42}.
+            2. Call _safe_set_nested with path ["a", "b"] and value 99.
+
+        Expectations:
+            - The intermediate non-dict "42" is replaced with a dictionary, resulting in {"a": {"b": 99}}.
+        """
         from batho.core.config.loader import _safe_set_nested
         d = {"a": 42}
         _safe_set_nested(d, ["a", "b"], 99)

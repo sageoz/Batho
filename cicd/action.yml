@@ -82,8 +82,16 @@ runs:
         export UV_PROJECT_ENVIRONMENT="${RUNNER_TEMP}/batho-venv"
         uv venv --python "${{ inputs.python-version }}" "${UV_PROJECT_ENVIRONMENT}"
         if [ -z "${BATHO_REF}" ]; then
-          echo "Installing Batho from action checkout: ${ACTION_PATH}/.."
-          uv pip install --python "${UV_PROJECT_ENVIRONMENT}" "${ACTION_PATH}/.."
+          if [ -f "${ACTION_PATH}/pyproject.toml" ]; then
+            INSTALL_PATH="${ACTION_PATH}"
+          elif [ -f "${ACTION_PATH}/../pyproject.toml" ]; then
+            INSTALL_PATH="${ACTION_PATH}/.."
+          else
+            echo "ERROR: Could not find pyproject.toml relative to ACTION_PATH: ${ACTION_PATH}"
+            exit 1
+          fi
+          echo "Installing Batho from local path: ${INSTALL_PATH}"
+          uv pip install --python "${UV_PROJECT_ENVIRONMENT}" "${INSTALL_PATH}"
         else
           echo "Installing Batho from git ref: ${BATHO_REF}"
           uv pip install --python "${UV_PROJECT_ENVIRONMENT}" "git+https://github.com/sageoz/batho@${BATHO_REF}"
@@ -119,7 +127,7 @@ runs:
         "${CMD[@]}"
 
         echo "Exporting transport package..."
-        EXPORT_CMD=(batho export --root "${ROOT_ABS}" --pack)
+        EXPORT_CMD=(batho export --root "${ROOT_ABS}")
         if [ "${BATHO_VERBOSE}" = "true" ]; then
           EXPORT_CMD+=(--verbose)
         fi
@@ -129,7 +137,7 @@ runs:
         echo "${EXPORT_OUTPUT}"
         
         # Parse output file path from output which prints "Packed → /path/to/artifact_<dir>.batho"
-        ZIP_PATH=$(echo "${EXPORT_OUTPUT}" | grep -oE "Packed → .*" | sed 's/Packed → //')
+        ZIP_PATH=$(echo "${EXPORT_OUTPUT}" | grep -oE "Packed → .*" | head -n 1 | sed 's/Packed → //' | xargs)
         if [ -z "${ZIP_PATH}" ]; then
           # Fallback: construct default location
           ROOT_NAME="$(basename "${ROOT_ABS}")"
@@ -141,7 +149,7 @@ runs:
         META_JSON="${ROOT_ABS}/.batho/artifact/meta.json"
         INDEX_ID=""
         if [ -f "${META_JSON}" ]; then
-          INDEX_ID=$(python -c "import json; print(json.load(open('${META_JSON}'))['last_run_uuid'])")
+          INDEX_ID=$(python -c "import json; print(json.load(open('${META_JSON}'))['last_run_uuid'])" | xargs)
         fi
         
         echo "zip-path=${ZIP_PATH}" >> "${GITHUB_OUTPUT}"
@@ -186,18 +194,17 @@ runs:
                     n /= 1024
                 return f"{n:.1f} GiB"
 
-            md = f"""## Batho Index Summary for `{repo_name}`
-
-| Metric | Value |
-| --- | --- |
-| **Files indexed** | {total_files} |
-| **Entities extracted** | {total_entities} |
-| **Relationships** | {total_relationships} |
-| **Transport ZIP** | `{zip_name}` |
-| **ZIP Size** | {human_bytes(zip_size)} |
-
-_Index build succeeded. Transport package is ready for upload._
-"""
+            md = (
+                f"## Batho Index Summary for `{repo_name}`\n\n"
+                f"| Metric | Value |\n"
+                f"| --- | --- |\n"
+                f"| **Files indexed** | {total_files} |\n"
+                f"| **Entities extracted** | {total_entities} |\n"
+                f"| **Relationships** | {total_relationships} |\n"
+                f"| **Transport ZIP** | `{zip_name}` |\n"
+                f"| **ZIP Size** | {human_bytes(zip_size)} |\n\n"
+                f"_Index build succeeded. Transport package is ready for upload._\n"
+            )
             with open(summary_file, "a") as f_out:
                 f_out.write(md)
         except Exception as e:

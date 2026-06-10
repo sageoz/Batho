@@ -17,10 +17,11 @@ def register_export_parser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser(
         "export",
         parents=[create_base_parser()],
-        help="Export BSG artifacts as JSON (storage, agent, overview, files, symbols, dependencies, delta)",
+        help="Export a zipped Pack artifact (artifact_<dir>.batho) from a .batho database.",
         description=(
-            "Export the latest BSG artifact from a .batho database into one of "
-            "several JSON views. Supports streaming mode for large repositories."
+            "Export the latest BSG artifact from a .batho database into a "
+            "transportable ZIP (artifact_<dir>.batho). Use --json to export "
+            "one of several JSON views instead."
         ),
     )
     parser.add_argument(
@@ -46,7 +47,7 @@ def register_export_parser(subparsers: argparse._SubParsersAction) -> None:
         type=Path,
         default=None,
         metavar="PATH",
-        help="Output file path (default: root/batho_export.json)",
+        help="Output file path (default: root/artifact_<dir>.batho; --json mode default: root/batho_export.json)",
     )
     parser.add_argument(
         "--index-id",
@@ -104,13 +105,13 @@ def register_export_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Include relationship blob in the export output",
     )
     parser.add_argument(
-        "--pack",
+        "--json",
         action="store_true",
         default=False,
-        dest="pack",
+        dest="json_mode",
         help=(
-            "Produce a transport ZIP (artifact_<dir>.batho) instead of JSON export. "
-            "Use --output to override the destination path."
+            "Export JSON view instead of the default Pack artifact. "
+            "Use --view, --format, --filter, --category to control the JSON output."
         ),
     )
     parser.set_defaults(func=cmd_export)
@@ -131,7 +132,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         token_budget=args.token_budget,
         baseline_path=args.baseline_path,
         include_relationships=args.include_relationships,
-        pack=args.pack,
+        pack=not args.json_mode,
     )
 
     result = run_export(options)
@@ -142,7 +143,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         return 1
 
     # Print summary to stderr
-    if args.pack:
+    if not args.json_mode:
         print(f"Packed → {result.output_path}", file=sys.stderr)
         return 0
 
