@@ -52,7 +52,7 @@ class IncrementalEngine:
 
         for abs_path in _collect_candidate_files(root):
             try:
-                rel = str(abs_path.relative_to(root))
+                rel = abs_path.relative_to(root).as_posix()
             except ValueError:
                 continue
             current_files.add(rel)
@@ -62,16 +62,18 @@ class IncrementalEngine:
             except OSError:
                 continue
 
+            tracked = known_tracking.get(rel)
+            old_hash = tracked["content_hash"] if tracked else None
+
             if max_bytes is not None and st.st_size > max_bytes:
+                if tracked and tracked.get("is_indexed"):
+                    changes.append(FileChange(rel, FileChangeType.MODIFIED, old_hash=old_hash))
                 continue
 
-            tracked = known_tracking.get(rel)
             if tracked is None:
                 new_hash = compute_file_hash_cached(str(abs_path), st.st_mtime)
                 changes.append(FileChange(rel, FileChangeType.ADDED, new_hash=new_hash))
                 continue
-
-            old_hash = tracked["content_hash"]
 
             if not strict_hashing:
                 tracked_mtime_ns = tracked.get("mtime_ns")

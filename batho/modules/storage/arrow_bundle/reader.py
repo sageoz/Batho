@@ -151,6 +151,7 @@ class BathoBundleReader:
 
     def get_file_tracking(self, file_path: str) -> dict[str, Any] | None:
         """Return single file_tracking row for a path."""
+        file_path = str(file_path).replace("\\", "/")
         table = self._get_table("file_tracking")
         if table.num_rows == 0:
             return None
@@ -172,7 +173,7 @@ class BathoBundleReader:
 
     def file_id_for_path(self, file_path: str) -> int | None:
         """Look up file_id for a given path."""
-        row = self.get_file_tracking(file_path)
+        row = self.get_file_tracking(str(file_path).replace("\\", "/"))
         return row["file_id"] if row else None
 
     # ------------------------------------------------------------------
@@ -218,6 +219,8 @@ class BathoBundleReader:
         rel_path: str | None = None,
         since_run_uuid: str | None = None,
     ) -> list[dict[str, Any]]:
+        if rel_path is not None:
+            rel_path = str(rel_path).replace("\\", "/")
         table = self._get_table("file_changelog")
         if table.num_rows == 0:
             return []

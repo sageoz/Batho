@@ -21,6 +21,7 @@ def cmd_fix(args: argparse.Namespace) -> int:
     """Execute the fix command."""
     from batho.modules.integrity.engine import FixEngine
     from batho.modules.integrity.report import ReportGenerator
+    from batho.utils.file_io import InterProcessLock
 
     root = args.root.resolve()
 
@@ -32,19 +33,23 @@ def cmd_fix(args: argparse.Namespace) -> int:
         print("       Run 'batho build --root {}' first.".format(root), file=sys.stderr)
         return 1
 
-    # Run fix engine
+    # Run fix engine under lock
+    batho_dir = root / ".batho"
+    batho_dir.mkdir(parents=True, exist_ok=True)
+    lock = InterProcessLock(batho_dir / "batho.lock")
     try:
-        engine = FixEngine(
-            root=root,
-            deep_mode=getattr(args, "deep", False),
-            dry_run=getattr(args, "dry_run", False),
-            target=getattr(args, "target", "all"),
-            phase=getattr(args, "phase", None),
-            parallel=getattr(args, "parallel", False),
-            verbose=getattr(args, "verbose", False),
-        )
+        with lock:
+            engine = FixEngine(
+                root=root,
+                deep_mode=getattr(args, "deep", False),
+                dry_run=getattr(args, "dry_run", False),
+                target=getattr(args, "target", "all"),
+                phase=getattr(args, "phase", None),
+                parallel=getattr(args, "parallel", False),
+                verbose=getattr(args, "verbose", False),
+            )
 
-        result = engine.run()
+            result = engine.run()
 
     except Exception as exc:
         print(f"error: Fix engine failed: {exc}", file=sys.stderr)

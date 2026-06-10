@@ -18,14 +18,24 @@ class StateConsistencyChecker:
         self.repairer = StateRepairer(db)
 
     def check_stuck_runs(self) -> list[Issue]:
-        """Find runs that are marked 'running' but started more than 24 hours ago."""
+        """Find runs that are marked 'running' but started more than 24 hours ago, or are stale due to process termination."""
         issues = []
         now = datetime.now(timezone.utc)
         threshold = now - timedelta(hours=24)
 
+        # Check if another process is holding the workspace lock
+        from batho.utils.file_io import InterProcessLock
+        lock_file = self.db.repo_root / ".batho" / "batho.lock"
+        is_locked_by_other = InterProcessLock.is_locked_by_other(lock_file)
+
         for run in self.db._reader.get_all_runs():
             if run.get("status") != "running":
                 continue
+
+            # If this is the active run in our current bundle instance, it is not stale
+            if run.get("run_uuid") in [r["run_uuid"] for r in getattr(self.db, "_run_rows", [])]:
+                continue
+
             started_at_str = run.get("started_at", "")
             try:
                 dt_str = started_at_str
@@ -37,7 +47,7 @@ class StateConsistencyChecker:
             except Exception:
                 started_at = threshold - timedelta(seconds=1)
 
-            if started_at < threshold:
+            if started_at < threshold or not is_locked_by_other:
                 issues.append(Issue(
                     type="stuck_run",
                     severity=Severity.WARNING,

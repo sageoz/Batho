@@ -1,0 +1,119 @@
+name: Publish to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "publish" to confirm production PyPI release'
+        required: true
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    uses: ./.github/workflows/release-readiness.yml
+
+  build:
+    name: Build package
+    needs: readiness
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Get version from pyproject.toml
+        id: get-version
+        run: |
+          version=$(grep '^version' pyproject.toml | head -1 | cut -d'"' -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build package
+        run: uv build
+
+      - name: Verify build artifacts
+        run: |
+          ls -lh dist/
+          echo "Checking for duplicate files in wheel..."
+          unzip -l dist/*.whl | awk 'NR>3 && $4 != "" && $4 !~ /^-+$/ {print $4}' | sort | uniq -d | grep -q . && exit 1 || echo "No duplicates found"
+          echo "Checking sdist contents..."
+          tar tzf dist/*.tar.gz | head -20
+
+      - name: Check package metadata with twine
+        run: uv run --with twine twine check dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+          if-no-files-found: error
+
+  publish-to-pypi:
+    name: Publish to PyPI
+    needs:
+      - readiness
+      - build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/batho/${{ needs.build.outputs.version }}/
+
+    steps:
+      - name: Guard against accidental manual trigger
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "publish" ]; then
+            echo "Aborted: confirmation input was not 'publish'"
+            exit 1
+          fi
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          verbose: true
+
+  verify-install:
+    name: Verify PyPI install
+    needs:
+      - publish-to-pypi
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install from PyPI and verify
+        run: |
+          uv venv .verify-venv
+          source .verify-venv/bin/activate
+          uv pip install batho==${{ needs.build.outputs.version }}
+          python -c "import batho; print(f'Installed batho {batho.__version__}')"
+          batho --help

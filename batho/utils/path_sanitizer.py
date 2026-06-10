@@ -244,3 +244,20 @@ def validate_path_list(
     for path in paths:
         sanitized.append(sanitize_path(path, base_dir, allow_absolute=False))
     return sanitized
+
+
+def is_filesystem_case_insensitive(dir_path: Path) -> bool:
+    """
+    Check if the filesystem at the given directory path is case-insensitive.
+    """
+    try:
+        import tempfile
+        dir_path_resolved = Path(dir_path).resolve()
+        dir_path_resolved.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=str(dir_path_resolved), prefix="batho_case_test_") as f:
+            p = Path(f.name)
+            alt_p = Path(str(p).upper() if str(p).islower() else str(p).lower())
+            return alt_p.exists()
+    except Exception:
+        import sys
+        return sys.platform in ("win32", "darwin")

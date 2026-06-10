@@ -32,6 +32,7 @@ from batho.modules.compression.rules import (
     apply_rule_plugins,
     load_effective_rules,
     _get_plugin_validator,
+    _is_safe_regex,
 )
 from batho.modules.graph.builder.codegraph import InMemoryGraph
 
@@ -435,3 +436,104 @@ class TestPluginValidatorThreadSafety:
             t.join()
 
         assert errors == [], f"Thread errors: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# ReDoS Pattern Checks
+# ---------------------------------------------------------------------------
+
+def test_is_safe_regex_escaped_redos():
+    r"""Verify that escaped backslashes in ReDoS patterns are not bypassed.
+
+    Scenario:
+        A malicious user provides a regex rule mapping containing escaped characters designed
+        to bypass safe regex checking, such as r'\\(a+)+'. The double backslash escapes the
+        backslash itself, leaving the nested quantifiers active. The rules engine must reject this.
+
+    Execution Flow:
+        1. Call `_is_safe_regex(r'\\(a+)+')` and assert it is False.
+        2. Call `_is_safe_regex(r'\\\\(a+)+')` and assert it is False.
+        3. Call `_is_safe_regex(r'\\(abc)')` and assert it is True (safe literal group).
+        4. Call `_is_safe_regex(r'\(a+)+')` and assert it is True (escaped group start, literal '(').
+
+    Expectations:
+        - Escaped characters preceding a group are parsed correctly.
+        - Active groups causing exponential backtracking (ReDoS) are caught regardless of escape styling.
+    """
+    assert _is_safe_regex(r'\\(a+)+') is False
+    assert _is_safe_regex(r'\\\\(a+)+') is False
+    
+    # Standard group without ReDoS
+    assert _is_safe_regex(r'\\(abc)') is True
+    assert _is_safe_regex(r'\(a+)+') is True
+
+
+def test_is_safe_regex_new_cases():
+    """Verify that _is_safe_regex handles character classes, optional quantifiers, and alternation with shared prefixes.
+
+    Scenario:
+        Test robust boundary conditions of the ReDoS detection regex rule utility on both safe patterns
+        (standard nested classes, api routes alternation) and unsafe patterns (nested quantifiers,
+        shared prefix alternations that trigger exponential search space on failure).
+
+    Execution Flow:
+        1. Assert safe patterns return True:
+           - "([a-z+])+"
+           - "(api|auth)+"
+        2. Assert unsafe patterns return False:
+           - "([a-z]+)+" (nested quantifiers)
+           - "(a?)+" (nullable group quantifier)
+           - "(a|ab)+" (overlapping prefix alternation)
+           - "(a|a)+" (duplicated choice alternation)
+
+    Expectations:
+        - Accurate classification of safe vs unsafe patterns.
+        - Prevents rules engine from loading catastrophic regexes.
+    """
+    # Safe regexes
+    assert _is_safe_regex("([a-z+])+") is True
+    assert _is_safe_regex("(api|auth)+") is True
+
+    # Unsafe regexes (nested quantifiers, ReDoS, or prefix sharing)
+    assert _is_safe_regex("([a-z]+)+") is False
+    assert _is_safe_regex("(a?)+") is False
+    assert _is_safe_regex("(a|ab)+") is False
+    assert _is_safe_regex("(a|a)+") is False
+
+
+def test_redos_pattern_detection():
+    """Verify that _is_safe_regex correctly classifies safe and unsafe regexes.
+
+    Scenario:
+        Validates general classification, string length limits (> 250 characters), and high
+        quantifier count limits (> 8 quantifiers) which can lead to CPU exhaustion.
+
+    Execution Flow:
+        1. Assert safe regexes return True:
+           - "^prefix.*"
+           - "[a-z]+_suffix"
+           - "(api|auth)_.*"
+           - "normal_pattern"
+        2. Assert unsafe/overflowing regexes return False:
+           - "(a+)+" / "(a*)*" / "([a-zA-Z]+)*" / "(a|b+)+"
+           - "a*b*c*d*e*f*g*h*i*j*" (too many quantifiers > 8)
+           - "x" * 251 (too long regex)
+
+    Expectations:
+        - Prevents processing of excessively long regex patterns.
+        - Limits the number of wildcard quantifiers to 8 per pattern.
+    """
+    # Safe regexes
+    assert _is_safe_regex("^prefix.*") is True
+    assert _is_safe_regex("[a-z]+_suffix") is True
+    assert _is_safe_regex("(api|auth)_.*") is True
+    assert _is_safe_regex("normal_pattern") is True
+
+    # Unsafe regexes (nested quantifiers or too many wildcards)
+    assert _is_safe_regex("(a+)+") is False
+    assert _is_safe_regex("(a*)*") is False
+    assert _is_safe_regex("([a-zA-Z]+)*") is False
+    assert _is_safe_regex("(a|b+)+") is False
+    assert _is_safe_regex("a*b*c*d*e*f*g*h*i*j*") is False  # too many quantifiers (> 8)
+    assert _is_safe_regex("x" * 251) is False  # too long
+

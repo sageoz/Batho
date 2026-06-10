@@ -1,0 +1,54 @@
+# Starter GitHub Actions workflow for running Batho on every push / PR.
+#
+# Copy this file into your repo as `.github/workflows/batho.yml`.
+# Two equivalent flavours are shown: (A) composite action (most flexible),
+# (B) reusable workflow (one-liner).
+#
+# v1.1.0 indexes the repo using "batho build --root ." and exports the transport
+# ZIP package (artifact_<dir>.batho) as a workflow artifact. It does NOT fail your build.
+
+name: Batho
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: batho-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # --- Flavour A: composite action ---------------------------------------
+  batho-index:
+    name: Batho Index (composite)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Batho
+        uses: sageoz/batho@v1.1.0
+        with:
+          root: "."
+          python-version: "3.12"
+          # Leave `batho-ref` empty to install Batho from the action's own
+          # checkout. Once Batho is published on PyPI you can pin a git ref:
+          #   batho-ref: "v1.1.0"
+          batho-ref: ""
+          artifact-name: batho-index
+          artifact-retention-days: "7"
+
+  # --- Flavour B: reusable workflow (one-liner) --------------------------
+  # Uncomment to use instead of Flavour A.
+  #
+  # batho-index-reusable:
+  #   uses: sageoz/batho/.github/workflows/batho-index.yml@v1.1.0
+  #   with:
+  #     root: "."

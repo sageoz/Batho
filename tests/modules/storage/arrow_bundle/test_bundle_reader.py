@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
+import json
 
 import pyarrow as pa
 import pytest
@@ -253,3 +255,81 @@ class TestInvalidation:
         reader.invalidate()
         assert reader._tables == {}
         assert reader._indices == {}
+
+
+class TestReaderCacheInvalidation:
+    """Robustness of automated invalidation on reader caches when metadata changes on disk."""
+
+    def test_reader_cache_invalidation(self, tmp_path: Path):
+        """Verify that reader caches are invalidated automatically when the active path changes on disk.
+
+        Scenario:
+            An Arrow database reader keeps tables cached in memory (`_tables`).
+            If another build/patch process updates the manifest generation (e.g. from 1 to 2) and switches
+            the active file, the reader must automatically detect this on the next call, clear its cached
+            tables, and load the fresh file from disk.
+
+        Execution Flow:
+            1. Setup a mock Arrow Bundle directory.
+            2. Write initial generation-1 runs table containing `uuid-1` to `runs.v1.ipc` and update `meta.json`.
+            3. Instantiate `BathoBundleReader` and call `_get_table("runs")` to cache it.
+            4. Assert that cached content yields `["uuid-1"]`.
+            5. Write updated generation-2 runs table containing `uuid-2` to `runs.v2.ipc` and update `meta.json`.
+            6. Sleep briefly to ensure filesystem modification time st_mtime changes significantly.
+            7. Call `_get_table("runs")` again.
+            8. Assert that the reader automatically invalidates its cache and yields `["uuid-2"]`.
+
+        Expectations:
+            - Multi-process cache consistency.
+            - Automatically refreshes memory structures on disk generation bumps.
+        """
+        # Setup Arrow Bundle dir
+        artifact_dir = tmp_path / "artifact"
+        artifact_dir.mkdir()
+        
+        # 1. Write initial runs table
+        schema = pa.schema([("run_uuid", pa.string())])
+        runs_table_1 = pa.Table.from_pydict({"run_uuid": ["uuid-1"]}, schema=schema)
+        
+        import pyarrow.ipc as ipc
+        tmp1 = artifact_dir / "runs.v1.ipc"
+        with ipc.new_file(str(tmp1), schema) as w:
+            w.write_table(runs_table_1)
+            
+        # Write initial meta.json
+        import json
+        meta_path = artifact_dir / "meta.json"
+        meta_path.write_text(json.dumps({
+            "generation": 1,
+            "active_files": {
+                "runs": "runs.v1.ipc"
+            }
+        }))
+        
+        # Create reader
+        reader = BathoBundleReader(artifact_dir)
+        
+        # Read table - should return runs.v1.ipc content
+        t1 = reader._get_table("runs")
+        assert t1.column("run_uuid").to_pylist() == ["uuid-1"]
+        
+        # 2. Write new runs table (generation 2)
+        runs_table_2 = pa.Table.from_pydict({"run_uuid": ["uuid-2"]}, schema=schema)
+        tmp2 = artifact_dir / "runs.v2.ipc"
+        with ipc.new_file(str(tmp2), schema) as w:
+            w.write_table(runs_table_2)
+            
+        # Update meta.json (and clear manager's manifest cache to ensure it reads it)
+        # Sleep a bit to guarantee mtime resolution changes if filesystem resolution is coarse
+        time.sleep(0.1)
+        meta_path.write_text(json.dumps({
+            "generation": 2,
+            "active_files": {
+                "runs": "runs.v2.ipc"
+            }
+        }))
+        
+        # Read table again - should invalidate cache automatically and return runs.v2.ipc content
+        t2 = reader._get_table("runs")
+        assert t2.column("run_uuid").to_pylist() == ["uuid-2"]
+

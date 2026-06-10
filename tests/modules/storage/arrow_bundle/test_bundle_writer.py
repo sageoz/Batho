@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import json
 from pathlib import Path
 
 import pyarrow as pa
@@ -11,6 +12,8 @@ import pytest
 
 from batho.modules.storage.arrow_bundle.writer import BathoBundleWriter, write_simple_ipc, read_ipc_table
 from batho.modules.storage.arrow_bundle.schemas import FILE_TRACKING_SCHEMA, RUNS_SCHEMA
+from batho.modules.storage.arrow_bundle.bundle import BathoBundle
+from batho.modules.storage.arrow_bundle.reader import BathoBundleReader
 
 
 # ---------------------------------------------------------------------------
@@ -159,3 +162,127 @@ class TestBathoBundleWriter:
         table = read_ipc_table(streams["rels_views"])
         assert table.num_rows == 2
         assert set(table.column("relation_type").to_pylist()) == {"imports", "calls"}
+
+
+class TestBundleWriterAndOffsets:
+    """Concurrency and offset indexing validation for the BathoBundleWriter."""
+
+    def test_bundle_writer_concurrency(self, tmp_path: Path):
+        """Verify that concurrent runs get separate writer instances to prevent cross-run contamination.
+
+        Scenario:
+            Multiple indexing jobs might spawn concurrently. The main `BathoBundle` must provision
+            independent writer instances per active run ID, mapped locally, preventing one run's flushes
+            from bleeding into another's.
+
+        Execution Flow:
+            1. Initialize `BathoBundle` on `tmp_path`.
+            2. Call `create_run("run-1")` and `create_run("run-2")`.
+            3. Assert that both run IDs are unique and not equal.
+            4. Verify that each run's writer in the bundle's `_writers` mapping are completely distinct objects.
+            5. Verify that each writer contains the correct corresponding `run_id`.
+            6. Clean up by closing the bundle.
+
+        Expectations:
+            - Independent writer instances per concurrent run.
+            - Absolute separation of write streams.
+        """
+        bundle = BathoBundle(tmp_path)
+        
+        # Simulate concurrent run creation
+        run_id_1 = bundle.create_run("run-1")
+        run_id_2 = bundle.create_run("run-2")
+
+        # Assert they have distinct writer instances in the writers map
+        assert run_id_1 != run_id_2
+        assert bundle._writers[run_id_1] is not bundle._writers[run_id_2]
+        assert bundle._writers[run_id_1].run_id == run_id_1
+        assert bundle._writers[run_id_2].run_id == run_id_2
+
+        # Clean up
+        bundle.close()
+
+    def test_multi_flush_offset_index_correctness(self, tmp_path: Path):
+        """Verify that multi-batch flushes are correctly sorted and indexed on load, avoiding corruption.
+
+        Scenario:
+            A long build or patch job flushes intermediate buffers to disk multiple times.
+            When those files are read back by the index reader, the internal offset mappings
+            and chunk sizes must be calculated correctly, avoiding out-of-bounds array slicing.
+
+        Execution Flow:
+            1. Set up artifact dir and initialize `BathoBundleWriter`.
+            2. Write Batch 1 (file_id=3) and trigger locked buffer flush.
+            3. Write Batch 2 (file_id=1) and trigger locked buffer flush.
+            4. Write Batch 3 (file_id=2) and finalize the writer.
+            5. Write a mock `meta.json` manifest.
+            6. Initialize `BathoBundleReader` and retrieve file artifacts by ID for 1, 2, and 3.
+            7. Assert that each retrieved file artifact matches the expected source data exactly.
+
+        Expectations:
+            - Independent batches written via multiple flushes are stitched together cleanly.
+            - Readers slice Arrow RecordBatches exactly according to the multi-flush index offsets.
+        """
+        artifact_dir = tmp_path / "artifact"
+        artifact_dir.mkdir()
+        
+        # 1. Write multiple batches simulating separate flushes
+        writer = BathoBundleWriter(artifact_dir, run_id=1)
+        
+        # Batch 1: file_id = 3
+        writer.write_file_artifact(
+            file_id=3,
+            agent={"entities": [{"id": "ent3", "name": "func3", "type": "function", "start_line": 1}]},
+            storage={"entities": []},
+            rels=[],
+            content_hash="hash3"
+        )
+        writer._flush_buffers_locked()
+
+        # Batch 2: file_id = 1
+        writer.write_file_artifact(
+            file_id=1,
+            agent={"entities": [{"id": "ent1", "name": "func1", "type": "function", "start_line": 1}]},
+            storage={"entities": []},
+            rels=[],
+            content_hash="hash1"
+        )
+        writer._flush_buffers_locked()
+
+        # Batch 3: file_id = 2
+        writer.write_file_artifact(
+            file_id=2,
+            agent={"entities": [{"id": "ent2", "name": "func2", "type": "function", "start_line": 1}]},
+            storage={"entities": []},
+            rels=[],
+            content_hash="hash2"
+        )
+        writer.finalize()
+
+        # Update meta.json manifest
+        meta_path = artifact_dir / "meta.json"
+        with open(meta_path, "w") as f:
+            json.dump({
+                "generation": 1,
+                "active_files": {
+                    "agent_views": "agent_views.tmp.ipc"
+                }
+            }, f)
+
+        # 2. Read back using BathoBundleReader
+        reader = BathoBundleReader(artifact_dir)
+        
+        # Retrieve artifacts by id - should look up slices correctly
+        res1 = reader.get_file_artifacts_by_id(1)
+        res2 = reader.get_file_artifacts_by_id(2)
+        res3 = reader.get_file_artifacts_by_id(3)
+
+        assert len(res1["agent_view"]) == 1
+        assert res1["agent_view"][0]["entity_id"] == "ent1"
+
+        assert len(res2["agent_view"]) == 1
+        assert res2["agent_view"][0]["entity_id"] == "ent2"
+
+        assert len(res3["agent_view"]) == 1
+        assert res3["agent_view"][0]["entity_id"] == "ent3"
+

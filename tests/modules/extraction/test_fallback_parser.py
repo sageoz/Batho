@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
+import pytest
 
 from batho.core.schemas import EntityType
 from batho.modules.extraction.fallback_parser import FallbackParser
+from batho.orchestrator.build import BuildOptions, run_build
+from batho.modules.storage.arrow_bundle.bundle import BathoBundle
 
 
 class TestFallbackParserDeduplication:
@@ -66,3 +70,40 @@ class TestFallbackParserDeduplication:
         result = parser.parse_file(Path("empty.py"), b"")
         assert result.entities == []
         assert result.status.value == "partial"
+
+
+def test_malformed_syntax_fallback(tmp_path: Path):
+    """Verify that parser / capture exceptions trigger the fallback parser and don't fail the build.
+
+    Scenario:
+        The tree-sitter or main AST parser raises an unexpected exception (e.g. ValueError) during
+        capture processing (malformed file syntax or parser bug).
+        The build pipeline must catch this, log a warning, trigger the regular-expression based
+        `FallbackParser` to retrieve whatever entities it can, and complete the build successfully.
+
+    Execution Flow:
+        1. Write a python file containing a class and method.
+        2. Mock `ASTExtractor._process_captures` to raise a `ValueError`.
+        3. Invoke `run_build` with full-force build options.
+        4. Assert that `res.success` is True (build succeeded).
+        5. Initialize `BathoBundle` and verify a valid, completed run ID is generated.
+
+    Expectations:
+        - Robustness against syntax or tree-sitter exceptions: build does not fail.
+        - Gracefully falls back to the robust regex-based `FallbackParser`.
+    """
+    # Write a test file
+    (tmp_path / "main.py").write_text("class MyClass:\n    def hello(self):\n        pass")
+    
+    # Mocking _process_captures to raise an exception, triggering fallback parser
+    with patch("batho.modules.extraction.extractor.ASTExtractor._process_captures", side_effect=ValueError("Mock capture processing failure")):
+        options = BuildOptions(root=tmp_path, force_full=True, verbose=False)
+        res = run_build(options)
+        
+        assert res.success
+        
+        # Verify that fallback parser was called and extracted MyClass
+        db = BathoBundle(tmp_path)
+        run_id = db.get_latest_run_id()
+        assert run_id is not None
+

@@ -480,11 +480,14 @@ class ASTExtractor(abc.ABC):
             entities = self._enrich_bidirectional_attributes(entities, content)
         except Exception as exc:
             self.logger.warning(
-                "capture_processing_failed",
+                "capture_processing_failed_triggering_fallback",
                 filepath=filepath,
                 error=str(exc),
             )
-            return [], []
+            from batho.modules.extraction.fallback_parser import FallbackParser
+            fallback_parser = FallbackParser()
+            fallback_result = fallback_parser.parse_file(Path(filepath), content)
+            return fallback_result.entities, fallback_result.relationships
 
         if include_gaps:
             gap_entities = self._extract_gaps(content, filepath, entities)

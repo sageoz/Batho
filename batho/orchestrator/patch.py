@@ -537,6 +537,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
         file_changelog_max_runs = cfg.get("indexer", {}).get("file_changelog_max_runs", 100)
         db.prune_file_changelog(max_runs=file_changelog_max_runs)
 
+        warnings_list = list(getattr(indexer, "warnings", []))
         return PatchResult(
             success=True,
             run_id=run_uuid,
@@ -553,6 +554,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
             nodes_removed=nodes_removed,
             nodes_modified=nodes_modified,
             nodes_renamed=nodes_renamed,
+            warnings=warnings_list,
         )
 
     except Exception as e:

@@ -32,3 +32,5 @@ artifact_*.batho-shm
 # Documentation
 docs/
 .batho/
+adaptors/
+tests/bridge/

@@ -165,6 +165,7 @@ class BathoBundle:
         return self._manager.active_path(name)
 
     def _get_or_create_file_id(self, file_path: str) -> int:
+        file_path = str(file_path).replace("\\", "/")
         with self._lock:
             if file_path in self._file_id_cache:
                 return self._file_id_cache[file_path]
@@ -293,6 +294,7 @@ class BathoBundle:
             self._run_uuid_by_internal_id[internal_id] = run_uuid
             self._current_run_internal_id = internal_id
             self._writers[internal_id] = BathoBundleWriter(self._artifact_dir, internal_id)
+            self._flush_runs(run_uuid)
         return internal_id
 
     def get_run_internal_id(self, run_uuid: str) -> int | None:
@@ -309,6 +311,7 @@ class BathoBundle:
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
+            found = False
             for row in self._run_rows:
                 if row["run_uuid"] == run_uuid:
                     row["status"] = "completed"
@@ -317,7 +320,22 @@ class BathoBundle:
                     row["rel_count"] = rel_count
                     row["file_count"] = file_count
                     row["duration_ms"] = duration_ms
+                    found = True
                     break
+            if not found:
+                existing_table = read_ipc_table(self._active_or_empty("runs"))
+                if existing_table.num_rows > 0:
+                    existing_rows = existing_table.to_pylist()
+                    for row in existing_rows:
+                        if row["run_uuid"] == run_uuid:
+                            row["status"] = "completed"
+                            row["completed_at"] = now
+                            row["entity_count"] = entity_count
+                            row["rel_count"] = rel_count
+                            row["file_count"] = file_count
+                            row["duration_ms"] = duration_ms
+                            self._run_rows.append(row)
+                            break
 
             run_internal_id = None
             for k, v in self._run_uuid_by_internal_id.items():
@@ -348,12 +366,25 @@ class BathoBundle:
     def fail_run(self, run_uuid: str, *, error_message: str = "") -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
+            found = False
             for row in self._run_rows:
                 if row["run_uuid"] == run_uuid:
                     row["status"] = "failed"
                     row["completed_at"] = now
                     row["error_message"] = error_message
+                    found = True
                     break
+            if not found:
+                existing_table = read_ipc_table(self._active_or_empty("runs"))
+                if existing_table.num_rows > 0:
+                    existing_rows = existing_table.to_pylist()
+                    for row in existing_rows:
+                        if row["run_uuid"] == run_uuid:
+                            row["status"] = "failed"
+                            row["completed_at"] = now
+                            row["error_message"] = error_message
+                            self._run_rows.append(row)
+                            break
             run_internal_id = None
             for k, v in self._run_uuid_by_internal_id.items():
                 if v == run_uuid:
@@ -545,6 +576,7 @@ class BathoBundle:
         run_internal_id: int,
         file_path: str,
     ) -> list[dict[str, Any]]:
+        file_path = str(file_path).replace("\\", "/")
         file_id = self._file_id_cache.get(file_path)
         if file_id is None:
             file_id = self._reader.file_id_for_path(file_path)
@@ -577,7 +609,7 @@ class BathoBundle:
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
             for r in records:
-                file_path = r["file_path"]
+                file_path = str(r["file_path"]).replace("\\", "/")
                 file_id = self._get_or_create_file_id(file_path)
                 mtime_ns = r.get("mtime_ns")
                 if mtime_ns is None:
@@ -602,7 +634,7 @@ class BathoBundle:
         return len(records)
 
     def get_file_tracking(self, file_path: str) -> dict[str, Any] | None:
-        return self._reader.get_file_tracking(file_path)
+        return self._reader.get_file_tracking(str(file_path).replace("\\", "/"))
 
     def get_all_file_tracking(self) -> dict[str, dict[str, Any]]:
         return self._reader.get_all_file_tracking()
@@ -614,6 +646,7 @@ class BathoBundle:
         return self._reader.get_unindexed_files_with_details()
 
     def delete_file_tracking(self, file_path: str) -> None:
+        file_path = str(file_path).replace("\\", "/")
         with self._lock:
             table = read_ipc_table(self._active_or_empty("file_tracking"))
             if table.num_rows == 0:
@@ -632,7 +665,8 @@ class BathoBundle:
     def delete_file_tracking_batch(self, file_paths: list[str]) -> int:
         if not file_paths:
             return 0
-        path_set = set(file_paths)
+        posix_paths = [str(fp).replace("\\", "/") for fp in file_paths]
+        path_set = set(posix_paths)
         with self._lock:
             table = read_ipc_table(self._active_or_empty("file_tracking"))
             if table.num_rows == 0:
@@ -734,7 +768,7 @@ class BathoBundle:
         rel_path: str,
         since: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._reader.get_file_changelog_raw(rel_path=rel_path, since_run_uuid=since)
+        return self._reader.get_file_changelog_raw(rel_path=str(rel_path).replace("\\", "/"), since_run_uuid=since)
 
     def prune_file_changelog(self, max_runs: int) -> None:
         self.garbage_collect()

@@ -31,10 +31,11 @@ class Issue:
 
     type: str                           # e.g., "corrupt_zstd_blob", "stuck_run"
     severity: Severity                  # CRITICAL, ERROR, WARNING, INFO
-    table: str                          # Database table name
-    identifier: dict[str, Any]          # Primary key values
-    description: str
+    table: str = ""                     # Database table name
+    identifier: dict[str, Any] = field(default_factory=dict) # Primary key values
+    description: str = ""
     repair_strategy: str | None = None
+    auto_fixable: bool = False
 
 
 @dataclass

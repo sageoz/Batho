@@ -149,7 +149,7 @@ def _load_bsg_map_from_bundle(
 
                 if target_file.startswith("/"):
                     try:
-                        target_file = str(Path(target_file).relative_to(root))
+                        target_file = Path(target_file).relative_to(root).as_posix()
                     except ValueError:
                         pass
 

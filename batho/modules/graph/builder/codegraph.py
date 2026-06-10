@@ -1008,7 +1008,7 @@ class CodeGraphIndexer:
                         continue
                     # Check ignore patterns
                     try:
-                        rel_path = str(file_path.relative_to(root_path))
+                        rel_path = file_path.relative_to(root_path).as_posix()
                     except ValueError:
                         rel_path = str(file_path)
                     if ignore_spec and ignore_spec.match_file(rel_path):
@@ -1049,7 +1049,7 @@ class CodeGraphIndexer:
                             file_extractor = _registry_get_extractor(suffix)
                             if file_extractor is None:
                                 try:
-                                    rel = str(file_path.relative_to(root_path))
+                                    rel = file_path.relative_to(root_path).as_posix()
                                 except ValueError:
                                     rel = str(file_path)
                                 self._unindexed_files.append((str(file_path), rel))
@@ -1062,6 +1062,21 @@ class CodeGraphIndexer:
                             break
                     if max_indexed_files_cap and len(candidates) >= max_indexed_files_cap:
                         break
+
+            # Check for case-insensitive collisions if on a case-insensitive filesystem
+            from batho.utils.path_sanitizer import is_filesystem_case_insensitive
+            if is_filesystem_case_insensitive(root_path):
+                seen_lower = {}
+                for file_path, rel in candidates:
+                    rel_lower = rel.lower()
+                    if rel_lower in seen_lower:
+                        msg = f"Case-insensitive path collision detected: '{rel}' collides with '{seen_lower[rel_lower]}'."
+                        self.logger.warning("path_case_collision", warning=msg)
+                        if not hasattr(self, "warnings"):
+                            self.warnings = []
+                        self.warnings.append(msg)
+                    else:
+                        seen_lower[rel_lower] = rel
 
             if verbose:
                 self.logger.info(
@@ -1186,7 +1201,7 @@ class CodeGraphIndexer:
 
                 if write_callback is not None:
                     try:
-                        file_rel = str(Path(filepath).relative_to(root_path))
+                        file_rel = Path(filepath).relative_to(root_path).as_posix()
                     except ValueError:
                         file_rel = filepath
                     blob_data = {
@@ -1223,8 +1238,18 @@ class CodeGraphIndexer:
                 result_callback=on_result_extracted,
                 ast_cache_dir=ast_cache_dir_str,
             )
-
             errors += extract_errors
+
+            # Add failed or skipped candidates to unindexed files so they are tracked as opaque snapshots
+            successful_paths = {r[0] for r in results}
+            for file_path, filepath in candidates:
+                if filepath not in successful_paths:
+                    try:
+                        rel = file_path.relative_to(root_path).as_posix()
+                    except ValueError:
+                        rel = str(filepath)
+                    if (str(file_path), rel) not in self._unindexed_files:
+                        self._unindexed_files.append((str(file_path), rel))
 
             # Populate ScopeManager with all definition symbols from GlobalSymbolManifests
             scope_manager = ScopeManager()

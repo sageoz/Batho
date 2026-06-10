@@ -612,6 +612,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                         duration_ms=elapsed_ms,
                     )
 
+                    warnings_list = list(getattr(indexer, "warnings", []))
                     return BuildResult(
                         success=True,
                         run_id=run_id,
@@ -621,6 +622,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                         bsg_file_count=bsg_file_count,
                         snapshot_id="",
                         duration_ms=elapsed_ms,
+                        warnings=warnings_list,
                     )
 
 
@@ -670,7 +672,7 @@ def _build_file_tracking(graph: Any, root: Path, indexer: Any = None, *, run_id:
         precompiled_blobs_abs = getattr(indexer, "_precompiled_blobs", {})
         for abs_path, blob_data in precompiled_blobs_abs.items():
             try:
-                rel = str(Path(abs_path).relative_to(root))
+                rel = Path(abs_path).relative_to(root).as_posix()
             except ValueError:
                 rel = abs_path
             precompiled_blobs[rel] = blob_data
@@ -680,7 +682,7 @@ def _build_file_tracking(graph: Any, root: Path, indexer: Any = None, *, run_id:
             if not file_path:
                 continue
             try:
-                rel = str(Path(file_path).relative_to(root))
+                rel = Path(file_path).relative_to(root).as_posix()
             except ValueError:
                 rel = str(file_path)
 
@@ -718,7 +720,7 @@ def _build_file_tracking(graph: Any, root: Path, indexer: Any = None, *, run_id:
         if not file_path:
             continue
         try:
-            rel = str(Path(file_path).relative_to(root))
+            rel = Path(file_path).relative_to(root).as_posix()
         except ValueError:
             rel = file_path
 

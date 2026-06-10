@@ -217,8 +217,10 @@ def write_atomically(
 class InterProcessLock:
     """An advisory file lock to prevent concurrent build/patch runs on the same repository."""
 
+    _acquired_paths: set[Path] = set()
+
     def __init__(self, lock_file_path: Path | str) -> None:
-        self.lock_file_path = Path(lock_file_path)
+        self.lock_file_path = Path(lock_file_path).resolve()
         self.fd: Any = None
 
     def __enter__(self) -> InterProcessLock:
@@ -255,9 +257,12 @@ class InterProcessLock:
                 if self.lock_file_path.exists():
                     raise RuntimeError("Another Batho process is already running on this repository.")
                 self.lock_file_path.touch()
+        
+        InterProcessLock._acquired_paths.add(self.lock_file_path)
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        InterProcessLock._acquired_paths.discard(self.lock_file_path)
         try:
             import fcntl
             if self.fd:
@@ -290,4 +295,20 @@ class InterProcessLock:
                         self.lock_file_path.unlink()
                 except Exception:
                     pass
+
+    @classmethod
+    def is_locked_by_other(cls, lock_file_path: Path | str) -> bool:
+        try:
+            path = Path(lock_file_path).resolve()
+            if not path.exists():
+                return False
+            if path in cls._acquired_paths:
+                return False
+            lock = cls(path)
+            with lock:
+                return False
+        except RuntimeError:
+            return True
+        except Exception:
+            return False
 

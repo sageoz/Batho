@@ -31,7 +31,8 @@ from batho.utils.logging import get_logger
 from .schemas import BUNDLE_SCHEMA_VERSION, ALL_SCHEMAS
 
 LOGGER = get_logger(__name__, component="arrow_bundle_manager")
-MAX_DECOMPRESS_SIZE = 500 * 1024 * 1024  # 500 MB
+MAX_DECOMPRESS_SIZE = 200 * 1024 * 1024  # 200 MB
+MAX_DECOMPRESS_RATIO = 100
 
 
 class BathoBundleManager:
@@ -288,6 +289,12 @@ class BathoBundleManager:
             if "manifest.json" not in names:
                 raise RuntimeError(f"Invalid artifact: manifest.json missing in {zip_path}")
 
+            manifest_info = zf.getinfo("manifest.json")
+            MAX_MANIFEST_SIZE = 10 * 1024 * 1024  # 10 MB
+            if manifest_info.file_size > MAX_MANIFEST_SIZE:
+                raise RuntimeError(
+                    f"manifest.json size {manifest_info.file_size} bytes exceeds maximum limit of {MAX_MANIFEST_SIZE} bytes"
+                )
             manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
             schema_ver = manifest.get("schema_version", "")
             if schema_ver != BUNDLE_SCHEMA_VERSION:
@@ -318,6 +325,7 @@ class BathoBundleManager:
                     if not is_safe_filename(logical_name):
                         raise PathSecurityError(f"Unsafe ZIP member path detected: {member}")
 
+                compressed_size = zf.getinfo(member).compress_size
                 try:
                     chunks = []
                     total_size = 0
@@ -332,6 +340,12 @@ class BathoBundleManager:
                                     raise RuntimeError(
                                         f"Decompressed size exceeded maximum limit of {MAX_DECOMPRESS_SIZE} bytes"
                                     )
+                                if total_size > 1024 * 1024:  # > 1 MB
+                                    ratio = total_size / max(1, compressed_size)
+                                    if ratio > MAX_DECOMPRESS_RATIO:
+                                        raise RuntimeError(
+                                            f"Decompression ratio {ratio:.1f}x exceeded safety threshold of {MAX_DECOMPRESS_RATIO}x"
+                                        )
                                 chunks.append(chunk)
                     raw_ipc = b"".join(chunks)
                 except Exception as exc:

@@ -1,0 +1,56 @@
+name: Publish to TestPyPI
+
+on:
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    name: Build and publish to TestPyPI
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build package
+        run: uv build
+
+      - name: Verify build artifacts
+        run: |
+          ls -lh dist/
+          echo "Checking for duplicate files in wheel..."
+          unzip -l dist/*.whl | awk '{print $4}' | sort | uniq -d || echo "No duplicates found ✓"
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          skip-existing: true
+          verbose: true
+
+      - name: Test installation from local build
+        run: |
+          uv venv .test-venv
+          source .test-venv/bin/activate
+          uv pip install --find-links dist/ "batho==$(cat pyproject.toml | grep '^version' | cut -d'"' -f2)"
+
+          # Verify installation
+          python -c "import batho; print(f'Batho version: {batho.__version__}')"
+          batho --help
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+          retention-days: 7

@@ -677,6 +677,12 @@ def extract_and_emit_parallel(
                 continue
 
             if size > configured_max_file_size_kb * 1024:
+                logger.warning(
+                    "file_exceeds_max_size_limit",
+                    filepath=filepath,
+                    size_bytes=size,
+                    limit_kb=configured_max_file_size_kb,
+                )
                 continue
 
             res = process_file_single_pass_worker(
@@ -719,6 +725,12 @@ def extract_and_emit_parallel(
             except OSError:
                 continue
             if size > configured_max_file_size_kb * 1024:
+                logger.warning(
+                    "file_exceeds_max_size_limit",
+                    filepath=filepath,
+                    size_bytes=size,
+                    limit_kb=configured_max_file_size_kb,
+                )
                 continue
             candidate_sizes.append(size)
             work_items.append((
