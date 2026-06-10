@@ -5,9 +5,10 @@ sidebar_label: Coming Soon
 
 # Performance Benchmarks
 
-:::caution Coming Soon
-Comprehensive performance benchmarks for Batho will be published in a future release. We are currently calibrating our benchmark suite to cover a wide range of codebase sizes and environments.
-:::
+> **🚧 Coming Soon:**  
+> Comprehensive performance benchmarks for Batho will be published in a future release.  
+> Our team is currently calibrating the benchmark suite to cover a wide range of codebase sizes and environments.
+
 
 Batho is designed from the ground up for maximum throughput and minimal overhead. In upcoming releases, we will publish comparative benchmarks details for the following key performance areas:
 
