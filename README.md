@@ -129,44 +129,6 @@ batho gc vacuum
 - `status`: Display storage metrics.
 - `vacuum`: Reclaim disk space.
 
-## 🔄 Migration from v1 to v1.1.0
-
-**Breaking Changes:**
-
-1. **Unified Configuration** — All config is now in a single `batho.yaml` file
-   - Old: Multiple config files scattered across the codebase
-   - New: Single `batho.yaml` with all settings (indexer, bsg, rules, storage)
-   - Action: Delete old config files; run `batho build` to auto-generate `batho.yaml`
-
-2. **Storage format** — SQLite `.batho` artifact replaced by Apache Arrow IPC
-   - Old: `artifact_<dirname>.batho` SQLite database
-   - New: `.batho/artifact/*.ipc` + `.batho/bsg/current/*.ipc` (Arrow IPC files)
-   - Action: Run `batho build --root . --full` to rebuild from scratch
-
-3. **Config key rename** — `paths.db_path` removed; replaced by `paths.artifact_dir`
-   - Old: `paths.db_path: "{root}"`
-   - New: `paths.artifact_dir: .batho/artifact` (env: `BATHO_ARTIFACT_DIR`)
-   - Action: Remove `db_path` from your `batho.yaml`; add `artifact_dir` if custom path needed
-
-**New Defaults:**
-
-- Symbol resolution is **enabled by default** (can be disabled in config)
-- Arrow IPC artifact store at `.batho/artifact/` (no SQLite dependency)
-- BSG plugins are **enabled by default** (38 built-in security/quality plugins)
-- Parallel processing is **enabled by default** (up to 16 workers)
-
-**Recommended Migration Steps:**
-
-```bash
-# 1. Delete old SQLite artifact (format incompatible)
-rm -rf .batho/
-
-# 2. Let Batho regenerate batho.yaml with current defaults
-batho build --root .
-
-# 3. Customize batho.yaml as needed (see docs/config.md)
-```
-
 ## ⚙️ Configuration
 
 Batho works out of the box with zero config. For production use, configure with `./batho.yaml`:
@@ -200,19 +162,6 @@ bsg:
   bidirectional:
     enabled: true
 ```
-
-## �️ Roadmap & Backlog
-
-### Backlog (Future Releases)
-
-| Feature | Description | Status |
-|---------|-------------|--------|
-| **Fleet Intelligence** | Multi-repo discovery, symbol routing, cross-repo impact analysis | 0% — Not started |
-| **MCP Hub** | Model Context Protocol server for AI agent integration | Not started |
-| **Cloud Sync** | Remote artifact storage and synchronization | Not started |
-| **Call-chain Analysis** | Analyze function call graphs and dependencies | Not started |
-
----
 
 ## �� Installation
 
