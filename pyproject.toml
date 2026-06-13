@@ -79,7 +79,6 @@ packages = ["batho"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "batho_cli.py" = "batho_cli.py"
-"batho/core/batho_data" = "batho/core/batho_data"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
