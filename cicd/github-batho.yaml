@@ -8,9 +8,14 @@ on:
     branches:
       - main
 
+concurrency:
+  group: batho-fleet-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   update-code-graph:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       actions: read    # Required to download previous artifacts
       contents: read   # Required to checkout code
@@ -26,7 +31,6 @@ jobs:
 
       - name: Install Batho
         run: |
-          # Replace with your actual installation command (e.g., pip install batho)
           pip install batho 
 
       - name: Download Previous Batho Artifact

@@ -99,6 +99,25 @@ const sidebars: SidebarsConfig = {
   benchmarksSidebar: [
     'benchmarks/index',
   ],
+
+  cicdSidebar: [
+    {
+      type: 'category',
+      label: 'CI/CD',
+      link: {
+        type: 'doc',
+        id: 'cicd/index',
+      },
+      items: [
+        'cicd/github-actions',
+        'cicd/gitlab-ci',
+        'cicd/composite-action',
+        'cicd/reusable-workflow',
+        'cicd/starter-template',
+        'cicd/fleet-indexer',
+      ],
+    },
+  ],
 };
 
 export default sidebars;

@@ -13,7 +13,7 @@ description: "Schema versions, directory structure, and glossary"
 | Configuration | `batho-config.v1` | Unified YAML configuration (`batho.yaml`) |
 | Entity Schema | `pydantic.Entity` | Frozen Pydantic model (`batho/core/schemas.py`) |
 | Relationship Schema | `pydantic.Relationship` | Frozen Pydantic model (`batho/core/schemas.py`) |
-| SQLite Database | `sqlite.v1` | SQLite tables: `file_tracking`, `file_artifacts`, `run_artifacts` |
+| Arrow Bundle | `batho-bundle.v1` | Arrow IPC tables: `file_tracking`, `file_artifacts`, `run_artifacts` |
 | BSG View | `bsg.v1` | Memory-mapped Arrow IPC views |
 
 ### Schema Dependency Graph
@@ -25,7 +25,7 @@ flowchart TB
         BATHO_YAML["batho.yaml<br/>(schema_version: batho-config.v1)"]
     end
 
-    subgraph Database["SQLite Artifact (.batho/artifact/)"]
+    subgraph Database["Arrow Bundle (.batho/artifact/)"]
         TRACKING["file_tracking<br/>(mtime, SHA-256 hashes)"]
         FILE_ARTS["file_artifacts<br/>(bsg_agent_view, bsg_storage_view)"]
         RUN_ARTS["run_artifacts<br/>(telemetry, audit, delta_stats)"]
@@ -57,9 +57,9 @@ flowchart TB
 ```
 .batho/
 ├── artifact/
-│   └── artifact_<dirname>.batho    # Unified SQLite+Arrow database file
+│   └── artifact_<dirname>.batho    # Arrow IPC transport artifact
 └── cache/
-    └── cache.db                    # Shared SQLite AST cache
+    └── cache.json                  # Shared AST cache metadata
 ```
 
 ---

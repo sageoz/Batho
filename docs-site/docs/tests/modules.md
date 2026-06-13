@@ -6516,19 +6516,19 @@ A Batho build process crashes abruptly. On-disk, the active run remains in 'runn
 
 **Execution Flow:**
 1. Initialize on-disk `BathoBundle` at `tmp_path`.
-    2. Call `bundle.create_run` to save a run as 'running' in SQLite.
+    2. Call `bundle.create_run` to save a run as 'running' in the Arrow bundle.
     3. Assert that database records it as 'running'.
     4. Mock `InterProcessLock.is_locked_by_other` to return False (simulating that the crashing process released the lock).
     5. Initialize `StateConsistencyChecker` and call `run()`.
     6. Assert that it flagged exactly 1 issue of type "stuck_run" and successfully executed exactly 1 repair.
-    7. Assert that the SQLite run database status was cleanly updated to "failed".
+    7. Assert that the bundle run status was cleanly updated to "failed".
 
 **Flowchart:**
 
 ```mermaid
 flowchart TD
     S0["Initialize on-disk `BathoBundle` at `tmp_path`."]
-    S1["Call `bundle.create_run` to save a run as 'running' in SQLit"]
+    S1["Call `bundle.create_run` to save a run as 'running'"]
     S0 --> S1
     S2["Assert that database records it as 'running'."]
     S1 --> S2
@@ -6538,7 +6538,7 @@ flowchart TD
     S3 --> S4
     S5["Assert that it flagged exactly 1 issue of type 'stuck_run' a"]
     S4 --> S5
-    S6["Assert that the SQLite run database status was cleanly updat"]
+    S6["Assert that the bundle run status was cleanly updat"]
     S5 --> S6
 ```
 
@@ -7353,7 +7353,7 @@ flowchart TD
 **Scenario:**
 When storing a patch changelog, the database references run integer IDs (`run_id`).
     The changelog logger must resolve the corresponding base run UUID string (`base_run_uuid`)
-    from historical runs in SQLite, ensuring correct linkage of incremental graph patches.
+    from historical runs in the bundle, ensuring correct linkage of incremental graph patches.
 
 **Execution Flow:**
 1. Initialize `BathoBundle`.
@@ -7375,7 +7375,7 @@ flowchart TD
 ```
 
 **Expectations:**
-- Correct mapping from SQLite incremental primary key IDs to public UUID strings.
+- Correct mapping from bundle incremental primary key IDs to public UUID strings.
 
 </details>
 
@@ -8685,7 +8685,7 @@ flowchart TD
 <summary>View Test Details</summary>
 
 **Scenario:**
-Mapping run UUID string to its primary key/row index in the SQLite database.
+Mapping run UUID string to its primary key/row index in the bundle.
 
 **Execution Flow:**
 1. Setup the reader with runs "r1" and "r2" committed.

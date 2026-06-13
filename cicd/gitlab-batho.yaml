@@ -4,6 +4,7 @@ stages:
 batho-indexer:
   stage: index
   image: python:3.12
+  timeout: 30 minutes
   rules:
     # Run on changes to main, or on any Merge Request
     - if: '$CI_COMMIT_BRANCH == "main"'

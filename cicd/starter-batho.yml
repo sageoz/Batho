@@ -38,8 +38,8 @@ jobs:
         with:
           root: "."
           python-version: "3.12"
-          # Leave `batho-ref` empty to install Batho from the action's own
-          # checkout. Once Batho is published on PyPI you can pin a git ref:
+          # Leave `batho-ref` empty to install Batho from the action's own checkout.
+          # Or set batho-ref to "pypi" to install from PyPI, or pin a git ref:
           #   batho-ref: "v1.1.0"
           batho-ref: ""
           artifact-name: batho-index

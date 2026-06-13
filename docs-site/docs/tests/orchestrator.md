@@ -11,7 +11,7 @@ Integration and edge case tests for Batho's build orchestrator.
 
 This module validates that the build pipeline:
 1. Rejects execution and yields warning results if another process holds the build lock.
-2. Cleans up files and marks the run as failed in SQLite when the build encounters a hard error.
+2. Cleans up files and marks the run as failed in the bundle when the build encounters a hard error.
 3. Issues warnings when case-insensitive filename collisions are detected on case-insensitive filesystems.
 4. Marks oversized files as opaque snapshots and logs warnings without failing the entire build.
 
@@ -71,7 +71,7 @@ The build process encounters an unexpected failure midway through indexing the c
 1. Create repo directory and write a basic `batho.yaml`.
     2. Mock `CodeGraphIndexer`'s `build_graph` method to raise a `ValueError`.
     3. Run `run_build` and assert `res.success` is False.
-    4. Verify that the build run status in the SQLite database is recorded as "failed".
+    4. Verify that the build run status in the bundle is recorded as "failed".
     5. Verify that the exception message is saved as the error message.
 
 **Flowchart:**
@@ -83,7 +83,7 @@ flowchart TD
     S0 --> S1
     S2["Run `run_build` and assert `res.success` is False."]
     S1 --> S2
-    S3["Verify that the build run status in the SQLite database is r"]
+    S3["Verify that the build run status in the bundle is r"]
     S2 --> S3
     S4["Verify that the exception message is saved as the error mess"]
     S3 --> S4

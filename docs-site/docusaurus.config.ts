@@ -102,6 +102,12 @@ const config: Config = {
           label: 'Benchmarks',
         },
         {
+          type: 'docSidebar',
+          sidebarId: 'cicdSidebar',
+          position: 'left',
+          label: 'CI/CD',
+        },
+        {
           href: 'https://github.com/sageoz/batho',
           label: 'GitHub',
           position: 'right',

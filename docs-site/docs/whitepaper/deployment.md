@@ -205,7 +205,7 @@ batho fix --dry-run
 batho gc runs --older-than 30
 ```
 
-#### SQLite Compaction
+#### Bundle Vacuum
 ```bash
 batho gc vacuum
 ```
