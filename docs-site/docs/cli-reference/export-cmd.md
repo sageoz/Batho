@@ -63,3 +63,8 @@ Export an agent-optimized JSON view:
 ```bash
 batho export --json --view agent --token-budget 8000 --output context.json
 ```
+
+## See Also
+
+- [`batho load`](/docs/cli-reference/load-cmd) — Unpack the transport artifact ZIP produced by `export`.
+- [`batho patch`](/docs/cli-reference/patch-cmd) — Incrementally update after loading.

@@ -35,6 +35,9 @@ batho export --root .
 # Incrementally patch changed files (using native content hashes)
 batho patch --root .
 
+# Load a transport artifact ZIP (e.g. in CI)
+batho load artifact_<dir>.batho
+
 # Query granular node changes between runs or for a specific file/entity
 batho diff --file batho/cli/build.py
 
@@ -96,7 +99,15 @@ batho export --root .
 - `--index-id <ID>`: Export a specific index run UUID (default: latest).
 - `--format <format>`: JSON output format (`json` or `pretty`; default: `json`).
 
-### 4. Database Integrity (`batho fix`)
+### 4. Load Artifact (`batho load`)
+Unpacks a transport artifact ZIP (`artifact_<dir>.batho`) produced by `batho export --pack` into the repository's `.batho/artifact/` directory.
+```bash
+batho load artifact_<dir>.batho
+```
+- `--root <path>`: Repository root directory (default: `.`).
+- `--force`: Overwrite existing bundle if present.
+
+### 5. Database Integrity (`batho fix`)
 Performs multi-stage database verification (`db` → `state` → `blobs` → `graph`) and executes repair routines.
 ```bash
 batho fix --deep
@@ -108,7 +119,7 @@ batho fix --deep
 - `--parallel`: Run independent checks concurrently.
 - `--format <text|json|csv>`: Report format.
 
-### 5. Node History (`batho diff`)
+### 6. Node History (`batho diff`)
 Queries exact, granular changes across runs, files, or specific symbols.
 ```bash
 batho diff --file batho/cli/build.py
@@ -119,7 +130,7 @@ batho diff --file batho/cli/build.py
 - `--since <run_uuid>`: Bounded history start (only with `--entity`).
 - `--json`: Format output as JSON.
 
-### 6. Storage Maintenance (`batho gc`)
+### 7. Storage Maintenance (`batho gc`)
 Manages database runs, prunes old history, and vacuums database pages.
 ```bash
 batho gc vacuum
