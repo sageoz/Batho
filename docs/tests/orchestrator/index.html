@@ -1,0 +1,896 @@
+<!doctype html><html lang=en dir=ltr class="docs-wrapper plugin-docs plugin-id-default docs-version-current docs-doc-page docs-doc-id-tests/orchestrator" data-has-hydrated=false><head><meta charset=UTF-8><meta name=generator content="Docusaurus v3.10.1"><title data-rh=true>Orchestrator Tests | BATHO</title><meta data-rh=true name=viewport content="width=device-width, initial-scale=1.0"/><meta data-rh=true name=twitter:card content=summary_large_image /><meta data-rh=true property=og:image content=https://batho.sageoz.org/img/batho-logo.svg /><meta data-rh=true name=twitter:image content=https://batho.sageoz.org/img/batho-logo.svg /><meta data-rh=true property=og:url content=https://batho.sageoz.org/docs/tests/orchestrator/ /><meta data-rh=true property=og:locale content=en /><meta data-rh=true name=docusaurus_locale content=en /><meta data-rh=true name=docsearch:language content=en /><meta data-rh=true name=docusaurus_version content=current /><meta data-rh=true name=docusaurus_tag content=docs-default-current /><meta data-rh=true name=docsearch:version content=current /><meta data-rh=true name=docsearch:docusaurus_tag content=docs-default-current /><meta data-rh=true property=og:title content="Orchestrator Tests | BATHO"/><meta data-rh=true name=description content=tests/orchestrator/test_build.py /><meta data-rh=true property=og:description content=tests/orchestrator/test_build.py /><link data-rh=true rel=icon href=/img/batho-logo.svg /><link data-rh=true rel=canonical href=https://batho.sageoz.org/docs/tests/orchestrator/ /><link data-rh=true rel=alternate href=https://batho.sageoz.org/docs/tests/orchestrator/ hreflang=en /><link data-rh=true rel=alternate href=https://batho.sageoz.org/docs/tests/orchestrator/ hreflang=x-default /><script data-rh=true type=application/ld+json>{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","item":"https://batho.sageoz.org/docs/tests/","name":"Tests","position":1},{"@type":"ListItem","item":"https://batho.sageoz.org/docs/tests/orchestrator","name":"Orchestrator","position":2}]}</script><link rel=stylesheet href=/assets/css/styles.c22465a6.css /><script src=/assets/js/runtime~main.5882c5aa.js defer></script><script src=/assets/js/main.5a709331.js defer></script></head><body><svg style="display: none;"><defs>
+<symbol id=theme-svg-external-link viewBox="0 0 24 24"><path fill=currentColor d="M21 13v10h-21v-19h12v2h-10v15h17v-8h2zm3-12h-10.988l4.035 4-6.977 7.07 2.828 2.828 6.977-7.07 4.125 4.172v-11z"/></symbol>
+</defs></svg>
+<script>!function(){var t=function(){try{return new URLSearchParams(window.location.search).get("docusaurus-theme")}catch(t){}}()||function(){try{return window.localStorage.getItem("theme-471")}catch(t){}}();document.documentElement.setAttribute("data-theme",t||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")),document.documentElement.setAttribute("data-theme-choice",t||"system")}(),function(){try{for(var[t,e]of new URLSearchParams(window.location.search).entries())if(t.startsWith("docusaurus-data-")){var a=t.replace("docusaurus-data-","data-");document.documentElement.setAttribute(a,e)}}catch(t){}}(),document.documentElement.setAttribute("data-announcement-bar-initially-dismissed",function(){try{return"true"===localStorage.getItem("docusaurus.announcement.dismiss-471")}catch(t){}return!1}())</script><div id=__docusaurus><link rel=preload as=image href=/img/batho-logo.svg /><div role=region aria-label="Skip to main content"><a class=skipToContent_fXgn href=#__docusaurus_skipToContent_fallback>Skip to main content</a></div><div class="theme-announcement-bar announcementBar_mb4j" style=background-color:#2563EB;color:#ffffff role=banner><div class=announcementBarPlaceholder_vyr4></div><div class="content_knG7 announcementBarContent_xLdY">Batho v1.1.0 is now available! 🎉 Check out the <a href=/docs/whitepaper>Whitepaper</a> for complete documentation.</div><button type=button aria-label=Close class="clean-btn close closeButton_CVFx announcementBarClose_gvF7"><svg viewBox="0 0 15 15" width=14 height=14><g stroke=currentColor stroke-width=3.1><path d="M.75.75l13.5 13.5M14.25.75L.75 14.25"/></g></svg></button></div><nav aria-label=Main class="theme-layout-navbar navbar navbar--fixed-top"><div class=navbar__inner><div class="theme-layout-navbar-left navbar__items"><button aria-label="Toggle navigation bar" aria-expanded=false class="navbar__toggle clean-btn" type=button><svg width=30 height=30 viewBox="0 0 30 30" aria-hidden=true><path stroke=currentColor stroke-linecap=round stroke-miterlimit=10 stroke-width=2 d="M4 7h22M4 15h22M4 23h22"/></svg></button><a class=navbar__brand href=/><div class=navbar__logo><img src=/img/batho-logo.svg alt="Batho Logo" class="themedComponent_mlkZ themedComponent--light_NVdE"/><img src=/img/batho-logo.svg alt="Batho Logo" class="themedComponent_mlkZ themedComponent--dark_xIcU"/></div><b class="navbar__title text--truncate">BATHO</b></a><a class="navbar__item navbar__link" href=/docs/intro/>Docs</a><a class="navbar__item navbar__link" href=/docs/whitepaper/>Whitepaper</a><a class="navbar__item navbar__link" href=/docs/cli-reference/>CLI</a><a aria-current=page class="navbar__item navbar__link navbar__link--active" href=/docs/tests/>Tests</a><a class="navbar__item navbar__link" href=/docs/benchmarks/>Benchmarks</a></div><div class="theme-layout-navbar-right navbar__items navbar__items--right"><a href=https://github.com/sageoz/batho target=_blank rel="noopener noreferrer" class="navbar__item navbar__link">GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><a href=https://pypi.org/project/batho/ target=_blank rel="noopener noreferrer" class="navbar__item navbar__link">PyPI<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><div class="toggle_vylO colorModeToggle_DEke"><button class="clean-btn toggleButton_gllP toggleButtonDisabled_aARS" type=button disabled title="system mode" aria-label="Switch between dark and light mode (currently system mode)"><svg viewBox="0 0 24 24" width=24 height=24 aria-hidden=true class="toggleIcon_g3eP lightToggleIcon_pyhR"><path fill=currentColor d="M12,9c1.65,0,3,1.35,3,3s-1.35,3-3,3s-3-1.35-3-3S10.35,9,12,9 M12,7c-2.76,0-5,2.24-5,5s2.24,5,5,5s5-2.24,5-5 S14.76,7,12,7L12,7z M2,13l2,0c0.55,0,1-0.45,1-1s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S1.45,13,2,13z M20,13l2,0c0.55,0,1-0.45,1-1 s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S19.45,13,20,13z M11,2v2c0,0.55,0.45,1,1,1s1-0.45,1-1V2c0-0.55-0.45-1-1-1S11,1.45,11,2z M11,20v2c0,0.55,0.45,1,1,1s1-0.45,1-1v-2c0-0.55-0.45-1-1-1C11.45,19,11,19.45,11,20z M5.99,4.58c-0.39-0.39-1.03-0.39-1.41,0 c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0s0.39-1.03,0-1.41L5.99,4.58z M18.36,16.95 c-0.39-0.39-1.03-0.39-1.41,0c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0c0.39-0.39,0.39-1.03,0-1.41 L18.36,16.95z M19.42,5.99c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06c-0.39,0.39-0.39,1.03,0,1.41 s1.03,0.39,1.41,0L19.42,5.99z M7.05,18.36c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06 c-0.39,0.39-0.39,1.03,0,1.41s1.03,0.39,1.41,0L7.05,18.36z"/></svg><svg viewBox="0 0 24 24" width=24 height=24 aria-hidden=true class="toggleIcon_g3eP darkToggleIcon_wfgR"><path fill=currentColor d="M9.37,5.51C9.19,6.15,9.1,6.82,9.1,7.5c0,4.08,3.32,7.4,7.4,7.4c0.68,0,1.35-0.09,1.99-0.27C17.45,17.19,14.93,19,12,19 c-3.86,0-7-3.14-7-7C5,9.07,6.81,6.55,9.37,5.51z M12,3c-4.97,0-9,4.03-9,9s4.03,9,9,9s9-4.03,9-9c0-0.46-0.04-0.92-0.1-1.36 c-0.98,1.37-2.58,2.26-4.4,2.26c-2.98,0-5.4-2.42-5.4-5.4c0-1.81,0.89-3.42,2.26-4.4C12.92,3.04,12.46,3,12,3L12,3z"/></svg><svg viewBox="0 0 24 24" width=24 height=24 aria-hidden=true class="toggleIcon_g3eP systemToggleIcon_QzmC"><path fill=currentColor d="m12 21c4.971 0 9-4.029 9-9s-4.029-9-9-9-9 4.029-9 9 4.029 9 9 9zm4.95-13.95c1.313 1.313 2.05 3.093 2.05 4.95s-0.738 3.637-2.05 4.95c-1.313 1.313-3.093 2.05-4.95 2.05v-14c1.857 0 3.637 0.737 4.95 2.05z"/></svg></button></div><div class=navbarSearchContainer_Bca1></div></div></div><div role=presentation class=navbar-sidebar__backdrop></div></nav><div id=__docusaurus_skipToContent_fallback class="theme-layout-main main-wrapper mainWrapper_z2l0"><div class=docsWrapper_hBAB><button aria-label="Scroll back to top" class="clean-btn theme-back-to-top-button backToTopButton_sjWU" type=button></button><div class=docRoot_UBD9><aside class="theme-doc-sidebar-container docSidebarContainer_YfHR"><div class=sidebarViewport_aRkj><div class=sidebar_njMd><nav aria-label="Docs sidebar" class="menu thin-scrollbar menu_SIkG menuWithAnnouncementBar_GW3s"><ul class="theme-doc-sidebar-menu menu__list"><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--active" href=/docs/tests/><span title=Tests class=categoryLinkLabel_W154>Tests</span></a><button aria-label="Collapse sidebar category 'Tests'" aria-expanded=true type=button class="clean-btn menu__caret"></button></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class="menu__link menu__link--active" aria-current=page tabindex=0 href=/docs/tests/orchestrator/><span title=Orchestrator class=linkLabel_WmDU>Orchestrator</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/docs/tests/modules/><span title=Subsystems/Modules class=linkLabel_WmDU>Subsystems/Modules</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/docs/tests/utils/><span title=Utilities class=linkLabel_WmDU>Utilities</span></a></ul></ul></nav></div></div></aside><main class=docMainContainer_TBSr><div class="container padding-top--md padding-bottom--lg"><div class=row><div class="col docItemCol_VOVn"><div class=docItemContainer_Djhp><article><nav class="theme-doc-breadcrumbs breadcrumbsContainer_Z_bl" aria-label=Breadcrumbs><ul class=breadcrumbs><li class=breadcrumbs__item><a aria-label="Home page" class=breadcrumbs__link href=/><svg viewBox="0 0 24 24" class=breadcrumbHomeIcon_YNFT><path d="M10 19v-5h4v5c0 .55.45 1 1 1h3c.55 0 1-.45 1-1v-7h1.7c.46 0 .68-.57.33-.87L12.67 3.6c-.38-.34-.96-.34-1.34 0l-8.36 7.53c-.34.3-.13.87.33.87H5v7c0 .55.45 1 1 1h3c.55 0 1-.45 1-1z" fill=currentColor /></svg></a><li class=breadcrumbs__item><a class=breadcrumbs__link href=/docs/tests/><span>Tests</span></a><li class="breadcrumbs__item breadcrumbs__item--active"><span class=breadcrumbs__link>Orchestrator</span></ul></nav><div class="tocCollapsible_ETCw theme-doc-toc-mobile tocMobile_ITEo"><button type=button class="clean-btn tocCollapsibleButton_TO0P">On this page</button></div><div class="theme-doc-markdown markdown"><header><h1>Orchestrator Tests</h1></header>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=testsorchestratortest_buildpy><code>tests/orchestrator/test_build.py</code><a href=#testsorchestratortest_buildpy class=hash-link aria-label="Direct link to testsorchestratortest_buildpy" title="Direct link to testsorchestratortest_buildpy" translate=no>​</a></h3>
+<p>Integration and edge case tests for Batho's build orchestrator.</p>
+<p>This module validates that the build pipeline:</p>
+<ol>
+<li class="">Rejects execution and yields warning results if another process holds the build lock.</li>
+<li class="">Cleans up files and marks the run as failed in SQLite when the build encounters a hard error.</li>
+<li class="">Issues warnings when case-insensitive filename collisions are detected on case-insensitive filesystems.</li>
+<li class="">Marks oversized files as opaque snapshots and logs warnings without failing the entire build.</li>
+</ol>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=standalone-tests>Standalone Tests<a href=#standalone-tests class=hash-link aria-label="Direct link to Standalone Tests" title="Direct link to Standalone Tests" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_build_lock_conflict><code>test_build_lock_conflict</code><a href=#test_build_lock_conflict class=hash-link aria-label="Direct link to test_build_lock_conflict" title="Direct link to test_build_lock_conflict" translate=no>​</a></h5>
+<p><em>Verify that run_build returns a failure result when lock cannot be acquired.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A build is already running or another process has left a lock active.
+When <code>run_build</code> attempts to start, it should fail immediately rather than proceeding
+and corrupting the database or writing partial assets.<p><strong>Execution Flow:</strong><ol>
+<li class="">Initialize repo structure and mock <code>.batho/batho.lock</code>.
+2. Acquire lock externally using <code>InterProcessLock</code>.
+3. Invoke <code>run_build</code> with <code>BuildOptions</code> pointing to the repository root.
+4. Assert that <code>res.success</code> is False.
+5. Verify that appropriate "lock" or "Another Batho process" warning is logged.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Build gracefully exits with success=False.<!-- -->
+<ul>
+<li class="">Proper diagnostics are recorded in the build result warnings.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_build_failed_cleanup><code>test_build_failed_cleanup</code><a href=#test_build_failed_cleanup class=hash-link aria-label="Direct link to test_build_failed_cleanup" title="Direct link to test_build_failed_cleanup" translate=no>​</a></h5>
+<p><em>Verify that on build failure, db.fail_run is called and store.cleanup_streams is called.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+The build process encounters an unexpected failure midway through indexing the codebase.
+The system must catch the error, mark the run as failed in the database with the
+appropriate error message, and clean up any partial Arrow files.<p><strong>Execution Flow:</strong><ol>
+<li class="">Create repo directory and write a basic <code>batho.yaml</code>.
+2. Mock <code>CodeGraphIndexer</code>'s <code>build_graph</code> method to raise a <code>ValueError</code>.
+3. Run <code>run_build</code> and assert <code>res.success</code> is False.
+4. Verify that the build run status in the SQLite database is recorded as "failed".
+5. Verify that the exception message is saved as the error message.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Robust error handling: exceptions are caught and reported in the build result.<!-- -->
+<ul>
+<li class="">Run state is updated to "failed" on-disk to prevent downstream operations from reading corrupt runs.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_case_insensitive_collision_warning><code>test_case_insensitive_collision_warning</code><a href=#test_case_insensitive_collision_warning class=hash-link aria-label="Direct link to test_case_insensitive_collision_warning" title="Direct link to test_case_insensitive_collision_warning" translate=no>​</a></h5>
+<p><em>Verify that case-insensitive duplicates issue a warning on build/patch.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+On a case-insensitive filesystem (or in an environment emulating one), two files exist
+whose paths differ only by case (e.g., <code>Index.py</code> and <code>index.py</code>).
+The build engine should proceed but emit a clear warning notifying the user of potential collisions.<p><strong>Execution Flow:</strong><ol>
+<li class="">Create two files <code>Index.py</code> and <code>index.py</code> with distinct contents.
+2. Mock filesystem walking to return both files.
+3. Mock <code>is_filesystem_case_insensitive</code> to return True.
+4. Run the build pipeline.
+5. Verify that the build succeeds but produces warnings referencing "Case-insensitive path collision".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Files are built successfully, but the potential filesystem conflict is logged as a warning.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_oversized_file_opaque_tracking><code>test_oversized_file_opaque_tracking</code><a href=#test_oversized_file_opaque_tracking class=hash-link aria-label="Direct link to test_oversized_file_opaque_tracking" title="Direct link to test_oversized_file_opaque_tracking" translate=no>​</a></h5>
+<p><em>Verify that files exceeding max_file_size_kb are skipped from AST parsing, log warnings, and are saved as opaque snapshots.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+The repository contains a file whose size exceeds the user's or system's max file size limit (configured in KB).
+The build should not fail; instead, it should skip AST parsing for this file, log a warning,
+and write it as an "opaque snapshot" (is_indexed=False) in the file tracking records.<p><strong>Execution Flow:</strong><ol>
+<li class="">Write a small file (<code>small_file.py</code>) and an oversized file (<code>large_file.py</code>).
+2. Run build specifying <code>max_file_size_kb=1</code>.
+3. Assert that the build succeeds.
+4. Capture logger warnings and assert that "file_exceeds_max_size_limit" warning was emitted.
+5. Open the <code>BathoBundle</code> database and query tracking for the large file.
+6. Assert that the large file is indeed tracked but with <code>is_indexed</code> set to False.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Robust fallback for large files: they are not parsed but are still tracked in the index.<!-- -->
+<ul>
+<li class="">System warning is generated.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<hr/>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=testsorchestratortest_build_patch_consistencypy><code>tests/orchestrator/test_build_patch_consistency.py</code><a href=#testsorchestratortest_build_patch_consistencypy class=hash-link aria-label="Direct link to testsorchestratortest_build_patch_consistencypy" title="Direct link to testsorchestratortest_build_patch_consistencypy" translate=no>​</a></h3>
+<p>Regression test for build/patch hash consistency bug.</p>
+<p>This test verifies that <code>batho patch</code> reports 0 changes immediately after
+<code>batho build</code> completes, ensuring hash computation is consistent between
+the two operations.</p>
+<p>Bug fixed: Previously, build.py used simple SHA256 for all files, while
+patch.py used content-aware hashing that returned <code>size_mtime</code> format
+for binary files instead of SHA256. This caused binary files to always
+appear "modified" even when unchanged.</p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=standalone-tests-1>Standalone Tests<a href=#standalone-tests-1 class=hash-link aria-label="Direct link to Standalone Tests" title="Direct link to Standalone Tests" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_repo_with_mixed_files><code>test_repo_with_mixed_files</code><a href=#test_repo_with_mixed_files class=hash-link aria-label="Direct link to test_repo_with_mixed_files" title="Direct link to test_repo_with_mixed_files" translate=no>​</a></h5>
+<p><em>Create a test repo with text, binary, and special files.</em></p>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_build_then_patch_reports_no_changes><code>test_build_then_patch_reports_no_changes</code><a href=#test_build_then_patch_reports_no_changes class=hash-link aria-label="Direct link to test_build_then_patch_reports_no_changes" title="Direct link to test_build_then_patch_reports_no_changes" translate=no>​</a></h5>
+<p><em>Verify patch reports 0 changes immediately after build.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A repository with mixed text, binary, and archive files is built. Immediately after building,
+a patch operation is run to detect changes.<p><strong>Execution Flow:</strong><ol>
+<li class="">Clean up existing bundle directories under the repository root.
+2. Execute <code>run_build</code> with force_full set to True.
+3. Verify the build is successful and the metadata file exists.
+4. Execute <code>run_patch</code> and assert it is successful.
+5. Verify that no changes are detected by the patch.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The build completes successfully and produces a bundle meta.json.<!-- -->
+<ul>
+<li class="">The subsequent patch operation reports 0 changes applied (or raises a 'No changes detected' warning).</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_build_then_patch_hash_scan_mode><code>test_build_then_patch_hash_scan_mode</code><a href=#test_build_then_patch_hash_scan_mode class=hash-link aria-label="Direct link to test_build_then_patch_hash_scan_mode" title="Direct link to test_build_then_patch_hash_scan_mode" translate=no>​</a></h5>
+<p><em>Verify patch with hash scan mode works correctly after build.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A repository is built, and then patch is run using the fallback hash scan mode (for non-git repositories).<p><strong>Execution Flow:</strong><ol>
+<li class="">Clean up existing bundle directories.
+2. Run build on the mixed-files test repository.
+3. Run patch in a non-git environment (which falls back to hash scan mode).
+4. Verify patch completes successfully.
+5. Verify no changes are detected.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The build and patch operations complete successfully.<!-- -->
+<ul>
+<li class="">The patch command reports 0 changes applied under hash scan mode.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_binary_file_hash_consistency><code>test_binary_file_hash_consistency</code><a href=#test_binary_file_hash_consistency class=hash-link aria-label="Direct link to test_binary_file_hash_consistency" title="Direct link to test_binary_file_hash_consistency" translate=no>​</a></h5>
+<p><em>Verify binary files get consistent SHA256 hashes from both functions.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A temporary binary file is created containing a mock PNG header and null bytes.<p><strong>Execution Flow:</strong><ol>
+<li class="">Create a binary temporary file.
+2. Compute the file's hash using <code>compute_file_hash</code>.
+3. Compute the file's expected SHA256 hash using the standard hashlib module.
+4. Compare the two computed hashes.
+5. Assert that the returned hash is not in size_mtime format.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The hash returned by <code>compute_file_hash</code> exactly matches the expected SHA256 hash.<!-- -->
+<ul>
+<li class="">The hash does not contain size/mtime indicators (e.g. "_" or "T").</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_text_file_hash_consistency><code>test_text_file_hash_consistency</code><a href=#test_text_file_hash_consistency class=hash-link aria-label="Direct link to test_text_file_hash_consistency" title="Direct link to test_text_file_hash_consistency" translate=no>​</a></h5>
+<p><em>Verify text files get consistent SHA256 hashes.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A temporary text file containing simple string data is created.<p><strong>Execution Flow:</strong><ol>
+<li class="">Create a temporary text file.
+2. Compute the file's hash using <code>compute_file_hash</code>.
+3. Compute the expected SHA256 hash using hashlib.
+4. Assert that the two hashes match.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The calculated hash from <code>compute_file_hash</code> is the exact SHA256 hex digest of the file's contents.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_build_git_metadata_and_file_tracking_run_id><code>test_build_git_metadata_and_file_tracking_run_id</code><a href=#test_build_git_metadata_and_file_tracking_run_id class=hash-link aria-label="Direct link to test_build_git_metadata_and_file_tracking_run_id" title="Direct link to test_build_git_metadata_and_file_tracking_run_id" translate=no>​</a></h5>
+<p><em>Verify that build correctly records run metadata and populates file_tracking.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A test repository is initialized as a git repo (if git is available) and built.<p><strong>Execution Flow:</strong><ol>
+<li class="">Attempt to initialize git, configure user identity, and commit files in the test repository.
+2. Clean up any existing bundle directory.
+3. Run build to create a bundle.
+4. Retrieve the bundle object and query the run metadata matching the build's run_id.
+5. Assert that git metadata fields (git_commit, git_branch) are populated correctly based on whether it is a git repository.
+6. Query the file_tracking records and assert they exist and reference the correct run_id.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The build completes successfully.<!-- -->
+<ul>
+<li class="">Git metadata (commit and branch) is captured if built inside a git repository, and is None otherwise.</li>
+<li class="">Every file in file_tracking is mapped to the current run's UUID as the last_run_uuid.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<hr/>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=testsorchestratortest_export_packpy><code>tests/orchestrator/test_export_pack.py</code><a href=#testsorchestratortest_export_packpy class=hash-link aria-label="Direct link to testsorchestratortest_export_packpy" title="Direct link to testsorchestratortest_export_packpy" translate=no>​</a></h3>
+<p>Tests for batho export default pack behavior (transport ZIP production).</p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=class-testexportdefaultpack>Class <code>TestExportDefaultPack</code><a href=#class-testexportdefaultpack class=hash-link aria-label="Direct link to class-testexportdefaultpack" title="Direct link to class-testexportdefaultpack" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_default_produces_zip><code>test_default_produces_zip</code><a href=#test_default_produces_zip class=hash-link aria-label="Direct link to test_default_produces_zip" title="Direct link to test_default_produces_zip" translate=no>​</a></h5>
+<p><em>Verify that running default export produces a valid ZIP archive.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+An export operation is invoked specifying a target ZIP output path on an existing bundle.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a minimal bundle with one completed run in the temp path.
+2. Define the output path pointing to <code>out.batho</code>.
+3. Run <code>run_export</code> with the configured ExportOptions.
+4. Verify the export is successful, the output file is created at the correct path, and it is a valid zipfile.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The export returns a successful result with no errors.<!-- -->
+<ul>
+<li class="">The output file exists and is recognized as a valid zip file.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_default_zip_contains_manifest_and_ipc><code>test_default_zip_contains_manifest_and_ipc</code><a href=#test_default_zip_contains_manifest_and_ipc class=hash-link aria-label="Direct link to test_default_zip_contains_manifest_and_ipc" title="Direct link to test_default_zip_contains_manifest_and_ipc" translate=no>​</a></h5>
+<p><em>Verify that the exported ZIP archive contains the manifest and IPC files.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+An export operation is run on an existing bundle, and the contents of the generated ZIP are inspected.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a minimal bundle.
+2. Run <code>run_export</code> to output <code>out.batho</code>.
+3. Open the output ZIP file and list its contents.
+4. Verify the ZIP includes "manifest.json" and at least one ".ipc.zst" member.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The export is successful.<!-- -->
+<ul>
+<li class="">The export package contains both the bundle manifest and the compressed IPC database tables.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_default_manifest_schema_version><code>test_default_manifest_schema_version</code><a href=#test_default_manifest_schema_version class=hash-link aria-label="Direct link to test_default_manifest_schema_version" title="Direct link to test_default_manifest_schema_version" translate=no>​</a></h5>
+<p><em>Verify that the manifest inside the export package contains the correct schema version.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+An export is performed, and the metadata in manifest.json inside the ZIP is loaded and checked.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a minimal bundle.
+2. Run <code>run_export</code> to output <code>out.batho</code>.
+3. Open the ZIP file, read the "manifest.json" entry, and parse it as JSON.
+4. Verify that schema_version is "batho-bundle.v1" and the generation value is at least 1.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The export manifest contains the expected schema version format and a positive generation number.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_default_ipc_members_are_zstd_compressed><code>test_default_ipc_members_are_zstd_compressed</code><a href=#test_default_ipc_members_are_zstd_compressed class=hash-link aria-label="Direct link to test_default_ipc_members_are_zstd_compressed" title="Direct link to test_default_ipc_members_are_zstd_compressed" translate=no>​</a></h5>
+<p><em>Verify that IPC file members within the exported ZIP are zstd-compressed.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+An export package is generated, and its internal IPC files are decompressed using Zstd.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a minimal bundle.
+2. Run <code>run_export</code> to output <code>out.batho</code>.
+3. For each file in the ZIP ending with ".ipc.zst", extract and decompress it using a ZstdDecompressor.
+4. Verify that the decompressed byte array contains valid data (length >= 8 bytes).</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">All IPC tables inside the archive are compressed with ZStandard and can be successfully decompressed.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_default_output_path><code>test_default_output_path</code><a href=#test_default_output_path class=hash-link aria-label="Direct link to test_default_output_path" title="Direct link to test_default_output_path" translate=no>​</a></h5>
+<p><em>Verify that export uses a default output path when none is explicitly specified.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+An export is run on an existing bundle without providing an output file path in the ExportOptions.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a minimal bundle.
+2. Initialize ExportOptions with only the bundle root directory.
+3. Run <code>run_export</code> with these options.
+4. Check that the returned output path has a ".batho" suffix and actually exists on disk.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The export successfully computes and creates the package at a default path.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_default_no_bundle_returns_error><code>test_default_no_bundle_returns_error</code><a href=#test_default_no_bundle_returns_error class=hash-link aria-label="Direct link to test_default_no_bundle_returns_error" title="Direct link to test_default_no_bundle_returns_error" translate=no>​</a></h5>
+<p><em>Verify that exporting an empty or non-existent bundle root returns a failure error.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+Export options are configured with a root directory that does not contain a Batho bundle.<p><strong>Execution Flow:</strong><ol>
+<li class="">Initialize ExportOptions pointing to an empty temporary directory.
+2. Run <code>run_export</code>.
+3. Assert that the operation failed and the errors contain the expected "No artifact bundle" message.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The export result reports success as False.<!-- -->
+<ul>
+<li class="">An error message indicating the lack of an artifact bundle is returned.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_default_roundtrip_with_load><code>test_default_roundtrip_with_load</code><a href=#test_default_roundtrip_with_load class=hash-link aria-label="Direct link to test_default_roundtrip_with_load" title="Direct link to test_default_roundtrip_with_load" translate=no>​</a></h5>
+<p><em>Pack then load should restore all IPC tables to a fresh directory.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+An exported bundle ZIP package is unpacked/loaded into a fresh destination directory using the BathoBundleManager.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a minimal bundle in a temp path.
+2. Export the bundle to <code>out.batho</code>.
+3. Create a fresh destination directory "restored".
+4. Use <code>BathoBundleManager</code> on the destination directory to unpack the exported ZIP package.
+5. Assert the unpacked manifest's schema version matches.
+6. Verify that IPC tables (such as runs) are correctly restored as files on disk.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Unpacking the export package successfully restores the manifest and active IPC table files.<!-- -->
+<ul>
+<li class="">Schema version is maintained in the restored manifest.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<hr/>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=testsorchestratortest_gcpy><code>tests/orchestrator/test_gc.py</code><a href=#testsorchestratortest_gcpy class=hash-link aria-label="Direct link to testsorchestratortest_gcpy" title="Direct link to testsorchestratortest_gcpy" translate=no>​</a></h3>
+<p>Tests for batho gc orchestrator against the Arrow Bundle.</p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=class-testgcstatus>Class <code>TestGCStatus</code><a href=#class-testgcstatus class=hash-link aria-label="Direct link to class-testgcstatus" title="Direct link to class-testgcstatus" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_status_returns_success><code>test_status_returns_success</code><a href=#test_status_returns_success class=hash-link aria-label="Direct link to test_status_returns_success" title="Direct link to test_status_returns_success" translate=no>​</a></h5>
+<p><em>Verify that running the GC status command on a valid bundle returns successfully.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle exists with at least one completed run, and the GC 'status' command is executed.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a bundle with one completed run.
+2. Run GC with GCOptions command set to 'status'.
+3. Verify the operation succeeds and contains "Arrow generation" in the output message.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The GC status execution succeeds.<!-- -->
+<ul>
+<li class="">The status message provides details about the current generation of Arrow files.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_status_missing_bundle><code>test_status_missing_bundle</code><a href=#test_status_missing_bundle class=hash-link aria-label="Direct link to test_status_missing_bundle" title="Direct link to test_status_missing_bundle" translate=no>​</a></h5>
+<p><em>Verify that running GC status on a directory without a bundle returns an error.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+An empty directory has no Batho bundle, and a GC 'status' command is run.<p><strong>Execution Flow:</strong><ol>
+<li class="">Define GCOptions pointing to an empty temporary directory.
+2. Execute GC status.
+3. Verify the operation fails and the output message states "No artifact bundle".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The GC status run fails.<!-- -->
+<ul>
+<li class="">The failure message indicates the bundle was not found.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=class-testgcdeleterun>Class <code>TestGCDeleteRun</code><a href=#class-testgcdeleterun class=hash-link aria-label="Direct link to class-testgcdeleterun" title="Direct link to class-testgcdeleterun" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_delete_existing_run><code>test_delete_existing_run</code><a href=#test_delete_existing_run class=hash-link aria-label="Direct link to test_delete_existing_run" title="Direct link to test_delete_existing_run" translate=no>​</a></h5>
+<p><em>Verify that deleting an existing run via GC succeeds and removes the run.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle exists with a specific run UUID, and GC 'run' delete command is called for that UUID.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a bundle with a test run UUID.
+2. Execute GC with command set to 'run' and the target run UUID.
+3. Verify the GC command succeeds.
+4. Reopen the bundle and query the deleted run UUID.
+5. Assert that the run is no longer present.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The run deletion operation succeeds.<!-- -->
+<ul>
+<li class="">The database no longer contains records for the deleted run.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_delete_nonexistent_run><code>test_delete_nonexistent_run</code><a href=#test_delete_nonexistent_run class=hash-link aria-label="Direct link to test_delete_nonexistent_run" title="Direct link to test_delete_nonexistent_run" translate=no>​</a></h5>
+<p><em>Verify that attempting to delete a nonexistent run returns an error.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+GC delete run command is executed for a UUID that does not exist in the bundle.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a bundle.
+2. Execute GC with command set to 'run' and a nonexistent run UUID.
+3. Assert that the command failed.
+4. Check that the error message indicates the run was not found.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The run deletion fails.<!-- -->
+<ul>
+<li class="">An error message is returned specifying that the run was not found.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_delete_run_missing_uuid><code>test_delete_run_missing_uuid</code><a href=#test_delete_run_missing_uuid class=hash-link aria-label="Direct link to test_delete_run_missing_uuid" title="Direct link to test_delete_run_missing_uuid" translate=no>​</a></h5>
+<p><em>Verify that attempting to delete a run without providing a UUID returns an error.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+GC run deletion command is invoked with run_uuid set to None.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a bundle.
+2. Execute GC with command set to 'run' and run_uuid set to None.
+3. Assert that the command fails.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The GC command reports a failure.</li>
+</ul></div></div></details>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=class-testgcvacuum>Class <code>TestGCVacuum</code><a href=#class-testgcvacuum class=hash-link aria-label="Direct link to class-testgcvacuum" title="Direct link to class-testgcvacuum" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_vacuum_removes_orphans><code>test_vacuum_removes_orphans</code><a href=#test_vacuum_removes_orphans class=hash-link aria-label="Direct link to test_vacuum_removes_orphans" title="Direct link to test_vacuum_removes_orphans" translate=no>​</a></h5>
+<p><em>Verify that the GC vacuum command deletes orphan IPC files.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+An orphan IPC file (not registered in the active manifest) is placed in the bundle directory.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a bundle and get its directory.
+2. Write a dummy/fake orphan IPC file to the bundle directory.
+3. Execute GC with command set to 'vacuum'.
+4. Verify the GC command succeeds.
+5. Check if the orphan file was deleted.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The vacuum command finishes successfully.<!-- -->
+<ul>
+<li class="">The orphan IPC file is deleted from the disk.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_orphans_subcommand><code>test_orphans_subcommand</code><a href=#test_orphans_subcommand class=hash-link aria-label="Direct link to test_orphans_subcommand" title="Direct link to test_orphans_subcommand" translate=no>​</a></h5>
+<p><em>Verify that the GC orphans command identifies stale IPC files.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+An orphan IPC file exists in the bundle directory, and the 'orphans' status command is executed.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a bundle and create an orphan IPC file in the bundle directory.
+2. Execute GC with command set to 'orphans'.
+3. Verify the command succeeds.
+4. Assert that the returned message references the stale IPC file.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The command reports success.<!-- -->
+<ul>
+<li class="">The output lists the stale/orphan IPC file.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=class-testgcpruneoldruns>Class <code>TestGCPruneOldRuns</code><a href=#class-testgcpruneoldruns class=hash-link aria-label="Direct link to class-testgcpruneoldruns" title="Direct link to class-testgcpruneoldruns" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_prune_no_old_runs><code>test_prune_no_old_runs</code><a href=#test_prune_no_old_runs class=hash-link aria-label="Direct link to test_prune_no_old_runs" title="Direct link to test_prune_no_old_runs" translate=no>​</a></h5>
+<p><em>Verify that pruning old runs does not delete new runs.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A run was just created, and the GC 'runs' pruning command is run with a large older_than threshold.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a bundle with a new run.
+2. Run GC with command set to 'runs' and older_than set to 365 days.
+3. Verify the command succeeds and reports "No runs found" to prune.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Pruning succeeds without deleting the recently created run.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_prune_invalid_threshold><code>test_prune_invalid_threshold</code><a href=#test_prune_invalid_threshold class=hash-link aria-label="Direct link to test_prune_invalid_threshold" title="Direct link to test_prune_invalid_threshold" translate=no>​</a></h5>
+<p><em>Verify that pruning with an invalid negative threshold returns an error.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+The GC 'runs' pruning command is executed with an older_than parameter of -1.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a bundle.
+2. Execute GC with command set to 'runs' and older_than set to -1.
+3. Assert that the operation failed.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The pruning run returns success as False.</li>
+</ul></div></div></details>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=class-testgcunknowncommand>Class <code>TestGCUnknownCommand</code><a href=#class-testgcunknowncommand class=hash-link aria-label="Direct link to class-testgcunknowncommand" title="Direct link to class-testgcunknowncommand" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_unknown_command><code>test_unknown_command</code><a href=#test_unknown_command class=hash-link aria-label="Direct link to test_unknown_command" title="Direct link to test_unknown_command" translate=no>​</a></h5>
+<p><em>Verify that executing an unknown GC command returns a failure.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+GC command is invoked with a non-existent sub-command.<p><strong>Execution Flow:</strong><ol>
+<li class="">Bootstrap a bundle.
+2. Execute GC command with command set to 'noop'.
+3. Assert that the operation failed.
+4. Verify the message points out "Unknown gc command".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The GC run fails due to an invalid command.</li>
+</ul></div></div></details>
+<hr/>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=testsorchestratortest_loadpy><code>tests/orchestrator/test_load.py</code><a href=#testsorchestratortest_loadpy class=hash-link aria-label="Direct link to testsorchestratortest_loadpy" title="Direct link to testsorchestratortest_loadpy" translate=no>​</a></h3>
+<p>Tests for batho load orchestrator — pack/unpack round-trip.</p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=class-testrunloadsuccess>Class <code>TestRunLoadSuccess</code><a href=#class-testrunloadsuccess class=hash-link aria-label="Direct link to class-testrunloadsuccess" title="Direct link to class-testrunloadsuccess" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_load_populates_bundle_dir><code>test_load_populates_bundle_dir</code><a href=#test_load_populates_bundle_dir class=hash-link aria-label="Direct link to test_load_populates_bundle_dir" title="Direct link to test_load_populates_bundle_dir" translate=no>​</a></h5>
+<p><em>Verify that load successfully populates the destination bundle directory.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+An exported bundle ZIP package is loaded into a clean destination directory.<p><strong>Execution Flow:</strong><ol>
+<li class="">Create a source directory and export a minimal bundle ZIP into it.
+2. Create a clean destination directory.
+3. Run <code>run_load</code> on the destination directory with the exported ZIP.
+4. Verify that the operation succeeds and a meta.json file exists in the destination.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The load operation returns success.<!-- -->
+<ul>
+<li class="">The destination bundle directory contains the unpacked meta.json metadata file.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_load_result_has_correct_tables_count><code>test_load_result_has_correct_tables_count</code><a href=#test_load_result_has_correct_tables_count class=hash-link aria-label="Direct link to test_load_result_has_correct_tables_count" title="Direct link to test_load_result_has_correct_tables_count" translate=no>​</a></h5>
+<p><em>Verify that the load operation returns the correct count of loaded tables.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle is exported to ZIP and then loaded, and the table load count is inspected.<p><strong>Execution Flow:</strong><ol>
+<li class="">Export a minimal bundle ZIP from the source directory.
+2. Run <code>run_load</code> targeting a destination directory.
+3. Assert that the operation succeeded.
+4. Verify that <code>tables_loaded</code> in the result is at least 1.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The load result indicates success.<!-- -->
+<ul>
+<li class="">The number of tables successfully loaded is 1 or more.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_load_result_has_generation><code>test_load_result_has_generation</code><a href=#test_load_result_has_generation class=hash-link aria-label="Direct link to test_load_result_has_generation" title="Direct link to test_load_result_has_generation" translate=no>​</a></h5>
+<p><em>Verify that the load result returns a valid bundle generation.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle ZIP package is loaded, and the generation attribute of the LoadResult is checked.<p><strong>Execution Flow:</strong><ol>
+<li class="">Export a minimal bundle ZIP from the source directory.
+2. Run <code>run_load</code> targeting a destination directory.
+3. Verify the generation in the result is greater than or equal to 1.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The load result contains a valid generation integer (>= 1).</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_loaded_bundle_is_readable><code>test_loaded_bundle_is_readable</code><a href=#test_loaded_bundle_is_readable class=hash-link aria-label="Direct link to test_loaded_bundle_is_readable" title="Direct link to test_loaded_bundle_is_readable" translate=no>​</a></h5>
+<p><em>Verify that the loaded bundle can be successfully read and queried.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle ZIP package is loaded into a destination directory, and then the BathoBundle reader is used to read the data.<p><strong>Execution Flow:</strong><ol>
+<li class="">Export a minimal bundle ZIP.
+2. Run <code>run_load</code> targeting a destination directory.
+3. Instanciate a <code>BathoBundle</code> on the destination directory.
+4. Query all runs from the database and check if the runs array length is 1 and the run UUID is 'build_001'.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The database is readable post-load.<!-- -->
+<ul>
+<li class="">The runs table contains the correct, matching run details bootstrapped during export.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_load_then_export_roundtrip><code>test_load_then_export_roundtrip</code><a href=#test_load_then_export_roundtrip class=hash-link aria-label="Direct link to test_load_then_export_roundtrip" title="Direct link to test_load_then_export_roundtrip" translate=no>​</a></h5>
+<p><em>Export -> load into dst -> export again -> load into dst2 -> still readable.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+Perform a full roundtrip: export a bundle, load it, export the loaded bundle again, and load it into a second directory.<p><strong>Execution Flow:</strong><ol>
+<li class="">Export the initial minimal bundle ZIP from the source.
+2. Load the ZIP into the first destination directory (dst1).
+3. Export a new ZIP from the first destination directory using <code>BathoBundleManager</code>.
+4. Load the second ZIP into a second destination directory (dst2) using <code>run_load</code>.
+5. Assert that the second load operation succeeds.
+6. Instantiate <code>BathoBundle</code> on dst2 and verify the run is readable and valid.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Both load and export operations succeed in sequence.<!-- -->
+<ul>
+<li class="">The final bundle in dst2 remains fully readable with matching run records.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=class-testrunloaderrors>Class <code>TestRunLoadErrors</code><a href=#class-testrunloaderrors class=hash-link aria-label="Direct link to class-testrunloaderrors" title="Direct link to class-testrunloaderrors" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_missing_root_fails><code>test_missing_root_fails</code><a href=#test_missing_root_fails class=hash-link aria-label="Direct link to test_missing_root_fails" title="Direct link to test_missing_root_fails" translate=no>​</a></h5>
+<p><em>Verify that trying to load into a non-existent destination directory fails.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+The load operation is run pointing to a non-existent destination root.<p><strong>Execution Flow:</strong><ol>
+<li class="">Run <code>run_load</code> with a destination root directory path that does not exist.
+2. Verify that the operation returns a failure.
+3. Assert that the failure message reports that the destination does not exist.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The load operation returns success as False.<!-- -->
+<ul>
+<li class="">An appropriate error message is returned pointing to the missing directory.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_missing_artifact_fails><code>test_missing_artifact_fails</code><a href=#test_missing_artifact_fails class=hash-link aria-label="Direct link to test_missing_artifact_fails" title="Direct link to test_missing_artifact_fails" translate=no>​</a></h5>
+<p><em>Verify that loading a non-existent artifact ZIP package fails.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+The load operation is run with a path to a non-existent ZIP package.<p><strong>Execution Flow:</strong><ol>
+<li class="">Create a valid destination directory.
+2. Run <code>run_load</code> with a non-existent artifact path.
+3. Verify that the operation fails and the message contains "not found".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The load operation fails.<!-- -->
+<ul>
+<li class="">The returned message reports that the artifact ZIP file was not found.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_existing_bundle_without_force_fails><code>test_existing_bundle_without_force_fails</code><a href=#test_existing_bundle_without_force_fails class=hash-link aria-label="Direct link to test_existing_bundle_without_force_fails" title="Direct link to test_existing_bundle_without_force_fails" translate=no>​</a></h5>
+<p><em>Verify that loading into an already occupied bundle directory without force fails.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A load operation is executed on a destination directory that already has a bundle directory.<p><strong>Execution Flow:</strong><ol>
+<li class="">Export a minimal bundle ZIP.
+2. Load the ZIP into the destination directory.
+3. Attempt to load the same ZIP into the destination directory again without the force option.
+4. Assert that the second load fails and the message contains "already exists".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The second load operation returns success as False.<!-- -->
+<ul>
+<li class="">An error is returned indicating that the bundle already exists at the destination.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_force_overwrites_existing_bundle><code>test_force_overwrites_existing_bundle</code><a href=#test_force_overwrites_existing_bundle class=hash-link aria-label="Direct link to test_force_overwrites_existing_bundle" title="Direct link to test_force_overwrites_existing_bundle" translate=no>​</a></h5>
+<p><em>Verify that loading with force=True overwrites an already occupied bundle directory.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A load operation is executed with force=True on a destination directory that already contains a bundle.<p><strong>Execution Flow:</strong><ol>
+<li class="">Export a minimal bundle ZIP.
+2. Load the ZIP into the destination directory.
+3. Run <code>run_load</code> targeting the same destination directory with the ZIP and <code>force=True</code>.
+4. Assert that the second load succeeds.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The force load succeeds and overwrites the existing bundle.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_bad_zip_schema_version_fails><code>test_bad_zip_schema_version_fails</code><a href=#test_bad_zip_schema_version_fails class=hash-link aria-label="Direct link to test_bad_zip_schema_version_fails" title="Direct link to test_bad_zip_schema_version_fails" translate=no>​</a></h5>
+<p><em>Verify that loading a ZIP package with an invalid schema version fails.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle ZIP package is loaded where the manifest.json contains a schema version mismatch.<p><strong>Execution Flow:</strong><ol>
+<li class="">Export a minimal bundle ZIP.
+2. Copy the ZIP, unpack manifest.json, modify the schema_version to an invalid value, and pack it back.
+3. Run <code>run_load</code> targeting a destination directory using the modified ZIP.
+4. Verify that the load fails.
+5. Assert that the returned error message indicates a schema mismatch.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The load fails due to schema version incompatibility.</li>
+</ul></div></div></details>
+<hr/>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=testsorchestratortest_load_bsg_currentpy><code>tests/orchestrator/test_load_bsg_current.py</code><a href=#testsorchestratortest_load_bsg_currentpy class=hash-link aria-label="Direct link to testsorchestratortest_load_bsg_currentpy" title="Direct link to testsorchestratortest_load_bsg_currentpy" translate=no>​</a></h3>
+<p>Tests for bsg/current reconstruction from a packed .batho artifact.</p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=class-testbsgcurrentreconstructed>Class <code>TestBsgCurrentReconstructed</code><a href=#class-testbsgcurrentreconstructed class=hash-link aria-label="Direct link to class-testbsgcurrentreconstructed" title="Direct link to class-testbsgcurrentreconstructed" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_bsg_current_dir_exists_after_load><code>test_bsg_current_dir_exists_after_load</code><a href=#test_bsg_current_dir_exists_after_load class=hash-link aria-label="Direct link to test_bsg_current_dir_exists_after_load" title="Direct link to test_bsg_current_dir_exists_after_load" translate=no>​</a></h5>
+<p><em>Verify that the bsg/current directory is created after loading a bundle.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle with entities is exported and then loaded with BSG reconstruction enabled.<p><strong>Execution Flow:</strong><ol>
+<li class="">Setup a minimal bundle with entity data in the source directory.
+2. Pack the bundle to a ZIP file and load it into a destination directory (with rebuild_bsg=True).
+3. Check if the path <code>.batho</code> / <code>bsg</code> / <code>current</code> exists inside the destination.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The bsg/current directory is successfully created on disk.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_entity_dict_written><code>test_entity_dict_written</code><a href=#test_entity_dict_written class=hash-link aria-label="Direct link to test_entity_dict_written" title="Direct link to test_entity_dict_written" translate=no>​</a></h5>
+<p><em>Verify that the reconstructed entity dictionary IPC table contains the correct rows.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle is loaded with BSG reconstruction enabled, and the resulting entity_dict.ipc is inspected.<p><strong>Execution Flow:</strong><ol>
+<li class="">Setup a minimal bundle, export it, and load it into the destination.
+2. Locate the <code>entity_dict.ipc</code> file in <code>.batho/bsg/current</code>.
+3. Assert that the file exists, read its contents into a table, and verify it contains at least 2 rows.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The entity_dict.ipc file exists and is populated with at least two entities.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_entities_ipc_written><code>test_entities_ipc_written</code><a href=#test_entities_ipc_written class=hash-link aria-label="Direct link to test_entities_ipc_written" title="Direct link to test_entities_ipc_written" translate=no>​</a></h5>
+<p><em>Verify that the entities IPC table is written and contains the expected entities.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle is loaded, and the entities.ipc file is read to check entity names.<p><strong>Execution Flow:</strong><ol>
+<li class="">Setup a minimal bundle, export it, and load it into the destination.
+2. Check that the <code>entities.ipc</code> file exists in the reconstructed directory.
+3. Read the table from the file.
+4. Verify that the table has at least 2 rows, containing "MyClass" and "my_func" in the <code>entity_name</code> column.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The entities.ipc file is successfully written.<!-- -->
+<ul>
+<li class="">Both mock entities "MyClass" and "my_func" are present in the table.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_relationships_ipc_written><code>test_relationships_ipc_written</code><a href=#test_relationships_ipc_written class=hash-link aria-label="Direct link to test_relationships_ipc_written" title="Direct link to test_relationships_ipc_written" translate=no>​</a></h5>
+<p><em>Verify that the relationships IPC table is written and contains the expected relation types.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle is loaded, and the relationships.ipc file is read to verify relationships.<p><strong>Execution Flow:</strong><ol>
+<li class="">Setup a minimal bundle, export it, and load it into the destination.
+2. Check that <code>relationships.ipc</code> exists.
+3. Read the IPC file and assert the table has at least 1 row.
+4. Verify the <code>relation_type</code> column contains "contains".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The relationships.ipc file is successfully written.<!-- -->
+<ul>
+<li class="">The "contains" relationship between MyClass and my_func is preserved.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_dangling_ipc_written_empty><code>test_dangling_ipc_written_empty</code><a href=#test_dangling_ipc_written_empty class=hash-link aria-label="Direct link to test_dangling_ipc_written_empty" title="Direct link to test_dangling_ipc_written_empty" translate=no>​</a></h5>
+<p><em>Verify that the dangling IPC table is written but is empty after load.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle is loaded, and the dangling.ipc file is inspected.<p><strong>Execution Flow:</strong><ol>
+<li class="">Setup a minimal bundle, export it, and load it into the destination.
+2. Check that <code>dangling.ipc</code> exists.
+3. Read the IPC file and assert that the number of rows is 0.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The dangling.ipc file is created.<!-- -->
+<ul>
+<li class="">The table in dangling.ipc contains 0 rows since there are no dangling relationships.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_meta_json_written><code>test_meta_json_written</code><a href=#test_meta_json_written class=hash-link aria-label="Direct link to test_meta_json_written" title="Direct link to test_meta_json_written" translate=no>​</a></h5>
+<p><em>Verify that the bsg/current metadata file is written and contains valid attributes.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle is loaded, and the bsg/current/meta.json is inspected.<p><strong>Execution Flow:</strong><ol>
+<li class="">Setup a minimal bundle, export it, and load it.
+2. Check that <code>meta.json</code> exists in <code>bsg/current/</code>.
+3. Parse the JSON content of the file.
+4. Assert that <code>schema_version</code> is present and <code>entity_count</code> is at least 2.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The metadata JSON file is correctly written and contains the proper schema version and entity count.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_rebuild_bsg_false_skips_reconstruction><code>test_rebuild_bsg_false_skips_reconstruction</code><a href=#test_rebuild_bsg_false_skips_reconstruction class=hash-link aria-label="Direct link to test_rebuild_bsg_false_skips_reconstruction" title="Direct link to test_rebuild_bsg_false_skips_reconstruction" translate=no>​</a></h5>
+<p><em>Verify that setting rebuild_bsg=False skips the bsg/current reconstruction.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A load operation is run with <code>rebuild_bsg</code> explicitly set to False.<p><strong>Execution Flow:</strong><ol>
+<li class="">Setup a minimal bundle and export it to ZIP.
+2. Run <code>run_load</code> targeting the destination with <code>rebuild_bsg=False</code>.
+3. Assert that the <code>.batho/bsg/current</code> directory does not exist.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The load operation succeeds but does not populate the bsg/current directory.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_bsg_current_entity_file_paths_populated><code>test_bsg_current_entity_file_paths_populated</code><a href=#test_bsg_current_entity_file_paths_populated class=hash-link aria-label="Direct link to test_bsg_current_entity_file_paths_populated" title="Direct link to test_bsg_current_entity_file_paths_populated" translate=no>​</a></h5>
+<p><em>Verify that entity file paths are properly populated in the reconstructed entities.ipc table.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A bundle is loaded, and the reconstructed <code>entities.ipc</code> is checked for correct <code>file_path</code> values.<p><strong>Execution Flow:</strong><ol>
+<li class="">Setup a minimal bundle, export it, and load it.
+2. Read <code>entities.ipc</code> from the bsg/current directory.
+3. Assert that the <code>file_path</code> column contains "src/foo.py".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The file paths mapping in the entities table matches the source file path "src/foo.py".</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_patch_can_open_reconstructed_store><code>test_patch_can_open_reconstructed_store</code><a href=#test_patch_can_open_reconstructed_store class=hash-link aria-label="Direct link to test_patch_can_open_reconstructed_store" title="Direct link to test_patch_can_open_reconstructed_store" translate=no>​</a></h5>
+<p><em>BsgScratchStore.open_for_patch should load the reconstructed current/.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+Open the reconstructed store for a patch operation and verify it has the correct entity/relationship counts.<p><strong>Execution Flow:</strong><ol>
+<li class="">Setup a minimal bundle, export it, and load it.
+2. Import <code>BsgScratchStore</code> and invoke <code>open_for_patch</code> on the destination's <code>.batho</code> directory.
+3. Assert that the returned current_store has an entity count of at least 2.
+4. Assert that the current_store has a relationship count of at least 1.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">The BsgScratchStore successfully opens the reconstructed directory.<!-- -->
+<ul>
+<li class="">The entity and relationship counts in the store match the loaded bundle counts.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<hr/>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=testsorchestratortest_patchpy><code>tests/orchestrator/test_patch.py</code><a href=#testsorchestratortest_patchpy class=hash-link aria-label="Direct link to testsorchestratortest_patchpy" title="Direct link to testsorchestratortest_patchpy" translate=no>​</a></h3>
+<p>Integration and edge case tests for Batho's patch orchestrator.</p>
+<p>This module validates that the patch pipeline:</p>
+<ol>
+<li class="">Rejects execution and yields warning results if another process holds the lock.</li>
+<li class="">Prevents concurrent patch runs on the same repository.</li>
+</ol>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=standalone-tests-2>Standalone Tests<a href=#standalone-tests-2 class=hash-link aria-label="Direct link to Standalone Tests" title="Direct link to Standalone Tests" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_patch_lock_contention><code>test_patch_lock_contention</code><a href=#test_patch_lock_contention class=hash-link aria-label="Direct link to test_patch_lock_contention" title="Direct link to test_patch_lock_contention" translate=no>​</a></h5>
+<p><em>Verify that concurrent patch runs fail immediately and gracefully with a lock conflict error.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+The repository is initialized with a build. A process acquires and holds the repository's <code>.batho/batho.lock</code> file.
+While the lock is held, we trigger <code>run_patch</code>.
+The patch operation must fail gracefully immediately without corrupting the active on-disk indexes.<p><strong>Execution Flow:</strong><ol>
+<li class="">Initialize repo with a small python file.
+2. Run a full build to create the initial Batho bundle.
+3. Identify the lock file path: <code>.batho/batho.lock</code>.
+4. Acquire the lock via <code>InterProcessLock</code>.
+5. Within the lock context, make a modification to the file and execute <code>run_patch</code>.
+6. Assert that the patch result success is False.
+7. Verify that warnings about "already running" or "lock" are present in the patch result.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Patch operations respect exclusive process-wide locking.<!-- -->
+<ul>
+<li class="">Failures are clean and prevent concurrent write contamination.</li>
+</ul>
+</li>
+</ul></div></div></details>
+<hr/>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=testsorchestratortest_root_isolationpy><code>tests/orchestrator/test_root_isolation.py</code><a href=#testsorchestratortest_root_isolationpy class=hash-link aria-label="Direct link to testsorchestratortest_root_isolationpy" title="Direct link to testsorchestratortest_root_isolationpy" translate=no>​</a></h3>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=standalone-tests-3>Standalone Tests<a href=#standalone-tests-3 class=hash-link aria-label="Direct link to Standalone Tests" title="Direct link to Standalone Tests" translate=no>​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_build_artifact_in_root_not_cwd><code>test_build_artifact_in_root_not_cwd</code><a href=#test_build_artifact_in_root_not_cwd class=hash-link aria-label="Direct link to test_build_artifact_in_root_not_cwd" title="Direct link to test_build_artifact_in_root_not_cwd" translate=no>​</a></h5>
+<p><em>Verify that build artifacts are created in the project root, not the current working directory.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A build is triggered while the current working directory is a subdirectory of the project.
+The artifact bundle must still be placed under the project's root, not under the CWD.<p><strong>Execution Flow:</strong><ol>
+<li class="">Create a subdirectory "other" inside the temp project.
+2. Change the working directory to "other" using monkeypatch.
+3. Run <code>run_build</code> with the project root as the target.
+4. Assert the build succeeds and the bundle meta.json exists under the project root.
+5. Assert the bundle was NOT created under "other".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Build output is anchored to the specified root directory, unaffected by the process CWD.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_patch_uses_root_not_cwd><code>test_patch_uses_root_not_cwd</code><a href=#test_patch_uses_root_not_cwd class=hash-link aria-label="Direct link to test_patch_uses_root_not_cwd" title="Direct link to test_patch_uses_root_not_cwd" translate=no>​</a></h5>
+<p><em>Verify that patch operations target the project root, not the current working directory.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+After a successful build, the CWD is changed to a subdirectory, and a file in the project is modified.
+The patch must still detect and apply changes to the project's root.<p><strong>Execution Flow:</strong><ol>
+<li class="">Run a full build on the temp project.
+2. Create and chdir into a subdirectory "other".
+3. Modify the project's main.py file.
+4. Run <code>run_patch</code> targeting the project root.
+5. Assert the patch succeeds and at least one change is applied.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Patch detects changes in the root project regardless of the current working directory.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_export_output_defaults_to_root><code>test_export_output_defaults_to_root</code><a href=#test_export_output_defaults_to_root class=hash-link aria-label="Direct link to test_export_output_defaults_to_root" title="Direct link to test_export_output_defaults_to_root" translate=no>​</a></h5>
+<p><em>Verify that export writes the artifact to the project root by default, not the CWD.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+After building, the CWD is changed to a subdirectory, and export is run without an explicit output path.
+The artifact must be placed in the project root.<p><strong>Execution Flow:</strong><ol>
+<li class="">Run a full build on the temp project.
+2. Create and chdir into a subdirectory "other".
+3. Run <code>run_export</code> with output=None.
+4. Assert the export succeeds and the artifact exists under the project root.
+5. Assert the artifact does NOT exist under "other".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Default export output is anchored to the project root directory.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_export_explicit_output_honoured><code>test_export_explicit_output_honoured</code><a href=#test_export_explicit_output_honoured class=hash-link aria-label="Direct link to test_export_explicit_output_honoured" title="Direct link to test_export_explicit_output_honoured" translate=no>​</a></h5>
+<p><em>Verify that an explicit output path overrides the default root-based output.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+After building, export is run with a custom output file path in a different directory.
+The artifact must be written exactly to the specified path.<p><strong>Execution Flow:</strong><ol>
+<li class="">Run a full build on the temp project.
+2. Create and chdir into a subdirectory "other".
+3. Run <code>run_export</code> with a custom output path inside "other".
+4. Assert the export succeeds, the custom file exists, and no artifact was written to the project root.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Explicit output path is honored over the default root-based naming.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_config_loaded_from_root_batho_yaml><code>test_config_loaded_from_root_batho_yaml</code><a href=#test_config_loaded_from_root_batho_yaml class=hash-link aria-label="Direct link to test_config_loaded_from_root_batho_yaml" title="Direct link to test_config_loaded_from_root_batho_yaml" translate=no>​</a></h5>
+<p><em>Verify that configuration is loaded from the project's batho.yaml, not the CWD.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A custom batho.yaml exists in the project root, and the CWD is changed elsewhere.
+Config must still resolve from the project root.<p><strong>Execution Flow:</strong><ol>
+<li class="">Write a custom batho.yaml with a unique max_file_size_kb value to the project root.
+2. Create and chdir into a subdirectory "other".
+3. Call <code>set_active_root(temp_project)</code>.
+4. Fetch config via <code>get_config_cached()</code>.
+5. Assert the loaded config reflects the custom value from the project root.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Config file resolution is anchored to the active root, not the process CWD.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_two_projects_independent_artifacts><code>test_two_projects_independent_artifacts</code><a href=#test_two_projects_independent_artifacts class=hash-link aria-label="Direct link to test_two_projects_independent_artifacts" title="Direct link to test_two_projects_independent_artifacts" translate=no>​</a></h5>
+<p><em>Verify that two separate projects in the same parent directory have independent artifacts.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+Two projects (proj_a, proj_b) exist as sibling directories under the same parent.
+Each is built independently, and their artifact bundles must not overlap or share run IDs.<p><strong>Execution Flow:</strong><ol>
+<li class="">Create two sibling project directories with distinct main.py files.
+2. Run a full build on each project.
+3. Assert both builds succeed and each has its own meta.json.
+4. Query the latest run ID from each project's bundle.
+5. Assert the run IDs are different.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Each project maintains an isolated artifact bundle with unique run identifiers.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_set_active_root_clears_cache><code>test_set_active_root_clears_cache</code><a href=#test_set_active_root_clears_cache class=hash-link aria-label="Direct link to test_set_active_root_clears_cache" title="Direct link to test_set_active_root_clears_cache" translate=no>​</a></h5>
+<p><em>Verify that calling set_active_root clears the config cache for the new root.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+Two projects have different batho.yaml configs. Switching the active root must
+reload the configuration rather than returning a stale cached value.<p><strong>Execution Flow:</strong><ol>
+<li class="">Create two projects with batho.yaml files containing different max_file_size_kb values.
+2. Set active root to proj_a and fetch cached config.
+3. Assert the value matches proj_a's config.
+4. Set active root to proj_b and fetch cached config.
+5. Assert the value matches proj_b's config.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Config cache is invalidated and reloaded when the active root changes.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_root_with_symlink><code>test_root_with_symlink</code><a href=#test_root_with_symlink class=hash-link aria-label="Direct link to test_root_with_symlink" title="Direct link to test_root_with_symlink" translate=no>​</a></h5>
+<p><em>Verify that build works correctly when the root path is a symlink.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+The project root is accessed through a symbolic link. The build must resolve the symlink
+and place artifacts in the real directory, while the active root tracks the resolved path.<p><strong>Execution Flow:</strong><ol>
+<li class="">Create a real project directory with a main.py file.
+2. Create a symbolic link pointing to the real directory.
+3. Change CWD to a different directory.
+4. Run build using the symlink path as the root.
+5. Assert artifacts exist in the real directory and the active root is the resolved real path.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Symlink roots are transparently resolved to their real paths for artifact placement.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_root_with_trailing_slash><code>test_root_with_trailing_slash</code><a href=#test_root_with_trailing_slash class=hash-link aria-label="Direct link to test_root_with_trailing_slash" title="Direct link to test_root_with_trailing_slash" translate=no>​</a></h5>
+<p><em>Verify that a root path with a trailing slash is handled correctly.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+The root path is provided with a trailing slash, which should not cause path resolution
+errors or duplicate separators in artifact paths.<p><strong>Execution Flow:</strong><ol>
+<li class="">Construct a Path from the temp project string with an appended "/".
+2. Run build with this path as the root.
+3. Assert the build succeeds and the bundle meta.json exists.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Trailing slashes in the root path are normalized without affecting artifact placement.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_root_nonexistent_raises_clean_error><code>test_root_nonexistent_raises_clean_error</code><a href=#test_root_nonexistent_raises_clean_error class=hash-link aria-label="Direct link to test_root_nonexistent_raises_clean_error" title="Direct link to test_root_nonexistent_raises_clean_error" translate=no>​</a></h5>
+<p><em>Verify that a non-existent root path produces a clean, descriptive error.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A build is invoked with a root directory that does not exist on the filesystem.
+The operation should fail gracefully with a meaningful warning message.<p><strong>Execution Flow:</strong><ol>
+<li class="">Define a path to a non-existent directory.
+2. Run build with this path as the root.
+3. Assert the build fails.
+4. Assert the warnings contain "not exist" or "no such".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Missing root directories are detected early and reported with a clean error message.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_root_is_file_not_dir><code>test_root_is_file_not_dir</code><a href=#test_root_is_file_not_dir class=hash-link aria-label="Direct link to test_root_is_file_not_dir" title="Direct link to test_root_is_file_not_dir" translate=no>​</a></h5>
+<p><em>Verify that passing a file path instead of a directory as root produces a clean error.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+The root argument points to an existing file rather than a directory.
+The build must detect this and fail with an appropriate error message.<p><strong>Execution Flow:</strong><ol>
+<li class="">Use an existing file (main.py) as the root path.
+2. Run build with this file path as root.
+3. Assert the build fails.
+4. Assert the warnings contain "not a directory" or "directory".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">File paths provided as root are rejected with a descriptive error.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_concurrent_builds_different_roots_no_config_bleed><code>test_concurrent_builds_different_roots_no_config_bleed</code><a href=#test_concurrent_builds_different_roots_no_config_bleed class=hash-link aria-label="Direct link to test_concurrent_builds_different_roots_no_config_bleed" title="Direct link to test_concurrent_builds_different_roots_no_config_bleed" translate=no>​</a></h5>
+<p><em>Verify that concurrent builds on different roots do not leak config values between threads.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+Two threads simultaneously set different active roots and read their respective configs.
+Each thread must see its own project's configuration without cross-contamination.<p><strong>Execution Flow:</strong><ol>
+<li class="">Create two projects with different batho.yaml values.
+2. Spawn two threads: worker_a sets root to proj_a, worker_b sets root to proj_b.
+3. Each thread reads its max_file_size_kb after a short sleep.
+4. Join both threads and assert each read the correct value.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Per-thread active roots remain isolated; no config bleeding occurs between concurrent builds.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_patch_on_nonexistent_artifact_clean_error><code>test_patch_on_nonexistent_artifact_clean_error</code><a href=#test_patch_on_nonexistent_artifact_clean_error class=hash-link aria-label="Direct link to test_patch_on_nonexistent_artifact_clean_error" title="Direct link to test_patch_on_nonexistent_artifact_clean_error" translate=no>​</a></h5>
+<p><em>Verify that patching a project with no existing artifact bundle produces a clean error.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+A patch is run on a directory that has never been built, so no artifact bundle exists.
+The patch must fail gracefully with a meaningful message.<p><strong>Execution Flow:</strong><ol>
+<li class="">Run patch on the temp project without ever building it first.
+2. Assert the patch fails.
+3. Assert the warnings contain "no artifact" or "bundle".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Missing bundles are detected and reported with a clean error before patching begins.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_diff_from_different_cwd><code>test_diff_from_different_cwd</code><a href=#test_diff_from_different_cwd class=hash-link aria-label="Direct link to test_diff_from_different_cwd" title="Direct link to test_diff_from_different_cwd" translate=no>​</a></h5>
+<p><em>Verify that the diff command works correctly when invoked from a different working directory.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+After building, the CWD is changed to a subdirectory, and diff is run targeting the project root.
+The command must still operate on the project's artifact data.<p><strong>Execution Flow:</strong><ol>
+<li class="">Run a full build on the temp project.
+2. Create and chdir into a subdirectory "other".
+3. Invoke cmd_diff with the project root and a non-existent run UUID.
+4. Assert the command returns 1 and stderr contains "not found".</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">CLI commands resolve the correct root artifact data regardless of the process CWD.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_fix_from_different_cwd><code>test_fix_from_different_cwd</code><a href=#test_fix_from_different_cwd class=hash-link aria-label="Direct link to test_fix_from_different_cwd" title="Direct link to test_fix_from_different_cwd" translate=no>​</a></h5>
+<p><em>Verify that the fix command works correctly when invoked from a different working directory.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+After building, the CWD is changed to a subdirectory, and fix is run targeting the project root.
+The command must still operate on the project's artifact data.<p><strong>Execution Flow:</strong><ol>
+<li class="">Run a full build on the temp project.
+2. Create and chdir into a subdirectory "other".
+3. Invoke cmd_fix with the project root in dry-run mode.
+4. Assert the command returns 0 (success).</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">CLI fix command resolves the correct root artifact data regardless of the process CWD.</li>
+</ul></div></div></details>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id=test_bundle_dir_based_on_root><code>test_bundle_dir_based_on_root</code><a href=#test_bundle_dir_based_on_root class=hash-link aria-label="Direct link to test_bundle_dir_based_on_root" title="Direct link to test_bundle_dir_based_on_root" translate=no>​</a></h5>
+<p><em>Verify that the bundle directory path is derived correctly from the project root.</em></p>
+<details class="details_lb9f alert alert--info details_b_Ee" data-collapsed=true><summary>View Test Details</summary><div><div class=collapsibleContent_i85q><p><strong>Scenario:</strong>
+Two different root paths must each map to their own unique artifact subdirectory.<p><strong>Execution Flow:</strong><ol>
+<li class="">Define two distinct project paths.
+2. Resolve the bundle directory for each using resolve_bundle_dir.
+3. Assert each resolves to <code>.batho/artifact</code> under its respective root.</li>
+</ol><p><strong>Flowchart:</strong><p><strong>Expectations:</strong><ul>
+<li class="">Bundle directories are always located at <code>&amp;lt;root&amp;gt;/.batho/artifact</code>.</li>
+</ul></div></div></details>
+<hr/></div><footer class="theme-doc-footer docusaurus-mt-lg"><div class="row margin-top--sm theme-doc-footer-edit-meta-row"><div class="col noPrint_WFHX"><a href=https://github.com/sageoz/batho/tree/main/docs-site/docs/tests/orchestrator.md target=_blank rel="noopener noreferrer" class=theme-edit-this-page><svg fill=currentColor height=20 width=20 viewBox="0 0 40 40" class=iconEdit_Z9Sw aria-hidden=true><g><path d="m34.5 11.7l-3 3.1-6.3-6.3 3.1-3q0.5-0.5 1.2-0.5t1.1 0.5l3.9 3.9q0.5 0.4 0.5 1.1t-0.5 1.2z m-29.5 17.1l18.4-18.5 6.3 6.3-18.4 18.4h-6.3v-6.2z"/></g></svg>Edit this page</a></div><div class="col lastUpdated_JAkA"></div></div></footer></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href=/docs/tests/><div class=pagination-nav__sublabel>Previous</div><div class=pagination-nav__label>Overview</div></a><a class="pagination-nav__link pagination-nav__link--next" href=/docs/tests/modules/><div class=pagination-nav__sublabel>Next</div><div class=pagination-nav__label>Subsystems/Modules</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href=#testsorchestratortest_buildpy class="table-of-contents__link toc-highlight"><code>tests/orchestrator/test_build.py</code></a><li><a href=#testsorchestratortest_build_patch_consistencypy class="table-of-contents__link toc-highlight"><code>tests/orchestrator/test_build_patch_consistency.py</code></a><li><a href=#testsorchestratortest_export_packpy class="table-of-contents__link toc-highlight"><code>tests/orchestrator/test_export_pack.py</code></a><li><a href=#testsorchestratortest_gcpy class="table-of-contents__link toc-highlight"><code>tests/orchestrator/test_gc.py</code></a><li><a href=#testsorchestratortest_loadpy class="table-of-contents__link toc-highlight"><code>tests/orchestrator/test_load.py</code></a><li><a href=#testsorchestratortest_load_bsg_currentpy class="table-of-contents__link toc-highlight"><code>tests/orchestrator/test_load_bsg_current.py</code></a><li><a href=#testsorchestratortest_patchpy class="table-of-contents__link toc-highlight"><code>tests/orchestrator/test_patch.py</code></a><li><a href=#testsorchestratortest_root_isolationpy class="table-of-contents__link toc-highlight"><code>tests/orchestrator/test_root_isolation.py</code></a></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="row footer__links"><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Docs</div><ul class="footer__items clean-list"><li class=footer__item><a class=footer__link-item href=/docs/getting-started/quick-start/>Getting Started</a><li class=footer__item><a class=footer__link-item href=/docs/whitepaper/>Whitepaper</a><li class=footer__item><a class=footer__link-item href=/docs/cli-reference/>CLI Reference</a></ul></div><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Community</div><ul class="footer__items clean-list"><li class=footer__item><a href=https://github.com/sageoz/batho target=_blank rel="noopener noreferrer" class=footer__link-item>GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://pypi.org/project/batho/ target=_blank rel="noopener noreferrer" class=footer__link-item>PyPI<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a></ul></div><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Legal</div><ul class="footer__items clean-list"><li class=footer__item><a href=https://github.com/sageoz/batho/blob/main/LICENSE target=_blank rel="noopener noreferrer" class=footer__link-item>License<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a></ul></div></div><div class="footer__bottom text--center"><div class=footer__copyright>Copyright © 2026 Sageoz. Built with Docusaurus.</div></div></div></footer></div></body>
