@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/batho.svg" alt="Batho" width="220" height="220" />
+  <img src="assets/batho.png" alt="Batho" width="220" height="220" />
 </p>
 
 <h1 align="center">B.A.T.H.O</h1>
@@ -10,12 +10,12 @@
 
 <p align="center">
   <a href="https://pypi.org/project/batho/"><img src="https://img.shields.io/pypi/v/batho?color=blue" alt="PyPI"></a>
-  <a href="https://github.com/sageoz/batho/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/v1.1.0-release-orange" alt="v1.1.0"></a>
   <a href="https://github.com/sageoz/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   <a href="https://batho.sageoz.org"><img src="https://img.shields.io/badge/docs-batho.sageoz.org-green" alt="Documentation"></a>
 </p>
 
 <br>
+
 ## 📚 Official Documentation
 
 For complete documentation, guides, and API reference, visit **[batho.sageoz.org](https://batho.sageoz.org)**.
@@ -24,21 +24,21 @@ For complete documentation, guides, and API reference, visit **[batho.sageoz.org
 
 ```bash
 # Install
-pip install batho
+pip install batho / uv add batho
 
-# Build full repository index (creates .batho/artifact/ + .batho/bsg/current/)
+# Build full repository index
 batho build --root .
+
+# Exports the latest Batho artifact into a transportable ZIP by default ("artifact_<dir>.batho").
+batho export --root .
 
 # Incrementally patch changed files (using native content hashes)
 batho patch --root .
 
-# Export index to a JSON view (e.g., agent view for LLM context injection)
-batho export --view agent --output context.json
-
 # Query granular node changes between runs or for a specific file/entity
 batho diff --file batho/cli/build.py
 
-# Verify database health and repair integrity anomalies
+# Verify artifact health and repair integrity anomalies
 batho fix --deep
 ```
 
@@ -54,7 +54,7 @@ batho fix --deep
 - **Dependency-Aware Resolution** — CDEU module resolves stdlib and third-party symbols (pip, npm, cargo, go) via manifest parsing and live introspection
 - **Symbol Resolution** — Cross-file symbol resolution with hierarchical encoding and SymbolRole tagging
 - **Arrow IPC Artifact Store** — Three-blob design (agent/storage/rel views) written to `.batho/artifact/` via `BathoBundle`; zero-copy memory-mapped reads
-- **BSG Graph Store** — Persistent entity/relationship graph in `.batho/bsg/current/` via `BsgScratchStore`; streaming flush + compaction for large repos
+- **BSG Store** — Persistent entity/relationship graph in `.batho/bsg/current/` via `BsgScratchStore`; streaming flush + compaction for large repos
 - **File Changelog** — Node-level diff history tracking per run
 - **Integrity Verification** — Multi-stage fix command with auto-repair capabilities
 - **Zero code execution** — Safe to run in CI or on untrusted repos
@@ -79,18 +79,22 @@ batho patch --root .
 ```
 - `--max-file-size-kb <KB>`: Skip files exceeding this size during hash scans.
 
-### 3. Render Views (`batho export`)
-Exports index datasets into structured JSON files (saves to `<root>/batho_export.json` by default).
+### 3. Export (`batho export`)
+Exports the latest BSG artifact into a transportable ZIP by default (`<root>/artifact_<dir>.batho`). Use `--json` to export a JSON view instead (default: `<root>/batho_export.json`).
 ```bash
-batho export --view agent
+batho export --root .
 ```
-- `--view <view>`: JSON view format (`storage`, `agent`, `overview`, `files`, `symbols`, `dependencies`, `delta`, `rel`).
+- `--root <path>`: Repository root directory (default: `.`).
+- `--json`: Export a JSON view instead of the default transport ZIP artifact.
+- `--view <view>`: JSON view format (default: `storage` with `--json`): `storage`, `agent`, `overview`, `files`, `symbols`, `dependencies`, `delta`, `rel`.
 - `--output <path>`: Custom file path.
 - `--filter <glob>`: Narrow exported files (e.g. `src/**/*.py`).
 - `--category <category>`: Filter by code category (`source`, `test`, `doc`, `config`, `infra`, `all`).
 - `--token-budget <N>`: Maximum token budget for agent view.
 - `--baseline <path>`: Baseline export file (required for `delta` view).
 - `--rel`: Include relationship lists in the export.
+- `--index-id <ID>`: Export a specific index run UUID (default: latest).
+- `--format <format>`: JSON output format (`json` or `pretty`; default: `json`).
 
 ### 4. Database Integrity (`batho fix`)
 Performs multi-stage database verification (`db` → `state` → `blobs` → `graph`) and executes repair routines.
