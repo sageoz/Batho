@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="assets/batho.png" alt="Batho" width="220" height="220" />
+  <img src="assets/batho.png" alt="Batho" width="200" height="200" />
 </p>
 
 <h1 align="center">B.A.T.H.O</h1>
+
 <p align="center">
-  <strong>Bidirectional AST Traversal & Hypergraph Orchestrator</strong><br>
-  <b>BATHO</b> indexes your codebase, compresses the result for LLM context windows, and tracks changes over time.
+  Multi-language codebase indexer that turns source code into compressed, queryable code graphs — built for AI agents and CI/CD pipelines.
 </p>
 
 <p align="center">
@@ -14,155 +14,244 @@
   <a href="https://batho.sageoz.org"><img src="https://img.shields.io/badge/docs-batho.sageoz.org-green" alt="Documentation"></a>
 </p>
 
-<br>
+---
 
-## 📚 Official Documentation
-
-For complete documentation, guides, and API reference, visit **[batho.sageoz.org](https://batho.sageoz.org)**.
-
-## 🚀 Quick Start
+## Installation
 
 ```bash
-# Install
-pip install batho / uv add batho
+pip install batho
+# or
+uv add batho
+```
 
+## Quick Start
+
+```bash
 # Build full repository index
 batho build --root .
 
-# Exports the latest Batho artifact into a transportable ZIP by default ("artifact_<dir>.batho").
-batho export --root .
-
-# Incrementally patch changed files (using native content hashes)
+# Incrementally re-index only changed files
 batho patch --root .
 
-# Load a transport artifact ZIP (e.g. in CI)
+# Export a transportable artifact ZIP (artifact_<dir>.batho)
+batho export --root .
+
+# Restore a graph from an artifact ZIP (e.g. downloaded in CI)
 batho load artifact_<dir>.batho
 
-# Query granular node changes between runs or for a specific file/entity
-batho diff --file batho/cli/build.py
+# Query node-level changes for a file across runs
+batho diff --file src/main.py
 
-# Verify artifact health and repair integrity anomalies
+# Verify and auto-repair artifact integrity
 batho fix --deep
 ```
 
-## ✨ Key Features
+## How It Works
 
-- **40+ language AST parsing** — Python, TypeScript, Rust, Go, Java, and more
-- **10x context compression** — Fit entire codebases into LLM context windows
-- **Time Machine snapshots** — Track codebase evolution with incremental patching
-- **BSG Plugin System v2** — 38 built-in plugins (28 foundation + 10 interceptors) for security, quality, and optimization
-- **Single-Pass Extraction** — One parse per file; cross-file references emit contextual stubs (`EntityType.UNRESOLVED`) resolved post-extraction by ScopeManager
-- **Deterministic IDs** — Position-based ID generation for stable entity tracking (no false positives from code movement)
-- **Graph Optimization** — Cyclic dependency detection and orphan node pruning
-- **Dependency-Aware Resolution** — CDEU module resolves stdlib and third-party symbols (pip, npm, cargo, go) via manifest parsing and live introspection
-- **Symbol Resolution** — Cross-file symbol resolution with hierarchical encoding and SymbolRole tagging
-- **Arrow IPC Artifact Store** — Three-blob design (agent/storage/rel views) written to `.batho/artifact/` via `BathoBundle`; zero-copy memory-mapped reads
-- **BSG Store** — Persistent entity/relationship graph in `.batho/bsg/current/` via `BsgScratchStore`; streaming flush + compaction for large repos
-- **File Changelog** — Node-level diff history tracking per run
-- **Integrity Verification** — Multi-stage fix command with auto-repair capabilities
-- **Zero code execution** — Safe to run in CI or on untrusted repos
+Batho parses every source file into an AST using tree-sitter, extracts entities and relationships into a BSG (Batho Semantic Graph), and persists the result as Apache Arrow IPC files. The transport artifact (`artifact_*.batho`) is a zstd-compressed ZIP of those IPC files, designed to be uploaded in CI and downloaded by AI agents — no local parsing required.
 
-## 🛠️ CLI Commands & Usage
+## Features
 
-Batho provides a clean command-line interface:
+- **40+ language AST parsing** — Python, TypeScript, Rust, Go, Java, C/C++, and more
+- **10x context compression** — fit entire codebases into LLM context windows
+- **Incremental patching** — hash-based change detection; only modified files are re-parsed
+- **Deterministic entity IDs** — position-based IDs prevent false positives from code movement
+- **Cross-file symbol resolution** — hierarchical encoding with SymbolRole tagging via ScopeManager
+- **Dependency-aware indexing** — CDEU resolves stdlib and third-party symbols (pip, npm, cargo, go) via manifest parsing and live introspection
+- **BSG Plugin System v2** — 38 built-in plugins (security, quality, optimization) with custom rule support
+- **Arrow IPC artifact store** — zero-copy memory-mapped reads; three-blob design (agent / storage / rel views)
+- **Graph optimization** — cyclic dependency detection and orphan node pruning
+- **Node-level diff history** — track codebase evolution across every indexed run
+- **Multi-stage integrity verification** — auto-repair via `batho fix`
+- **Zero code execution** — safe to run in CI or on untrusted repositories
 
-### 1. Build Index (`batho build`)
-Parses all repository source files and builds the initial AST code graph database.
-```bash
-batho build --root .
+## CLI Reference
+
+| Command | Purpose | Key flags |
+|---|---|---|
+| `batho build` | Full index build from scratch | `--full`, `--max-workers N`, `--max-file-size-kb KB` |
+| `batho patch` | Incremental re-index of changed files | `--max-file-size-kb KB` |
+| `batho export` | Export artifact ZIP or JSON view | `--json`, `--view`, `--filter`, `--output`, `--token-budget N` |
+| `batho load` | Restore graph from artifact ZIP | `--root`, `--force` |
+| `batho diff` | Query node-level change history | `--file`, `--entity`, `--run`, `--since`, `--json` |
+| `batho fix` | Verify and repair artifact integrity | `--deep`, `--dry-run`, `--target`, `--parallel` |
+| `batho gc` | Prune old runs and vacuum storage | `vacuum`, `status`, `runs --older-than N` |
+
+### Export views
+
+When using `batho export --json --view <view>`, available views are:
+
+`storage` · `agent` · `overview` · `files` · `symbols` · `dependencies` · `delta` · `rel`
+
+## CI/CD Integration
+
+Batho's CI/CD strategy is **incremental**: download the previous artifact → `batho load` → `batho patch` → `batho export` → upload. On first run (no artifact), it falls back to `batho build --full`.
+
+### GitHub Actions — Composite Action (recommended)
+
+The simplest integration. Add to any workflow:
+
+```yaml
+- name: Checkout
+  uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+
+- name: Run Batho
+  uses: sageoz/batho@v1.1.0
+  with:
+    root: "."
+    artifact-name: "batho-index"
+    artifact-retention-days: "7"
 ```
-- `--full`: Force a full rebuild by deleting the existing database first.
-- `--max-workers <N>`: Maximum parallel workers for parsing (defaults to CPU count).
-- `--max-file-size-kb <KB>`: Skip files exceeding this size (default: 500 KB).
 
-### 2. Incremental Patch (`batho patch`)
-Scans the filesystem for modified/added files, re-parses them, and updates the index using copy-on-write database transactions.
-```bash
-batho patch --root .
+**Inputs:** `root` · `python-version` · `batho-ref` · `verbose` · `max-workers` · `max-file-size-kb` · `artifact-name` · `artifact-retention-days` · `upload-artifact` · `summary`
+
+**Outputs:** `zip-path` · `output-dir` · `index-id`
+
+### GitHub Actions — Reusable Workflow
+
+Call the reusable workflow from any consumer repository:
+
+```yaml
+jobs:
+  batho:
+    uses: sageoz/batho/.github/workflows/batho-index.yml@v1.1.0
+    with:
+      root: "."
+      artifact-name: "batho-index"
+      artifact-retention-days: "7"
 ```
-- `--max-file-size-kb <KB>`: Skip files exceeding this size during hash scans.
 
-### 3. Export (`batho export`)
-Exports the latest BSG artifact into a transportable ZIP by default (`<root>/artifact_<dir>.batho`). Use `--json` to export a JSON view instead (default: `<root>/batho_export.json`).
-```bash
-batho export --root .
+### GitHub Actions — Manual Workflow
+
+For full control, add `.github/workflows/batho-ci.yml` to your repository:
+
+```yaml
+name: Batho Index
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  update-code-graph:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Batho
+        run: pip install batho
+
+      - name: Download previous artifact
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: batho-database
+          workflow: batho-ci.yml
+          branch: ${{ github.ref_name }}
+        continue-on-error: true
+
+      - name: Build or patch index
+        run: |
+          if ls artifact_*.batho 1>/dev/null 2>&1; then
+            batho load --root . artifact_*.batho --force
+            batho patch --root .
+          else
+            batho build --root . --full
+          fi
+          batho export --root .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: batho-database
+          path: artifact_*.batho
+          retention-days: 90
 ```
-- `--root <path>`: Repository root directory (default: `.`).
-- `--json`: Export a JSON view instead of the default transport ZIP artifact.
-- `--view <view>`: JSON view format (default: `storage` with `--json`): `storage`, `agent`, `overview`, `files`, `symbols`, `dependencies`, `delta`, `rel`.
-- `--output <path>`: Custom file path.
-- `--filter <glob>`: Narrow exported files (e.g. `src/**/*.py`).
-- `--category <category>`: Filter by code category (`source`, `test`, `doc`, `config`, `infra`, `all`).
-- `--token-budget <N>`: Maximum token budget for agent view.
-- `--baseline <path>`: Baseline export file (required for `delta` view).
-- `--rel`: Include relationship lists in the export.
-- `--index-id <ID>`: Export a specific index run UUID (default: latest).
-- `--format <format>`: JSON output format (`json` or `pretty`; default: `json`).
 
-### 4. Load Artifact (`batho load`)
-Unpacks a transport artifact ZIP (`artifact_<dir>.batho`) produced by `batho export --pack` into the repository's `.batho/artifact/` directory.
-```bash
-batho load artifact_<dir>.batho
+### GitLab CI
+
+Add to `.gitlab-ci.yml`:
+
+```yaml
+stages:
+  - index
+
+batho-indexer:
+  stage: index
+  image: python:3.12
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq unzip curl
+    - pip install batho
+  script:
+    - |
+      curl --fail --location \
+        --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/artifacts/${CI_COMMIT_REF_NAME}/download?job=batho-indexer" \
+        --output artifacts.zip || true
+      [ -f artifacts.zip ] && unzip -o artifacts.zip || true
+      if ls artifact_*.batho 1>/dev/null 2>&1; then
+        batho load --root . artifact_*.batho --force
+        batho patch --root .
+      else
+        batho build --root . --full
+      fi
+      batho export --root .
+  artifacts:
+    paths:
+      - artifact_*.batho
+    expire_in: 90 days
 ```
-- `--root <path>`: Repository root directory (default: `.`).
-- `--force`: Overwrite existing bundle if present.
 
-### 5. Database Integrity (`batho fix`)
-Performs multi-stage database verification (`db` → `state` → `blobs` → `graph`) and executes repair routines.
+### AI Agent Access
+
+Agents can download and restore a pre-built graph without local indexing:
+
 ```bash
-batho fix --deep
+# GitHub — download latest artifact from main
+gh api /repos/{owner}/{repo}/actions/artifacts \
+  --jq '.artifacts[] | select(.name=="batho-database") | .id' \
+  | xargs -I {} gh api /repos/{owner}/{repo}/actions/artifacts/{}/zip \
+  --output batho-database.zip
+unzip batho-database.zip
+batho load --root . artifact_*.batho
+
+# GitLab
+curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+  "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/artifacts/main/download?job=batho-indexer" \
+  --output batho-database.zip
+unzip batho-database.zip
+batho load --root . artifact_*.batho
 ```
-- `--deep`: Full validation (decompresses and checks zstd payload blobs).
-- `--dry-run`: Diagnoses issues without committing repairs.
-- `--target <target>`: Target a specific checker (`db`, `state`, `blobs`, `graph`, `all`).
-- `--phase <1-4>`: Run a specific verification phase.
-- `--parallel`: Run independent checks concurrently.
-- `--format <text|json|csv>`: Report format.
 
-### 6. Node History (`batho diff`)
-Queries exact, granular changes across runs, files, or specific symbols.
-```bash
-batho diff --file batho/cli/build.py
-```
-- `--run <run_uuid>`: Changes made in a specific run.
-- `--entity <entity_id>`: Full evolution history of a symbol.
-- `--file <rel_path>`: All node-level changes in a file across runs.
-- `--since <run_uuid>`: Bounded history start (only with `--entity`).
-- `--json`: Format output as JSON.
+## Configuration
 
-### 7. Storage Maintenance (`batho gc`)
-Manages database runs, prunes old history, and vacuums database pages.
-```bash
-batho gc vacuum
-```
-- `run <run_uuid>`: Delete a specific indexing run.
-- `runs --older-than <days>`: Prune runs older than a threshold.
-- `status`: Display storage metrics.
-- `vacuum`: Reclaim disk space.
-
-## ⚙️ Configuration
-
-Batho works out of the box with zero config. For production use, configure with `./batho.yaml`:
+Batho runs with zero config. To customize, copy [`batho.yaml.example`](batho.yaml.example) to `./batho.yaml`:
 
 ```yaml
 schema_version: batho-config.v1
 
 logging:
-  level: ERROR
-  quiet: false
-
-paths:
-  artifact_dir: .batho/artifact   # Arrow IPC artifact store (override: BATHO_ARTIFACT_DIR)
-  cache_dir: .batho/cache
-  bsg_dir: .batho/bsg
+  level: ERROR          # DEBUG | INFO | WARNING | ERROR
 
 indexer:
   max_file_size_kb: 500
-  ignore_patterns: []
-
-flags:
-  strict: false
-  audit_log_enabled: true
+  ignore_patterns: []   # additional gitignore-style patterns
+  max_workers: 0        # 0 = auto (CPU count)
 
 bsg:
   cache:
@@ -170,35 +259,27 @@ bsg:
     max_size_mb: 1024
   symbol_resolution:
     enabled: true
-  bidirectional:
-    enabled: true
+
+flags:
+  audit_log_enabled: true
 ```
 
-## �� Installation
+See [`batho.yaml.example`](batho.yaml.example) for the full reference including dependency indexing, graph options, artifact blob control, and BSG plugin configuration.
+
+## Developer Setup
 
 ```bash
-pip install batho
-```
-
-**PyPI:** https://pypi.org/project/batho/
-
-## 🛠️ Developer Setup
-
-```bash
-# Clone the repository
 git clone https://github.com/sageoz/batho.git
 cd batho
-
-# Install dependencies
 uv sync --all-groups --all-extras
-
-# Run tests
 uv run pytest
-
-# Run CLI from source
-uv run python -m batho_cli --help
+uv run python batho_cli.py --help
 ```
 
-## 📄 License
+## Documentation
 
-Apache License 2.0 - see [LICENSE](LICENSE) for details.
+Full documentation, API reference, and guides: **[batho.sageoz.org](https://batho.sageoz.org)**
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE) for details.
