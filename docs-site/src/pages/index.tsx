@@ -240,7 +240,7 @@ function QuickStart() {
             <h2 className={styles.quickStartTitle}>Get Started in Seconds</h2>
           </Animated>
           <Animated delay={2}>
-            <p className={styles.quickStartDesc}>One command to index your entire codebase.</p>
+            <p className={styles.quickStartDesc}>One command to give your AI agent a map of your entire codebase.</p>
           </Animated>
           <Animated delay={3}>
             <div className={styles.quickStartCodeBlock}>
@@ -359,7 +359,7 @@ function Workflow() {
         </Animated>
         <Animated delay={2}>
           <p className={styles.workflowSectionSubtitle}>
-            Four simple steps from code to intelligence
+            From source code to AI-ready graph in four steps
           </p>
         </Animated>
         <div className={styles.workflowGrid}>
@@ -372,11 +372,73 @@ function Workflow() {
   );
 }
 
+function BenefitsSection() {
+  const benefits = [
+    {
+      title: 'Lower Token Costs',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+        </svg>
+      ),
+      description: 'Your agent traverses a graph instead of reading entire files. Feed the LLM only what it needs.',
+    },
+    {
+      title: 'Fewer Hallucinations',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 12l2 2 4-4M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z" />
+        </svg>
+      ),
+      description: 'Deterministic, tree-sitter-parsed relationships. No guessing, no embeddings — just facts.',
+    },
+    {
+      title: 'More Use Cases',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 3v12M18 9l-6-6-6 6M18 21v-12M6 15l6 6 6-6" />
+        </svg>
+      ),
+      description: 'When cost and accuracy are solved, automation possibilities widen with imagination.',
+    },
+  ];
+
+  return (
+    <section className={styles.benefits}>
+      <div className="container">
+        <Animated delay={1}>
+          <h2 className={styles.benefitsTitle}>Why Batho?</h2>
+        </Animated>
+        <Animated delay={2}>
+          <p className={styles.benefitsSubtitle}>
+            Companies are reducing AI usage because token spend is getting pricey. Batho fixes cost and quality.
+          </p>
+        </Animated>
+        <div className={styles.benefitsGrid}>
+          {benefits.map((b, idx) => (
+            <div
+              key={b.title}
+              className={clsx(
+                'batho-animate-fadeInUp',
+                `batho-delay-${Math.min(idx + 2, 6)}`,
+                styles.benefitCard
+              )}>
+              <div className={styles.benefitIconWrap}>{b.icon}</div>
+              <h3 className={styles.benefitCardTitle}>{b.title}</h3>
+              <p className={styles.benefitCardDesc}>{b.description}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Metrics() {
   const metrics = [
+    { value: '10x', label: 'Less Tokens', desc: 'vs. raw file injection' },
+    { value: '0', label: 'Hallucinations', desc: 'deterministic, not guessed' },
     { value: '40+', label: 'Languages', desc: 'tree-sitter powered' },
-    { value: '10x', label: 'Compression', desc: 'for LLM injection' },
-    { value: '381', label: 'Tests', desc: 'automated coverage' },
     { value: '>95%', label: 'Cache Hit', desc: 'typical PR changes' },
   ];
 
@@ -409,11 +471,11 @@ function CTABanner() {
       <div className="container">
         <div className={styles.ctaInner}>
           <Animated delay={1}>
-            <h2 className={styles.ctaTitle}>Ready to transform your codebase?</h2>
+            <h2 className={styles.ctaTitle}>Stop paying to dump your repo into an LLM.</h2>
           </Animated>
           <Animated delay={2}>
             <p className={styles.ctaSubtitle}>
-              Get started with Batho in under a minute. No configuration required.
+              Index your codebase in one command. Your AI agent gets the map — not the whole territory.
             </p>
           </Animated>
           <Animated delay={3}>
@@ -439,10 +501,11 @@ function CTABanner() {
 export default function Home(): ReactNode {
   return (
     <Layout
-      title="BATHO — Code Intelligence Engine"
-      description="BATHO indexes your codebase, compresses it for LLM context windows, and tracks changes over time. 40+ languages, Arrow IPC Bundle storage, and time-aware hypergraphs.">
+      title="BATHO — Spend Less. Hallucinate Less. Automate More."
+      description="Batho reduces token spend and hallucinations by indexing your codebase into a navigable code graph. Power bug tracking, security checks, and any AI workflow without dumping whole repositories into the LLM.">
       <HomepageHeader />
       <main>
+        <BenefitsSection />
         <HomepageFeatures />
         <Workflow />
         <Metrics />

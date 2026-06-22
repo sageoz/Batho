@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'BATHO',
-  tagline: 'Bidirectional AST Traversal & Hypergraph Orchestrator',
+  tagline: 'Reduce token spend and hallucinations. Index your codebase into a graph your AI agents can navigate.',
   favicon: 'img/batho-logo.svg',
 
   future: {

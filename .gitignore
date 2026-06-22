@@ -53,3 +53,5 @@ node_modules/
 .docusaurus/
 .cache/
 docs/
+scripts/
+gif.gif

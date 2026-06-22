@@ -5,7 +5,7 @@
 <h1 align="center">B.A.T.H.O</h1>
 
 <p align="center">
-  Multi-language codebase indexer that turns source code into compressed, queryable code graphs — built for AI agents and CI/CD pipelines.
+  Reduce token spend and hallucinations by indexing your codebase into a graph your AI agents can navigate — without dumping whole repositories into the Context.
 </p>
 
 <p align="center">
@@ -15,6 +15,22 @@
 </p>
 
 ---
+
+## Why Batho?
+
+Companies are reducing AI usage because token spend is getting pricey — before even accounting for hallucinations that erode result quality. Batho fixes both.
+
+- **Lower token costs** — Your AI agent traverses a graph of entities and relationships instead of reading entire source files. Feed the LLM only what it needs, not the whole repository.
+- **Fewer hallucinations** — Batho extracts deterministic, tree-sitter-parsed syntax relationships from your code. No guessing, no embeddings — your agent works with facts.
+- **More use cases** — When cost is under control and results are trustworthy, the range of what you can automate widens with imagination.
+
+## Use Cases
+
+- **Bug tracking** — Map bug reports to the exact functions and dependencies involved
+- **Security checks** — Trace data flows and identify vulnerable code paths across files
+- **Code review automation** — Surface relevant context and relationships for every PR
+- **Multi-repo navigation** — Index multiple repositories into one large context graph
+- **Any AI workflow** — If your agent needs to understand code, Batho gives it the map
 
 ## Installation
 
@@ -48,40 +64,39 @@ batho fix --deep
 
 ## How It Works
 
-Batho parses every source file into an AST using tree-sitter, extracts entities and relationships into a BSG (Batho Semantic Graph), and persists the result as Apache Arrow IPC files. The transport artifact (`artifact_*.batho`) is a zstd-compressed ZIP of those IPC files, designed to be uploaded in CI and downloaded by AI agents — no local parsing required.
+Batho parses your source files into a structured graph of entities and relationships, then packages it into a transportable artifact your AI agent can query. No local parsing required — just build, export, and let your agent navigate the graph.
+
+<details>
+<summary>Technical details</summary>
+
+Batho uses tree-sitter for AST parsing, extracts entities and relationships into a BSG (Batho Semantic Graph), and persists the result as Apache Arrow IPC files. The transport artifact (`artifact_*.batho`) is a zstd-compressed ZIP of those IPC files, designed for zero-copy memory-mapped reads.
+
+</details>
 
 ## Features
 
-- **40+ language AST parsing** — Python, TypeScript, Rust, Go, Java, C/C++, and more
-- **10x context compression** — fit entire codebases into LLM context windows
-- **Incremental patching** — hash-based change detection; only modified files are re-parsed
-- **Deterministic entity IDs** — position-based IDs prevent false positives from code movement
-- **Cross-file symbol resolution** — hierarchical encoding with SymbolRole tagging via ScopeManager
-- **Dependency-aware indexing** — CDEU resolves stdlib and third-party symbols (pip, npm, cargo, go) via manifest parsing and live introspection
-- **BSG Plugin System v2** — 38 built-in plugins (security, quality, optimization) with custom rule support
-- **Arrow IPC artifact store** — zero-copy memory-mapped reads; three-blob design (agent / storage / rel views)
-- **Graph optimization** — cyclic dependency detection and orphan node pruning
-- **Node-level diff history** — track codebase evolution across every indexed run
-- **Multi-stage integrity verification** — auto-repair via `batho fix`
+- **Spend less on tokens** — 10x compression means your agent uses a fraction of the context window
+- **Works with your stack** — 40+ languages including Python, TypeScript, Rust, Go, Java, C/C++
+- **No hallucinations** — deterministic, tree-sitter-parsed relationships, not embeddings or guesses
+- **Fast incremental updates** — hash-based change detection re-parses only modified files
+- **Cross-file symbol resolution** — your agent sees how functions, classes, and dependencies connect
+- **38 built-in analysis plugins** — security, quality, and optimization rules with custom rule support
+- **Track codebase evolution** — node-level diff history across every indexed run
 - **Zero code execution** — safe to run in CI or on untrusted repositories
 
 ## CLI Reference
 
-| Command | Purpose | Key flags |
-|---|---|---|
-| `batho build` | Full index build from scratch | `--full`, `--max-workers N`, `--max-file-size-kb KB` |
-| `batho patch` | Incremental re-index of changed files | `--max-file-size-kb KB` |
-| `batho export` | Export artifact ZIP or JSON view | `--json`, `--view`, `--filter`, `--output`, `--token-budget N` |
-| `batho load` | Restore graph from artifact ZIP | `--root`, `--force` |
-| `batho diff` | Query node-level change history | `--file`, `--entity`, `--run`, `--since`, `--json` |
-| `batho fix` | Verify and repair artifact integrity | `--deep`, `--dry-run`, `--target`, `--parallel` |
-| `batho gc` | Prune old runs and vacuum storage | `vacuum`, `status`, `runs --older-than N` |
+| Command | Purpose |
+|---|---|
+| `batho build` | Full index build from scratch |
+| `batho patch` | Incremental re-index of changed files |
+| `batho export` | Export transportable artifact ZIP or JSON view |
+| `batho load` | Restore graph from an artifact ZIP |
+| `batho diff` | Query node-level change history |
+| `batho fix` | Verify and repair artifact integrity |
+| `batho gc` | Prune old runs and vacuum storage |
 
-### Export views
-
-When using `batho export --json --view <view>`, available views are:
-
-`storage` · `agent` · `overview` · `files` · `symbols` · `dependencies` · `delta` · `rel`
+Full CLI flags and export views: **[docs](https://batho.sageoz.org/docs/cli-reference)**
 
 ## CI/CD Integration
 
@@ -109,23 +124,9 @@ The simplest integration. Add to any workflow:
 
 **Outputs:** `zip-path` · `output-dir` · `index-id`
 
-### GitHub Actions — Reusable Workflow
-
-Call the reusable workflow from any consumer repository:
-
-```yaml
-jobs:
-  batho:
-    uses: sageoz/batho/.github/workflows/batho-index.yml@v1.1.0
-    with:
-      root: "."
-      artifact-name: "batho-index"
-      artifact-retention-days: "7"
-```
-
 ### GitHub Actions — Manual Workflow
 
-For full control, add `.github/workflows/batho-ci.yml` to your repository:
+For full control, add `.github/workflows/batho-ci.yml`:
 
 ```yaml
 name: Batho Index
@@ -180,63 +181,7 @@ jobs:
           retention-days: 90
 ```
 
-### GitLab CI
-
-Add to `.gitlab-ci.yml`:
-
-```yaml
-stages:
-  - index
-
-batho-indexer:
-  stage: index
-  image: python:3.12
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-  before_script:
-    - apt-get update -qq && apt-get install -y -qq unzip curl
-    - pip install batho
-  script:
-    - |
-      curl --fail --location \
-        --header "JOB-TOKEN: $CI_JOB_TOKEN" \
-        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/artifacts/${CI_COMMIT_REF_NAME}/download?job=batho-indexer" \
-        --output artifacts.zip || true
-      [ -f artifacts.zip ] && unzip -o artifacts.zip || true
-      if ls artifact_*.batho 1>/dev/null 2>&1; then
-        batho load --root . artifact_*.batho --force
-        batho patch --root .
-      else
-        batho build --root . --full
-      fi
-      batho export --root .
-  artifacts:
-    paths:
-      - artifact_*.batho
-    expire_in: 90 days
-```
-
-### AI Agent Access
-
-Agents can download and restore a pre-built graph without local indexing:
-
-```bash
-# GitHub — download latest artifact from main
-gh api /repos/{owner}/{repo}/actions/artifacts \
-  --jq '.artifacts[] | select(.name=="batho-database") | .id' \
-  | xargs -I {} gh api /repos/{owner}/{repo}/actions/artifacts/{}/zip \
-  --output batho-database.zip
-unzip batho-database.zip
-batho load --root . artifact_*.batho
-
-# GitLab
-curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
-  "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/artifacts/main/download?job=batho-indexer" \
-  --output batho-database.zip
-unzip batho-database.zip
-batho load --root . artifact_*.batho
-```
+Full CI/CD guides for GitLab CI, reusable workflows, and AI agent access patterns: **[docs](https://batho.sageoz.org)**
 
 ## Configuration
 
@@ -246,12 +191,12 @@ Batho runs with zero config. To customize, copy [`batho.yaml.example`](batho.yam
 schema_version: batho-config.v1
 
 logging:
-  level: ERROR          # DEBUG | INFO | WARNING | ERROR
+  level: ERROR
 
 indexer:
   max_file_size_kb: 500
-  ignore_patterns: []   # additional gitignore-style patterns
-  max_workers: 0        # 0 = auto (CPU count)
+  ignore_patterns: []
+  max_workers: 0
 
 bsg:
   cache:
@@ -264,7 +209,7 @@ flags:
   audit_log_enabled: true
 ```
 
-See [`batho.yaml.example`](batho.yaml.example) for the full reference including dependency indexing, graph options, artifact blob control, and BSG plugin configuration.
+See [`batho.yaml.example`](batho.yaml.example) for the full reference.
 
 ## Developer Setup
 

@@ -605,6 +605,111 @@
 }
 
 /* ------------------------------------------------------------------
+   Benefits Section
+   ------------------------------------------------------------------ */
+.benefits {
+  padding: var(--batho-space-20) 0;
+  background: var(--batho-surface-0);
+  border-top: 1px solid var(--batho-surface-3);
+}
+
+.benefitsTitle {
+  font-family: var(--ifm-heading-font-family);
+  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: -0.02em;
+  margin-bottom: var(--batho-space-3);
+  color: var(--ifm-font-color-base);
+}
+
+.benefitsSubtitle {
+  font-size: 1.125rem;
+  text-align: center;
+  color: var(--ifm-color-emphasis-600);
+  margin-bottom: var(--batho-space-12);
+  max-width: 520px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.benefitsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--batho-space-6);
+}
+
+.benefitCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  padding: var(--batho-space-8);
+  background: var(--batho-surface-1);
+  border: 1px solid var(--batho-surface-3);
+  border-radius: 16px;
+  transition: transform var(--batho-duration-base) var(--batho-ease-out),
+              box-shadow var(--batho-duration-base) var(--batho-ease-out),
+              border-color var(--batho-duration-fast) var(--batho-ease-out);
+}
+
+.benefitCard:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.12),
+               0 0 0 1px rgba(37, 99, 235, 0.15),
+               0 0 30px rgba(37, 99, 235, 0.06);
+  border-color: var(--ifm-color-primary);
+}
+
+[data-theme='dark'] .benefitCard:hover {
+  box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.35),
+               0 0 0 1px rgba(96, 165, 250, 0.15),
+               0 0 30px rgba(96, 165, 250, 0.06);
+}
+
+.benefitIconWrap {
+  height: 48px;
+  width: 48px;
+  margin-bottom: var(--batho-space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%);
+  border-radius: 12px;
+  border: 1px solid rgba(37, 99, 235, 0.15);
+  transition: background 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+}
+
+.benefitIconWrap svg {
+  height: 24px;
+  width: 24px;
+  stroke: var(--ifm-color-primary);
+  stroke-width: 1.5;
+}
+
+.benefitCard:hover .benefitIconWrap {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.15) 0%, rgba(59, 130, 246, 0.1) 100%);
+  border-color: rgba(37, 99, 235, 0.3);
+  transform: scale(1.05);
+}
+
+.benefitCardTitle {
+  font-family: var(--ifm-heading-font-family);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: var(--batho-space-2);
+  color: var(--ifm-font-color-base);
+}
+
+.benefitCardDesc {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-600);
+  margin: 0;
+}
+
+/* ------------------------------------------------------------------
    Metrics Section
    ------------------------------------------------------------------ */
 .metrics {
@@ -814,6 +919,15 @@
     gap: var(--batho-space-4);
   }
 
+  .benefitsGrid {
+    grid-template-columns: 1fr;
+    gap: var(--batho-space-4);
+  }
+
+  .benefits {
+    padding: var(--batho-space-16) 0;
+  }
+
   .workflow {
     padding: var(--batho-space-16) 0;
   }
@@ -855,6 +969,10 @@
 
   .workflowStep {
     padding: var(--batho-space-4);
+  }
+
+  .benefitCard {
+    padding: var(--batho-space-6) var(--batho-space-4);
   }
 
   .metricsGrid {

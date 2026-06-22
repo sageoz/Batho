@@ -13,7 +13,7 @@ type FeatureItem = {
 
 const FeatureList: FeatureItem[] = [
   {
-    title: '40+ Language AST Parsing',
+    title: 'Works With Your Stack',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -24,14 +24,14 @@ const FeatureList: FeatureItem[] = [
     ),
     description: (
       <>
-        Python, TypeScript, Rust, Go, Java, and more — extracted via tree-sitter
-        into structured entities and relationships.
+        Python, TypeScript, Rust, Go, Java, and more. Batho parses 40+ languages
+        so your agent understands your entire codebase.
       </>
     ),
     link: '/docs/whitepaper/code-graph',
   },
   {
-    title: '10x Context Compression',
+    title: 'Spend Less on Tokens',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -41,14 +41,14 @@ const FeatureList: FeatureItem[] = [
     ),
     description: (
       <>
-        BSG (Batho Structured Graph) compresses entire codebases into
-        token-budgeted formats for LLM injection.
+        Batho compresses entire codebases into a graph your agent traverses —
+        using a fraction of the tokens.
       </>
     ),
     link: '/docs/whitepaper/bsg-compression',
   },
   {
-    title: 'Time Machine Snapshots',
+    title: 'Track Codebase Evolution',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" />
@@ -57,14 +57,14 @@ const FeatureList: FeatureItem[] = [
     ),
     description: (
       <>
-        Track codebase evolution with versioned snapshots, incremental diffing,
-        and patch chaining.
+        Versioned snapshots and incremental diffing let your agent understand
+        what changed and why — across every commit.
       </>
     ),
     link: '/docs/whitepaper/time-machine',
   },
   {
-    title: 'Durable Arrow Registry',
+    title: 'Zero-Copy Performance',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <ellipse cx="12" cy="5" rx="9" ry="3" />
@@ -74,14 +74,14 @@ const FeatureList: FeatureItem[] = [
     ),
     description: (
       <>
-        Arrow-backed registry tracking codebase versions, patch audit logs, and
-        run histories securely.
+        Apache Arrow IPC storage means zero-copy, memory-mapped reads. Your
+        agent queries the graph instantly.
       </>
     ),
     link: '/docs/whitepaper/time-machine',
   },
   {
-    title: 'Bidirectional Traversal',
+    title: 'Reconstruct Anything',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="m7 15 5 5 5-5" />
@@ -91,14 +91,14 @@ const FeatureList: FeatureItem[] = [
     ),
     description: (
       <>
-        Reconstruct files byte-for-byte from the BSG using syntax glue and
-        cryptographic hash integrity checks.
+        Reconstruct any file byte-for-byte from the graph. Cryptographic hash
+        integrity means nothing is lost.
       </>
     ),
     link: '/docs/whitepaper/code-graph',
   },
   {
-    title: 'Unified Configuration',
+    title: 'Zero Config to Start',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="3" />
@@ -107,8 +107,8 @@ const FeatureList: FeatureItem[] = [
     ),
     description: (
       <>
-        Consolidate exclusions, rules, and plugin overrides under a single
-        schema-validated YAML file.
+        Batho runs with zero config. Customize with a single YAML file when
+        you need control.
       </>
     ),
     link: '/docs/getting-started/configuration',
