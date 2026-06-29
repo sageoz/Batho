@@ -1,12 +1,12 @@
 ---
-sidebar_position: 11
-title: "8. Deployment & Operations"
+sidebar_position: 13
+title: "12. Deployment & Operations"
 description: "Installation, configuration, CI/CD integration, and operational commands"
 ---
 
-# 8. Deployment & Operations
+# 12. Deployment & Operations
 
-## 8.1 Deployment Architecture
+## 12.1 Deployment Architecture
 
 Batho is designed for flexible deployment across local developer workstations and automated CI/CD pipelines. The following architecture diagram illustrates the production topology:
 
@@ -49,7 +49,7 @@ flowchart TB
 
 ---
 
-## 8.2 Installation
+## 12.2 Installation
 
 Install the `batho` package directly from PyPI.
 
@@ -63,7 +63,7 @@ pip install batho
 
 ---
 
-## 8.3 Configuration Loading Flow
+## 12.3 Configuration Loading Flow
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
@@ -92,7 +92,7 @@ flowchart LR
 
 ---
 
-## 8.4 CI/CD Integration
+## 12.4 CI/CD Integration
 
 Integrate Batho into CI pipelines to automate graph generation and rule verification.
 
@@ -156,7 +156,7 @@ jobs:
 
 ---
 
-## 8.5 Operational Command Taxonomy
+## 12.5 Operational Command Taxonomy
 
 Batho's command suite is divided into three functional categories:
 

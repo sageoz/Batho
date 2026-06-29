@@ -1,12 +1,12 @@
 ---
-sidebar_position: 6
-title: "5. Time Machine & Incremental Patching"
+sidebar_position: 8
+title: "7. Time Machine & Incremental Patching"
 description: "Snapshots, incremental patch lifecycle, and patch operations"
 ---
 
-# 5. Time Machine & Incremental Patching
+# 7. Time Machine & Incremental Patching
 
-## 5.1 Arrow Bundle Run Format
+## 7.1 Arrow Bundle Run Format
 
 Batho manages index runs and history inside a unified Arrow IPC database (`.batho` directory). Each time code is analyzed (via `build` or `patch`), a new run record is created with its corresponding metadata.
 
@@ -19,7 +19,7 @@ A run record is written with the following schema:
 - `commit_hash`: Git commit hash at the time of indexing.
 - `metadata`: JSON blob containing context overviews, metrics, and file category stats.
 
-## 5.2 Incremental Patch Lifecycle
+## 7.2 Incremental Patch Lifecycle
 
 The patch lifecycle ensures atomic, content-hash-based updates:
 
@@ -48,7 +48,7 @@ Unlike legacy versions of Batho, which delegated change detection to Git status,
 
 This native tracking eliminates false positives caused by untracked or uncommitted files in developer environments.
 
-## 5.3 CLI Commands
+## 7.3 CLI Commands
 
 Under the v1.1.0 command taxonomy, the Time Machine is controlled by the following commands:
 

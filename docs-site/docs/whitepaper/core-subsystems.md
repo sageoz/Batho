@@ -10,15 +10,17 @@ description: "Subsystem inventory and technology stack"
 
 Batho is composed of tightly-integrated subsystems that work together to provide code intelligence capabilities. Each subsystem has a well-defined responsibility and can be tested independently.
 
-| Subsystem | Module Path | Purpose | Status |
-|-----------|-------------|---------|--------|
-| **AST Extraction** | `batho/modules/extraction/` | tree-sitter based multi-language parsing | Production |
-| **Code Graph** | `batho/modules/graph/` | In-memory hypergraph with adjacency indexing | Production |
-| **BSG Map & Compression** | `batho/modules/compression/` | Flat symbol index, priority token budgeting, and rule loaders | Production |
-| **Dependency Indexer** | `batho/modules/dependency/` | stdlib and installed virtual environment dependency indexer | Production |
-| **Integrity Verification** | `batho/modules/integrity/` | Database checker, repair engine, and report generation | Production |
-| **Storage Registry** | `batho/modules/storage/` | Arrow IPC database manager | Production |
-| **CLI Command Suite** | `batho/cli/` | Command interface parsing and subcommand orchestration | Production |
+| Subsystem | Purpose | Status |
+|-----------|---------|--------|
+| **AST Extraction** | tree-sitter based multi-language parsing | Production |
+| **Code Graph** | In-memory hypergraph with adjacency indexing | Production |
+| **BSG Map & Compression** | Flat symbol index, priority token budgeting, and rule loaders | Production |
+| **Dependency Indexer** | stdlib and installed virtual environment dependency indexer | Production |
+| **Storage Registry** | Arrow IPC database manager, BSG scratch store, and unified cache | Production |
+| **Integrity Verification** | Database checker, repair engine, and report generation | Production |
+| **Orchestrator Layer** | High-level command implementations (build, patch, export, load, gc) | Production |
+| **Shared Utilities** | Hashing, file I/O, encoding, ignore patterns, logging, path sanitization, memory monitoring | Production |
+| **CLI Command Suite** | Command interface parsing and subcommand orchestration | Production |
 
 ## 2.2 Technology Stack
 
@@ -60,10 +62,11 @@ Subsystems communicate through well-defined interfaces:
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 graph TD
-    CLI --> Extractor
-    CLI --> Graph
-    CLI --> Storage
-    CLI --> Integrity
+    CLI --> Orchestrator
+    Orchestrator --> Extractor
+    Orchestrator --> Graph
+    Orchestrator --> Storage
+    Orchestrator --> Integrity
 
     Extractor --> Cache
     Extractor --> Graph
@@ -79,12 +82,13 @@ graph TD
     Rules --> BSG
 
     Integrity --> Storage
-    Storage --> CLI
+    Storage --> Orchestrator
 
     style CLI fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style Orchestrator fill:#fff3e0,stroke:#f57c00,stroke-width:2px
     style Extractor fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style Graph fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    style Storage fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style Storage fill:#fce4ec,stroke:#c2185b,stroke-width:2px
     style Integrity fill:#fce4ec,stroke:#c2185b,stroke-width:2px
 ```
 
@@ -92,8 +96,9 @@ graph TD
 
 ## 2.4 Data Flow Between Subsystems
 
-1. **Extraction Phase**: CLI → Extractor → Cache + Graph
-2. **Resolution Phase**: Graph → SymbolIndex → Graph (cross-file resolution)
-3. **Intelligence Phase**: Graph → BSG → Rules → BSG (semantic tagging)
-4. **Storage & Serialization**: BSG → Storage Registry (Arrow IPC views)
-5. **Output Phase**: Storage Registry → CLI (Command output / JSON Export)
+1. **Command Phase**: CLI → Orchestrator (parse options, load config)
+2. **Extraction Phase**: Orchestrator → Extractor → Cache + Graph
+3. **Resolution Phase**: Graph → SymbolIndex → Graph (cross-file resolution)
+4. **Intelligence Phase**: Graph → BSG → Rules → BSG (semantic tagging)
+5. **Storage & Serialization**: BSG → Storage Registry (Arrow IPC views)
+6. **Output Phase**: Storage Registry → Orchestrator → CLI (Command output / JSON Export)

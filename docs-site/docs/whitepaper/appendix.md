@@ -1,18 +1,18 @@
 ---
-sidebar_position: 12
-title: "9. Appendix: Schema Reference"
+sidebar_position: 14
+title: "13. Appendix: Schema Reference"
 description: "Schema versions, directory structure, and glossary"
 ---
 
-# 9. Appendix: Schema Reference
+# 13. Appendix: Schema Reference
 
-## 9.1 Schema Versions
+## 13.1 Schema Versions
 
 | Artifact / Config | Schema Version | Description / Location |
 |-------------------|----------------|------------------------|
 | Configuration | `batho-config.v1` | Unified YAML configuration (`batho.yaml`) |
-| Entity Schema | `pydantic.Entity` | Frozen Pydantic model (`batho/core/schemas.py`) |
-| Relationship Schema | `pydantic.Relationship` | Frozen Pydantic model (`batho/core/schemas.py`) |
+| Entity Schema | Pydantic model | Frozen dataclass for code entities |
+| Relationship Schema | Pydantic model | Frozen dataclass for code relationships |
 | Arrow Bundle | `batho-bundle.v1` | Arrow IPC tables: `file_tracking`, `file_artifacts`, `run_artifacts` |
 | BSG View | `bsg.v1` | Memory-mapped Arrow IPC views |
 
@@ -52,7 +52,7 @@ flowchart TB
 
 ---
 
-## 9.2 Directory Structure
+## 13.2 Directory Structure
 
 ```
 .batho/
@@ -64,7 +64,7 @@ flowchart TB
 
 ---
 
-## 9.3 Glossary
+## 13.3 Glossary
 
 | Term | Definition |
 |------|------------|
@@ -80,7 +80,7 @@ flowchart TB
 
 ---
 
-## 9.4 Error Codes
+## 13.4 Error Codes
 
 | Code | Description |
 |------|-------------|

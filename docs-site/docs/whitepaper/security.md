@@ -1,12 +1,12 @@
 ---
-sidebar_position: 7
-title: "6. Security & Governance"
+sidebar_position: 10
+title: "9. Security & Governance"
 description: "Zero-code-execution guarantee, BSG interceptors, and audit logging"
 ---
 
-# 6. Security & Governance
+# 9. Security & Governance
 
-## 6.1 Security Architecture Overview
+## 9.1 Security Architecture Overview
 
 Batho's security model is built on a **zero-code-execution guarantee** with defense-in-depth layers spanning static analysis, plugin-based interception, immutable audit trails, and cryptographic integrity verification. The following architecture diagram illustrates the trust boundaries and data flow through each security layer:
 
@@ -73,7 +73,7 @@ flowchart TB
 
 ---
 
-## 6.2 Zero-Code-Execution Guarantee
+## 9.2 Zero-Code-Execution Guarantee
 
 Batho operates entirely via static analysis, ensuring safe operation on untrusted codebases. The following flow diagram details the input sanitization and processing pipeline that maintains this guarantee:
 
@@ -116,7 +116,7 @@ flowchart LR
 
 ---
 
-## 6.3 BSG Interceptor Plugins
+## 9.3 BSG Interceptor Plugins
 
 Security-focused plugins run during graph construction to detect and tag risks before they enter the compressed output. The interceptor pipeline operates as a non-blocking enricher — detections are tagged, not blocked, allowing the build to continue while surfacing issues.
 
@@ -171,7 +171,7 @@ flowchart TB
 
 ---
 
-## 6.4 Audit Logging
+## 9.4 Audit Logging
 
 All patch operations produce a comprehensive, append-only audit trail in the database if `flags.audit_log_enabled` is set in `batho.yaml`. The audit subsystem captures structured events at every phase of the patch lifecycle, enabling post-hoc forensic analysis and compliance reporting.
 
@@ -208,7 +208,7 @@ flowchart TB
 
 ---
 
-## 6.5 Compliance & Cryptographic Verification
+## 9.5 Compliance & Cryptographic Verification
 
 Batho maintains a complete chain of custody for all code intelligence artifacts, enabling regulatory compliance scenarios such as SOC 2 and ISO 27001 audits.
 

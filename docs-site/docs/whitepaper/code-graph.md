@@ -1,12 +1,12 @@
 ---
-sidebar_position: 4
-title: "3. Deterministic Code Graph Engine"
+sidebar_position: 5
+title: "4. Deterministic Code Graph Engine"
 description: "Entity model, graph consistency, and cross-file resolution"
 ---
 
-# 3. Deterministic Code Graph Engine
+# 4. Deterministic Code Graph Engine
 
-## 3.1 Entity Model
+## 4.1 Entity Model
 
 The graph is built on two primitives: **Entities** and **Relationships**. This model enables efficient querying and cross-referencing across large codebases.
 
@@ -41,7 +41,7 @@ The graph is built on two primitives: **Entities** and **Relationships**. This m
 | `IMPLEMENTS` | Class → Interface | Interface implementation |
 | `DEFINES` | File → Entity | Container definition |
 
-## 3.2 Graph Consistency Model
+## 4.2 Graph Consistency Model
 
 The `InMemoryGraph` ensures deterministic processing through lazy indexing and automatic deduplication:
 
@@ -70,7 +70,7 @@ flowchart LR
 - Invalidated on every relationship mutation.
 - Duplicate relationships silently deduplicated via `has_relationship()`.
 
-## 3.3 Cross-File Resolution
+## 4.3 Cross-File Resolution
 
 The `SymbolIndex` performs a two-pass resolution to enable cross-module references:
 
@@ -100,7 +100,7 @@ flowchart TB
 2. **Global pass**: Match unresolved imports against exported symbols across the repository.
 3. **Tracking**: Unresolved targets are tagged with `unresolved:` prefix and tracked for later resolution.
 
-## 3.4 Example: Cross-File Reference
+## 4.4 Example: Cross-File Reference
 
 Consider a Python project with two files:
 
@@ -134,7 +134,7 @@ def create_user(name: str) -> User:
 }
 ```
 
-## 3.5 Bidirectional Traversal & Lossless Reconstruction
+## 4.5 Bidirectional Traversal & Lossless Reconstruction
 
 Batho v1.1.0 supports lossless, bidirectional graph-to-code reconstruction, allowing a developer or LLM agent to rebuild the exact source file from the graph.
 

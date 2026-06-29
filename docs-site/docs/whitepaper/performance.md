@@ -1,12 +1,12 @@
 ---
-sidebar_position: 10
-title: "7. Performance & Scalability"
+sidebar_position: 11
+title: "10. Performance & Scalability"
 description: "Benchmarks, scaling dimensions, and cache strategy"
 ---
 
-# 7. Performance & Scalability
+# 10. Performance & Scalability
 
-## 7.1 Benchmarks
+## 10.1 Benchmarks
 
 Performance metrics from production workloads in Batho v1.1.0:
 
@@ -20,7 +20,7 @@ Performance metrics from production workloads in Batho v1.1.0:
 | Arrow Bundle size | ~45MB | Compressed Arrow IPC Bundle database |
 | Agent BSG export size | ~3.5MB | 12K token budget |
 
-## 7.2 Scaling Dimensions
+## 10.2 Scaling Dimensions
 
 | Dimension | Strategy | Limit |
 |-----------|----------|-------|
@@ -37,7 +37,7 @@ Performance metrics from production workloads in Batho v1.1.0:
 | Medium (10K-50K) | 4 cores | 1.5GB | 500MB |
 | Large (50K-200K) | 8+ cores | 4GB+ | 2GB |
 
-## 7.3 Cache Strategy
+## 10.3 Cache Strategy
 
 The caching strategy minimizes redundant work:
 

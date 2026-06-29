@@ -19,11 +19,13 @@ flowchart TB
     end
 
     subgraph Core["Batho Core Engine"]
+        Orchestrator["Orchestrator Layer<br/>(build / patch / export / load / gc)"]
         Extractor["Multi-Language AST Extractor<br/>(tree-sitter)"]
         Graph["InMemoryGraph<br/>(Entities and Relationships)"]
         Cache["AST Cache<br/>(msgpack)"]
         SymbolIndex["SymbolIndex<br/>(Cross-file Resolution)"]
         Incremental["IncrementalGraphUpdater"]
+        Storage["Arrow Bundle Store<br/>(MVCC + zero-copy mmap)"]
     end
 
     subgraph Intelligence["Intelligence Layer"]
@@ -45,10 +47,12 @@ flowchart TB
     Graph --> Incremental
     Graph --> BSG
     BSG --> Rules
-    BSG --> Bundle
-    CLI --> Core
-    CLI --> Intelligence
-    CLI --> Output
+    BSG --> Storage
+    Storage --> Bundle
+    CLI --> Orchestrator
+    Orchestrator --> Core
+    Orchestrator --> Intelligence
+    Orchestrator --> Output
 
     style Sources fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
     style Core fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
@@ -69,6 +73,7 @@ The data flow pipeline ensures deterministic processing with built-in caching an
 sequenceDiagram
     actor User
     participant CLI as batho CLI
+    participant Orch as Orchestrator
     participant Extractor as AST Extractor
     participant Cache as AST Cache
     participant Graph as InMemoryGraph
@@ -77,7 +82,8 @@ sequenceDiagram
     participant Store as Arrow Bundle Store
 
     User->>CLI: batho build --root .
-    CLI->>Extractor: Discover files (respect .gitignore)
+    CLI->>Orch: BuildOptions
+    Orch->>Extractor: Discover files (respect .gitignore)
     Extractor->>Cache: Check mtime + SHA-256
     Cache-->>Extractor: Cache hit / miss
     loop Parallel Extraction
@@ -89,7 +95,8 @@ sequenceDiagram
     BSG->>Rules: Apply semantic overlay
     Rules-->>BSG: Tagged graph
     BSG->>Store: Write Arrow IPC Bundle
-    Store-->>CLI: Database created
+    Store-->>Orch: Database created
+    Orch-->>CLI: Build result
     CLI-->>User: Build output summary shown
 ```
 
@@ -103,11 +110,13 @@ sequenceDiagram
 
 | Component | Purpose | Key Features |
 |-----------|---------|--------------|
+| **Orchestrator Layer** | High-level command implementations | Typed options/results, module delegation, error recovery |
 | **AST Extractor** | Multi-language parsing via tree-sitter | 40+ language support, parallel processing, mtime tracking |
 | **InMemoryGraph** | Hypergraph storage | Lazy adjacency indexing, relationship deduplication, cross-file resolution |
 | **AST Cache** | Persistent entity cache | msgpack-backed, SHA-256 validation, automatic invalidation |
 | **SymbolIndex** | Cross-file symbol resolution | Two-pass resolution, unresolved target tracking |
 | **IncrementalUpdater** | Patch application | Diff-based updates, content-hash comparisons, rollback support |
+| **Arrow Bundle Store** | Persistent artifact storage | MVCC generation commit, zero-copy memory-mapped reads, O(1) point lookup |
 
 ### Intelligence Layer Components
 

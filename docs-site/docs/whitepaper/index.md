@@ -102,6 +102,14 @@ flowchart TB
 | Figure 22 | Monitoring Stack | Deployment & Operations |
 | Figure 23 | Backup Flow | Deployment & Operations |
 | Figure 24 | Schema Dependency Graph | Appendix |
+| Figure 25 | Arrow Bundle Architecture | Storage & Persistence Layer |
+| Figure 26 | MVCC Generation Lifecycle | Storage & Persistence Layer |
+| Figure 27 | Arrow Store Compaction Pipeline | Storage & Persistence Layer |
+| Figure 28 | Unified Cache Architecture | Storage & Persistence Layer |
+| Figure 29 | Dependency Indexing Pipeline | Dependency Intelligence |
+| Figure 30 | Integrity Check & Repair Pipeline | Integrity & Repair System |
+| Figure 31 | Orchestrator → Module Delegation Flow | Infrastructure & Shared Services |
+| Figure 32 | Plugin Dependency Graph | BSG Compression |
 
 ---
 
@@ -109,13 +117,17 @@ flowchart TB
 
 1. [Architecture Overview](/docs/whitepaper/architecture)
 2. [Core Subsystems](/docs/whitepaper/core-subsystems)
-3. [Deterministic Code Graph Engine](/docs/whitepaper/code-graph)
-4. [BSG Compression & LLM Injection](/docs/whitepaper/bsg-compression)
-5. [Time Machine & Incremental Patching](/docs/whitepaper/time-machine)
-6. [Security & Governance](/docs/whitepaper/security)
-7. [Performance & Scalability](/docs/whitepaper/performance)
-8. [Deployment & Operations](/docs/whitepaper/deployment)
-9. [Appendix: Schema Reference](/docs/whitepaper/appendix)
+3. [Storage & Persistence Layer](/docs/whitepaper/storage)
+4. [Deterministic Code Graph Engine](/docs/whitepaper/code-graph)
+5. [BSG Compression & LLM Injection](/docs/whitepaper/bsg-compression)
+6. [Dependency Intelligence](/docs/whitepaper/dependency)
+7. [Time Machine & Incremental Patching](/docs/whitepaper/time-machine)
+8. [Integrity & Repair System](/docs/whitepaper/integrity)
+9. [Security & Governance](/docs/whitepaper/security)
+10. [Performance & Scalability](/docs/whitepaper/performance)
+11. [Infrastructure & Shared Services](/docs/whitepaper/infrastructure)
+12. [Deployment & Operations](/docs/whitepaper/deployment)
+13. [Appendix: Schema Reference](/docs/whitepaper/appendix)
 
 ---
 
@@ -123,6 +135,7 @@ flowchart TB
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.1.1 | 2026-06-29 | Batho Core Team | Added Storage, Dependency, Integrity, and Infrastructure sections; added BSG plugin catalog; renumbered sections |
 | 1.1.0 | 2026-06-10 | Batho Core Team | Refactored to v1.1.0 (unified batho.yaml, 7 CLI commands, Arrow IPC format, removed legacy subsystems) |
 | 1.0.0 | 2026-05-17 | Batho Core Team | Initial whitepaper for Batho v1 |
 
