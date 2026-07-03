@@ -1,0 +1,523 @@
+"""Batho MCP tools — 7 tools for code-graph intelligence."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pyarrow.compute as pc
+from fastmcp import FastMCP
+from fastmcp.tools.tool import ToolResult
+from mcp.types import TextContent
+
+from batho.modules.storage.arrow_bundle.reader import BathoBundleReader
+from batho.mcp.graph_builder import (
+    build_dual_output, format_summary, estimate_tokens,
+)
+from batho.mcp.community_summaries import load_communities, format_communities_for_overview
+from batho.mcp.delta_reader import read_delta, format_delta_markdown, build_delta_structured
+
+import structlog
+
+LOGGER = structlog.get_logger(__name__)
+
+_readers: dict[str, BathoBundleReader] = {}
+
+
+def _resolve_root(root_path: str | None, default_root: str | None) -> str:
+    """Resolve root_path: explicit arg > server default > error."""
+    resolved = root_path or default_root
+    if not resolved:
+        raise ValueError(
+            "root_path is required. Either pass it as a tool argument "
+            "or start the server with `batho mcp --root /path/to/repo`."
+        )
+    return str(Path(resolved).resolve())
+
+
+def _get_reader(root_path: str) -> BathoBundleReader:
+    resolved = str(Path(root_path).resolve())
+    if resolved not in _readers:
+        artifact_dir = Path(resolved) / ".batho" / "artifact"
+        _readers[resolved] = BathoBundleReader(artifact_dir)
+    return _readers[resolved]
+
+
+def _check_artifact(root_path: str) -> str | None:
+    artifact_dir = Path(root_path).resolve() / ".batho" / "artifact"
+    if not artifact_dir.exists():
+        return f"No Batho artifact found at {artifact_dir}. Run `batho build` first."
+    return None
+
+
+def _file_paths_map(reader: BathoBundleReader) -> dict[int, str]:
+    tracking = reader.get_all_file_tracking()
+    return {v.get("file_id", -1): k for k, v in tracking.items()}
+
+
+def _manifest_gen(reader: BathoBundleReader) -> int:
+    try:
+        manifest = reader._manager.load_manifest()
+        return manifest.get("generation", 0)
+    except Exception:
+        return 0
+
+
+def _err(msg: str) -> ToolResult:
+    return ToolResult(content=[TextContent(type="text", text=f"Error: {msg}")], structured_content={"error": msg})
+
+
+def register_tools(app: FastMCP, default_root: str | None = None) -> None:
+
+    @app.tool
+    def graph_overview(
+        root_path: str | None = None,
+        response_format: str = "summary",
+        max_tokens: int = 25000,
+    ) -> ToolResult:
+        """Get a high-level overview of the codebase graph: entity counts, relationship breakdown, file list, and community summaries."""
+        try:
+            root = _resolve_root(root_path, default_root)
+        except ValueError as e:
+            return _err(str(e))
+        err = _check_artifact(root)
+        if err:
+            return _err(err)
+        reader = _get_reader(root)
+
+        runs = reader.get_all_runs()
+        if not runs:
+            return _err("No runs found. Run `batho build` first.")
+        latest = runs[-1]
+
+        agent_table = reader._get_table("agent_views")
+        rels_table = reader._get_table("rels_views")
+        tracking = reader.get_all_file_tracking()
+
+        entity_type_counts: dict[str, int] = {}
+        if agent_table.num_rows > 0:
+            etypes = agent_table.column("entity_type").to_pylist()
+            for et in etypes:
+                entity_type_counts[et] = entity_type_counts.get(et, 0) + 1
+
+        rel_type_counts: dict[str, int] = {}
+        if rels_table.num_rows > 0:
+            rtypes = rels_table.column("relation_type").to_pylist()
+            for rt in rtypes:
+                rel_type_counts[rt] = rel_type_counts.get(rt, 0) + 1
+
+        files_list = []
+        for fp, tr in tracking.items():
+            files_list.append({"path": fp, "entities": 0, "indexed": tr.get("is_indexed", False)})
+        files_list.sort(key=lambda x: x["path"])
+
+        stats = {
+            "total_entities": agent_table.num_rows,
+            "total_relationships": rels_table.num_rows,
+            "total_files": len(tracking),
+            "entity_breakdown": entity_type_counts,
+            "relationship_breakdown": rel_type_counts,
+            "files": files_list,
+            "run_id": latest.get("run_uuid"),
+            "git_commit": latest.get("git_commit"),
+            "artifact_generation": _manifest_gen(reader),
+        }
+
+        artifact_dir = Path(root).resolve() / ".batho" / "artifact"
+        communities_raw = load_communities(artifact_dir)
+        communities = format_communities_for_overview(communities_raw)
+
+        markdown = format_summary(stats, communities)
+        from batho.mcp.graph_builder import truncate_to_budget
+        markdown, truncated = truncate_to_budget(markdown, max_tokens)
+
+        structured = {
+            "overview": {
+                "stats": stats,
+                "communities": communities,
+            },
+            "meta": {
+                "artifact_generation": stats["artifact_generation"],
+                "tokens_used": estimate_tokens(markdown),
+                "token_budget": max_tokens,
+                "truncated": truncated,
+            },
+        }
+        return ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
+
+    @app.tool
+    def graph_query(
+        root_path: str | None = None,
+        file_path: str | None = None,
+        entity_types: list[str] | None = None,
+        relation_types: list[str] | None = None,
+        name_pattern: str | None = None,
+        response_format: str = "concise",
+        limit: int = 50,
+        offset: int = 0,
+        max_tokens: int = 25000,
+    ) -> ToolResult:
+        """Query the code graph with optional filters (file, entity types, relation types, name pattern). Returns paginated nodes and edges."""
+        try:
+            root = _resolve_root(root_path, default_root)
+        except ValueError as e:
+            return _err(str(e))
+        err = _check_artifact(root)
+        if err:
+            return _err(err)
+        reader = _get_reader(root)
+
+        agent_table = reader._get_table("agent_views")
+        if agent_table.num_rows == 0:
+            return _err("No entities found in artifact.")
+
+        table = agent_table
+
+        if file_path:
+            file_path = str(file_path).replace("\\", "/")
+            fid = reader.file_id_for_path(file_path)
+            if fid is None:
+                return _err(f"File not indexed: {file_path}")
+            table = table.filter(pc.equal(table.column("file_id"), fid))
+
+        if entity_types:
+            masks = [pc.equal(table.column("entity_type"), et) for et in entity_types]
+            combined = masks[0]
+            for m in masks[1:]:
+                combined = pc.or_(combined, m)
+            table = table.filter(combined)
+
+        if name_pattern:
+            table = table.filter(pc.match_substring_regex(table.column("name"), name_pattern))
+
+        total_nodes = table.num_rows
+        rows = table.to_pylist()
+        rows = rows[offset:offset + limit]
+
+        rels_table = reader._get_table("rels_views")
+        rels_rows: list[dict] = []
+        if rels_table.num_rows > 0 and rows:
+            entity_ids = {r.get("entity_id", "") for r in rows}
+            file_ids = {r.get("file_id", -1) for r in rows}
+            for fid in file_ids:
+                fid_artifacts = reader.get_file_artifacts_by_id(fid)
+                fid_rels = fid_artifacts.get("rels_view", []) if fid_artifacts else []
+                if fid_rels:
+                    rels_rows.extend(fid_rels)
+
+            if relation_types:
+                rels_rows = [r for r in rels_rows if r.get("relation_type") in relation_types]
+
+            rels_rows = [r for r in rels_rows if r.get("source_id") in entity_ids or r.get("target_id") in entity_ids]
+
+        file_paths = _file_paths_map(reader)
+        gen = _manifest_gen(reader)
+
+        markdown, structured = build_dual_output(
+            rows, rels_rows, file_paths,
+            response_format=response_format, max_tokens=max_tokens,
+            offset=offset, limit=limit,
+            total_nodes=total_nodes, total_edges=rels_table.num_rows,
+            artifact_generation=gen,
+        )
+        return ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
+
+    @app.tool
+    def get_entity(
+        entity_id: str,
+        root_path: str | None = None,
+        include_source: bool = False,
+        response_format: str = "detailed",
+    ) -> ToolResult:
+        """Get detailed information about a single entity, including its relationships and optionally source code."""
+        try:
+            root = _resolve_root(root_path, default_root)
+        except ValueError as e:
+            return _err(str(e))
+        err = _check_artifact(root)
+        if err:
+            return _err(err)
+        reader = _get_reader(root)
+
+        agent_table = reader._get_table("agent_views")
+        if agent_table.num_rows == 0:
+            return _err("No entities found.")
+
+        mask = pc.equal(agent_table.column("entity_id"), entity_id)
+        matched = agent_table.filter(mask)
+        if matched.num_rows == 0:
+            return _err(f"Entity not found: {entity_id}")
+
+        entity_row = matched.to_pylist()[0]
+        file_paths = _file_paths_map(reader)
+
+        rels_table = reader._get_table("rels_views")
+        rels_rows: list[dict] = []
+        if rels_table.num_rows > 0:
+            src_mask = pc.equal(rels_table.column("source_id"), entity_id)
+            tgt_mask = pc.equal(rels_table.column("target_id"), entity_id)
+            combined = pc.or_(src_mask, tgt_mask)
+            rels_rows = rels_table.filter(combined).to_pylist()
+
+        storage_rows = None
+        if include_source:
+            storage_table = reader._get_table("storage_views")
+            if storage_table.num_rows > 0:
+                smask = pc.equal(storage_table.column("entity_id"), entity_id)
+                storage_rows = storage_table.filter(smask).to_pylist()
+
+        gen = _manifest_gen(reader)
+        markdown, structured = build_dual_output(
+            [entity_row], rels_rows, file_paths,
+            storage_rows=storage_rows,
+            response_format=response_format, max_tokens=25000,
+            offset=0, limit=1,
+            total_nodes=1, total_edges=len(rels_rows),
+            artifact_generation=gen,
+        )
+        return ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
+
+    @app.tool
+    def trace_path(
+        source_entity_id: str,
+        target_entity_id: str,
+        root_path: str | None = None,
+        max_depth: int = 5,
+        relation_types: list[str] | None = None,
+        response_format: str = "concise",
+    ) -> ToolResult:
+        """Find the shortest path between two entities in the code graph using BFS."""
+        try:
+            root = _resolve_root(root_path, default_root)
+        except ValueError as e:
+            return _err(str(e))
+        err = _check_artifact(root)
+        if err:
+            return _err(err)
+        reader = _get_reader(root)
+
+        rels_table = reader._get_table("rels_views")
+        if rels_table.num_rows == 0:
+            return _err("No relationships found in artifact.")
+
+        all_rels = rels_table.to_pylist()
+        if relation_types:
+            all_rels = [r for r in all_rels if r.get("relation_type") in relation_types]
+
+        adjacency: dict[str, list[tuple[str, str]]] = {}
+        for rel in all_rels:
+            sid = rel.get("source_id", "")
+            tid = rel.get("target_id", "")
+            rt = rel.get("relation_type", "")
+            adjacency.setdefault(sid, []).append((tid, rt))
+
+        if source_entity_id not in adjacency and source_entity_id != target_entity_id:
+            return _err(f"Source entity not found or has no outgoing edges: {source_entity_id}")
+
+        from collections import deque
+        queue: deque[list[tuple[str, str]]] = deque()
+        visited: set[str] = {source_entity_id}
+        queue.append([(source_entity_id, "")])
+
+        path: list[tuple[str, str]] | None = None
+        while queue:
+            current = queue.popleft()
+            current_id = current[-1][0]
+            if current_id == target_entity_id:
+                path = current
+                break
+            if len(current) - 1 >= max_depth:
+                continue
+            for next_id, rt in adjacency.get(current_id, []):
+                if next_id not in visited:
+                    visited.add(next_id)
+                    queue.append(current + [(next_id, rt)])
+
+        if path is None:
+            return _err(f"No path found from {source_entity_id} to {target_entity_id} within depth {max_depth}")
+
+        agent_table = reader._get_table("agent_views")
+        name_by_id: dict[str, str] = {}
+        if agent_table.num_rows > 0:
+            for row in agent_table.to_pylist():
+                name_by_id[row.get("entity_id", "")] = row.get("name", "")
+
+        lines: list[str] = ["## Path Trace"]
+        for i, (eid, rt) in enumerate(path):
+            name = name_by_id.get(eid, eid)
+            if i == 0:
+                lines.append(f"  {name}")
+            else:
+                lines.append(f"  → [{rt}] {name}")
+        lines.append(f"\nDepth: {len(path) - 1} hops")
+
+        structured = {
+            "path": [{"entity_id": eid, "relation_type": rt, "name": name_by_id.get(eid, eid)} for eid, rt in path],
+            "depth": len(path) - 1,
+            "meta": {"artifact_generation": _manifest_gen(reader)},
+        }
+        return ToolResult(content=[TextContent(type="text", text="\n".join(lines))], structured_content=structured)
+
+    @app.tool
+    def get_file_graph(
+        file_path: str,
+        root_path: str | None = None,
+        include_cross_file_refs: bool = True,
+        response_format: str = "concise",
+        max_tokens: int = 25000,
+    ) -> ToolResult:
+        """Get all entities and relationships within a single file. Optionally includes cross-file reference stubs."""
+        try:
+            root = _resolve_root(root_path, default_root)
+        except ValueError as e:
+            return _err(str(e))
+        err = _check_artifact(root)
+        if err:
+            return _err(err)
+        reader = _get_reader(root)
+
+        file_path = str(file_path).replace("\\", "/")
+        fid = reader.file_id_for_path(file_path)
+        if fid is None:
+            return _err(f"File not indexed: {file_path}")
+
+        file_artifacts = reader.get_file_artifacts_by_id(fid, include_storage=True)
+        agent_rows = file_artifacts.get("agent_view", []) if file_artifacts else []
+        rels_rows = file_artifacts.get("rels_view", []) if file_artifacts else []
+        storage_rows = file_artifacts.get("storage_view", []) if file_artifacts else []
+
+        if include_cross_file_refs and rels_rows:
+            agent_table = reader._get_table("agent_views")
+            if agent_table.num_rows > 0:
+                cross_ids = set()
+                for rel in rels_rows:
+                    sid = rel.get("source_id", "")
+                    tid = rel.get("target_id", "")
+                    if sid and not any(r.get("entity_id") == sid for r in agent_rows):
+                        cross_ids.add(sid)
+                    if tid and not any(r.get("entity_id") == tid for r in agent_rows):
+                        cross_ids.add(tid)
+                if cross_ids:
+                    for cid in cross_ids:
+                        mask = pc.equal(agent_table.column("entity_id"), cid)
+                        matched = agent_table.filter(mask)
+                        if matched.num_rows > 0:
+                            agent_rows.extend(matched.to_pylist())
+
+        file_paths = _file_paths_map(reader)
+        gen = _manifest_gen(reader)
+
+        agent_table_full = reader._get_table("agent_views")
+        rels_table_full = reader._get_table("rels_views")
+
+        markdown, structured = build_dual_output(
+            agent_rows, rels_rows, file_paths,
+            storage_rows=storage_rows if response_format == "detailed" else None,
+            response_format=response_format, max_tokens=max_tokens,
+            offset=0, limit=len(agent_rows),
+            total_nodes=len(agent_rows), total_edges=len(rels_rows),
+            artifact_generation=gen,
+        )
+        return ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
+
+    @app.tool
+    def search_entities(
+        query: str,
+        root_path: str | None = None,
+        entity_types: list[str] | None = None,
+        limit: int = 25,
+        response_format: str = "concise",
+    ) -> ToolResult:
+        """Search for entities by name (substring regex match). Returns matching entities with optional type filter."""
+        try:
+            root = _resolve_root(root_path, default_root)
+        except ValueError as e:
+            return _err(str(e))
+        err = _check_artifact(root)
+        if err:
+            return _err(err)
+        reader = _get_reader(root)
+
+        agent_table = reader._get_table("agent_views")
+        if agent_table.num_rows == 0:
+            return _err("No entities found in artifact.")
+
+        try:
+            mask = pc.match_substring_regex(agent_table.column("name"), query)
+        except Exception:
+            mask = pc.match_substring(agent_table.column("name"), query)
+        table = agent_table.filter(mask)
+
+        if entity_types:
+            masks = [pc.equal(table.column("entity_type"), et) for et in entity_types]
+            combined = masks[0]
+            for m in masks[1:]:
+                combined = pc.or_(combined, m)
+            table = table.filter(combined)
+
+        total = table.num_rows
+        rows = table.to_pylist()[:limit]
+
+        file_paths = _file_paths_map(reader)
+        gen = _manifest_gen(reader)
+
+        lines: list[str] = [f"## Search Results ({total} matches, showing {len(rows)})"]
+        for row in rows:
+            name = row.get("name", "")
+            etype = row.get("entity_type", "")
+            fp = file_paths.get(row.get("file_id", -1), "")
+            lr = ""
+            sl = row.get("start_line")
+            el = row.get("end_line")
+            if sl:
+                lr = f"L{sl}" if not el or el == sl else f"L{sl}-{el}"
+            lines.append(f"- {name} [{etype}] {fp}:{lr}")
+
+        structured = {
+            "results": [build_node_dict_simple(r, file_paths) for r in rows],
+            "meta": {"total_matches": total, "returned": len(rows), "artifact_generation": gen},
+        }
+        return ToolResult(content=[TextContent(type="text", text="\n".join(lines))], structured_content=structured)
+
+    @app.tool
+    def get_delta(
+        root_path: str | None = None,
+        run_id: str | None = None,
+        change_kind: str | None = None,
+        file_path: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        response_format: str = "concise",
+    ) -> ToolResult:
+        """Get incremental changes from the latest patch run (or a specific run). Shows added/removed/modified/renamed nodes."""
+        try:
+            root = _resolve_root(root_path, default_root)
+        except ValueError as e:
+            return _err(str(e))
+        err = _check_artifact(root)
+        if err:
+            return _err(err)
+        reader = _get_reader(root)
+
+        changes, delta_stats, run_info = read_delta(
+            reader, run_id=run_id, change_kind=change_kind,
+            file_path=file_path, limit=limit, offset=offset,
+        )
+
+        if not run_info and not changes:
+            return _err("No patch runs found. Run `batho patch` first.")
+
+        markdown = format_delta_markdown(changes, delta_stats, run_info, response_format)
+        structured = build_delta_structured(changes, delta_stats, run_info)
+        return ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
+
+
+def build_node_dict_simple(row: dict, file_paths: dict[int, str]) -> dict:
+    return {
+        "id": row.get("entity_id", ""),
+        "name": row.get("name", ""),
+        "type": row.get("entity_type", ""),
+        "file": file_paths.get(row.get("file_id", -1), ""),
+        "start_line": row.get("start_line"),
+        "end_line": row.get("end_line"),
+    }

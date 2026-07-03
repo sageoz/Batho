@@ -25,6 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from batho.cli.diff import register_diff_parser
     from batho.cli.gc import register_gc_parser
     from batho.cli.load import register_load_parser
+    from batho.cli.mcp import register_mcp_parser
 
     register_build_parser(subparsers)
     register_patch_parser(subparsers)
@@ -33,6 +34,7 @@ def _build_parser() -> argparse.ArgumentParser:
     register_diff_parser(subparsers)
     register_gc_parser(subparsers)
     register_load_parser(subparsers)
+    register_mcp_parser(subparsers)
 
     return parser
 

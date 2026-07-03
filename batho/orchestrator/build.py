@@ -343,6 +343,29 @@ def run_build(options: BuildOptions) -> BuildResult:
                         relationships=rel_count,
                     )
 
+                    # --- Community Detection ---
+                    community_cfg = cfg.get("community_detection", {})
+                    if community_cfg.get("enabled", True):
+                        try:
+                            from batho.modules.graph.community import detect_communities, communities_to_rows
+                            from batho.modules.storage.arrow_bundle.schemas import COMMUNITIES_SCHEMA
+                            from batho.modules.storage.arrow_bundle.writer import write_simple_ipc
+                            t_comm_0 = time.monotonic()
+                            communities = detect_communities(graph)
+                            comm_rows = communities_to_rows(communities)
+                            comm_path = bundle_dir / "communities.tmp.ipc"
+                            write_simple_ipc(comm_rows, COMMUNITIES_SCHEMA, comm_path)
+                            final_comm_path = bundle_dir / "communities.ipc"
+                            comm_path.replace(final_comm_path)
+                            comm_duration_ms = (time.monotonic() - t_comm_0) * 1000
+                            LOGGER.info(
+                                "community_detection_complete",
+                                communities=len(communities),
+                                duration_ms=round(comm_duration_ms, 2),
+                            )
+                        except Exception as exc:
+                            LOGGER.warning("community_detection_failed", error=str(exc))
+
                     # Bidirectional rules pass removed to avoid main-thread loading latency
                     bidi_stats = None
 

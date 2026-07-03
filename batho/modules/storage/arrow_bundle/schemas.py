@@ -109,6 +109,16 @@ RUN_ARTIFACTS_SCHEMA: pa.Schema = pa.schema([
     pa.field("created_at", pa.utf8(), nullable=False),
 ])
 
+COMMUNITIES_SCHEMA: pa.Schema = pa.schema([
+    pa.field("community_id", pa.int32(), nullable=False),
+    pa.field("name", pa.utf8(), nullable=False),
+    pa.field("entity_count", pa.int32(), nullable=False),
+    pa.field("file_count", pa.int32(), nullable=False),
+    pa.field("top_entities", pa.list_(pa.utf8()), nullable=True),
+    pa.field("description", pa.large_utf8(), nullable=True),
+    pa.field("file_paths", pa.list_(pa.utf8()), nullable=True),
+])
+
 ALL_SCHEMAS: dict[str, pa.Schema] = {
     "runs": RUNS_SCHEMA,
     "file_tracking": FILE_TRACKING_SCHEMA,
@@ -117,4 +127,5 @@ ALL_SCHEMAS: dict[str, pa.Schema] = {
     "rels_views": RELS_VIEWS_SCHEMA,
     "file_changelog": FILE_CHANGELOG_SCHEMA,
     "run_artifacts": RUN_ARTIFACTS_SCHEMA,
+    "communities": COMMUNITIES_SCHEMA,
 }

@@ -59,6 +59,9 @@ dependencies = [
     "psutil>=7.2.2",
     "pyarrow>=14.0",
     "numpy>=1.26.0",
+    "fastmcp>=2.14.0",
+    "leidenalg>=0.10",
+    "python-igraph>=0.11",
 ]
 
 [project.optional-dependencies]

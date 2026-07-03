@@ -11,6 +11,11 @@ from .incremental import (
     get_head_commit as get_head_commit,
     get_current_branch as get_current_branch,
 )
+from .community import (
+    Community as Community,
+    detect_communities as detect_communities,
+    communities_to_rows as communities_to_rows,
+)
 
 __all__ = [
     "InMemoryGraph",
@@ -22,4 +27,7 @@ __all__ = [
     "is_git_repo",
     "get_head_commit",
     "get_current_branch",
+    "Community",
+    "detect_communities",
+    "communities_to_rows",
 ]
