@@ -5,7 +5,7 @@
 <h1 align="center">B.A.T.H.O</h1>
 
 <p align="center">
-  Reduce token spend and hallucinations by indexing your codebase into a graph your AI agents can navigate — without dumping whole repositories into the Context.fgf
+  Reduce token spend and hallucinations by indexing your codebase into a graph your AI agents can navigate without dumping whole repositories into the context.
 </p>
 
 <p align="center">
