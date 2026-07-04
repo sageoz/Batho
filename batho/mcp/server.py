@@ -13,11 +13,15 @@ from fastmcp import FastMCP
 
 from batho.mcp.instructions import INSTRUCTIONS
 from batho.mcp.tools import register_tools
+from batho.mcp.prompts import register_prompts
+from batho.mcp.resources import register_resources
 from batho.mcp.registry import RepoRegistry
 
 import structlog
 
 LOGGER = structlog.get_logger(__name__)
+
+BATHO_MCP_VERSION = "1.1.0"
 
 
 def create_app(
@@ -45,8 +49,11 @@ def create_app(
     app = FastMCP(
         name="batho",
         instructions=INSTRUCTIONS,
+        version=BATHO_MCP_VERSION,
     )
     register_tools(app, default_root=root, registry=registry if entries else None)
+    register_prompts(app)
+    register_resources(app, registry=registry if entries else None)
     return app
 
 
