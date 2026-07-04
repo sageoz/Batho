@@ -5,6 +5,13 @@ INSTRUCTIONS = """\
 
 Prefer Batho tools over grep/read for structural code questions.
 
+## Repo management
+- "What repos are available?" → list_repos
+- "Add repo X at path Y" → add_repo(name, path)
+- "Remove repo X" → remove_repo(name)
+- Query a specific repo → pass repo="name" to any query tool
+- If repo is omitted, the first registered repo is used as default
+
 ## Tool selection
 - Architecture / "what does this codebase do?" → graph_overview FIRST
 - "What's in file X?" → get_file_graph
@@ -15,6 +22,7 @@ Prefer Batho tools over grep/read for structural code questions.
 - "What changed since last build/patch?" → get_delta
 
 ## Tips
+- Start with list_repos to see available repos.
 - Start with graph_overview for unfamiliar codebases.
 - Use response_format: "summary" for orientation, "concise" for queries, "detailed" for deep dives.
 - Check pagination hints before follow-up questions.

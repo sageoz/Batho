@@ -13,33 +13,54 @@ from fastmcp import FastMCP
 
 from batho.mcp.instructions import INSTRUCTIONS
 from batho.mcp.tools import register_tools
+from batho.mcp.registry import RepoRegistry
 
 import structlog
 
 LOGGER = structlog.get_logger(__name__)
 
 
-def create_app(root: str | None = None) -> FastMCP:
+def create_app(
+    root: str | None = None,
+    registry_path: Path | None = None,
+) -> FastMCP:
     """Create and configure the FastMCP application with all Batho tools.
 
     Args:
         root: Repository root containing .batho artifact. If None,
-              tools will require root_path in each call.
+              tools will require repo parameter in each call.
+        registry_path: Path to mcp-repos.json. If None, uses default
+                       (~/.batho/mcp-repos.json).
     """
+    registry = RepoRegistry(config_path=registry_path)
+    entries = registry.list_all()
+
+    if entries:
+        LOGGER.info("batho_mcp_multi_repo", repos=[e.name for e in entries])
+    elif root:
+        LOGGER.info("batho_mcp_single_repo", root=root)
+    else:
+        LOGGER.warning("batho_mcp_no_repos")
+
     app = FastMCP(
         name="batho",
         instructions=INSTRUCTIONS,
     )
-    register_tools(app, default_root=root)
+    register_tools(app, default_root=root, registry=registry if entries else None)
     return app
 
 
-def run_server(root: str | None = None) -> None:
+def run_server(
+    root: str | None = None,
+    registry_path: Path | None = None,
+) -> None:
     """Start the MCP server on stdio transport.
 
     Args:
         root: Repository root containing .batho artifact. If None,
               defaults to current working directory.
+        registry_path: Path to mcp-repos.json. If None, uses default
+                       (~/.batho/mcp-repos.json).
     """
     import os
 
@@ -53,7 +74,7 @@ def run_server(root: str | None = None) -> None:
     else:
         LOGGER.info("batho_mcp_starting", root=root, artifact_dir=str(artifact_dir))
 
-    app = create_app(root=root)
+    app = create_app(root=root, registry_path=registry_path)
     try:
         app.run(transport="stdio")
     except KeyboardInterrupt:

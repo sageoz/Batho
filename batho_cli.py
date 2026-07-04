@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from batho import __version__
 from batho.core.config.loader import get_config_cached
 from batho.utils.logging import configure_logging_from_dict
 
@@ -14,6 +15,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="batho",
         description="Batho — deterministic code intelligence engine",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"batho {__version__}"
     )
     subparsers = parser.add_subparsers(dest="command")
 

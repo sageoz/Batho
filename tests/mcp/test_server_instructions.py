@@ -24,6 +24,9 @@ def test_instructions_content():
     assert "Batho" in INSTRUCTIONS
     assert "graph_overview" in INSTRUCTIONS
     assert "get_delta" in INSTRUCTIONS
+    assert "list_repos" in INSTRUCTIONS
+    assert "add_repo" in INSTRUCTIONS
+    assert "remove_repo" in INSTRUCTIONS
 
 
 def test_create_app():
@@ -47,6 +50,7 @@ def test_tool_registration():
     app = create_app()
 
     expected_tools = [
+        "list_repos", "add_repo", "remove_repo",
         "graph_overview", "graph_query", "get_entity",
         "trace_path", "get_file_graph", "search_entities", "get_delta",
     ]

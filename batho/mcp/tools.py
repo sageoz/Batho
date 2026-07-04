@@ -16,38 +16,115 @@ from batho.mcp.graph_builder import (
 )
 from batho.mcp.community_summaries import load_communities, format_communities_for_overview
 from batho.mcp.delta_reader import read_delta, format_delta_markdown, build_delta_structured
+from batho.mcp.registry import RepoRegistry, RepoEntry
 
 import structlog
 
 LOGGER = structlog.get_logger(__name__)
 
-_readers: dict[str, BathoBundleReader] = {}
+
+class _ReaderPool:
+    """Manages BathoBundleReader instances keyed by repo name."""
+
+    def __init__(self, registry: RepoRegistry | None = None) -> None:
+        self._registry = registry
+        self._readers: dict[str, BathoBundleReader] = {}
+        self._root_readers: dict[str, BathoBundleReader] = {}
+
+    def get_by_repo(self, repo_name: str) -> BathoBundleReader:
+        """Get or create a reader for a named repo from the registry."""
+        if repo_name in self._readers:
+            return self._readers[repo_name]
+        if not self._registry:
+            raise ValueError(f"No registry configured. Cannot resolve repo '{repo_name}'.")
+        entry = self._registry.get(repo_name)
+        if not entry:
+            available = [e.name for e in self._registry.list_all()]
+            raise ValueError(
+                f"Repo '{repo_name}' not found in registry. "
+                f"Available repos: {available}"
+            )
+        reader = BathoBundleReader(entry.artifact_dir)
+        self._readers[repo_name] = reader
+        return reader
+
+    def get_by_root(self, root_path: str) -> BathoBundleReader:
+        """Get or create a reader for an explicit root path (backward compat)."""
+        resolved = str(Path(root_path).resolve())
+        if resolved not in self._root_readers:
+            artifact_dir = Path(resolved) / ".batho" / "artifact"
+            self._root_readers[resolved] = BathoBundleReader(artifact_dir)
+        return self._root_readers[resolved]
+
+    def invalidate(self, repo_name: str) -> None:
+        """Remove a reader from the pool (e.g. after repo removal)."""
+        self._readers.pop(repo_name, None)
 
 
-def _resolve_root(root_path: str | None, default_root: str | None) -> str:
-    """Resolve root_path: explicit arg > server default > error."""
-    resolved = root_path or default_root
-    if not resolved:
+_pool: _ReaderPool | None = None
+
+
+def _resolve_repo(repo: str | None, default_root: str | None) -> tuple[str, BathoBundleReader]:
+    """Resolve repo name to (repo_name, reader).
+
+    Priority: explicit repo arg > registry default (first entry) > --root fallback.
+    Returns (repo_name_or_root, reader).
+    """
+    global _pool
+    if _pool is None:
+        _pool = _ReaderPool()
+
+    # Explicit repo name provided
+    if repo:
+        if _pool._registry and _pool._registry.get(repo):
+            return repo, _pool.get_by_repo(repo)
         raise ValueError(
-            "root_path is required. Either pass it as a tool argument "
-            "or start the server with `batho mcp --root /path/to/repo`."
+            f"Repo '{repo}' not found in registry. "
+            f"Available: {[e.name for e in _pool._registry.list_all()] if _pool._registry else 'no registry'}"
         )
-    return str(Path(resolved).resolve())
+
+    # No repo arg — try registry default (first entry)
+    if _pool._registry:
+        entries = _pool._registry.list_all()
+        if entries:
+            return entries[0].name, _pool.get_by_repo(entries[0].name)
+
+    # Fallback to --root (backward compat)
+    if default_root:
+        root = str(Path(default_root).resolve())
+        return root, _pool.get_by_root(root)
+
+    raise ValueError(
+        "No repo specified and no registry entries found. "
+        "Use add_repo to register a repo, or start with `batho mcp --root /path/to/repo`."
+    )
 
 
-def _get_reader(root_path: str) -> BathoBundleReader:
-    resolved = str(Path(root_path).resolve())
-    if resolved not in _readers:
-        artifact_dir = Path(resolved) / ".batho" / "artifact"
-        _readers[resolved] = BathoBundleReader(artifact_dir)
-    return _readers[resolved]
-
-
-def _check_artifact(root_path: str) -> str | None:
+def _check_artifact_by_root(root_path: str) -> str | None:
     artifact_dir = Path(root_path).resolve() / ".batho" / "artifact"
     if not artifact_dir.exists():
         return f"No Batho artifact found at {artifact_dir}. Run `batho build` first."
     return None
+
+
+def _check_artifact_for_repo(entry: RepoEntry) -> str | None:
+    if not RepoRegistry.has_artifact(entry):
+        return f"No Batho artifact found at {entry.artifact_dir}. Run `batho build` first."
+    return None
+
+
+# Backward-compatible aliases for tests
+def _get_reader(root_path: str) -> BathoBundleReader:
+    """Backward compat: get reader by root path."""
+    global _pool
+    if _pool is None:
+        _pool = _ReaderPool()
+    return _pool.get_by_root(root_path)
+
+
+def _check_artifact(root_path: str) -> str | None:
+    """Backward compat: check artifact by root path."""
+    return _check_artifact_by_root(root_path)
 
 
 def _file_paths_map(reader: BathoBundleReader) -> dict[int, str]:
@@ -67,23 +144,95 @@ def _err(msg: str) -> ToolResult:
     return ToolResult(content=[TextContent(type="text", text=f"Error: {msg}")], structured_content={"error": msg})
 
 
-def register_tools(app: FastMCP, default_root: str | None = None) -> None:
+def register_tools(
+    app: FastMCP,
+    default_root: str | None = None,
+    registry: RepoRegistry | None = None,
+) -> None:
+    global _pool
+    _pool = _ReaderPool(registry=registry)
+
+    @app.tool
+    def list_repos() -> ToolResult:
+        """List all registered Batho repos and their artifact status."""
+        if not registry:
+            return _err("No registry configured. Start server with a registry or use --root.")
+        entries = registry.list_all()
+        if not entries:
+            return _err("No repos registered. Use add_repo to register a repo.")
+        lines = ["## Registered Repos", ""]
+        structured_repos = []
+        for entry in entries:
+            has_art = RepoRegistry.has_artifact(entry)
+            status = "✓ ready" if has_art else "✗ no artifact"
+            entity_count = 0
+            if has_art:
+                try:
+                    r = _pool.get_by_repo(entry.name)
+                    agent_table = r._get_table("agent_views")
+                    entity_count = agent_table.num_rows
+                except Exception:
+                    pass
+            lines.append(f"- **{entry.name}** — {entry.path} ({status}, {entity_count} entities)")
+            structured_repos.append({
+                "name": entry.name,
+                "path": entry.path,
+                "has_artifact": has_art,
+                "entity_count": entity_count,
+            })
+        structured = {"repos": structured_repos, "total": len(structured_repos)}
+        return ToolResult(content=[TextContent(type="text", text="\n".join(lines))], structured_content=structured)
+
+    @app.tool
+    def add_repo(name: str, path: str) -> ToolResult:
+        """Register a repository in the Batho MCP registry. The repo must have a .batho artifact (run `batho build` first)."""
+        if not registry:
+            return _err("No registry configured. Cannot add repos.")
+        resolved = str(Path(path).resolve())
+        artifact_dir = Path(resolved) / ".batho" / "artifact"
+        if not artifact_dir.exists():
+            return _err(f"No Batho artifact found at {artifact_dir}. Run `batho build --root {resolved}` first.")
+        entry = registry.add(name=name, path=resolved)
+        _pool.invalidate(name)
+        try:
+            reader = _pool.get_by_repo(name)
+            agent_table = reader._get_table("agent_views")
+            entity_count = agent_table.num_rows
+        except Exception:
+            entity_count = 0
+        markdown = f"## Repo Registered\n\n- **{name}** — {resolved}\n- Entities: {entity_count}\n- Artifact: ✓ ready"
+        structured = {"name": name, "path": resolved, "entity_count": entity_count, "has_artifact": True}
+        return ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
+
+    @app.tool
+    def remove_repo(name: str) -> ToolResult:
+        """Remove a repository from the Batho MCP registry."""
+        if not registry:
+            return _err("No registry configured.")
+        removed = registry.remove(name)
+        if not removed:
+            return _err(f"Repo '{name}' not found in registry.")
+        _pool.invalidate(name)
+        markdown = f"## Repo Removed\n\n- **{name}** — removed from registry"
+        structured = {"name": name, "removed": True}
+        return ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
 
     @app.tool
     def graph_overview(
-        root_path: str | None = None,
+        repo: str | None = None,
         response_format: str = "summary",
         max_tokens: int = 25000,
     ) -> ToolResult:
         """Get a high-level overview of the codebase graph: entity counts, relationship breakdown, file list, and community summaries."""
         try:
-            root = _resolve_root(root_path, default_root)
+            repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
             return _err(str(e))
-        err = _check_artifact(root)
-        if err:
-            return _err(err)
-        reader = _get_reader(root)
+        if registry and registry.get(repo_name):
+            err = _check_artifact_for_repo(registry.get(repo_name))
+            if err:
+                return _err(err)
+        root = str(Path(registry.get(repo_name).path).resolve()) if registry and registry.get(repo_name) else repo_name
 
         runs = reader.get_all_runs()
         if not runs:
@@ -147,7 +296,7 @@ def register_tools(app: FastMCP, default_root: str | None = None) -> None:
 
     @app.tool
     def graph_query(
-        root_path: str | None = None,
+        repo: str | None = None,
         file_path: str | None = None,
         entity_types: list[str] | None = None,
         relation_types: list[str] | None = None,
@@ -159,13 +308,9 @@ def register_tools(app: FastMCP, default_root: str | None = None) -> None:
     ) -> ToolResult:
         """Query the code graph with optional filters (file, entity types, relation types, name pattern). Returns paginated nodes and edges."""
         try:
-            root = _resolve_root(root_path, default_root)
+            repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
             return _err(str(e))
-        err = _check_artifact(root)
-        if err:
-            return _err(err)
-        reader = _get_reader(root)
 
         agent_table = reader._get_table("agent_views")
         if agent_table.num_rows == 0:
@@ -225,19 +370,15 @@ def register_tools(app: FastMCP, default_root: str | None = None) -> None:
     @app.tool
     def get_entity(
         entity_id: str,
-        root_path: str | None = None,
+        repo: str | None = None,
         include_source: bool = False,
         response_format: str = "detailed",
     ) -> ToolResult:
         """Get detailed information about a single entity, including its relationships and optionally source code."""
         try:
-            root = _resolve_root(root_path, default_root)
+            repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
             return _err(str(e))
-        err = _check_artifact(root)
-        if err:
-            return _err(err)
-        reader = _get_reader(root)
 
         agent_table = reader._get_table("agent_views")
         if agent_table.num_rows == 0:
@@ -281,20 +422,16 @@ def register_tools(app: FastMCP, default_root: str | None = None) -> None:
     def trace_path(
         source_entity_id: str,
         target_entity_id: str,
-        root_path: str | None = None,
+        repo: str | None = None,
         max_depth: int = 5,
         relation_types: list[str] | None = None,
         response_format: str = "concise",
     ) -> ToolResult:
         """Find the shortest path between two entities in the code graph using BFS."""
         try:
-            root = _resolve_root(root_path, default_root)
+            repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
             return _err(str(e))
-        err = _check_artifact(root)
-        if err:
-            return _err(err)
-        reader = _get_reader(root)
 
         rels_table = reader._get_table("rels_views")
         if rels_table.num_rows == 0:
@@ -361,20 +498,16 @@ def register_tools(app: FastMCP, default_root: str | None = None) -> None:
     @app.tool
     def get_file_graph(
         file_path: str,
-        root_path: str | None = None,
+        repo: str | None = None,
         include_cross_file_refs: bool = True,
         response_format: str = "concise",
         max_tokens: int = 25000,
     ) -> ToolResult:
         """Get all entities and relationships within a single file. Optionally includes cross-file reference stubs."""
         try:
-            root = _resolve_root(root_path, default_root)
+            repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
             return _err(str(e))
-        err = _check_artifact(root)
-        if err:
-            return _err(err)
-        reader = _get_reader(root)
 
         file_path = str(file_path).replace("\\", "/")
         fid = reader.file_id_for_path(file_path)
@@ -423,20 +556,16 @@ def register_tools(app: FastMCP, default_root: str | None = None) -> None:
     @app.tool
     def search_entities(
         query: str,
-        root_path: str | None = None,
+        repo: str | None = None,
         entity_types: list[str] | None = None,
         limit: int = 25,
         response_format: str = "concise",
     ) -> ToolResult:
         """Search for entities by name (substring regex match). Returns matching entities with optional type filter."""
         try:
-            root = _resolve_root(root_path, default_root)
+            repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
             return _err(str(e))
-        err = _check_artifact(root)
-        if err:
-            return _err(err)
-        reader = _get_reader(root)
 
         agent_table = reader._get_table("agent_views")
         if agent_table.num_rows == 0:
@@ -481,7 +610,7 @@ def register_tools(app: FastMCP, default_root: str | None = None) -> None:
 
     @app.tool
     def get_delta(
-        root_path: str | None = None,
+        repo: str | None = None,
         run_id: str | None = None,
         change_kind: str | None = None,
         file_path: str | None = None,
@@ -491,13 +620,9 @@ def register_tools(app: FastMCP, default_root: str | None = None) -> None:
     ) -> ToolResult:
         """Get incremental changes from the latest patch run (or a specific run). Shows added/removed/modified/renamed nodes."""
         try:
-            root = _resolve_root(root_path, default_root)
+            repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
             return _err(str(e))
-        err = _check_artifact(root)
-        if err:
-            return _err(err)
-        reader = _get_reader(root)
 
         changes, delta_stats, run_info = read_delta(
             reader, run_id=run_id, change_kind=change_kind,
