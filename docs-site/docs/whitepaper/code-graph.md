@@ -136,7 +136,7 @@ def create_user(name: str) -> User:
 
 ## 4.5 Bidirectional Traversal & Lossless Reconstruction
 
-Batho v1.1.0 supports lossless, bidirectional graph-to-code reconstruction, allowing a developer or LLM agent to rebuild the exact source file from the graph.
+Batho v1.2.0 supports lossless, bidirectional graph-to-code reconstruction, allowing a developer or LLM agent to rebuild the exact source file from the graph.
 
 ### The Role of `SYNTAX_GLUE`
 When `bsg.bidirectional.enabled` is `true`, the parser identifies not only AST elements (e.g. classes, functions) but also all intervening segments, such as whitespace, braces, skipped comments, and other non-semantic structures. These are emitted as `SYNTAX_GLUE` entities.

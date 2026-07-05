@@ -18,7 +18,7 @@ The starter template (`starter-batho.yml`) is a ready-to-copy workflow for consu
 # Two equivalent flavours are shown: (A) composite action (most flexible),
 # (B) reusable workflow (one-liner).
 #
-# v1.1.0 indexes the repo using "batho build --root ." and exports the transport
+# v1.2.0 indexes the repo using "batho build --root ." and exports the transport
 # ZIP package (artifact_<dir>.batho) as a workflow artifact. It does NOT fail your build.
 
 name: Batho
@@ -43,18 +43,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Run Batho
-        uses: sageoz/batho@v1.1.0
+        uses: sageoz/batho@v1.2.0
         with:
           root: "."
           python-version: "3.12"
           # Leave `batho-ref` empty to install Batho from the action's own checkout.
           # Or set batho-ref to "pypi" to install from PyPI, or pin a git ref:
-          #   batho-ref: "v1.1.0"
+          #   batho-ref: "v1.2.0"
           batho-ref: ""
           artifact-name: batho-index
           artifact-retention-days: "7"
@@ -63,7 +63,7 @@ jobs:
   # Uncomment to use instead of Flavour A.
   #
   # batho-index-reusable:
-  #   uses: sageoz/batho/.github/workflows/batho-index.yml@v1.1.0
+  #   uses: sageoz/batho/.github/workflows/batho-index.yml@v1.2.0
   #   with:
   #     root: "."
 ```
@@ -86,7 +86,7 @@ jobs:
 batho-ref: "pypi"
 
 # From a specific git tag
-batho-ref: "v1.1.0"
+batho-ref: "v1.2.0"
 
 # From the action's own checkout (for testing or offline)
 batho-ref: ""

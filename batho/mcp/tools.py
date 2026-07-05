@@ -263,11 +263,12 @@ def register_tools(
             repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
             return _err(str(e), error_type=CLIENT_ERROR, hint="Call list_repos to see available repos.")
-        if registry and registry.get(repo_name):
-            err = _check_artifact_for_repo(registry.get(repo_name))
+        entry = registry.get(repo_name) if registry else None
+        if entry:
+            err = _check_artifact_for_repo(entry)
             if err:
                 return _err(err, error_type=EXTERNAL_ERROR, hint="Run 'batho build' first to create the artifact.")
-        root = str(Path(registry.get(repo_name).path).resolve()) if registry and registry.get(repo_name) else repo_name
+        root = str(Path(entry.path).resolve()) if entry else repo_name
 
         runs = reader.get_all_runs()
         if not runs:
@@ -636,13 +637,14 @@ def register_tools(
         if include_cross_file_refs and rels_rows:
             agent_table = reader._get_table("agent_views")
             if agent_table.num_rows > 0:
+                known_ids = {r.get("entity_id", "") for r in agent_rows}
                 cross_ids = set()
                 for rel in rels_rows:
                     sid = rel.get("source_id", "")
                     tid = rel.get("target_id", "")
-                    if sid and not any(r.get("entity_id") == sid for r in agent_rows):
+                    if sid and sid not in known_ids:
                         cross_ids.add(sid)
-                    if tid and not any(r.get("entity_id") == tid for r in agent_rows):
+                    if tid and tid not in known_ids:
                         cross_ids.add(tid)
                 if cross_ids:
                     for cid in cross_ids:
@@ -653,9 +655,6 @@ def register_tools(
 
         file_paths = _file_paths_map(reader)
         gen = _manifest_gen(reader)
-
-        agent_table_full = reader._get_table("agent_views")
-        rels_table_full = reader._get_table("rels_views")
 
         markdown, structured = build_dual_output(
             agent_rows, rels_rows, file_paths,

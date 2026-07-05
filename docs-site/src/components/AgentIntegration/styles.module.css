@@ -1,0 +1,478 @@
+/* ------------------------------------------------------------------
+   Agent Integration Section
+   ------------------------------------------------------------------ */
+.agentIntegration {
+  padding: var(--batho-space-20) 0;
+  background: var(--batho-surface-0);
+  border-top: 1px solid var(--batho-surface-3);
+  overflow-x: hidden;
+}
+
+/* ------------------------------------------------------------------
+   Section Header
+   ------------------------------------------------------------------ */
+.sectionHeader {
+  text-align: center;
+  margin-bottom: var(--batho-space-12);
+}
+
+.sectionTitle {
+  font-family: var(--ifm-heading-font-family);
+  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: var(--batho-space-3);
+  color: var(--ifm-font-color-base);
+}
+
+.sectionSubtitle {
+  font-size: 1.125rem;
+  color: var(--ifm-color-emphasis-600);
+  max-width: 560px;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+/* ------------------------------------------------------------------
+   Tab Bar
+   ------------------------------------------------------------------ */
+.tabBar {
+  display: flex;
+  gap: var(--batho-space-2);
+  padding: var(--batho-space-2);
+  background: var(--batho-surface-1);
+  border: 1px solid var(--batho-surface-3);
+  border-radius: 16px;
+  margin-bottom: var(--batho-space-8);
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tabBar::-webkit-scrollbar {
+  height: 4px;
+}
+
+.tabBar::-webkit-scrollbar-thumb {
+  background: var(--batho-surface-3);
+  border-radius: 2px;
+}
+
+/* ------------------------------------------------------------------
+   Tab Button
+   ------------------------------------------------------------------ */
+.tabButton {
+  display: flex;
+  align-items: center;
+  gap: var(--batho-space-2);
+  padding: var(--batho-space-2) var(--batho-space-4);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background var(--batho-duration-fast) var(--batho-ease-out),
+              border-color var(--batho-duration-fast) var(--batho-ease-out),
+              box-shadow var(--batho-duration-fast) var(--batho-ease-out);
+}
+
+.tabButton:hover {
+  background: var(--batho-surface-2);
+}
+
+.tabButtonActive {
+  background: var(--batho-surface-0);
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.08);
+}
+
+[data-theme='dark'] .tabButtonActive {
+  background: var(--batho-surface-2);
+  box-shadow: 0 2px 8px rgba(96, 165, 250, 0.1);
+}
+
+.tabButtonActive:hover {
+  background: var(--batho-surface-0);
+}
+
+[data-theme='dark'] .tabButtonActive:hover {
+  background: var(--batho-surface-2);
+}
+
+/* ------------------------------------------------------------------
+   Monogram Badge
+   ------------------------------------------------------------------ */
+.monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--ifm-color-emphasis-500);
+  background: var(--batho-surface-2);
+  border: 1px solid var(--batho-surface-3);
+  transition: background var(--batho-duration-fast) var(--batho-ease-out),
+              color var(--batho-duration-fast) var(--batho-ease-out),
+              border-color var(--batho-duration-fast) var(--batho-ease-out);
+}
+
+.monogramActive {
+  color: var(--ifm-color-primary);
+  background: rgba(37, 99, 235, 0.08);
+  border-color: rgba(37, 99, 235, 0.2);
+}
+
+[data-theme='dark'] .monogramActive {
+  color: var(--ifm-color-primary);
+  background: rgba(96, 165, 250, 0.1);
+  border-color: rgba(96, 165, 250, 0.2);
+}
+
+/* ------------------------------------------------------------------
+   Tab Label
+   ------------------------------------------------------------------ */
+.tabLabel {
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--ifm-color-emphasis-600);
+  transition: color var(--batho-duration-fast) var(--batho-ease-out);
+}
+
+.tabButtonActive .tabLabel {
+  color: var(--ifm-font-color-base);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------
+   Tab Panel
+   ------------------------------------------------------------------ */
+.tabPanel {
+  background: var(--batho-surface-1);
+  border: 1px solid var(--batho-surface-3);
+  border-radius: 16px;
+  padding: var(--batho-space-8);
+  animation: fadeInPanel var(--batho-duration-base) var(--batho-ease-out);
+}
+
+@keyframes fadeInPanel {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ------------------------------------------------------------------
+   Panel Grid (2 columns: info | config)
+   ------------------------------------------------------------------ */
+.panelGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--batho-space-8);
+  align-items: start;
+}
+
+/* ------------------------------------------------------------------
+   Panel Info (left column)
+   ------------------------------------------------------------------ */
+.panelInfo {
+  display: flex;
+  flex-direction: column;
+}
+
+.agentName {
+  font-family: var(--ifm-heading-font-family);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: var(--batho-space-2);
+  color: var(--ifm-font-color-base);
+}
+
+.agentTagline {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-600);
+  margin-bottom: var(--batho-space-6);
+}
+
+/* ------------------------------------------------------------------
+   Benefit List
+   ------------------------------------------------------------------ */
+.benefitList {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--batho-space-6) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--batho-space-3);
+}
+
+.benefitItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--batho-space-3);
+}
+
+.benefitCheck {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  margin-top: 2px;
+}
+
+.benefitCheck svg {
+  width: 12px;
+  height: 12px;
+  stroke: var(--batho-accent);
+  stroke-width: 3;
+}
+
+[data-theme='dark'] .benefitCheck {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.15);
+}
+
+.benefitText {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-700);
+}
+
+/* ------------------------------------------------------------------
+   Setup Link
+   ------------------------------------------------------------------ */
+.setupLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--batho-space-2);
+  flex-wrap: wrap;
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ifm-color-primary);
+  text-decoration: none;
+  margin-top: auto;
+  transition: color var(--batho-duration-fast) var(--batho-ease-out);
+}
+
+.setupLink:hover {
+  color: var(--ifm-color-primary-dark);
+  text-decoration: none;
+}
+
+.setupLinkArrow {
+  font-family: var(--ifm-font-family-monospace);
+  transition: transform var(--batho-duration-fast) var(--batho-ease-out);
+}
+
+.setupLink:hover .setupLinkArrow {
+  transform: translateX(4px);
+}
+
+/* ------------------------------------------------------------------
+   Config Block (right column)
+   ------------------------------------------------------------------ */
+.panelConfig {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  width: 100%;
+}
+
+.configBlock {
+  width: 100%;
+  min-width: 0;
+  background: var(--batho-surface-0);
+  border: 1px solid var(--batho-surface-3);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+[data-theme='dark'] .configBlock {
+  background: var(--batho-surface-0);
+}
+
+.configHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--batho-space-2) var(--batho-space-4);
+  background: var(--batho-surface-2);
+  border-bottom: 1px solid var(--batho-surface-3);
+}
+
+.configLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ifm-color-emphasis-500);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.configCopy {
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ifm-color-primary);
+  background: transparent;
+  border: 1px solid var(--batho-surface-3);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--batho-duration-fast) var(--batho-ease-out),
+              border-color var(--batho-duration-fast) var(--batho-ease-out);
+}
+
+.configCopy:hover {
+  background: rgba(37, 99, 235, 0.08);
+  border-color: var(--ifm-color-primary);
+}
+
+[data-theme='dark'] .configCopy:hover {
+  background: rgba(96, 165, 250, 0.1);
+}
+
+.configPre {
+  margin: 0;
+  padding: var(--batho-space-4);
+  overflow-x: auto;
+  background: var(--batho-surface-0);
+}
+
+.configCode {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--ifm-font-color-base);
+  white-space: pre;
+}
+
+/* ------------------------------------------------------------------
+   Responsive
+   ------------------------------------------------------------------ */
+@media screen and (max-width: 996px) {
+  .agentIntegration {
+    padding: var(--batho-space-16) var(--batho-space-3);
+  }
+
+  .panelGrid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--batho-space-6);
+  }
+
+  .tabPanel {
+    padding: var(--batho-space-6);
+  }
+
+  .panelConfig {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .tabBar {
+    gap: var(--batho-space-1);
+    padding: var(--batho-space-2);
+  }
+
+  .tabButton {
+    padding: var(--batho-space-2) var(--batho-space-3);
+  }
+
+  .tabLabel {
+    font-size: 0.8rem;
+  }
+
+  .monogram {
+    width: 28px;
+    height: 28px;
+    font-size: 0.7rem;
+  }
+
+  .sectionTitle {
+    font-size: 1.5rem;
+  }
+
+  .sectionSubtitle {
+    font-size: 1rem;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .agentIntegration {
+    padding: var(--batho-space-12) var(--batho-space-3);
+  }
+
+  .sectionSubtitle {
+    font-size: 0.95rem;
+  }
+
+  .tabBar {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .tabBar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tabButton {
+    padding: var(--batho-space-2) var(--batho-space-3);
+  }
+
+  .tabPanel {
+    padding: var(--batho-space-4);
+  }
+
+  .panelGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panelConfig {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .agentName {
+    font-size: 1.25rem;
+  }
+
+  .agentTagline {
+    font-size: 0.9rem;
+  }
+
+  .benefitText {
+    font-size: 0.85rem;
+  }
+
+  .configPre {
+    padding: var(--batho-space-3);
+  }
+
+  .configCode {
+    font-size: 0.7rem;
+  }
+}

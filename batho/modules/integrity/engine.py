@@ -237,7 +237,7 @@ class FixEngine:
                                 Issue(
                                     type="runner_error",
                                     severity=Severity.ERROR,
-                                    table="sqlite_master",
+                                    table="arrow_bundle",
                                     identifier={},
                                     description=f"Phase execution crashed: {e}",
                                 )

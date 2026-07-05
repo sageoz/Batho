@@ -1,4 +1,4 @@
-"""Pydantic models for Batho v1.1.0 configuration."""
+"""Pydantic models for Batho v1.2.0 configuration."""
 
 from __future__ import annotations
 
@@ -103,6 +103,10 @@ class GraphConfig(BaseModel):
     orphan_pruning: GraphOrphanPruningConfig = Field(
         default_factory=GraphOrphanPruningConfig
     )
+
+
+class CommunityDetectionConfig(BaseModel):
+    enabled: bool = Field(default=True)
 
 
 class FlagsConfig(BaseModel):
@@ -254,6 +258,9 @@ class Config(BaseModel):
     bsg: BsgConfig = Field(default_factory=BsgConfig)
     dependency: DependencyConfig = Field(default_factory=DependencyConfig)
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
+    community_detection: CommunityDetectionConfig = Field(
+        default_factory=CommunityDetectionConfig
+    )
 
     @field_validator("logging")
     @classmethod

@@ -1,7 +1,7 @@
 ---
 sidebar_position: 2
 title: "Installation"
-description: "Install Batho via pip, uv, or from source"
+description: "Install Batho via pip, uv, pipx, or from source"
 ---
 
 # Installation
@@ -9,8 +9,9 @@ description: "Install Batho via pip, uv, or from source"
 ## PyPI Install
 
 ```bash
-pip install batho          # pip
-uv pip install batho       # uv
+pip install batho          # pip (or: python -m pip install batho / python3 -m pip install batho)
+uv pip install batho       # uv (faster alternative)
+pipx install batho         # pipx (isolated global CLI install)
 pip install -e .           # development (editable)
 ```
 

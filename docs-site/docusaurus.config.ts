@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'BATHO',
-  tagline: 'Reduce token spend and hallucinations. Index your codebase into a graph your AI agents can navigate.',
+  tagline: 'Give your AI coding agent a map of your codebase. Reduce token spend, eliminate hallucinations, and ship faster with graph-powered code intelligence.',
   favicon: 'img/batho-logo.svg',
 
   future: {
@@ -59,7 +59,7 @@ const config: Config = {
     },
     announcementBar: {
       id: 'v1-release',
-      content: 'Batho v1.1.0 is now available! 🎉 Check out the <a href="/docs/whitepaper">Whitepaper</a> for complete documentation.',
+      content: 'Batho v1.2.0 is now available! 🎉 Check out the <a href="/docs/whitepaper">Whitepaper</a> for complete documentation.',
       backgroundColor: '#2563EB',
       textColor: '#ffffff',
       isCloseable: true,
@@ -79,33 +79,15 @@ const config: Config = {
         },
         {
           type: 'docSidebar',
+          sidebarId: 'mcpSidebar',
+          position: 'left',
+          label: 'MCP',
+        },
+        {
+          type: 'docSidebar',
           sidebarId: 'whitepaperSidebar',
           position: 'left',
           label: 'Whitepaper',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'cliSidebar',
-          position: 'left',
-          label: 'CLI',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'testsSidebar',
-          position: 'left',
-          label: 'Tests',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'benchmarksSidebar',
-          position: 'left',
-          label: 'Benchmarks',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'cicdSidebar',
-          position: 'left',
-          label: 'CI/CD',
         },
         {
           href: 'https://github.com/sageoz/batho',
@@ -123,12 +105,25 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Docs',
+          title: 'Get Started',
           items: [
             {
-              label: 'Getting Started',
+              label: 'Quick Start',
               to: '/docs/getting-started/quick-start',
             },
+            {
+              label: 'Setup with AI Agent',
+              to: '/docs/getting-started/skill-setup',
+            },
+            {
+              label: 'MCP Server',
+              to: '/docs/mcp',
+            },
+          ],
+        },
+        {
+          title: 'Reference',
+          items: [
             {
               label: 'Whitepaper',
               to: '/docs/whitepaper',
@@ -136,6 +131,10 @@ const config: Config = {
             {
               label: 'CLI Reference',
               to: '/docs/cli-reference',
+            },
+            {
+              label: 'CI/CD',
+              to: '/docs/cicd',
             },
           ],
         },
@@ -149,15 +148,6 @@ const config: Config = {
             {
               label: 'PyPI',
               href: 'https://pypi.org/project/batho/',
-            },
-          ],
-        },
-        {
-          title: 'Legal',
-          items: [
-            {
-              label: 'License',
-              href: 'https://github.com/sageoz/batho/blob/main/LICENSE',
             },
           ],
         },

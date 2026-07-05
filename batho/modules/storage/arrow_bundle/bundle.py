@@ -505,10 +505,15 @@ class BathoBundle:
             file_path = tr["file_path"]
             content_hash = tr.get("content_hash", "")
 
-            agent_rows = self._reader._slice_for_file("agent_views", file_id)
-            rels_rows: list[dict] = []
-            if include_relationships:
-                rels_rows = self._reader._slice_for_file("rels_views", file_id)
+            artifacts = self._reader.get_file_artifacts_by_id(
+                file_id, include_storage=include_storage
+            )
+            agent_rows = artifacts.get("agent_view", [])
+            rels_rows = artifacts.get("rels_view", []) if include_relationships else []
+            storage_by_id: dict[str, dict] = {}
+            if include_storage:
+                storage_rows = artifacts.get("storage_view", [])
+                storage_by_id = {r.get("entity_id"): r for r in storage_rows}
 
             entities: list[dict] = []
             for row in agent_rows:
@@ -525,8 +530,6 @@ class BathoBundle:
                     "fqn": row.get("fqn"),
                 }
                 if include_storage:
-                    storage_rows = self._reader._slice_for_file("storage_views", file_id)
-                    storage_by_id = {r.get("entity_id"): r for r in storage_rows}
                     sr = storage_by_id.get(ent["id"])
                     if sr:
                         ent["raw_content"] = sr.get("raw_content")
@@ -595,6 +598,7 @@ class BathoBundle:
                 "signature": r.get("signature"),
                 "is_exported": r.get("is_exported", False),
                 "fqn": r.get("fqn"),
+                "content_hash": r.get("content_hash"),
             }
             for r in agent_rows
         ]

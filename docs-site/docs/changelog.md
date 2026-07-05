@@ -6,6 +6,39 @@ description: "Batho release history"
 
 # Changelog
 
+## v1.2.0 — 2026-07-05
+
+**MCP server, multi-repo registry, and community detection — Batho becomes an AI agent platform.**
+
+### New Features & Enhancements
+
+- **MCP Server** (`batho mcp`): FastMCP-based stdio server exposing 10 tools for AI agents to query the code graph:
+  - `graph_overview` — high-level codebase summary with entity counts, relationships, and communities
+  - `graph_query` — filtered graph query by file, entity type, relation type, or name pattern
+  - `get_entity` — detailed info for a single entity with relationships and optional source code
+  - `trace_path` — shortest dependency path between two entities (BFS traversal)
+  - `get_file_graph` — all entities and relationships within a single file
+  - `search_entities` — substring/regex search across entity names
+  - `get_delta` — incremental changes from the latest patch
+  - `list_repos` / `add_repo` / `remove_repo` — multi-repo registry management
+- **Multi-Repo Registry**: JSON-based registry at `~/.batho/mcp-repos.json` — one MCP config entry serves all repos. Register repos at runtime via `add_repo` tool.
+- **Community Detection**: Leiden clustering via `leidenalg` + `igraph` — automatically groups related entities into communities for codebase overview.
+- **Dual-Output Architecture**: All MCP tools return both markdown `content` (model-facing, ~34% fewer tokens) and JSON `structuredContent` (machine-facing).
+- **Token Budget Truncation**: Configurable `max_tokens` parameter on graph tools with automatic truncation and reporting.
+- **MCP Prompts**: Workflow-specific prompt templates for agent onboarding (`explore_codebase`, `trace_dependencies`, `security_audit`, `refactor_prep`).
+- **MCP Resources**: Static schema and dynamic repo-list resources accessible via URI references.
+- **Structured Error Handling**: Typed errors (`CLIENT_ERROR`, `EXTERNAL_ERROR`) with retry hints and actionable messages.
+- **SKILL.md**: AI agent setup skill file for automated global install, MCP configuration across Claude Desktop, Cursor, Windsurf, and VS Code.
+- **GitHub Actions Fleet Indexer**: Automated code graph indexing workflow with incremental patching on every push/PR.
+- **New CLI Command**: `batho mcp` — starts the MCP server (8th CLI command).
+- **New Dependencies**: `fastmcp>=2.14.0`, `leidenalg>=0.10`, `python-igraph>=0.11`
+
+### Tests
+
+- **507 tests** (up from 381) — 126 new MCP tests covering tools, prompts, resources, registry, community detection, token budget, and error handling.
+
+---
+
 ## v1.1.0 — 2026-06-10
 
 **Refactored v1.1.0 release focusing on unified configuration, performance, and CLI simplicity.**

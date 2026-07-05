@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "batho"
-version = "1.1.0"
+version = "1.2.0"
 description = "Enterprise-grade multi-language source code indexer and semantic code intelligence engine powered by tree-sitter AST parsing, BSG compression, and relational code graph snapshots."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
 authors = [
-    { name = "Batho", email = "hello@sageoz.org" },
+    { name = "Sageoz Team", email = "hello@sageoz.org" },
 ]
 keywords = [
     "code-indexer",

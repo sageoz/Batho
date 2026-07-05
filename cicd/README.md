@@ -1,6 +1,6 @@
 # cicd/ — Batho CI/CD Assets
 
-This directory contains production-ready CI/CD integrations for Batho v1.1.0. Files are kept here for reference and packaging; the canonical activation paths are documented below.
+This directory contains production-ready CI/CD integrations for Batho v1.2.0. Files are kept here for reference and packaging; the canonical activation paths are documented below.
 
 ## Contents
 
@@ -51,4 +51,4 @@ After moving, update paths in `action.yml` to remove the parked subdirectory loo
   uv pip install --python "${UV_PROJECT_ENVIRONMENT}" "${ACTION_PATH}"
   ```
 
-Tag a release (e.g. `v1.1.0`) and smoke test from a scratch repository.
+Tag a release (e.g. `v1.2.0`) and smoke test from a scratch repository.

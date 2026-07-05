@@ -1,4 +1,4 @@
-# Batho unified root configuration — v1.1.0
+# Batho unified root configuration — v1.2.0
 # Copy this file to ./batho.yaml and edit values for your environment.
 # All state is persisted in a single SQLite artifact: artifact_<dirname>.batho
 schema_version: batho-config.v1

@@ -20,11 +20,65 @@ const sidebars: SidebarsConfig = {
       label: 'Getting Started',
       items: [
         'getting-started/quick-start',
+        'getting-started/skill-setup',
         'getting-started/installation',
         'getting-started/configuration',
       ],
     },
-
+    {
+      type: 'category',
+      label: 'CLI Reference',
+      link: {
+        type: 'doc',
+        id: 'cli-reference/index',
+      },
+      items: [
+        'cli-reference/build-cmd',
+        'cli-reference/patch-cmd',
+        'cli-reference/export-cmd',
+        'cli-reference/load-cmd',
+        'cli-reference/fix-cmd',
+        'cli-reference/diff-cmd',
+        'cli-reference/gc-cmd',
+        'cli-reference/mcp-cmd',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'CI/CD',
+      link: {
+        type: 'doc',
+        id: 'cicd/index',
+      },
+      items: [
+        'cicd/github-actions',
+        'cicd/gitlab-ci',
+        'cicd/composite-action',
+        'cicd/reusable-workflow',
+        'cicd/starter-template',
+        'cicd/fleet-indexer',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Tests & Benchmarks',
+      items: [
+        {
+          type: 'category',
+          label: 'Tests',
+          link: {
+            type: 'doc',
+            id: 'tests/index',
+          },
+          items: [
+            'tests/orchestrator',
+            'tests/modules',
+            'tests/utils',
+          ],
+        },
+        'benchmarks/index',
+      ],
+    },
     {
       type: 'category',
       label: 'Contributing',
@@ -64,61 +118,20 @@ const sidebars: SidebarsConfig = {
     },
   ],
 
-  cliSidebar: [
+  mcpSidebar: [
     {
       type: 'category',
-      label: 'CLI Reference',
+      label: 'MCP Server',
       link: {
         type: 'doc',
-        id: 'cli-reference/index',
+        id: 'mcp/index',
       },
       items: [
-        'cli-reference/build-cmd',
-        'cli-reference/patch-cmd',
-        'cli-reference/export-cmd',
-        'cli-reference/load-cmd',
-        'cli-reference/fix-cmd',
-        'cli-reference/diff-cmd',
-        'cli-reference/gc-cmd',
-      ],
-    },
-  ],
-
-  testsSidebar: [
-    {
-      type: 'category',
-      label: 'Tests',
-      link: {
-        type: 'doc',
-        id: 'tests/index',
-      },
-      items: [
-        'tests/orchestrator',
-        'tests/modules',
-        'tests/utils',
-      ],
-    },
-  ],
-
-  benchmarksSidebar: [
-    'benchmarks/index',
-  ],
-
-  cicdSidebar: [
-    {
-      type: 'category',
-      label: 'CI/CD',
-      link: {
-        type: 'doc',
-        id: 'cicd/index',
-      },
-      items: [
-        'cicd/github-actions',
-        'cicd/gitlab-ci',
-        'cicd/composite-action',
-        'cicd/reusable-workflow',
-        'cicd/starter-template',
-        'cicd/fleet-indexer',
+        'mcp/setup',
+        'mcp/single-repo',
+        'mcp/multi-repo',
+        'mcp/tools-reference',
+        'mcp/prompts-reference',
       ],
     },
   ],

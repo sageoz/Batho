@@ -1,14 +1,14 @@
 ---
 sidebar_position: 1
 title: "Whitepaper Overview"
-description: "Batho v1.1.0 Technical Whitepaper — Bidirectional AST Traversal & Hypergraph Orchestrator"
+description: "Batho v1.2.0 Technical Whitepaper — Bidirectional AST Traversal & Hypergraph Orchestrator"
 ---
 
-# Batho v1.1.0 Technical Whitepaper
+# Batho v1.2.0 Technical Whitepaper
 
 ## Bidirectional AST Traversal & Hypergraph Orchestrator
 
-**Document Version:** 1.1.0  
+**Document Version:** 1.2.0  
 **Date:** June 2026  
 **Classification:** Public — Enterprise Technical Reference  
 **Author:** Batho Core Team  
@@ -18,7 +18,7 @@ description: "Batho v1.1.0 Technical Whitepaper — Bidirectional AST Traversal 
 
 ## Executive Summary
 
-Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic, production-grade code intelligence engine that transforms raw codebases into queryable, time-aware structured hypergraphs. Version 1.1.0 delivers a unified configuration schema (`batho.yaml`), a high-performance Arrow IPC Bundle storage format, lossless bidirectional traversal support, and a streamlined 7-command CLI interface. Batho is designed for polyglot enterprises managing millions of lines of code across hundreds of repositories.
+Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic, production-grade code intelligence engine that transforms raw codebases into queryable, time-aware structured hypergraphs. Version 1.2.0 delivers a unified configuration schema (`batho.yaml`), a high-performance Arrow IPC Bundle storage format, lossless bidirectional traversal support, and a streamlined 8-command CLI interface. Batho is designed for polyglot enterprises managing millions of lines of code across hundreds of repositories.
 
 **Key Value Propositions**
 
@@ -27,7 +27,7 @@ Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic
 | Supported Languages | 40+ via tree-sitter |
 | Context Compression | Up to 10x for LLM injection |
 | Incremental Patch Speed | 10–100x faster than full re-index |
-| Test Coverage | 381 automated tests |
+| Test Coverage | 507 automated tests |
 | Cache Hit Rate | >95% on typical PR-sized changes |
 | Snapshot Retention | 90 days default, configurable |
 | Max Indexed Files | 200,000 per repository |
@@ -70,7 +70,7 @@ flowchart TB
     style Output fill:#fff3e0,stroke:#f57c00,stroke-width:2px
 ```
 
-**Figure 1: Batho v1.1.0 System Architecture Overview** - High-level data flow from source inputs through the core engine to consumption interfaces.
+**Figure 1: Batho v1.2.0 System Architecture Overview** - High-level data flow from source inputs through the core engine to consumption interfaces.
 
 ---
 
@@ -78,7 +78,7 @@ flowchart TB
 
 | Figure | Title | Section |
 |--------|-------|---------|
-| Figure 1 | Batho v1.1.0 System Architecture Overview | Overview |
+| Figure 1 | Batho v1.2.0 System Architecture Overview | Overview |
 | Figure 2 | High-Level System Architecture | Architecture Overview |
 | Figure 3 | Data Flow Pipeline | Architecture Overview |
 | Figure 4 | Subsystem Interactions | Core Subsystems |
@@ -135,6 +135,7 @@ flowchart TB
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.2.0 | 2026-07-05 | Batho Core Team | Added MCP Server, multi-repo registry, community detection, prompts/resources, SKILL.md |
 | 1.1.1 | 2026-06-29 | Batho Core Team | Added Storage, Dependency, Integrity, and Infrastructure sections; added BSG plugin catalog; renumbered sections |
 | 1.1.0 | 2026-06-10 | Batho Core Team | Refactored to v1.1.0 (unified batho.yaml, 7 CLI commands, Arrow IPC format, removed legacy subsystems) |
 | 1.0.0 | 2026-05-17 | Batho Core Team | Initial whitepaper for Batho v1 |

@@ -19,6 +19,8 @@ Batho is composed of tightly-integrated subsystems that work together to provide
 | **Storage Registry** | Arrow IPC database manager, BSG scratch store, and unified cache | Production |
 | **Integrity Verification** | Database checker, repair engine, and report generation | Production |
 | **Orchestrator Layer** | High-level command implementations (build, patch, export, load, gc) | Production |
+| **Community Detection** | Leiden-clustering based code network grouping | Production |
+| **MCP Server** | Model Context Protocol server exposing code graph capabilities | Production |
 | **Shared Utilities** | Hashing, file I/O, encoding, ignore patterns, logging, path sanitization, memory monitoring | Production |
 | **CLI Command Suite** | Command interface parsing and subcommand orchestration | Production |
 
@@ -39,6 +41,7 @@ Batho is composed of tightly-integrated subsystems that work together to provide
 |-------|------------|---------|
 | CLI Framework | argparse (stdlib) | Command-line interface |
 | Data Export | JSON / Pretty | Programmatic data output |
+| MCP Protocol | FastMCP | Model Context Protocol server (stdio) |
 
 ### Data Layer
 

@@ -21,7 +21,7 @@ import structlog
 
 LOGGER = structlog.get_logger(__name__)
 
-BATHO_MCP_VERSION = "1.1.0"
+BATHO_MCP_VERSION = "1.2.0"
 
 
 def create_app(

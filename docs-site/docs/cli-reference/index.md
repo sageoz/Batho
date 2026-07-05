@@ -25,6 +25,7 @@ batho <command> --help
 | [`fix`](/docs/cli-reference/fix-cmd) | Verify structural consistency and automatically repair database integrity issues. |
 | [`diff`](/docs/cli-reference/diff-cmd) | Track granular node evolution and print node-level diff history across runs, files, or entities. |
 | [`gc`](/docs/cli-reference/gc-cmd) | Clean up old runs, sweep orphaned files, and vacuum the Arrow IPC database. |
+| [`mcp`](/docs/cli-reference/mcp-cmd) | Start the Batho MCP server for AI agent integration. |
 
 ## Global CLI Flags
 

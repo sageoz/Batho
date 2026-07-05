@@ -432,7 +432,7 @@
 
 .quickStartInner {
   text-align: center;
-  max-width: 560px;
+  max-width: 800px;
   margin: 0 auto;
 }
 
@@ -507,18 +507,145 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
 }
 
+.quickStartGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--batho-space-6);
+  text-align: left;
+  margin-top: var(--batho-space-8);
+}
+
+@media screen and (min-width: 997px) {
+  .quickStartGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.quickStartCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--batho-space-3);
+  background: var(--batho-surface-0);
+  border: 1px solid var(--batho-surface-3);
+  border-radius: 16px;
+  padding: var(--batho-space-6);
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+
+.quickStartCardPrimary {
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 4px 24px rgba(37, 99, 235, 0.08);
+}
+
+[data-theme='dark'] .quickStartCardPrimary {
+  box-shadow: 0 4px 24px rgba(96, 165, 250, 0.1);
+}
+
+.quickStartBadge {
+  display: inline-block;
+  position: absolute;
+  top: -10px;
+  left: var(--batho-space-4);
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #fff;
+  background: var(--ifm-color-primary);
+  border-radius: 6px;
+  padding: 3px 10px;
+}
+
+.quickStartCardTitle {
+  font-family: var(--ifm-heading-font-family);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--ifm-font-color-base);
+  margin: 0;
+  padding-right: var(--batho-space-2);
+}
+
+.quickStartCardDesc {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-600);
+  margin: 0;
+}
+
+.quickStartCard .quickStartCodeBlock {
+  display: flex;
+  align-items: center;
+  gap: var(--batho-space-3);
+  overflow-x: auto;
+  max-width: 100%;
+  background: var(--batho-surface-0);
+  border: 1px solid var(--batho-surface-3);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: none;
+}
+
+.quickStartCard .quickStartCodeBlock:hover {
+  box-shadow: none;
+  border-color: var(--batho-surface-3);
+}
+
+.quickStartCard .quickStartCode {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: break-word;
+  font-size: 13px;
+}
+
+.quickStartHint {
+  font-size: 0.85rem;
+  color: var(--ifm-color-emphasis-600);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.quickStartInlineCode {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+  background: var(--batho-surface-2);
+  border: 1px solid var(--batho-surface-3);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--ifm-font-color-base);
+  word-break: break-word;
+}
+
+.quickStartLink {
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ifm-color-primary);
+  text-decoration: none;
+  margin-top: auto;
+  transition: color var(--batho-duration-fast) var(--batho-ease-out);
+}
+
+.quickStartLink:hover {
+  color: var(--ifm-color-primary-dark);
+  text-decoration: none;
+}
+
 /* ------------------------------------------------------------------
    Workflow Section
    ------------------------------------------------------------------ */
 .workflow {
-  padding: var(--batho-space-20) 0;
+  padding: var(--batho-space-20) var(--batho-space-3);
   background: var(--batho-surface-0);
   border-top: 1px solid var(--batho-surface-3);
+  overflow-x: hidden;
 }
 
 .workflowSectionTitle {
   font-family: var(--ifm-heading-font-family);
-  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
   font-weight: 700;
   text-align: center;
   letter-spacing: -0.02em;
@@ -527,31 +654,46 @@
 }
 
 .workflowSectionSubtitle {
-  font-size: 1.125rem;
+  font-size: 1.05rem;
   text-align: center;
   color: var(--ifm-color-emphasis-600);
-  margin-bottom: var(--batho-space-12);
+  margin-bottom: var(--batho-space-10);
   max-width: 480px;
   margin-left: auto;
   margin-right: auto;
+  line-height: 1.6;
 }
 
 .workflowGrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--batho-space-6);
+  grid-template-columns: 1fr;
+  gap: var(--batho-space-4);
+}
+
+@media screen and (min-width: 768px) {
+  .workflowGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media screen and (min-width: 997px) {
+  .workflowGrid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--batho-space-6);
+  }
 }
 
 .workflowStep {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  padding: var(--batho-space-6);
+  padding: var(--batho-space-5);
   background: var(--batho-surface-1);
   border: 1px solid var(--batho-surface-3);
-  border-radius: 16px;
+  border-radius: 14px;
   transition: transform var(--batho-duration-base) var(--batho-ease-out),
               box-shadow var(--batho-duration-base) var(--batho-ease-out);
+  min-width: 0;
 }
 
 .workflowStep:hover {
@@ -562,24 +704,24 @@
 
 .workflowNumber {
   font-family: var(--ifm-heading-font-family);
-  font-size: 2.5rem;
+  font-size: 2rem;
   font-weight: 700;
   color: var(--ifm-color-primary);
   opacity: 0.3;
   line-height: 1;
-  margin-bottom: var(--batho-space-4);
+  margin-bottom: var(--batho-space-3);
 }
 
 .workflowTitle {
   font-family: var(--ifm-heading-font-family);
-  font-size: 1.25rem;
+  font-size: 1.15rem;
   font-weight: 600;
   margin-bottom: var(--batho-space-2);
   color: var(--ifm-font-color-base);
 }
 
 .workflowDesc {
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   line-height: 1.6;
   color: var(--ifm-color-emphasis-600);
   margin-bottom: var(--batho-space-4);
@@ -588,7 +730,7 @@
 
 .workflowCode {
   font-family: var(--ifm-font-family-monospace);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--ifm-color-emphasis-700);
   background: var(--batho-surface-2);
   padding: var(--batho-space-2) var(--batho-space-3);
@@ -596,6 +738,7 @@
   border: 1px solid var(--batho-surface-3);
   width: 100%;
   overflow-x: auto;
+  white-space: nowrap;
 }
 
 .workflowCode code {
@@ -608,14 +751,15 @@
    Benefits Section
    ------------------------------------------------------------------ */
 .benefits {
-  padding: var(--batho-space-20) 0;
+  padding: var(--batho-space-20) var(--batho-space-3);
   background: var(--batho-surface-0);
   border-top: 1px solid var(--batho-surface-3);
+  overflow-x: hidden;
 }
 
 .benefitsTitle {
   font-family: var(--ifm-heading-font-family);
-  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
   font-weight: 700;
   text-align: center;
   letter-spacing: -0.02em;
@@ -624,19 +768,33 @@
 }
 
 .benefitsSubtitle {
-  font-size: 1.125rem;
+  font-size: 1.05rem;
   text-align: center;
   color: var(--ifm-color-emphasis-600);
-  margin-bottom: var(--batho-space-12);
+  margin-bottom: var(--batho-space-10);
   max-width: 520px;
   margin-left: auto;
   margin-right: auto;
+  line-height: 1.6;
 }
 
 .benefitsGrid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--batho-space-6);
+  grid-template-columns: 1fr;
+  gap: var(--batho-space-4);
+}
+
+@media screen and (min-width: 768px) {
+  .benefitsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media screen and (min-width: 997px) {
+  .benefitsGrid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--batho-space-6);
+  }
 }
 
 .benefitCard {
@@ -644,13 +802,14 @@
   flex-direction: column;
   align-items: flex-start;
   text-align: left;
-  padding: var(--batho-space-8);
+  padding: var(--batho-space-6);
   background: var(--batho-surface-1);
   border: 1px solid var(--batho-surface-3);
-  border-radius: 16px;
+  border-radius: 14px;
   transition: transform var(--batho-duration-base) var(--batho-ease-out),
               box-shadow var(--batho-duration-base) var(--batho-ease-out),
               border-color var(--batho-duration-fast) var(--batho-ease-out);
+  min-width: 0;
 }
 
 .benefitCard:hover {
@@ -668,9 +827,9 @@
 }
 
 .benefitIconWrap {
-  height: 48px;
-  width: 48px;
-  margin-bottom: var(--batho-space-4);
+  height: 44px;
+  width: 44px;
+  margin-bottom: var(--batho-space-3);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -678,11 +837,12 @@
   border-radius: 12px;
   border: 1px solid rgba(37, 99, 235, 0.15);
   transition: background 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+  flex-shrink: 0;
 }
 
 .benefitIconWrap svg {
-  height: 24px;
-  width: 24px;
+  height: 22px;
+  width: 22px;
   stroke: var(--ifm-color-primary);
   stroke-width: 1.5;
 }
@@ -695,7 +855,7 @@
 
 .benefitCardTitle {
   font-family: var(--ifm-heading-font-family);
-  font-size: 1.25rem;
+  font-size: 1.15rem;
   font-weight: 600;
   letter-spacing: -0.01em;
   margin-bottom: var(--batho-space-2);
@@ -703,7 +863,7 @@
 }
 
 .benefitCardDesc {
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   line-height: 1.6;
   color: var(--ifm-color-emphasis-600);
   margin: 0;
@@ -713,25 +873,45 @@
    Metrics Section
    ------------------------------------------------------------------ */
 .metrics {
-  padding: var(--batho-space-16) 0;
+  padding: var(--batho-space-16) var(--batho-space-3);
   background: var(--batho-surface-1);
   border-top: 1px solid var(--batho-surface-3);
+  overflow-x: hidden;
 }
 
 .metricsGrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--batho-space-6);
+  grid-template-columns: 1fr;
+  gap: var(--batho-space-4);
+}
+
+@media screen and (min-width: 480px) {
+  .metricsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media screen and (min-width: 768px) {
+  .metricsGrid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media screen and (min-width: 997px) {
+  .metricsGrid {
+    grid-template-columns: repeat(5, 1fr);
+  }
 }
 
 .metricCard {
   text-align: center;
-  padding: var(--batho-space-6);
+  padding: var(--batho-space-5);
   background: var(--batho-surface-0);
   border: 1px solid var(--batho-surface-3);
-  border-radius: 16px;
+  border-radius: 14px;
   transition: transform var(--batho-duration-base) var(--batho-ease-out),
               box-shadow var(--batho-duration-base) var(--batho-ease-out);
+  min-width: 0;
 }
 
 .metricCard:hover {
@@ -742,7 +922,7 @@
 
 .metricValue {
   font-family: var(--ifm-heading-font-family);
-  font-size: clamp(2rem, 4vw, 3rem);
+  font-size: clamp(1.75rem, 4vw, 3rem);
   font-weight: 700;
   background: linear-gradient(135deg, var(--ifm-color-primary) 0%, var(--batho-accent) 100%);
   -webkit-background-clip: text;
@@ -753,14 +933,14 @@
 }
 
 .metricLabel {
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--ifm-font-color-base);
   margin-bottom: var(--batho-space-1);
 }
 
 .metricDesc {
-  font-size: 0.875rem;
+  font-size: 0.85rem;
   color: var(--ifm-color-emphasis-500);
 }
 
@@ -878,6 +1058,10 @@
     font-size: 2rem;
   }
 
+  .heroSubtitle {
+    font-size: 0.95rem;
+  }
+
   .buttons {
     flex-direction: column;
     width: 100%;
@@ -888,62 +1072,104 @@
     justify-content: center;
   }
 
-  .terminalPre {
-    font-size: 12px;
+  .terminalWrapper {
+    padding: 0 8px;
   }
 
-  .terminalTitle {
+  .terminalBody {
+    height: 180px;
+    padding: 12px 14px 16px;
+  }
+
+  .terminalPre {
     font-size: 11px;
   }
 
-  .trafficLight {
-    width: 11px;
-    height: 11px;
+  .terminalTitle {
+    font-size: 10px;
   }
 
-  .quickStartCodeBlock {
+  .trafficLight {
+    width: 10px;
+    height: 10px;
+  }
+
+  .trafficLights {
+    gap: 7px;
+  }
+
+  .quickStart {
+    padding: var(--batho-space-12) var(--batho-space-3);
+  }
+
+  .quickStartGrid {
+    gap: var(--batho-space-5);
+    margin-top: var(--batho-space-6);
+  }
+
+  .quickStartCard {
+    padding: var(--batho-space-5);
+    border-radius: 14px;
+  }
+
+  .quickStartCardTitle {
+    font-size: 1.05rem;
+  }
+
+  .quickStartCardDesc {
+    font-size: 0.85rem;
+  }
+
+  .quickStartCard .quickStartCodeBlock {
     flex-direction: column;
+    align-items: flex-start;
     gap: var(--batho-space-2);
-    padding: 12px 16px;
+    padding: 10px 12px;
+  }
+
+  .quickStartCard .quickStartCode {
+    font-size: 12px;
     width: 100%;
   }
 
   .quickStartCopy {
+    align-self: flex-end;
     margin-left: 0;
-    width: 100%;
+    width: auto;
+    padding: 4px 10px;
+    font-size: 11px;
   }
 
-  /* Workflow responsive */
-  .workflowGrid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: var(--batho-space-4);
+  .quickStartHint {
+    font-size: 0.8rem;
   }
 
-  .benefitsGrid {
-    grid-template-columns: 1fr;
-    gap: var(--batho-space-4);
+  .quickStartInlineCode {
+    font-size: 0.75rem;
   }
 
-  .benefits {
-    padding: var(--batho-space-16) 0;
+  .quickStartBadge {
+    font-size: 0.65rem;
+    padding: 2px 8px;
+    top: -8px;
   }
 
+  .quickStartLink {
+    font-size: 0.8rem;
+  }
+
+  .benefits,
   .workflow {
-    padding: var(--batho-space-16) 0;
-  }
-
-  /* Metrics responsive */
-  .metricsGrid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: var(--batho-space-4);
+    padding: var(--batho-space-16) var(--batho-space-3);
   }
 
   .metrics {
-    padding: var(--batho-space-12) 0;
+    padding: var(--batho-space-12) var(--batho-space-3);
   }
 
-  .metricCard {
-    padding: var(--batho-space-4);
+  .workflowSectionSubtitle,
+  .benefitsSubtitle {
+    margin-bottom: var(--batho-space-8);
   }
 
   /* CTA responsive */
@@ -963,24 +1189,70 @@
 }
 
 @media screen and (max-width: 480px) {
-  .workflowGrid {
-    grid-template-columns: 1fr;
+  .benefits,
+  .workflow {
+    padding: var(--batho-space-12) var(--batho-space-3);
+  }
+
+  .metrics {
+    padding: var(--batho-space-10) var(--batho-space-3);
   }
 
   .workflowStep {
     padding: var(--batho-space-4);
+    border-radius: 12px;
+  }
+
+  .workflowNumber {
+    font-size: 1.75rem;
+  }
+
+  .workflowTitle {
+    font-size: 1.05rem;
+  }
+
+  .workflowDesc {
+    font-size: 0.85rem;
+  }
+
+  .workflowCode {
+    font-size: 0.7rem;
   }
 
   .benefitCard {
-    padding: var(--batho-space-6) var(--batho-space-4);
+    padding: var(--batho-space-5);
+    border-radius: 12px;
   }
 
-  .metricsGrid {
-    grid-template-columns: 1fr;
+  .benefitCardTitle {
+    font-size: 1.05rem;
+  }
+
+  .benefitCardDesc {
+    font-size: 0.85rem;
+  }
+
+  .benefitIconWrap {
+    height: 40px;
+    width: 40px;
+  }
+
+  .benefitIconWrap svg {
+    height: 20px;
+    width: 20px;
   }
 
   .metricCard {
     padding: var(--batho-space-4);
+    border-radius: 12px;
+  }
+
+  .metricLabel {
+    font-size: 0.9rem;
+  }
+
+  .metricDesc {
+    font-size: 0.8rem;
   }
 
   .heroOrb1,

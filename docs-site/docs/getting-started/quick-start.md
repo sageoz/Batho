@@ -6,12 +6,13 @@ description: "Get Batho running in 30 seconds"
 
 # Quick Start
 
+> **Tip**  
+> **Setup with your AI Agent**  
+> Prefer to let your AI agent handle setup? Give it the [Batho Setup Skill](https://github.com/sageoz/batho/blob/main/SKILL.md) — your agent installs Batho, builds the graph, and configures MCP automatically. See [Setup with AI Agent Skill](/docs/getting-started/skill-setup).
+
 Get running in 30 seconds:
 
 ```bash
-# Install
-uv add batho
-# or
 pip install batho
 
 # Build full code graph for your repository (baseline)
@@ -48,5 +49,6 @@ Batho scans your codebase, extracts every function, class, import, and relations
 
 - [Installation](/docs/getting-started/installation) - Detailed installation options
 - [Configuration](/docs/getting-started/configuration) - Configure Batho for your needs
+- [MCP Server](/docs/mcp) - Set up AI agent integration via Model Context Protocol
 - [CLI Reference](/docs/cli-reference) - Complete command documentation
 - [Whitepaper](/docs/whitepaper) - Deep technical reference

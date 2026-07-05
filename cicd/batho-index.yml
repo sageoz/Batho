@@ -5,7 +5,7 @@ name: Batho Index (reusable)
 #
 #   jobs:
 #     batho:
-#       uses: sageoz/batho/.github/workflows/batho-index.yml@v1.1.0
+#       uses: sageoz/batho/.github/workflows/batho-index.yml@v1.2.0
 #       with:
 #         root: "."
 #
@@ -99,7 +99,7 @@ jobs:
 
       - name: Run Batho
         id: batho
-        uses: sageoz/batho@v1.1.0
+        uses: sageoz/batho@v1.2.0
         with:
           root: ${{ inputs.root }}
           python-version: ${{ inputs.python-version }}

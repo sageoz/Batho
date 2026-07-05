@@ -5,211 +5,155 @@
 <h1 align="center">B.A.T.H.O</h1>
 
 <p align="center">
-  Reduce token spend and hallucinations by indexing your codebase into a graph your AI agents can navigate without dumping whole repositories into the context.
+  Give your AI coding agent a map of your codebase — not the whole territory.<br>
+  Reduce token spend 10x, eliminate hallucinations, and ship faster with graph-powered code intelligence.
 </p>
 
 <p align="center">
   <a href="https://pypi.org/project/batho/"><img src="https://img.shields.io/pypi/v/batho?color=blue" alt="PyPI"></a>
   <a href="https://github.com/sageoz/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   <a href="https://batho.sageoz.org"><img src="https://img.shields.io/badge/docs-batho.sageoz.org-green" alt="Documentation"></a>
+  <a href="https://github.com/sageoz/batho/stargazers"><img src="https://img.shields.io/github/stars/sageoz/batho?style=flat" alt="Stars"></a>
 </p>
+
+<p align="center">
+  <strong>Works with:</strong>
+  Claude Code &middot; Cursor &middot; Windsurf &middot; Antigravity &middot; Gemini CLI &middot; Cline &middot; OpenCode &middot; Aider
+</p>
+
+---
+
+## Quick Setup
+
+The fastest way to set up Batho: **give the skill file to your AI agent** and let it do everything for you.
+
+### 1. Download the skill file
+
+```bash
+curl -O https://raw.githubusercontent.com/sageoz/batho/main/SKILL.md
+```
+
+### 2. Give it to your AI agent
+
+Paste this into your agent's chat (Claude Code, Cursor, Windsurf, or any agent that supports skills):
+
+```
+Read SKILL.md and set up Batho for this repo
+```
+
+### 3. Your agent handles the rest
+
+- Installs Batho globally (pip / uv / pipx)
+- Builds the code graph for your repository
+- Auto-detects all installed AI clients (Claude Desktop, Cursor, Windsurf, VS Code)
+- Configures MCP for each client
+- Verifies the setup works end-to-end
+
+No manual JSON editing. No config file hunting. Your agent does it all.
+
+> **Multi-repo?** Your agent can register multiple repos via the MCP registry — one config serves all. See the [Multi-Repo Guide](https://batho.sageoz.org/docs/mcp/multi-repo).
+
+<details>
+<summary>Manual Setup (CLI)</summary>
+
+Prefer the terminal? Batho works with zero config:
+
+```bash
+# Install
+pip install batho
+
+# Build the code graph
+batho build --root . --verbose
+
+# Start the MCP server
+batho mcp
+```
+
+Then add to your agent's MCP config:
+
+```json
+{
+  "mcpServers": {
+    "batho": { "command": "batho", "args": ["mcp"] }
+  }
+}
+```
+
+Full setup guide: **[docs](https://batho.sageoz.org/docs/mcp/setup)**
+
+</details>
 
 ---
 
 ## Why Batho?
 
-Companies are reducing AI usage because token spend is getting pricey — before even accounting for hallucinations that erode result quality. Batho fixes both.
+AI coding agents are powerful — but they burn tokens reading files and hallucinate when context is thin. Batho gives your agent a structured code graph so it works smarter, not harder.
 
-- **Lower token costs** — Your AI agent traverses a graph of entities and relationships instead of reading entire source files. Feed the LLM only what it needs, not the whole repository.
-- **Fewer hallucinations** — Batho extracts deterministic, tree-sitter-parsed syntax relationships from your code. No guessing, no embeddings — your agent works with facts.
-- **More use cases** — When cost is under control and results are trustworthy, the range of what you can automate widens with imagination.
+- **Slash token costs** — Your agent queries a graph instead of reading entire files. 10x fewer tokens per task — no more dumping your repo into the LLM.
+- **Eliminate hallucinations** — Deterministic, tree-sitter-parsed relationships. Your agent gets facts, not guesses — zero hallucinations on structural queries.
+- **Agent superpowers** — Bug tracking, security audits, refactoring, code review — your agent handles more, accurately. When cost and quality are solved, automation widens with imagination.
 
-## Use Cases
+---
 
-- **Bug tracking** — Map bug reports to the exact functions and dependencies involved
-- **Security checks** — Trace data flows and identify vulnerable code paths across files
-- **Code review automation** — Surface relevant context and relationships for every PR
-- **Multi-repo navigation** — Index multiple repositories into one large context graph
-- **Any AI workflow** — If your agent needs to understand code, Batho gives it the map
+## MCP Tools
 
-## Installation
+Batho exposes 10 MCP tools your AI agent can call:
 
-```bash
-pip install batho
-# or
-uv add batho
-```
+| Tool | Purpose |
+|------|---------|
+| `graph_overview` | High-level codebase summary: entities, relationships, communities |
+| `graph_query` | Filtered graph query by file, type, or name pattern |
+| `get_entity` | Detailed info for a single entity + relationships |
+| `trace_path` | Shortest path between two entities (BFS) |
+| `get_file_graph` | All entities and relationships in a file |
+| `search_entities` | Substring/regex search across entity names |
+| `get_delta` | Incremental changes from the latest patch |
+| `list_repos` | List all registered repos with status |
+| `add_repo` | Register a repository in the MCP registry |
+| `remove_repo` | Remove a repository from the registry |
 
-## Quick Start
+Full reference: **[docs](https://batho.sageoz.org/docs/mcp/tools-reference)**
 
-```bash
-# Build full repository index
-batho build --root .
-
-# Incrementally re-index only changed files
-batho patch --root .
-
-# Export a transportable artifact ZIP (artifact_<dir>.batho)
-batho export --root .
-
-# Restore a graph from an artifact ZIP (e.g. downloaded in CI)
-batho load artifact_<dir>.batho
-
-# Query node-level changes for a file across runs
-batho diff --file src/main.py
-
-# Verify and auto-repair artifact integrity
-batho fix --deep
-```
-
-## How It Works
-
-Batho parses your source files into a structured graph of entities and relationships, then packages it into a transportable artifact your AI agent can query. No local parsing required — just build, export, and let your agent navigate the graph.
-
-<details>
-<summary>Technical details</summary>
-
-Batho uses tree-sitter for AST parsing, extracts entities and relationships into a BSG (Batho Semantic Graph), and persists the result as Apache Arrow IPC files. The transport artifact (`artifact_*.batho`) is a zstd-compressed ZIP of those IPC files, designed for zero-copy memory-mapped reads.
-
-</details>
+---
 
 ## Features
 
-- **Spend less on tokens** — 10x compression means your agent uses a fraction of the context window
-- **Works with your stack** — 40+ languages including Python, TypeScript, Rust, Go, Java, C/C++
-- **No hallucinations** — deterministic, tree-sitter-parsed relationships, not embeddings or guesses
+- **40+ languages** — Python, TypeScript, Rust, Go, Java, C/C++ and more via tree-sitter
+- **10x token compression** — your agent uses a fraction of the context window
+- **Zero hallucinations** — deterministic AST-parsed relationships, not embeddings or guesses
 - **Fast incremental updates** — hash-based change detection re-parses only modified files
 - **Cross-file symbol resolution** — your agent sees how functions, classes, and dependencies connect
 - **38 built-in analysis plugins** — security, quality, and optimization rules with custom rule support
-- **Track codebase evolution** — node-level diff history across every indexed run
+- **Time-machine** — node-level diff history across every indexed run
 - **Zero code execution** — safe to run in CI or on untrusted repositories
+- **MCP-native** — works with 8 AI coding agents out of the box
 
-## CLI Reference
+---
 
-| Command | Purpose |
-|---|---|
-| `batho build` | Full index build from scratch |
-| `batho patch` | Incremental re-index of changed files |
-| `batho export` | Export transportable artifact ZIP or JSON view |
-| `batho load` | Restore graph from an artifact ZIP |
-| `batho diff` | Query node-level change history |
-| `batho fix` | Verify and repair artifact integrity |
-| `batho gc` | Prune old runs and vacuum storage |
+## CI/CD
 
-Full CLI flags and export views: **[docs](https://batho.sageoz.org/docs/cli-reference)**
+Batho's CI/CD strategy is **incremental**: download the previous artifact → `batho load` → `batho patch` → `batho export` → upload.
 
-## CI/CD Integration
-
-Batho's CI/CD strategy is **incremental**: download the previous artifact → `batho load` → `batho patch` → `batho export` → upload. On first run (no artifact), it falls back to `batho build --full`.
-
-### GitHub Actions — Composite Action (recommended)
-
-The simplest integration. Add to any workflow:
+**GitHub Actions composite action:**
 
 ```yaml
-- name: Checkout
-  uses: actions/checkout@v4
-  with:
-    fetch-depth: 0
-
-- name: Run Batho
-  uses: sageoz/batho@v1.1.0
+- uses: sageoz/batho@v1.2.0
   with:
     root: "."
     artifact-name: "batho-index"
-    artifact-retention-days: "7"
 ```
 
-**Inputs:** `root` · `python-version` · `batho-ref` · `verbose` · `max-workers` · `max-file-size-kb` · `artifact-name` · `artifact-retention-days` · `upload-artifact` · `summary`
+Full CI/CD guides (GitHub Actions, GitLab CI, reusable workflows): **[docs](https://batho.sageoz.org/docs/cicd)**
 
-**Outputs:** `zip-path` · `output-dir` · `index-id`
-
-### GitHub Actions — Manual Workflow
-
-For full control, add `.github/workflows/batho-ci.yml`:
-
-```yaml
-name: Batho Index
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-permissions:
-  actions: read
-  contents: read
-
-jobs:
-  update-code-graph:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Batho
-        run: pip install batho
-
-      - name: Download previous artifact
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          name: batho-database
-          workflow: batho-ci.yml
-          branch: ${{ github.ref_name }}
-        continue-on-error: true
-
-      - name: Build or patch index
-        run: |
-          if ls artifact_*.batho 1>/dev/null 2>&1; then
-            batho load --root . artifact_*.batho --force
-            batho patch --root .
-          else
-            batho build --root . --full
-          fi
-          batho export --root .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: batho-database
-          path: artifact_*.batho
-          retention-days: 90
-```
-
-Full CI/CD guides for GitLab CI, reusable workflows, and AI agent access patterns: **[docs](https://batho.sageoz.org)**
+---
 
 ## Configuration
 
-Batho runs with zero config. To customize, copy [`batho.yaml.example`](batho.yaml.example) to `./batho.yaml`:
+Batho runs with zero config. To customize, copy [`batho.yaml.example`](batho.yaml.example) to `./batho.yaml`.
 
-```yaml
-schema_version: batho-config.v1
+Full configuration reference: **[docs](https://batho.sageoz.org/docs/getting-started/configuration)**
 
-logging:
-  level: ERROR
-
-indexer:
-  max_file_size_kb: 500
-  ignore_patterns: []
-  max_workers: 0
-
-bsg:
-  cache:
-    enabled: true
-    max_size_mb: 1024
-  symbol_resolution:
-    enabled: true
-
-flags:
-  audit_log_enabled: true
-```
-
-See [`batho.yaml.example`](batho.yaml.example) for the full reference.
+---
 
 ## Developer Setup
 
@@ -221,9 +165,24 @@ uv run pytest
 uv run python batho_cli.py --help
 ```
 
+---
+
 ## Documentation
 
-Full documentation, API reference, and guides: **[batho.sageoz.org](https://batho.sageoz.org)**
+- [Quick Start](https://batho.sageoz.org/docs/getting-started/quick-start) — CLI setup guide
+- [Setup with AI Agent Skill](https://batho.sageoz.org/docs/getting-started/skill-setup) — Let your agent set up Batho
+- [MCP Server](https://batho.sageoz.org/docs/mcp) — Connect AI agents to your code graph
+- [Whitepaper](https://batho.sageoz.org/docs/whitepaper) — Deep technical reference
+- [CLI Reference](https://batho.sageoz.org/docs/cli-reference) — Complete command documentation
+- [CI/CD](https://batho.sageoz.org/docs/cicd) — GitHub Actions, GitLab CI, and more
+
+---
+
+## Acknowledgments
+
+Co-authored with [Devin](https://devin.ai) — autonomous AI software engineer by Cognition.
+
+---
 
 ## License
 

@@ -25,7 +25,7 @@ const FeatureList: FeatureItem[] = [
     description: (
       <>
         Python, TypeScript, Rust, Go, Java, and more. Batho parses 40+ languages
-        so your agent understands your entire codebase.
+        so your AI agent understands your entire codebase — no blind spots.
       </>
     ),
     link: '/docs/whitepaper/code-graph',
@@ -112,6 +112,23 @@ const FeatureList: FeatureItem[] = [
       </>
     ),
     link: '/docs/getting-started/configuration',
+  },
+  {
+    title: 'MCP-Native',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2a10 10 0 1 0 10 10" />
+        <path d="M12 2v10l7-7" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    ),
+    description: (
+      <>
+        Works with Claude Code, Cursor, Windsurf, Antigravity, Gemini CLI,
+        Cline, OpenCode, and Aider. One MCP config, zero hassle.
+      </>
+    ),
+    link: '/docs/mcp/setup',
   },
 ];
 

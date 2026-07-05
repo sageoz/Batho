@@ -778,3 +778,52 @@ class TestBundleFacadeAdvanced:
         assert bundle._changelog_rows[0]["run_uuid"] == "active-uuid"
         assert bundle._changelog_rows[0]["base_run_uuid"] == "second-uuid"
 
+    def test_get_agent_entities_for_file(self, tmp_path: Path):
+        """Verify that get_agent_entities_for_file returns entities with content_hash."""
+        from batho.modules.storage.arrow_bundle.writer import BathoBundleWriter
+        
+        bundle = BathoBundle(tmp_path)
+        run_uuid = "run-123"
+        run_id = bundle.create_run(run_uuid, root_path=str(tmp_path))
+        
+        bundle.upsert_file_tracking([{
+            "file_path": "foo.py",
+            "content_hash": "hash_foo",
+            "mtime_ns": 1000,
+            "inode": None,
+            "size": 100,
+            "is_indexed": True,
+            "last_run_uuid": run_uuid,
+        }])
+        
+        file_id = bundle._file_id_cache["foo.py"]
+        
+        writer = bundle._writers[run_id]
+        writer.write_file_artifact(
+            file_id=file_id,
+            agent={"entities": [{
+                "id": "ent1",
+                "name": "foo_func",
+                "type": "function",
+                "start_line": 1,
+                "end_line": 10,
+                "signature": "def foo()",
+                "is_exported": True,
+                "fqn": "foo.foo_func",
+            }]},
+            storage={"entities": []},
+            rels=[],
+            content_hash="hash_ent1",
+        )
+        
+        bundle.complete_run(run_uuid, entity_count=1, file_count=1)
+        
+        bundle_read = BathoBundle(tmp_path)
+        entities = bundle_read.get_agent_entities_for_file(run_id, "foo.py")
+        
+        assert len(entities) == 1
+        assert entities[0]["id"] == "ent1"
+        assert entities[0]["name"] == "foo_func"
+        assert entities[0]["content_hash"] == "hash_ent1"
+
+

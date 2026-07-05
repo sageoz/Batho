@@ -17,10 +17,13 @@ description: "Batho — Bidirectional AST Traversal & Hypergraph Orchestrator"
 | **BSG Compression** | Compress code intelligence into token-budgeted formats for LLM injection |
 | **Time Machine** | Snapshot, diff, and incrementally patch code intelligence over time |
 | **Arrow IPC Bundle export** | Export optimized hypergraphs and indices as Arrow IPC bundles for downstream integration |
+| **MCP Server** | Serve code graph intelligence to AI agents via Model Context Protocol |
 
 ## Quick Links
 
+- [Setup with AI Agent Skill](/docs/getting-started/skill-setup) — Let your AI agent set up Batho for you
 - [Getting Started](/docs/getting-started/quick-start) — Install and run Batho in 30 seconds
+- [MCP Server](/docs/mcp) — Connect AI agents to your code graph
 - [Whitepaper](/docs/whitepaper) — Deep technical reference for every subsystem
 - [CLI Reference](/docs/cli-reference) — Complete command documentation
 - [GitHub](https://github.com/sageoz/batho) — Source code and issues
@@ -53,7 +56,7 @@ flowchart LR
 | Supported Languages | 40+ via tree-sitter |
 | Context Compression | Up to 10x for LLM injection |
 | Incremental Patch Speed | 10–100x faster than full re-index |
-| Test Coverage | 381 automated tests |
+| Test Coverage | 507 automated tests |
 | Cache Hit Rate | >95% on typical PR-sized changes |
 | Snapshot Retention | 90 days default, configurable |
 | Max Indexed Files | 200,000 per repository |

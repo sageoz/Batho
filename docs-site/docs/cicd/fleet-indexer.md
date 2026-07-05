@@ -6,7 +6,7 @@ Both GitHub Actions and GitLab CI implement the same four-phase incremental patc
 
 ### Phase 1: Artifact Retrieval
 
-- **GitHub**: `dawidd6/action-download-artifact@v6` fetches the most recent `batho-database` artifact from the same branch.
+- **GitHub**: `dawidd6/action-download-artifact@v21` fetches the most recent `artifact_<repo>.batho` artifact from the same branch.
 - **GitLab**: `curl` with `CI_JOB_TOKEN` downloads from the last successful pipeline.
 - **First run**: Both gracefully handle missing artifacts and fall through to a full build.
 
@@ -44,7 +44,7 @@ flowchart LR
 
 ### Phase 4: Upload
 
-- **GitHub**: `actions/upload-artifact@v4` as `batho-database`, 90-day retention.
+- **GitHub**: `actions/upload-artifact@v7` as `artifact_<repo>.batho`, 90-day retention.
 - **GitLab**: `artifacts.paths`, branch-specific name, 90-day expiration.
 - **Agents**: Run `batho load` to restore the graph without local indexing.
 
@@ -92,7 +92,7 @@ flowchart TD
 | Issue | Cause | Resolution |
 |---|---|---|
 | Artifact download fails | First run (no previous artifact) | Expected — falls through to full build |
-| Workflow filename mismatch | `workflow` param doesn't match file | Ensure `workflow: batho-ci.yml` matches your filename |
+| Workflow filename mismatch | `workflow` param doesn't match file | Ensure `workflow: github-batho.yaml` matches your filename |
 | `batho load` fails | Schema version mismatch | Delete artifact to trigger full rebuild |
 | `batho patch` fails | Corrupted `bsg/current/` | Re-run `batho load --force`, then `batho patch` |
 | Build timeout | Large repository | Increase `timeout-minutes` / `timeout` |
@@ -103,5 +103,5 @@ flowchart TD
 1. **Branch strategy**: Run on `main` and all merge requests to catch issues early.
 2. **Retention**: Balance 90-day default with storage costs.
 3. **Incremental first**: Always prefer `load` + `patch` over full builds.
-4. **Version pinning**: Pin Python (`3.12`) and Batho (`v1.1.0`) for reproducible builds.
+4. **Version pinning**: Pin Python (`3.12`) and Batho (`v1.2.0`) for reproducible builds.
 5. **Monitor performance**: Track job duration to identify repositories needing optimization.

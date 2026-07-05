@@ -202,3 +202,14 @@ class TestConfigSecurityAndRecovery:
         assert cfg_path.exists()
         assert "level: 12345" not in cfg_path.read_text(encoding="utf-8")
 
+    def test_community_detection_config_parsed(self, tmp_path: Path):
+        """Verify that community_detection config is parsed and not stripped by Pydantic validation."""
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text("community_detection:\n  enabled: false\n", encoding="utf-8")
+        
+        cfg = get_config_with_root(tmp_path)
+        
+        assert "community_detection" in cfg
+        assert cfg["community_detection"]["enabled"] is False
+
+

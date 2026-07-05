@@ -533,8 +533,47 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 from batho.modules.storage.arrow_bundle.schemas import COMMUNITIES_SCHEMA
                 from batho.modules.storage.arrow_bundle.writer import write_simple_ipc
                 from batho.modules.storage.arrow_bundle import resolve_bundle_dir
+                from batho.modules.graph.builder.codegraph import InMemoryGraph
+                from batho.core.schemas import EntityType, RelationshipType
+                from types import SimpleNamespace
                 bundle_dir = resolve_bundle_dir(root)
                 t_comm_0 = time.monotonic()
+
+                # Reconstruct graph from stored artifact tables
+                agent_table = db._reader._get_table("agent_views")
+                rels_table = db._reader._get_table("rels_views")
+                tracking = db._reader.get_all_file_tracking()
+                file_id_to_path = {v.get("file_id"): k for k, v in tracking.items()}
+
+                entities: dict[str, Any] = {}
+                if agent_table.num_rows > 0:
+                    for row in agent_table.to_pylist():
+                        eid = row.get("entity_id", "")
+                        try:
+                            etype = EntityType[row.get("entity_type", "UNRESOLVED")]
+                        except KeyError:
+                            etype = EntityType.UNRESOLVED
+                        entities[eid] = SimpleNamespace(
+                            id=eid,
+                            name=row.get("name", ""),
+                            file=file_id_to_path.get(row.get("file_id", -1), ""),
+                            type=etype,
+                        )
+
+                relationships: list[Any] = []
+                if rels_table.num_rows > 0:
+                    for row in rels_table.to_pylist():
+                        try:
+                            rtype = RelationshipType[row.get("relation_type", "")]
+                        except KeyError:
+                            continue
+                        relationships.append(SimpleNamespace(
+                            source_id=row.get("source_id", ""),
+                            target_id=row.get("target_id", ""),
+                            type=rtype,
+                        ))
+
+                graph = InMemoryGraph(entities=entities, relationships=relationships)
                 communities = detect_communities(graph)
                 comm_rows = communities_to_rows(communities)
                 comm_path = bundle_dir / "communities.tmp.ipc"

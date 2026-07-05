@@ -132,11 +132,11 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Install Batho
         run: pip install batho
       - name: Run Build
@@ -146,7 +146,7 @@ jobs:
       - name: Pack Artifact Database
         run: batho export --root . --output artifact.batho
       - name: Archive Code Intelligence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: batho-artifacts
           path: |

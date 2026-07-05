@@ -6,7 +6,7 @@ The composite action (`action.yml`) is a self-contained GitHub Action that sets 
 
 ```mermaid
 flowchart TD
-    A["Consumer workflow calls sageoz/batho@v1.1.0"] --> B["Set up uv"]
+    A["Consumer workflow calls sageoz/batho@v1.2.0"] --> B["Set up uv"]
     B --> C["Install Python 3.12"]
     C --> D["Install Batho into isolated venv"]
     D --> E["batho build --root . --full"]
@@ -16,7 +16,7 @@ flowchart TD
     G -- No --> I["Skip summary"]
     H --> J{"upload-artifact == true?"}
     I --> J
-    J -- Yes --> K["Upload artifact with actions/upload-artifact@v4"]
+    J -- Yes --> K["Upload artifact with actions/upload-artifact@v7"]
     J -- No --> L["Skip upload"]
 ```
 
@@ -57,12 +57,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Run Batho Index
-        uses: sageoz/batho@v1.1.0
+        uses: sageoz/batho@v1.2.0
         with:
           root: "."
           python-version: "3.12"
@@ -105,7 +105,7 @@ Pin a specific commit, tag, or branch:
 
 ```yaml
 with:
-  batho-ref: "v1.1.0"
+  batho-ref: "v1.2.0"
 ```
 
 ## Step Summary

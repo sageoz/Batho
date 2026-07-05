@@ -111,10 +111,10 @@ class IncrementalEngine:
     def update_state(self, fingerprints: list[dict[str, Any]]) -> None:
         if fingerprints:
             self.db.upsert_file_tracking(fingerprints)
-            LOGGER.debug("Updated %d file tracking records.", len(fingerprints))
+            LOGGER.debug("file_tracking_records_updated", count=len(fingerprints))
 
     def handle_deleted_files(self, deleted_files: set[str]) -> None:
         if not deleted_files:
             return
         deleted_count = self.db.delete_file_tracking_batch(list(deleted_files))
-        LOGGER.debug("Removed %d tracking records for %d deleted files.", deleted_count, len(deleted_files))
+        LOGGER.debug("file_tracking_records_removed", deleted_count=deleted_count, files_count=len(deleted_files))

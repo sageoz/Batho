@@ -18,7 +18,7 @@ inputs:
     description: |
       How to install Batho.
         - "" (default): install from this action's checkout (${GITHUB_ACTION_PATH}).
-        - a git ref (e.g. "main", "v1.1.0", or a commit sha): install via "git+https://github.com/sageoz/batho@<ref>".
+        - a git ref (e.g. "main", "v1.2.0", or a commit sha): install via "git+https://github.com/sageoz/batho@<ref>".
         - "pypi": install the latest published version from PyPI via "pip install batho".
     required: false
     default: ""

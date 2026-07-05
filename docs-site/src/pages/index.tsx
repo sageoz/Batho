@@ -5,6 +5,7 @@ import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import HomepageFeatures from '../components/HomepageFeatures';
+import AgentIntegration from '../components/AgentIntegration';
 import Heading from '@theme/Heading';
 
 import styles from './index.module.css';
@@ -94,6 +95,11 @@ const COMMAND_LINES: CommandLine[] = [
     comment: '# Run integrity verification',
     cmd: 'batho fix --dry-run',
     output: 'Running diagnostics...\n✓ Arrow database: verified\n✓ Run history chain: verified\n✓ Graph consistency: verified\n✓ Integrity intact',
+  },
+  {
+    comment: '# Start MCP server for your AI agent',
+    cmd: 'batho mcp',
+    output: 'MCP server running on stdio\n✓ 10 tools available: graph_overview, graph_query, get_entity, ...\n✓ Connect from Claude Code, Cursor, Windsurf, and more',
   },
 ];
 
@@ -225,13 +231,23 @@ function CodePreview() {
 }
 
 function QuickStart() {
-  const [copied, setCopied] = useState(false);
-  const cmd = 'pip install batho';
-  const handleCopy = () => {
-    navigator.clipboard.writeText(cmd);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const [copiedSkill, setCopiedSkill] = useState(false);
+  const [copiedCli, setCopiedCli] = useState(false);
+  const skillCmd = 'curl -O https://raw.githubusercontent.com/sageoz/batho/main/SKILL.md';
+  const cliCmd = 'pip install batho && batho build --root . && batho mcp';
+
+  const handleCopySkill = () => {
+    navigator.clipboard.writeText(skillCmd);
+    setCopiedSkill(true);
+    setTimeout(() => setCopiedSkill(false), 2000);
   };
+
+  const handleCopyCli = () => {
+    navigator.clipboard.writeText(cliCmd);
+    setCopiedCli(true);
+    setTimeout(() => setCopiedCli(false), 2000);
+  };
+
   return (
     <section className={styles.quickStart}>
       <div className="container">
@@ -240,15 +256,55 @@ function QuickStart() {
             <h2 className={styles.quickStartTitle}>Get Started in Seconds</h2>
           </Animated>
           <Animated delay={2}>
-            <p className={styles.quickStartDesc}>One command to give your AI agent a map of your entire codebase.</p>
+            <p className={styles.quickStartDesc}>
+              Give your AI agent a skill file — it handles install, build, and MCP config automatically.
+            </p>
           </Animated>
           <Animated delay={3}>
-            <div className={styles.quickStartCodeBlock}>
-              <span className={styles.quickStartPrompt}>$</span>
-              <code className={styles.quickStartCode}>{cmd}</code>
-              <button className={styles.quickStartCopy} onClick={handleCopy} type="button">
-                {copied ? 'Copied!' : 'Copy'}
-              </button>
+            <div className={styles.quickStartGrid}>
+              {/* Primary: Skill method */}
+              <div className={clsx(styles.quickStartCard, styles.quickStartCardPrimary)}>
+                <div className={styles.quickStartBadge}>Recommended</div>
+                <h3 className={styles.quickStartCardTitle}>Setup with your AI Agent</h3>
+                <p className={styles.quickStartCardDesc}>
+                  Download the skill file and give it to your agent. It installs Batho, builds the graph, and configures MCP for all detected clients.
+                </p>
+                <div className={styles.quickStartCodeBlock}>
+                  <span className={styles.quickStartPrompt}>$</span>
+                  <code className={styles.quickStartCode}>{skillCmd}</code>
+                  <button className={styles.quickStartCopy} onClick={handleCopySkill} type="button">
+                    {copiedSkill ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+                <p className={styles.quickStartHint}>
+                  Then tell your agent: <code className={styles.quickStartInlineCode}>Read SKILL.md and set up Batho for this repo</code>
+                </p>
+                <Link
+                  className={styles.quickStartLink}
+                  to="/docs/getting-started/skill-setup">
+                  Full guide &rarr;
+                </Link>
+              </div>
+
+              {/* Secondary: CLI method */}
+              <div className={styles.quickStartCard}>
+                <h3 className={styles.quickStartCardTitle}>Manual CLI Setup</h3>
+                <p className={styles.quickStartCardDesc}>
+                  Prefer the terminal? Three commands — install, build, start MCP server.
+                </p>
+                <div className={styles.quickStartCodeBlock}>
+                  <span className={styles.quickStartPrompt}>$</span>
+                  <code className={styles.quickStartCode}>{cliCmd}</code>
+                  <button className={styles.quickStartCopy} onClick={handleCopyCli} type="button">
+                    {copiedCli ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+                <Link
+                  className={styles.quickStartLink}
+                  to="/docs/getting-started/quick-start">
+                  CLI quick start &rarr;
+                </Link>
+              </div>
             </div>
           </Animated>
         </div>
@@ -273,7 +329,10 @@ function HomepageHeader() {
           </Heading>
         </Animated>
         <Animated delay={2}>
-          <p className={styles.heroSubtitle}>{siteConfig.tagline}</p>
+          <p className={styles.heroSubtitle}>
+            Give your AI coding agent a map of your codebase — not the whole territory.
+            Reduce token spend, eliminate hallucinations, and ship faster with graph-powered code intelligence.
+          </p>
         </Animated>
         <Animated delay={3}>
           <div className={styles.buttons}>
@@ -284,8 +343,8 @@ function HomepageHeader() {
             </Link>
             <Link
               className="button button--secondary button--lg"
-              to="/docs/whitepaper">
-              Read Whitepaper
+              to="/docs/mcp/setup">
+              Setup with Your Agent
             </Link>
           </div>
         </Animated>
@@ -375,31 +434,31 @@ function Workflow() {
 function BenefitsSection() {
   const benefits = [
     {
-      title: 'Lower Token Costs',
+      title: 'Slash Token Costs',
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
         </svg>
       ),
-      description: 'Your agent traverses a graph instead of reading entire files. Feed the LLM only what it needs.',
+      description: 'Your agent queries a graph instead of reading entire files. 10x fewer tokens per task — no more dumping your repo into the LLM.',
     },
     {
-      title: 'Fewer Hallucinations',
+      title: 'Eliminate Hallucinations',
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M9 12l2 2 4-4M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z" />
         </svg>
       ),
-      description: 'Deterministic, tree-sitter-parsed relationships. No guessing, no embeddings — just facts.',
+      description: 'Deterministic, tree-sitter-parsed relationships. Your agent gets facts, not guesses — zero hallucinations on structural queries.',
     },
     {
-      title: 'More Use Cases',
+      title: 'Agent Superpowers',
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M6 3v12M18 9l-6-6-6 6M18 21v-12M6 15l6 6 6-6" />
         </svg>
       ),
-      description: 'When cost and accuracy are solved, automation possibilities widen with imagination.',
+      description: 'Bug tracking, security audits, refactoring, code review — your agent handles more, accurately. When cost and quality are solved, automation widens with imagination.',
     },
   ];
 
@@ -411,7 +470,8 @@ function BenefitsSection() {
         </Animated>
         <Animated delay={2}>
           <p className={styles.benefitsSubtitle}>
-            Companies are reducing AI usage because token spend is getting pricey. Batho fixes cost and quality.
+            AI coding agents are powerful — but they burn tokens reading files and hallucinate when context is thin.
+            Batho gives your agent a structured code graph so it works smarter, not harder.
           </p>
         </Animated>
         <div className={styles.benefitsGrid}>
@@ -439,6 +499,7 @@ function Metrics() {
     { value: '10x', label: 'Less Tokens', desc: 'vs. raw file injection' },
     { value: '0', label: 'Hallucinations', desc: 'deterministic, not guessed' },
     { value: '40+', label: 'Languages', desc: 'tree-sitter powered' },
+    { value: '8', label: 'AI Agents', desc: 'MCP-compatible out of the box' },
     { value: '>95%', label: 'Cache Hit', desc: 'typical PR changes' },
   ];
 
@@ -471,11 +532,12 @@ function CTABanner() {
       <div className="container">
         <div className={styles.ctaInner}>
           <Animated delay={1}>
-            <h2 className={styles.ctaTitle}>Stop paying to dump your repo into an LLM.</h2>
+            <h2 className={styles.ctaTitle}>Give your AI agent a code graph — not a file dump.</h2>
           </Animated>
           <Animated delay={2}>
             <p className={styles.ctaSubtitle}>
-              Index your codebase in one command. Your AI agent gets the map — not the whole territory.
+              Index in one command. Connect via MCP. Your agent gets structural intelligence
+              with zero-copy speed, 10x fewer tokens, and zero hallucinations.
             </p>
           </Animated>
           <Animated delay={3}>
@@ -501,11 +563,12 @@ function CTABanner() {
 export default function Home(): ReactNode {
   return (
     <Layout
-      title="BATHO — Spend Less. Hallucinate Less. Automate More."
-      description="Batho reduces token spend and hallucinations by indexing your codebase into a navigable code graph. Power bug tracking, security checks, and any AI workflow without dumping whole repositories into the LLM.">
+      title="BATHO — Code Graph Intelligence for AI Coding Agents"
+      description="Batho gives your AI coding agent a structured code graph instead of raw files. Reduce token spend 10x, eliminate hallucinations, and connect via MCP to Claude Code, Cursor, Windsurf, Antigravity, and more.">
       <HomepageHeader />
       <main>
         <BenefitsSection />
+        <AgentIntegration />
         <HomepageFeatures />
         <Workflow />
         <Metrics />
