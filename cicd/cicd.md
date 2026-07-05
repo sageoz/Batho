@@ -31,14 +31,14 @@ Two platform-specific configurations are provided: GitHub Actions and GitLab CI.
 | **Runner** | `runs-on` | `ubuntu-latest` | Standard GitHub Actions runner |
 | **Permissions** | `actions` | `read` | Download previous workflow artifacts |
 | **Permissions** | `contents` | `read` | Checkout repository code |
-| **Step 1** | `actions/checkout@v4` | - | Clone repository |
-| **Step 2** | `actions/setup-python@v5` | `python: 3.11` | Install Python runtime |
+| **Step 1** | `actions/checkout@v7` | - | Clone repository |
+| **Step 2** | `actions/setup-python@v6` | `python: 3.12` | Install Python runtime |
 | **Step 3** | `pip install batho` | - | Install Batho CLI |
-| **Step 4** | `dawidd6/action-download-artifact@v6` | `batho-database` | Download previous `.batho` artifact |
+| **Step 4** | `dawidd6/action-download-artifact@v21` | `artifact_<repo>.batho` | Download previous `.batho` artifact |
 | **Step 5** | `batho load / build` | conditional | Restore graph or full index |
 | **Step 5** | `batho patch` | if artifact existed | Incremental re-index |
-| **Step 5** | `batho export` | always | Export Arrow IPC graph into transport artifact |
-| **Step 6** | `actions/upload-artifact@v4` | `batho-database` | Upload transport artifact |
+| **Step 5** | `batho export --output` | always | Export Arrow IPC graph into transport artifact |
+| **Step 6** | `actions/upload-artifact@v7` | `artifact_<repo>.batho` | Upload transport artifact |
 | **Retention** | `retention-days` | `90` | Keep artifact for 90 days |
 
 ### GitLab CI (`gitlab-batho.yaml`)
@@ -69,16 +69,16 @@ Two platform-specific configurations are provided: GitHub Actions and GitLab CI.
 ```mermaid
 flowchart TD
     A["Push/PR to main"] --> B["Checkout Code"]
-    B --> C["Setup Python 3.11"]
+    B --> C["Setup Python 3.12"]
     C --> D["Install Batho"]
     D --> E["Download Previous Artifact"]
     E --> F{Artifact exists?}
     F -- "Yes" --> G["batho load --root . artifact_*.batho --force"]
     G --> H["batho patch --root . --verbose"]
-    H --> I["batho export --root ."]
+    H --> I["batho export --root . --output artifact_<repo>.batho"]
     F -- "No" --> J["batho build --root . --full --verbose"]
     J --> I
-    I --> K["Upload artifact_*.batho"]
+    I --> K["Upload artifact_<repo>.batho"]
     K --> L["Retain for 90 days"]
 ```
 
@@ -111,7 +111,7 @@ Both workflows implement the same four-phase strategy:
 
 ### Phase 1: Artifact Retrieval
 
-- **GitHub**: Uses `dawidd6/action-download-artifact@v6` to fetch the most recent `batho-database` artifact from the same branch
+- **GitHub**: Uses `dawidd6/action-download-artifact@v21` to fetch the most recent `artifact_<repo>.batho` artifact from the same branch
 - **GitLab**: Uses `curl` with `CI_JOB_TOKEN` to download artifacts from the last successful pipeline on the same branch
 - **First Run**: Both platforms gracefully handle the absence of a previous artifact (GitHub via `continue-on-error: true`, GitLab via `curl --fail` with fallback)
 
@@ -141,7 +141,7 @@ fi
 
 ```bash
 # Always run after build or patch
-batho export --root .
+batho export --root . --output "artifact_${REPO_NAME}.batho"
 ```
 
 `batho export` produces `artifact_<dirname>.batho` — a ZIP containing:
@@ -150,7 +150,7 @@ batho export --root .
 
 ### Phase 4: Artifact Upload
 
-- **GitHub**: Uploads `artifact_*.batho` as `batho-database` with 90-day retention
+- **GitHub**: Uploads `artifact_<repo>.batho` with 90-day retention
 - **GitLab**: Uploads `artifact_*.batho` with branch-specific naming and 90-day expiration
 - **AI Agent Access**: Agents run `batho load` to restore the full graph store without local indexing
 
@@ -160,8 +160,8 @@ batho export --root .
 
 ### GitHub Actions
 
-- **Workflow Filename**: Must match the `workflow` parameter in the download step (currently `batho-ci.yml`)
-- **Artifact Naming**: Consistent `batho-database` name across runs for reliable downloads
+- **Workflow Filename**: Must match the `workflow` parameter in the download step (currently `github-batho.yaml`)
+- **Artifact Naming**: Repo-based `artifact_<repo>.batho` name, consistent across runs for reliable downloads
 - **Permissions**: Requires `actions: read` and `contents: read` for artifact access
 - **Runner**: Uses `ubuntu-latest` with pre-installed Git and Python toolchain
 
@@ -179,7 +179,7 @@ batho export --root .
 ### Repository Setup
 
 1. **Copy the appropriate workflow file** to your CI/CD configuration directory:
-   - GitHub: `.github/workflows/batho-ci.yml` (rename from `github-batho.yaml`)
+   - GitHub: `.github/workflows/github-batho.yaml` (copy from `cicd/github-batho.yaml`)
    - GitLab: `.gitlab-ci.yml` (rename from `gitlab-batho.yaml`)
 
 2. **Install Batho** in your environment:
@@ -218,11 +218,11 @@ Agents can download and load pre-built code graphs:
 # Download latest artifact from main branch
 gh api \
   /repos/{owner}/{repo}/actions/artifacts \
-  --jq '.artifacts[] | select(.name=="batho-database") | .id' \
+  --jq '.artifacts[] | select(.name|startswith("artifact_") and endswith(".batho")) | .id' \
   | xargs -I {} gh api \
   /repos/{owner}/{repo}/actions/artifacts/{}/zip \
-  --output batho-database.zip
-unzip batho-database.zip
+  --output batho-artifact.zip
+unzip batho-artifact.zip
 
 # Restore the Arrow IPC graph store (fast-path: bsg/current/ extracted directly)
 batho load --root . artifact_*.batho
