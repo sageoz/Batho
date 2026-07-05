@@ -83,6 +83,24 @@ packages = ["batho"]
 [tool.hatch.build.targets.wheel.force-include]
 "batho_cli.py" = "batho_cli.py"
 
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "tests/",
+    "docs-site/",
+    "docs/",
+    "benchmarks/",
+    "cicd/",
+    "assets/",
+    ".github/",
+    ".devin/",
+    ".windsurf/",
+    "batho.yaml",
+    "batho.yaml.example",
+    "SKILL.md",
+    ".python-version",
+    "uv.lock",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

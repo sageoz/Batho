@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/batho.png" alt="Batho" width="200" height="200" />
+  <img src="https://raw.githubusercontent.com/sageoz/batho/main/assets/batho.svg" alt="Batho" width="200" height="200" />
 </p>
 
 <h1 align="center">B.A.T.H.O</h1>
