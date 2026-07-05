@@ -1,5 +1,5 @@
 import type {ReactNode} from 'react';
-import {useState, useRef, useEffect} from 'react';
+import {useState, useRef} from 'react';
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import styles from './styles.module.css';
@@ -182,14 +182,6 @@ export default function AgentIntegration(): ReactNode {
   const tabListRef = useRef<HTMLDivElement>(null);
   const agent = AGENTS[activeTab];
 
-  // Scroll active tab into view on mobile
-  useEffect(() => {
-    const tabButton = tabListRef.current?.children[activeTab] as HTMLElement;
-    if (tabButton) {
-      tabButton.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-    }
-  }, [activeTab]);
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowRight') {
       e.preventDefault();
@@ -204,6 +196,7 @@ export default function AgentIntegration(): ReactNode {
     <section className={styles.agentIntegration}>
       <div className="container">
         <div className={styles.sectionHeader}>
+          <span className={styles.sectionEyebrow}>Integrations</span>
           <h2 className={styles.sectionTitle}>Works With Your AI Agent</h2>
           <p className={styles.sectionSubtitle}>
             Batho connects to any MCP-compatible coding agent. One config, zero hassle.

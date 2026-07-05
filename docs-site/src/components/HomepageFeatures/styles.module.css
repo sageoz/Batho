@@ -4,7 +4,7 @@
 .features {
   display: flex;
   align-items: center;
-  padding: var(--batho-space-16) 0 var(--batho-space-20);
+  padding: var(--batho-space-20) 0;
   width: 100%;
   background: var(--batho-surface-1);
   border-top: 1px solid var(--batho-surface-3);
@@ -12,6 +12,40 @@
 
 [data-theme='dark'] .features {
   background: var(--batho-surface-1);
+}
+
+.featuresHeader {
+  text-align: center;
+  margin-bottom: var(--batho-space-12);
+  width: 100%;
+}
+
+.featuresEyebrow {
+  display: block;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ifm-color-primary);
+  margin-bottom: var(--batho-space-2);
+}
+
+.featuresTitle {
+  font-family: var(--ifm-heading-font-family);
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: var(--batho-space-3);
+  color: var(--ifm-font-color-base);
+}
+
+.featuresSubtitle {
+  font-size: 1.05rem;
+  color: var(--ifm-color-emphasis-600);
+  max-width: 520px;
+  margin: 0 auto;
+  line-height: 1.6;
 }
 
 /* ------------------------------------------------------------------
@@ -25,8 +59,9 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  gap: var(--batho-space-3);
   text-align: left;
-  padding: var(--batho-space-8) var(--batho-space-4);
+  padding: var(--batho-space-7);
   background: var(--batho-surface-0);
   border: 1px solid var(--batho-surface-3);
   border-radius: 16px;
@@ -61,7 +96,6 @@
   height: 48px;
   width: 48px;
   max-width: 100%;
-  margin-bottom: var(--batho-space-4);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -69,6 +103,7 @@
   border-radius: 12px;
   border: 1px solid rgba(37, 99, 235, 0.15);
   transition: background 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+  flex-shrink: 0;
 }
 
 .featureIconWrap svg {
@@ -92,7 +127,7 @@
   font-size: 1.125rem;
   font-weight: 600;
   letter-spacing: -0.01em;
-  margin-bottom: var(--batho-space-2);
+  margin: 0;
   color: var(--ifm-font-color-base);
 }
 
@@ -115,7 +150,6 @@
   align-items: center;
   gap: 4px;
   margin-top: auto;
-  padding-top: var(--batho-space-3);
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--ifm-color-primary);
@@ -148,7 +182,7 @@
    ------------------------------------------------------------------ */
 @media screen and (max-width: 768px) {
   .features {
-    padding: var(--batho-space-12) 0 var(--batho-space-16);
+    padding: var(--batho-space-12) 0;
   }
 
   .features .row {
@@ -162,6 +196,6 @@
   }
 
   .featureCard {
-    padding: var(--batho-space-6) var(--batho-space-4);
+    padding: var(--batho-space-6);
   }
 }

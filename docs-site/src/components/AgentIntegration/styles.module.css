@@ -13,7 +13,18 @@
    ------------------------------------------------------------------ */
 .sectionHeader {
   text-align: center;
-  margin-bottom: var(--batho-space-12);
+  margin-bottom: var(--batho-space-10);
+}
+
+.sectionEyebrow {
+  display: block;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ifm-color-primary);
+  margin-bottom: var(--batho-space-2);
 }
 
 .sectionTitle {
@@ -38,6 +49,8 @@
    ------------------------------------------------------------------ */
 .tabBar {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: var(--batho-space-2);
   padding: var(--batho-space-2);
   background: var(--batho-surface-1);
@@ -46,18 +59,6 @@
   margin-bottom: var(--batho-space-8);
   max-width: 100%;
   box-sizing: border-box;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  -webkit-overflow-scrolling: touch;
-}
-
-.tabBar::-webkit-scrollbar {
-  height: 4px;
-}
-
-.tabBar::-webkit-scrollbar-thumb {
-  background: var(--batho-surface-3);
-  border-radius: 2px;
 }
 
 /* ------------------------------------------------------------------
@@ -382,7 +383,7 @@
   }
 
   .tabPanel {
-    padding: var(--batho-space-6);
+    padding: var(--batho-space-7);
   }
 
   .panelConfig {
@@ -429,22 +430,12 @@
     font-size: 0.95rem;
   }
 
-  .tabBar {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-
-  .tabBar::-webkit-scrollbar {
-    display: none;
-  }
-
   .tabButton {
     padding: var(--batho-space-2) var(--batho-space-3);
   }
 
   .tabPanel {
-    padding: var(--batho-space-4);
+    padding: var(--batho-space-5);
   }
 
   .panelGrid {
