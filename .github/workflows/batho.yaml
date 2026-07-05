@@ -1,0 +1,72 @@
+name: Batho Fleet Indexer
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: batho-fleet-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  update-code-graph:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read    # Required to download previous artifacts
+      contents: read   # Required to checkout code
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12' # Adjust based on your environment
+
+      - name: Install Batho
+        run: |
+          pip install batho 
+
+      - name: Download Previous Batho Artifact
+        # This action fetches the artifact from the last successful run on this branch
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true # Will fail on the very first run, which is expected
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: batho-ci.yml # MUST match the filename of this yaml file
+          branch: ${{ github.ref_name }}
+          name: batho-database
+          path: .
+
+      - name: Run Batho (Patch or Build)
+        run: |
+          # Batho stores the code graph as Arrow IPC files packed into artifact_<dirname>.batho
+          if ls artifact_*.batho 1> /dev/null 2>&1; then
+            echo "✅ Found existing Batho artifact. Running incremental patch..."
+
+            # Load the previous artifact into .batho/ then patch changed files
+            batho load --root . artifact_*.batho --force
+            batho patch --root . --verbose
+          else
+            echo "⚠️ No existing artifact found. Running full build..."
+
+            # Creates the Arrow IPC graph from scratch (one-time setup)
+            batho build --root . --full --verbose
+          fi
+
+          # Export the updated .batho/ bundle into a transport artifact (Arrow IPC + zstd)
+          batho export --root .
+
+      - name: Upload Updated Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: batho-database
+          # Uploads the artifact_<dirname>.batho Arrow IPC transport artifact
+          path: artifact_*.batho
+          retention-days: 90 # Keeps the artifact available for AI agents to download
