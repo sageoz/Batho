@@ -20,12 +20,15 @@ jobs:
       actions: read    # Required to download previous artifacts
       contents: read   # Required to checkout code
 
+    env:
+      BATHO_ARTIFACT: artifact_${{ github.event.repository.name }}.batho
+
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12' # Adjust based on your environment
 
@@ -35,13 +38,13 @@ jobs:
 
       - name: Download Previous Batho Artifact
         # This action fetches the artifact from the last successful run on this branch
-        uses: dawidd6/action-download-artifact@v6
+        uses: dawidd6/action-download-artifact@v21
         continue-on-error: true # Will fail on the very first run, which is expected
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: batho-ci.yml # MUST match the filename of this yaml file
+          workflow: github-batho.yaml # MUST match the filename of this yaml file
           branch: ${{ github.ref_name }}
-          name: batho-database
+          name: ${{ env.BATHO_ARTIFACT }}
           path: .
 
       - name: Run Batho (Patch or Build)
@@ -61,12 +64,12 @@ jobs:
           fi
 
           # Export the updated .batho/ bundle into a transport artifact (Arrow IPC + zstd)
-          batho export --root .
+          batho export --root . --output "${BATHO_ARTIFACT}"
 
       - name: Upload Updated Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: batho-database
-          # Uploads the artifact_<dirname>.batho Arrow IPC transport artifact
-          path: artifact_*.batho
+          name: ${{ env.BATHO_ARTIFACT }}
+          # Uploads the artifact_<repo>.batho Arrow IPC transport artifact
+          path: ${{ env.BATHO_ARTIFACT }}
           retention-days: 90 # Keeps the artifact available for AI agents to download
