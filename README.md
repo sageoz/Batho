@@ -14,6 +14,7 @@
   <a href="https://github.com/sageoz/batho/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License"></a>
   <a href="https://batho.sageoz.org"><img src="https://img.shields.io/badge/docs-batho.sageoz.org-green" alt="Documentation"></a>
   <a href="https://github.com/sageoz/batho/stargazers"><img src="https://img.shields.io/github/stars/sageoz/batho?style=flat" alt="Stars"></a>
+  <a href="https://doi.org/10.5281/zenodo.21407508"><img src="https://img.shields.io/badge/DOI-10.5281/zenodo.21407508-blue" alt="DOI"></a>
 </p>
 
 <p align="center">
@@ -183,7 +184,26 @@ uv run python batho_cli.py --help
 Co-authored with [Devin](https://devin.ai) — autonomous AI software engineer by Cognition.
 
 ---
+Citation
 
+If you use Batho in your research, please cite it as:
+
+```bibtex
+@misc{Sharma_Batho_2026,
+  author = {Sharma, Rishiraj},
+  doi = {10.5281/zenodo.21407508},
+  month = {7},
+  title = {Batho: Deterministic Code Intelligence Engine},
+  url = {https://pypi.org/project/batho/},
+  year = {2026}
+}
+```
+
+You can also find the citation metadata in [`CITATION.cff`](CITATION.cff) or use GitHub's **"Cite this repository"** button.
+
+---
+
+## 
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) for details.

@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use Batho, please cite it as below."
+title: "Batho: Deterministic Code Intelligence Engine"
+authors:
+  - family-names: "Sharma"
+    given-names: "Rishiraj"
+    orcid: "https://orcid.org/0009-0001-8817-7606"
+version: "1.2.1"
+date-released: "2026-07-17"
+license: "Apache-2.0"
+repository-code: "https://github.com/sageoz/batho"
+url: "https://pypi.org/project/batho/"
+doi: "10.5281/zenodo.21407508"
+keywords:
+  - code intelligence
+  - semantic code graph
+  - tree-sitter
+  - abstract syntax tree
+  - static analysis
+  - LLM context
+  - code indexing
+  - deterministic reconstruction
+preferred-citation:
+  type: software
+  title: "Batho: Deterministic Code Intelligence Engine"
+  authors:
+    - family-names: "Sharma"
+      given-names: "Rishiraj"
+      orcid: "https://orcid.org/0009-0001-8817-7606"
+  version: "1.2.1"
+  date-released: "2026-07-17"
+  license: "Apache-2.0"
+  url: "https://github.com/sageoz/batho"
+  doi: "10.5281/zenodo.21407508"

@@ -1,0 +1,32 @@
+{
+  "title": "Batho: Deterministic Code Intelligence Engine",
+  "description": "Enterprise-grade multi-language source code indexer and semantic code intelligence engine powered by tree-sitter AST parsing, BSG compression, and relational code graph snapshots.",
+  "creators": [
+    {
+      "name": "Sharma, Rishiraj",
+      "orcid": "0009-0001-8817-7606"
+    }
+  ],
+  "keywords": [
+    "code intelligence",
+    "semantic code graph",
+    "tree-sitter",
+    "static analysis",
+    "LLM context",
+    "code indexing",
+    "deterministic reconstruction"
+  ],
+  "license": "Apache-2.0",
+  "upload_type": "software",
+  "version": "1.2.1",
+  "access_right": "open",
+  "publication_date": "2026-07-17",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/sageoz/batho",
+      "relation": "isSupplementTo",
+      "resource_type": "software",
+      "scheme": "url"
+    }
+  ]
+}
