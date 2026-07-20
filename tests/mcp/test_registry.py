@@ -201,3 +201,52 @@ class TestMultiRepoTools:
         assert reg.remove("testrepo") is True
         assert reg.get("testrepo") is None
         assert reg.list_all() == []
+
+
+class TestRepoRegistryConcurrency:
+    def test_concurrent_add_no_lost_update(self, tmp_path: Path):
+        """Verify that concurrent add() calls don't lose entries due to race conditions.
+
+        Scenario:
+            Multiple threads call add() simultaneously on a shared RepoRegistry.
+            Without locking, some entries could be lost due to load→mutate→save races.
+
+        Execution Flow:
+            1. Create a RepoRegistry with 2 pre-existing entries.
+            2. Spawn 4 threads, each calling add() with a unique name.
+            3. Wait for all threads to complete.
+            4. Assert all 6 entries (2 original + 4 new) are present.
+
+        Expectations:
+            - No entries are lost due to concurrent writes.
+            - The threading.Lock in RepoRegistry prevents the race condition.
+        """
+        import threading
+
+        config = tmp_path / "mcp-repos.json"
+        reg = RepoRegistry(config_path=config)
+        reg.add(name="repo1", path=str(tmp_path / "repo1"))
+        reg.add(name="repo2", path=str(tmp_path / "repo2"))
+
+        errors: list[Exception] = []
+
+        def add_repo(name: str):
+            try:
+                reg.add(name=name, path=str(tmp_path / name))
+            except Exception as e:
+                errors.append(e)
+
+        threads = []
+        for i in range(4):
+            t = threading.Thread(target=add_repo, args=(f"repo{i + 3}",))
+            threads.append(t)
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        entries = reg.list_all()
+        names = {e.name for e in entries}
+        assert names == {"repo1", "repo2", "repo3", "repo4", "repo5", "repo6"}

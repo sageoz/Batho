@@ -29,6 +29,7 @@ from batho.modules.extraction.symbol_table import FileSymbolTable
 from batho.utils.file_io import read_file_bytes
 from batho.utils.hash import _is_binary
 from batho.utils.logging import configure_logging, get_logger
+from batho.utils.memory_monitor import cap_workers_by_ram
 
 logger = get_logger(__name__, component="pipeline")
 _WORKER_LOGGING_INITIALIZED = False
@@ -713,7 +714,19 @@ def extract_and_emit_parallel(
         cpu_count = os.cpu_count() or 4
         actual_workers = min(cpu_count, max_workers, len(candidates))
         actual_workers = max(1, actual_workers)
-        
+
+        # Cap by available RAM using configured per-worker footprint
+        from batho.core.config import get_config_cached
+        memory_cfg = get_config_cached().get("memory", {})
+        max_per_worker_mb = float(memory_cfg.get("max_per_worker_mb", 150.0))
+        actual_workers = cap_workers_by_ram(actual_workers, max_per_worker_mb)
+        logger.info(
+            "bsg_workers_selected",
+            workers=actual_workers,
+            configured_max=max_workers,
+            max_per_worker_mb=max_per_worker_mb,
+        )
+
         # Collect sizes in a single pass to avoid redundant stat calls
         candidate_sizes: list[int] = []
         work_items = []

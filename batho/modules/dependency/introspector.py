@@ -5,6 +5,7 @@ import importlib
 import importlib.util
 import logging
 import os
+import re
 import subprocess
 import sys
 import json
@@ -60,6 +61,9 @@ class ThirdPartyIntrospector:
         Introspect Python package using a subprocess to run a retrieval script.
         Uses module-level script template for better performance.
         """
+        if not re.match(r'^[a-zA-Z0-9_.-]+$', package_name):
+            logger.warning(f"Invalid package name rejected: {package_name}")
+            return {}
         script = _INTROSPECT_SCRIPT_TEMPLATE.format(
             package_name=package_name,
             mode=self.mode

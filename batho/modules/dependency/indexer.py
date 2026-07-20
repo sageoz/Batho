@@ -188,7 +188,6 @@ class DependencyIndexer:
         venv_paths = [
             self.root / ".venv",
             self.root / "venv",
-            self.root / ".env",
             self.root / "env",
         ]
         for venv_path in venv_paths:

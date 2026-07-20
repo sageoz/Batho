@@ -56,6 +56,13 @@ dependency:
     ttl_days: 90
   max_deps_per_manifest: 500
 
+# Memory-aware tuning. Thresholds are RSS values for the current process.
+memory:
+  warning_threshold_mb: 500.0
+  critical_threshold_mb: 800.0
+  rss_flush_threshold_mb: 650.0  # persist-and-release early, below critical
+  max_per_worker_mb: 150.0       # RAM-based worker cap; conservative for Python + tree-sitter
+
 # Fine-grained control over which blobs are written to the SQLite artifact.
 # Disable blobs you don't need to reduce artifact size.
 artifact_blobs:
@@ -143,3 +150,9 @@ extraction:
     enabled: true           # Persist parsed AST to disk for cross-session reuse
     ttl_days: 30             # Days before cached AST entries expire
     max_entries: 5000        # Maximum cached files (oldest evicted first)
+
+# Community detection via Leiden clustering
+community_detection:
+  enabled: true             # Disable to skip Leiden entirely
+  skip_threshold: 200000   # Skip community detection above this entity count
+  sample_threshold: 100000  # Sample whole files down to this count before Leiden

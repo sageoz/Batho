@@ -6,6 +6,7 @@ Git is no longer used for change detection; it is only captured for metadata.
 
 from __future__ import annotations
 
+import gc
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from typing import Any
 from pydantic import BaseModel
 from batho.core.config import get_config_cached, set_active_root
 from batho.utils.logging import get_logger
+from batho.utils.memory_monitor import get_rss_mb, should_flush_for_memory
 
 from batho.modules.compression.bsg_map import BSGMap
 from batho.modules.graph.builder.codegraph import InMemoryGraph
@@ -150,6 +152,24 @@ def run_patch(options: PatchOptions) -> PatchResult:
 
         base_run_internal_id = db.get_run_internal_id(base_run_uuid)
         cfg = get_config_cached()
+        memory_cfg = cfg.get("memory", {})
+        community_cfg = cfg.get("community_detection", {})
+        rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 650.0))
+
+        LOGGER.info(
+            "effective_memory_config",
+            warning_threshold_mb=memory_cfg.get("warning_threshold_mb", 500.0),
+            critical_threshold_mb=memory_cfg.get("critical_threshold_mb", 800.0),
+            rss_flush_threshold_mb=rss_flush_threshold_mb,
+            max_per_worker_mb=memory_cfg.get("max_per_worker_mb", 150.0),
+        )
+        LOGGER.info(
+            "effective_community_detection_config",
+            enabled=community_cfg.get("enabled", True),
+            skip_threshold=community_cfg.get("skip_threshold", 200_000),
+            sample_threshold=community_cfg.get("sample_threshold", 100_000),
+        )
+
         max_file_size_kb = options.max_file_size_kb or cfg.get("indexer", {}).get("max_file_size_kb", 500)
 
         # --- Detect changes natively (Batho's Local Git Model) ---
@@ -222,6 +242,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
         nodes_removed = 0
         nodes_modified = 0
         nodes_renamed = 0
+        indexer = None
 
         if added_or_modified:
             bsg_cfg = dict(cfg.get("bsg", {}))
@@ -368,12 +389,28 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     # Flush batch using configurable dynamic size or byte threshold (default 15MB)
                     batch_size = cfg.get("persistence", {}).get("batch_size", 500)
                     batch_bytes_threshold = cfg.get("persistence", {}).get("batch_bytes_threshold", 15_728_640)
-                    if len(write_batch) >= batch_size or current_batch_bytes >= batch_bytes_threshold:
+                    should_rss_flush = should_flush_for_memory(rss_flush_threshold_mb)
+                    if (
+                        len(write_batch) >= batch_size
+                        or current_batch_bytes >= batch_bytes_threshold
+                        or should_rss_flush
+                    ):
+                        if should_rss_flush:
+                            rss_before = get_rss_mb()
                         t_write_0 = time.monotonic()
                         db.insert_file_artifacts_batch(run_internal_id, write_batch, store=store, delta_store=delta_store)
                         t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
                         write_batch = []
                         current_batch_bytes = 0
+                        if should_rss_flush:
+                            gc.collect()
+                            rss_after = get_rss_mb()
+                            LOGGER.info(
+                                "rss_flush_released_memory",
+                                rss_before_mb=round(rss_before, 1),
+                                rss_after_mb=round(rss_after, 1),
+                                recovered_mb=round(rss_before - rss_after, 1),
+                            )
 
                     # Fetch base-run entities for this file and diff
                     if base_run_internal_id is not None:
@@ -574,7 +611,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                         ))
 
                 graph = InMemoryGraph(entities=entities, relationships=relationships)
-                communities = detect_communities(graph)
+                communities = detect_communities(graph, community_cfg)
                 comm_rows = communities_to_rows(communities)
                 comm_path = bundle_dir / "communities.tmp.ipc"
                 write_simple_ipc(comm_rows, COMMUNITIES_SCHEMA, comm_path)
@@ -601,7 +638,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
         file_changelog_max_runs = cfg.get("indexer", {}).get("file_changelog_max_runs", 100)
         db.prune_file_changelog(max_runs=file_changelog_max_runs)
 
-        warnings_list = list(getattr(indexer, "warnings", []))
+        warnings_list = list(getattr(indexer, "warnings", [])) if indexer else []
         return PatchResult(
             success=True,
             run_id=run_uuid,

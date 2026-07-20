@@ -1,6 +1,6 @@
 schema_version: batho-config.v1
 logging:
-  level: INFO
+  level: ERROR
   json_format: null
   quiet: false
   file: null
@@ -67,6 +67,11 @@ artifact_blobs:
 persistence:
   batch_size: 500
   batch_bytes_threshold: 15728640
+memory:
+  warning_threshold_mb: 500.0
+  critical_threshold_mb: 800.0
+  rss_flush_threshold_mb: 650.0
+  max_per_worker_mb: 150.0
 bsg:
   parallel:
     enabled: true
@@ -116,3 +121,7 @@ extraction:
     enabled: true
     ttl_days: 30
     max_entries: 5000
+community_detection:
+  enabled: true
+  skip_threshold: 200000
+  sample_threshold: 100000

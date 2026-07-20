@@ -401,3 +401,63 @@ class TestResolutionCacheMetadata:
         result = cache2.get_project_metadata("/path/to/file", "hash")
         
         assert result == metadata
+
+
+class TestResolutionCacheAtomicWrites:
+    """Tests for atomic write behavior in ResolutionCache."""
+
+    @pytest.fixture
+    def temp_cache_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            yield Path(tmp)
+
+    def test_put_symbols_atomic_overwrite(self, temp_cache_dir):
+        """Verify that put_symbols writes atomically — overwriting an existing cache file doesn't corrupt it.
+
+        Scenario:
+            A cache file exists for a package. put_symbols is called again for the same
+            package with updated symbols. The file should be atomically replaced.
+
+        Execution Flow:
+            1. Write symbols for a package.
+            2. Read them back to verify.
+            3. Overwrite with different symbols.
+            4. Read again — should get the new symbols, not corrupted data.
+
+        Expectations:
+            - The file is not corrupted after overwrite.
+            - The new symbols are returned.
+        """
+        cache = ResolutionCache(temp_cache_dir)
+        symbols_v1 = {"mod": ["func_v1"]}
+        symbols_v2 = {"mod": ["func_v2"]}
+
+        cache.put_symbols("pkg", "1.0.0", "pip", symbols_v1)
+        assert cache.get_symbols("pkg", "1.0.0", "pip") == symbols_v1
+
+        cache.put_symbols("pkg", "1.0.0", "pip", symbols_v2)
+        assert cache.get_symbols("pkg", "1.0.0", "pip") == symbols_v2
+
+    def test_save_index_atomic(self, temp_cache_dir):
+        """Verify that _save_index writes atomically — the index file is valid after save.
+
+        Scenario:
+            The manifest index is saved and reloaded. The data should be consistent.
+
+        Execution Flow:
+            1. Mark several manifests as indexed.
+            2. Create a new ResolutionCache pointing to the same directory.
+            3. Verify the manifest index was loaded correctly.
+
+        Expectations:
+            - The index file is valid and loadable after atomic save.
+        """
+        cache1 = ResolutionCache(temp_cache_dir)
+        cache1.mark_manifest_indexed("/path/to/file1", "hash1")
+        cache1.mark_manifest_indexed("/path/to/file2", "hash2")
+
+        # New instance should load the saved index
+        cache2 = ResolutionCache(temp_cache_dir)
+        assert not cache2.is_manifest_stale("/path/to/file1", "hash1")
+        assert not cache2.is_manifest_stale("/path/to/file2", "hash2")
+        assert cache2.is_manifest_stale("/path/to/file1", "wrong_hash")

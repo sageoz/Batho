@@ -7,6 +7,9 @@ The MCP server reads this registry to create one BathoBundleReader per repo.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import threading
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
@@ -34,6 +37,7 @@ class RepoRegistry:
 
     def __init__(self, config_path: Path | None = None) -> None:
         self.config_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
+        self._lock = threading.Lock()
 
     def load(self) -> list[RepoEntry]:
         """Load entries from the JSON config file. Returns empty list if file doesn't exist."""
@@ -48,32 +52,44 @@ class RepoRegistry:
         return [RepoEntry(name=r["name"], path=r["path"]) for r in repos if "name" in r and "path" in r]
 
     def save(self, entries: list[RepoEntry]) -> None:
-        """Write entries to the JSON config file. Creates parent dirs if needed."""
+        """Write entries to the JSON config file atomically. Creates parent dirs if needed."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         data = {"repos": [asdict(e) for e in entries]}
-        self.config_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        fd, tmp_path = tempfile.mkstemp(dir=self.config_path.parent, prefix="mcp-repos.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(data, indent=2))
+            os.replace(tmp_path, str(self.config_path))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def add(self, name: str, path: str) -> RepoEntry:
         """Add or update a repo entry. Returns the entry."""
-        entries = self.load()
-        resolved = str(Path(path).resolve())
-        entry = RepoEntry(name=name, path=resolved)
-        # Upsert: replace if name exists, otherwise append
-        entries = [e for e in entries if e.name != name]
-        entries.append(entry)
-        self.save(entries)
-        LOGGER.info("registry_add", name=name, path=resolved)
-        return entry
+        with self._lock:
+            entries = self.load()
+            resolved = str(Path(path).resolve())
+            entry = RepoEntry(name=name, path=resolved)
+            # Upsert: replace if name exists, otherwise append
+            entries = [e for e in entries if e.name != name]
+            entries.append(entry)
+            self.save(entries)
+            LOGGER.info("registry_add", name=name, path=resolved)
+            return entry
 
     def remove(self, name: str) -> bool:
         """Remove a repo entry by name. Returns True if removed, False if not found."""
-        entries = self.load()
-        filtered = [e for e in entries if e.name != name]
-        if len(filtered) == len(entries):
-            return False
-        self.save(filtered)
-        LOGGER.info("registry_remove", name=name)
-        return True
+        with self._lock:
+            entries = self.load()
+            filtered = [e for e in entries if e.name != name]
+            if len(filtered) == len(entries):
+                return False
+            self.save(filtered)
+            LOGGER.info("registry_remove", name=name)
+            return True
 
     def get(self, name: str) -> RepoEntry | None:
         """Look up a repo entry by name."""

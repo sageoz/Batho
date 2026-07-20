@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import pytest
 
 from batho.core.config import set_active_root
 from batho.core.config.loader import _get_config_cached_for_root, get_config_with_root
+from batho.core.config.models import Config
 from batho.utils.path_sanitizer import PathSecurityError
 
 
@@ -213,3 +215,126 @@ class TestConfigSecurityAndRecovery:
         assert cfg["community_detection"]["enabled"] is False
 
 
+class TestMemoryConfig:
+    """Verify memory thresholds and worker caps load from config and env."""
+
+    def test_memory_config_defaults(self):
+        """Default memory config values match the expected safe defaults."""
+        cfg = Config()
+        assert cfg.memory.warning_threshold_mb == 500.0
+        assert cfg.memory.critical_threshold_mb == 800.0
+        assert cfg.memory.rss_flush_threshold_mb == 650.0
+        assert cfg.memory.max_per_worker_mb == 150.0
+
+    def test_memory_config_from_yaml(self, tmp_path: Path):
+        """Memory thresholds are loaded from batho.yaml."""
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "memory:\n"
+            "  warning_threshold_mb: 1000.0\n"
+            "  critical_threshold_mb: 2000.0\n"
+            "  rss_flush_threshold_mb: 1500.0\n"
+            "  max_per_worker_mb: 300.0\n",
+            encoding="utf-8",
+        )
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert cfg["memory"]["warning_threshold_mb"] == 1000.0
+        assert cfg["memory"]["critical_threshold_mb"] == 2000.0
+        assert cfg["memory"]["rss_flush_threshold_mb"] == 1500.0
+        assert cfg["memory"]["max_per_worker_mb"] == 300.0
+
+    def test_community_detection_thresholds_from_yaml(self, tmp_path: Path):
+        """Community detection skip/sample thresholds are loaded from batho.yaml."""
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "community_detection:\n"
+            "  enabled: true\n"
+            "  skip_threshold: 50000\n"
+            "  sample_threshold: 25000\n",
+            encoding="utf-8",
+        )
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert cfg["community_detection"]["enabled"] is True
+        assert cfg["community_detection"]["skip_threshold"] == 50000
+        assert cfg["community_detection"]["sample_threshold"] == 25000
+
+    def test_memory_env_overrides(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Environment variables override memory config values."""
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text("memory:\n  warning_threshold_mb: 100.0\n", encoding="utf-8")
+
+        monkeypatch.setenv("BATHO_MEMORY_CRITICAL_THRESHOLD_MB", "900.5")
+        monkeypatch.setenv("BATHO_MEMORY_RSS_FLUSH_THRESHOLD_MB", "700")
+        monkeypatch.setenv("BATHO_MEMORY_MAX_PER_WORKER_MB", "250")
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert cfg["memory"]["warning_threshold_mb"] == 100.0
+        assert cfg["memory"]["critical_threshold_mb"] == 900.5
+        assert cfg["memory"]["rss_flush_threshold_mb"] == 700.0
+        assert cfg["memory"]["max_per_worker_mb"] == 250.0
+
+    def test_community_detection_env_overrides(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Environment variables override community detection config values."""
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text("community_detection:\n  enabled: true\n", encoding="utf-8")
+
+        monkeypatch.setenv("BATHO_COMMUNITY_DETECTION_ENABLED", "false")
+        monkeypatch.setenv("BATHO_COMMUNITY_DETECTION_SKIP_THRESHOLD", "50000")
+        monkeypatch.setenv("BATHO_COMMUNITY_DETECTION_SAMPLE_THRESHOLD", "25000")
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert cfg["community_detection"]["enabled"] is False
+        assert cfg["community_detection"]["skip_threshold"] == 50000
+        assert cfg["community_detection"]["sample_threshold"] == 25000
+
+    def test_legacy_batho_yaml_gets_new_defaults(self, tmp_path: Path):
+        """An older batho.yaml without memory/community_detection still receives defaults."""
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "indexer:\n  max_workers: 4\n",
+            encoding="utf-8",
+        )
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert "memory" in cfg
+        assert cfg["memory"]["warning_threshold_mb"] == 500.0
+        assert cfg["memory"]["critical_threshold_mb"] == 800.0
+        assert cfg["memory"]["rss_flush_threshold_mb"] == 650.0
+        assert cfg["memory"]["max_per_worker_mb"] == 150.0
+
+        assert "community_detection" in cfg
+        assert cfg["community_detection"]["enabled"] is True
+        assert cfg["community_detection"]["skip_threshold"] == 200_000
+        assert cfg["community_detection"]["sample_threshold"] == 100_000
+
+    def test_get_config_with_root_auto_create_false_does_not_write(self, tmp_path: Path):
+        """When auto_create is False, a missing batho.yaml is not created."""
+        target_dir = tmp_path / "target_repo"
+        target_dir.mkdir()
+
+        cfg = get_config_with_root(target_dir, auto_create=False)
+
+        assert cfg is not None
+        assert not (target_dir / "batho.yaml").exists()
+
+    def test_get_config_with_root_auto_create_true_writes_target_dir(self, tmp_path: Path):
+        """When auto_create is True, a default batho.yaml is written in the target directory."""
+        target_dir = tmp_path / "target_repo"
+        target_dir.mkdir()
+        invocation_dir = tmp_path / "invocation"
+        invocation_dir.mkdir()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.chdir(invocation_dir)
+            cfg = get_config_with_root(target_dir, auto_create=True)
+
+        assert cfg is not None
+        assert (target_dir / "batho.yaml").exists()
+        assert not (invocation_dir / "batho.yaml").exists()

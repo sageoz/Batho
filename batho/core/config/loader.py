@@ -50,6 +50,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -96,16 +103,18 @@ def _safe_set_nested(d: dict[str, Any], keys: list[str], val: Any) -> None:
     curr[keys[-1]] = val
 
 
-def get_config_with_root(root_dir: Path) -> dict[str, Any]:
+def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str, Any]:
     """Return validated config as a plain dict, loading batho.yaml from root_dir.
 
-    If batho.yaml does not exist, it is created with default configuration options.
+    If batho.yaml does not exist and auto_create is True, it is created with
+    default configuration options. Otherwise, the default config is returned
+    without writing to disk.
     """
     base_cfg: dict[str, Any] = Config().model_dump()
 
     cfg_path = root_dir / "batho.yaml"
 
-    if not cfg_path.exists():
+    if not cfg_path.exists() and auto_create:
         try:
             cfg_path.write_text(
                 yaml.safe_dump(base_cfg, default_flow_style=False, sort_keys=False),
@@ -318,6 +327,45 @@ def get_config_with_root(root_dir: Path) -> dict[str, Any]:
         _env_bool("BATHO_ARTIFACT_BLOBS_DELTA_STATS", _safe_get_nested(base_cfg, ["artifact_blobs", "run_artifacts", "delta_stats"], True)),
     )
 
+    # Memory overrides
+    _safe_set_nested(
+        base_cfg,
+        ["memory", "warning_threshold_mb"],
+        _env_float("BATHO_MEMORY_WARNING_THRESHOLD_MB", _safe_get_nested(base_cfg, ["memory", "warning_threshold_mb"], 500.0)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["memory", "critical_threshold_mb"],
+        _env_float("BATHO_MEMORY_CRITICAL_THRESHOLD_MB", _safe_get_nested(base_cfg, ["memory", "critical_threshold_mb"], 800.0)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["memory", "rss_flush_threshold_mb"],
+        _env_float("BATHO_MEMORY_RSS_FLUSH_THRESHOLD_MB", _safe_get_nested(base_cfg, ["memory", "rss_flush_threshold_mb"], 650.0)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["memory", "max_per_worker_mb"],
+        _env_float("BATHO_MEMORY_MAX_PER_WORKER_MB", _safe_get_nested(base_cfg, ["memory", "max_per_worker_mb"], 150.0)),
+    )
+
+    # Community detection overrides
+    _safe_set_nested(
+        base_cfg,
+        ["community_detection", "enabled"],
+        _env_bool("BATHO_COMMUNITY_DETECTION_ENABLED", _safe_get_nested(base_cfg, ["community_detection", "enabled"], True)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["community_detection", "skip_threshold"],
+        _env_int("BATHO_COMMUNITY_DETECTION_SKIP_THRESHOLD", _safe_get_nested(base_cfg, ["community_detection", "skip_threshold"], 200_000)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["community_detection", "sample_threshold"],
+        _env_int("BATHO_COMMUNITY_DETECTION_SAMPLE_THRESHOLD", _safe_get_nested(base_cfg, ["community_detection", "sample_threshold"], 100_000)),
+    )
+
     # BSG overrides
     _safe_set_nested(
         base_cfg,
@@ -454,12 +502,12 @@ def get_config_with_root(root_dir: Path) -> dict[str, Any]:
 
 
 @lru_cache(maxsize=None)
-def _get_config_cached_for_root(root_dir: Path) -> dict[str, Any]:
-    return get_config_with_root(root_dir)
+def _get_config_cached_for_root(root_dir: Path, auto_create: bool = False) -> dict[str, Any]:
+    return get_config_with_root(root_dir, auto_create=auto_create)
 
 
-def get_config_cached() -> dict[str, Any]:
-    return _get_config_cached_for_root(get_active_root())
+def get_config_cached(auto_create: bool = False) -> dict[str, Any]:
+    return _get_config_cached_for_root(get_active_root(), auto_create)
 
 
 def reload_config() -> dict[str, Any]:

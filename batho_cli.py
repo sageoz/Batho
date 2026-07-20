@@ -47,13 +47,20 @@ def main() -> None:
     """CLI main entry point."""
     import gc
     gc.set_threshold(50000, 50, 50)
-    configure_logging_from_dict(get_config_cached()["logging"])
+
     parser = _build_parser()
     args = parser.parse_args()
 
     if not args.command:
         parser.print_help()
         sys.exit(0)
+
+    # Resolve config from the target --root directory, not the invocation CWD.
+    if hasattr(args, "root"):
+        from batho.core.config import set_active_root
+        set_active_root(args.root.resolve())
+
+    configure_logging_from_dict(get_config_cached()["logging"])
 
     if hasattr(args, "func"):
         exit_code = args.func(args)

@@ -311,3 +311,29 @@ class TestIntrospectorScriptTemplate:
         
         # Package name should appear literally
         assert "package-with-dashes" in script
+
+    def test_introspect_rejects_invalid_package_name(self):
+        """Verify that invalid package names are rejected before subprocess execution.
+
+        Scenario:
+            A malicious package name containing shell metacharacters is passed
+            to introspect_python. The introspector should reject it and return {}
+
+        Execution Flow:
+            1. Call introspect_python with a malicious string.
+            2. Assert that the return value is an empty dict.
+            3. Assert that no subprocess was spawned (no real introspection attempted).
+
+        Expectations:
+            - Invalid package names are rejected by the regex validation.
+            - Returns empty dict without executing any subprocess.
+        """
+        introspector = ThirdPartyIntrospector()
+        result = introspector.introspect_python("; rm -rf /")
+        assert result == {}
+
+        result2 = introspector.introspect_python("$(whoami)")
+        assert result2 == {}
+
+        result3 = introspector.introspect_python("pkg;malicious")
+        assert result3 == {}

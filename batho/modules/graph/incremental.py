@@ -38,6 +38,7 @@ def _run_git(
 
     env = os.environ.copy()
     env["PATH"] = safe_path
+    env["GIT_PAGER"] = "cat"
 
     try:
         return subprocess.run(

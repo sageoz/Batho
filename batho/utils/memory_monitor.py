@@ -38,7 +38,7 @@ class MemoryMonitor:
     """Monitor memory usage during operations."""
 
     def __init__(
-        self, warning_threshold_mb: float = 500.0, critical_threshold_mb: float = 1000.0
+        self, warning_threshold_mb: float = 500.0, critical_threshold_mb: float = 800.0
     ):
         """
         Initialize memory monitor.
@@ -166,7 +166,7 @@ class MemoryMonitor:
 def memory_monitor(
     operation: str,
     warning_threshold_mb: float = 500.0,
-    critical_threshold_mb: float = 1000.0,
+    critical_threshold_mb: float = 800.0,
 ):
     """
     Context manager for monitoring memory usage during an operation.
@@ -310,3 +310,44 @@ def check_memory_pressure(threshold_percent: float = 90.0) -> bool:
     except Exception as e:
         logger.error("failed_to_check_memory_pressure", error=str(e))
         return False
+
+
+def cap_workers_by_ram(configured_max_workers: int, max_per_worker_mb: float) -> int:
+    """Cap worker count by available RAM.
+
+    Args:
+        configured_max_workers: Desired/maximum workers from config or CLI.
+        max_per_worker_mb: Estimated memory footprint per worker in MB.
+
+    Returns:
+        Maximum workers that fit into currently available RAM, at least 1.
+    """
+    if configured_max_workers <= 1:
+        return max(1, configured_max_workers)
+    if not _PSUTIL_AVAILABLE or max_per_worker_mb <= 0:
+        return max(1, configured_max_workers)
+    try:
+        available_mb = _psutil.virtual_memory().available / 1024 / 1024
+    except Exception as exc:
+        logger.error("failed_to_get_available_ram", error=str(exc))
+        return max(1, configured_max_workers)
+    ram_limited = max(1, int(available_mb // max_per_worker_mb))
+    return max(1, min(configured_max_workers, ram_limited))
+
+
+def get_rss_mb() -> float:
+    """Return current process RSS in MB, or 0.0 if psutil is unavailable."""
+    if not _PSUTIL_AVAILABLE:
+        return 0.0
+    try:
+        return _psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
+    except Exception as exc:
+        logger.error("failed_to_get_rss", error=str(exc))
+        return 0.0
+
+
+def should_flush_for_memory(rss_flush_threshold_mb: float) -> bool:
+    """Return True if current RSS crosses the early-flush threshold."""
+    if rss_flush_threshold_mb <= 0:
+        return False
+    return get_rss_mb() >= rss_flush_threshold_mb

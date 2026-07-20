@@ -51,3 +51,39 @@ def test_patch_lock_contention(tmp_path: Path):
         patch_res = run_patch(PatchOptions(root=tmp_path, verbose=False))
         assert patch_res.success is False
         assert any("already running" in w.lower() or "lock" in w.lower() for w in patch_res.warnings)
+
+
+def test_patch_delete_only_no_crash(tmp_path: Path):
+    """Verify that a patch run with only file deletions does not crash with NameError.
+
+    Scenario:
+        A repo is built with two files. One file is deleted, leaving no added/modified
+        files — only a deletion. The patch must handle this gracefully without
+        referencing an undefined `indexer` variable.
+
+    Execution Flow:
+        1. Create a repo with two Python files.
+        2. Run a full build to create the initial Batho bundle.
+        3. Delete one file (leaving the other unchanged).
+        4. Run `run_patch` — must succeed without NameError.
+        5. Delete the remaining file.
+        6. Run `run_patch` again — must still succeed.
+
+    Expectations:
+        - Delete-only patch runs return PatchResult(success=True).
+        - No NameError or AttributeError is raised.
+    """
+    (tmp_path / "main.py").write_text("def hello(): pass")
+    (tmp_path / "utils.py").write_text("def helper(): pass")
+    res = run_build(BuildOptions(root=tmp_path, force_full=True))
+    assert res.success
+
+    # Delete one file — patch should handle delete-only gracefully
+    (tmp_path / "utils.py").unlink()
+    patch_res = run_patch(PatchOptions(root=tmp_path, verbose=False))
+    assert patch_res.success
+
+    # Delete the remaining file — still delete-only
+    (tmp_path / "main.py").unlink()
+    patch_res = run_patch(PatchOptions(root=tmp_path, verbose=False))
+    assert patch_res.success

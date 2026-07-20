@@ -37,17 +37,89 @@ class Community:
         }
 
 
-def detect_communities(graph: Any) -> list[Community]:
+def _sample_graph_by_files(graph: Any, sample_threshold: int) -> tuple[set[str], list[Any]]:
+    """Sample graph by retaining whole files until entity count <= sample_threshold.
+
+    Files are greedily kept in descending order of entity count, which preserves
+    intra-file structure while capping memory use.
+
+    Returns:
+        A set of kept entity IDs and the filtered relationships.
+    """
+    from collections import defaultdict
+
+    entities_by_file: dict[str, list[str]] = defaultdict(list)
+    for eid, ent in graph.entities.items():
+        entities_by_file[getattr(ent, "file", "")].append(eid)
+
+    # Sort files by entity count descending; keep whole files until under threshold
+    sorted_files = sorted(
+        entities_by_file.items(),
+        key=lambda item: len(item[1]),
+        reverse=True,
+    )
+    kept_ids: set[str] = set()
+    running_total = 0
+    for _, eids in sorted_files:
+        count = len(eids)
+        if running_total + count > sample_threshold and kept_ids:
+            break
+        kept_ids.update(eids)
+        running_total += count
+
+    filtered_rels = [
+        rel for rel in graph.relationships
+        if rel.source_id in kept_ids and rel.target_id in kept_ids
+    ]
+    return kept_ids, filtered_rels
+
+
+def detect_communities(graph: Any, config: dict[str, Any] | None = None) -> list[Community]:
     """Detect communities in the code graph using Leiden clustering.
 
     Args:
         graph: InMemoryGraph with entities and relationships.
+        config: Optional community detection configuration with keys:
+            enabled, skip_threshold, sample_threshold.
 
     Returns:
         List of Community objects sorted by entity count (descending).
     """
+    if config is None:
+        config = {}
+    enabled = bool(config.get("enabled", True))
+    skip_threshold = int(config.get("skip_threshold", 200_000))
+    sample_threshold = int(config.get("sample_threshold", 100_000))
+
+    if not enabled:
+        LOGGER.info("community_detection_disabled_by_config")
+        return []
+
     if not graph.entities or not graph.relationships:
         return []
+
+    entity_count = len(graph.entities)
+    if entity_count > skip_threshold:
+        LOGGER.warning(
+            "community_detection_skipped_large_graph",
+            entity_count=entity_count,
+            skip_threshold=skip_threshold,
+        )
+        return []
+
+    relationships = graph.relationships
+    if entity_count > sample_threshold:
+        LOGGER.info(
+            "community_detection_sampling_graph",
+            entity_count=entity_count,
+            sample_threshold=sample_threshold,
+        )
+        kept_ids, relationships = _sample_graph_by_files(graph, sample_threshold)
+        LOGGER.info(
+            "community_detection_sampled_graph",
+            kept_entities=len(kept_ids),
+            kept_relationships=len(relationships),
+        )
 
     try:
         import igraph as ig
@@ -56,7 +128,16 @@ def detect_communities(graph: Any) -> list[Community]:
         LOGGER.warning("community_detection_deps_missing")
         return []
 
-    entity_ids = list(graph.entities.keys())
+    if relationships is graph.relationships:
+        entity_ids = list(graph.entities.keys())
+    else:
+        # Sampled graph: only kept entities participate
+        entity_ids = sorted(
+            {eid for rel in relationships for eid in (rel.source_id, rel.target_id)}
+        )
+        if not entity_ids:
+            return []
+
     id_to_idx: dict[str, int] = {}
     idx_to_id: dict[int, str] = {}
     for i, eid in enumerate(entity_ids):
@@ -64,7 +145,7 @@ def detect_communities(graph: Any) -> list[Community]:
         idx_to_id[i] = eid
 
     edges: list[tuple[int, int]] = []
-    for rel in graph.relationships:
+    for rel in relationships:
         src_idx = id_to_idx.get(rel.source_id)
         tgt_idx = id_to_idx.get(rel.target_id)
         if src_idx is not None and tgt_idx is not None and src_idx != tgt_idx:

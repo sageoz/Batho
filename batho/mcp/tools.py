@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pyarrow.compute as pc
 from fastmcp import FastMCP, Context
 from fastmcp.tools.tool import ToolResult
@@ -293,8 +294,16 @@ def register_tools(
                 rel_type_counts[rt] = rel_type_counts.get(rt, 0) + 1
 
         files_list = []
+        entity_counts_by_file: dict[str, int] = {}
+        if agent_table.num_rows > 0:
+            file_ids = agent_table.column("file_id").to_pylist()
+            fid_to_path = {tr.get("file_id"): fp for fp, tr in tracking.items()}
+            for fid in file_ids:
+                fp = fid_to_path.get(fid)
+                if fp:
+                    entity_counts_by_file[fp] = entity_counts_by_file.get(fp, 0) + 1
         for fp, tr in tracking.items():
-            files_list.append({"path": fp, "entities": 0, "indexed": tr.get("is_indexed", False)})
+            files_list.append({"path": fp, "entities": entity_counts_by_file.get(fp, 0), "indexed": tr.get("is_indexed", False)})
         files_list.sort(key=lambda x: x["path"])
 
         stats = {
@@ -316,6 +325,8 @@ def register_tools(
         markdown = format_summary(stats, communities)
         from batho.mcp.graph_builder import truncate_to_budget
         markdown, truncated = truncate_to_budget(markdown, max_tokens)
+        if truncated:
+            markdown += f"\n\n---\nTruncated to fit {max_tokens} token budget."
 
         structured = {
             "overview": {
@@ -647,11 +658,10 @@ def register_tools(
                     if tid and tid not in known_ids:
                         cross_ids.add(tid)
                 if cross_ids:
-                    for cid in cross_ids:
-                        mask = pc.equal(agent_table.column("entity_id"), cid)
-                        matched = agent_table.filter(mask)
-                        if matched.num_rows > 0:
-                            agent_rows.extend(matched.to_pylist())
+                    mask = pc.is_in(agent_table.column("entity_id"), value_set=pa.array(list(cross_ids)))
+                    matched = agent_table.filter(mask)
+                    if matched.num_rows > 0:
+                        agent_rows.extend(matched.to_pylist())
 
         file_paths = _file_paths_map(reader)
         gen = _manifest_gen(reader)

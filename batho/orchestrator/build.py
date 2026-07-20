@@ -7,6 +7,7 @@ exits early directing the user to `batho patch`.
 
 from __future__ import annotations
 
+import gc
 import json
 import time
 import uuid
@@ -18,6 +19,7 @@ from pydantic import BaseModel
 from batho.core.config import get_config_cached, set_active_root
 from batho.utils.hash import _is_binary, compute_file_hash
 from batho.utils.logging import get_logger
+from batho.utils.memory_monitor import get_rss_mb, should_flush_for_memory
 from batho.modules.graph.incremental import get_head_commit, get_current_branch, is_git_repo
 
 LOGGER = get_logger(__name__, component="orchestrator.build")
@@ -191,9 +193,26 @@ def run_build(options: BuildOptions) -> BuildResult:
                     bundle_dir.mkdir(parents=True, exist_ok=True)
 
                 # --- Load config ---
-                cfg = get_config_cached()
+                cfg = get_config_cached(auto_create=True)
                 indexer_cfg = cfg.get("indexer", {})
                 bsg_cfg = cfg.get("bsg", {})
+                memory_cfg = cfg.get("memory", {})
+                community_cfg = cfg.get("community_detection", {})
+                rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 650.0))
+
+                LOGGER.info(
+                    "effective_memory_config",
+                    warning_threshold_mb=memory_cfg.get("warning_threshold_mb", 500.0),
+                    critical_threshold_mb=memory_cfg.get("critical_threshold_mb", 800.0),
+                    rss_flush_threshold_mb=rss_flush_threshold_mb,
+                    max_per_worker_mb=memory_cfg.get("max_per_worker_mb", 150.0),
+                )
+                LOGGER.info(
+                    "effective_community_detection_config",
+                    enabled=community_cfg.get("enabled", True),
+                    skip_threshold=community_cfg.get("skip_threshold", 200_000),
+                    sample_threshold=community_cfg.get("sample_threshold", 100_000),
+                )
 
                 max_file_size_kb = options.max_file_size_kb or indexer_cfg.get("max_file_size_kb", 500)
 
@@ -254,6 +273,26 @@ def run_build(options: BuildOptions) -> BuildResult:
                 precompiled_write_batch = []
                 precompiled_current_batch_bytes = 0
 
+                def _flush_precompiled_batch() -> None:
+                    nonlocal precompiled_write_batch, precompiled_current_batch_bytes, t_batch_write_ms
+                    if not precompiled_write_batch:
+                        return
+                    t_write_0 = time.monotonic()
+                    arrow_batch = _decode_precompiled_batch(precompiled_write_batch)
+                    db.insert_file_artifacts_batch(run_internal_id, arrow_batch, store=store)
+                    t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
+                    precompiled_write_batch.clear()
+                    precompiled_current_batch_bytes = 0
+
+                def _flush_legacy_batch(batch: list[dict]) -> None:
+                    nonlocal t_batch_write_ms
+                    if not batch:
+                        return
+                    t_write_0 = time.monotonic()
+                    db.insert_file_artifacts_batch(run_internal_id, batch, store=store, entity_ids_global=all_entity_ids)
+                    t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
+                    batch.clear()
+
                 # --- Dependency Indexing (CDEU) ---
                 from batho.modules.dependency import build_dependency_index
                 from batho.modules.extraction.scope_manager import ScopeManager
@@ -301,13 +340,24 @@ def run_build(options: BuildOptions) -> BuildResult:
 
                     batch_size = cfg.get("persistence", {}).get("batch_size", 500)
                     batch_bytes_threshold = cfg.get("persistence", {}).get("batch_bytes_threshold", 15_728_640)
-                    if len(precompiled_write_batch) >= batch_size or precompiled_current_batch_bytes >= batch_bytes_threshold:
-                        t_write_0 = time.monotonic()
-                        arrow_batch = _decode_precompiled_batch(precompiled_write_batch)
-                        db.insert_file_artifacts_batch(run_internal_id, arrow_batch, store=store)
-                        t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
-                        precompiled_write_batch.clear()
-                        precompiled_current_batch_bytes = 0
+                    should_rss_flush = should_flush_for_memory(rss_flush_threshold_mb)
+                    if (
+                        len(precompiled_write_batch) >= batch_size
+                        or precompiled_current_batch_bytes >= batch_bytes_threshold
+                        or should_rss_flush
+                    ):
+                        if should_rss_flush:
+                            rss_before = get_rss_mb()
+                        _flush_precompiled_batch()
+                        if should_rss_flush:
+                            gc.collect()
+                            rss_after = get_rss_mb()
+                            LOGGER.info(
+                                "rss_flush_released_memory",
+                                rss_before_mb=round(rss_before, 1),
+                                rss_after_mb=round(rss_after, 1),
+                                recovered_mb=round(rss_before - rss_after, 1),
+                            )
 
                 with CodeGraphIndexer(
                     cache_path=str(root), root=str(root), ast_cache_dir=ast_cache_dir
@@ -351,7 +401,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                             from batho.modules.storage.arrow_bundle.schemas import COMMUNITIES_SCHEMA
                             from batho.modules.storage.arrow_bundle.writer import write_simple_ipc
                             t_comm_0 = time.monotonic()
-                            communities = detect_communities(graph)
+                            communities = detect_communities(graph, community_cfg)
                             comm_rows = communities_to_rows(communities)
                             comm_path = bundle_dir / "communities.tmp.ipc"
                             write_simple_ipc(comm_rows, COMMUNITIES_SCHEMA, comm_path)
@@ -508,17 +558,28 @@ def run_build(options: BuildOptions) -> BuildResult:
 
                             batch_size = cfg.get("persistence", {}).get("batch_size", 500)
                             batch_bytes_threshold = cfg.get("persistence", {}).get("batch_bytes_threshold", 15_728_640)
-                            if len(legacy_write_batch) >= batch_size or legacy_current_batch_bytes >= batch_bytes_threshold:
-                                t_write_0 = time.monotonic()
-                                db.insert_file_artifacts_batch(run_internal_id, legacy_write_batch, store=store, entity_ids_global=all_entity_ids)
-                                t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
-                                legacy_write_batch.clear()
+                            should_rss_flush = should_flush_for_memory(rss_flush_threshold_mb)
+                            if (
+                                len(legacy_write_batch) >= batch_size
+                                or legacy_current_batch_bytes >= batch_bytes_threshold
+                                or should_rss_flush
+                            ):
+                                if should_rss_flush:
+                                    rss_before = get_rss_mb()
+                                _flush_legacy_batch(legacy_write_batch)
                                 legacy_current_batch_bytes = 0
+                                if should_rss_flush:
+                                    gc.collect()
+                                    rss_after = get_rss_mb()
+                                    LOGGER.info(
+                                        "rss_flush_released_memory",
+                                        rss_before_mb=round(rss_before, 1),
+                                        rss_after_mb=round(rss_after, 1),
+                                        recovered_mb=round(rss_before - rss_after, 1),
+                                    )
 
                         if legacy_write_batch:
-                            t_write_0 = time.monotonic()
-                            db.insert_file_artifacts_batch(run_internal_id, legacy_write_batch, store=store, entity_ids_global=all_entity_ids)
-                            t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
+                            _flush_legacy_batch(legacy_write_batch)
 
                     # --- Accumulate precompiled-path files into BSG Arrow store ---
                     if precompiled_blobs and store_files:

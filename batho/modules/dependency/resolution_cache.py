@@ -3,6 +3,7 @@ import hashlib
 import logging
 import msgpack
 import os
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -43,8 +44,17 @@ class ResolutionCache:
 
     def _save_index(self):
         try:
-            with open(self.index_file, "wb") as f:
-                f.write(msgpack.packb(self._manifest_index))
+            fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, prefix="dep_manifests.", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(msgpack.packb(self._manifest_index))
+                os.replace(tmp_path, str(self.index_file))
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except Exception as e:
             logger.debug(f"Failed to save manifest index: {e}")
 
@@ -62,14 +72,23 @@ class ResolutionCache:
         return None
 
     def put_symbols(self, pkg: str, version: str, manager: str, symbols: Dict[str, List[str]]) -> None:
-        """Store symbols for a package in the cache (thread-safe)."""
+        """Store symbols for a package in the cache (thread-safe, atomic write)."""
         with self._lock:
             pkg_hash = self._compute_pkg_hash(pkg, version, manager)
             cache_file = self.dep_dir / f"{pkg_hash}.msgpack"
 
             try:
-                with open(cache_file, "wb") as f:
-                    f.write(msgpack.packb(symbols))
+                fd, tmp_path = tempfile.mkstemp(dir=self.dep_dir, prefix=f"{pkg_hash}.", suffix=".tmp")
+                try:
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(msgpack.packb(symbols))
+                    os.replace(tmp_path, str(cache_file))
+                except Exception:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise
             except Exception as e:
                 logger.debug(f"Failed to write cache for {pkg}: {e}")
 

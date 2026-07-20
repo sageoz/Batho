@@ -107,6 +107,15 @@ class GraphConfig(BaseModel):
 
 class CommunityDetectionConfig(BaseModel):
     enabled: bool = Field(default=True)
+    skip_threshold: int = Field(default=200_000, ge=1)
+    sample_threshold: int = Field(default=100_000, ge=1)
+
+
+class MemoryConfig(BaseModel):
+    warning_threshold_mb: float = Field(default=500.0, ge=1.0)
+    critical_threshold_mb: float = Field(default=800.0, ge=1.0)
+    rss_flush_threshold_mb: float = Field(default=650.0, ge=1.0)
+    max_per_worker_mb: float = Field(default=150.0, ge=1.0)
 
 
 class FlagsConfig(BaseModel):
@@ -255,6 +264,7 @@ class Config(BaseModel):
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     artifact_blobs: ArtifactBlobsConfig = Field(default_factory=ArtifactBlobsConfig)
     persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     bsg: BsgConfig = Field(default_factory=BsgConfig)
     dependency: DependencyConfig = Field(default_factory=DependencyConfig)
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)

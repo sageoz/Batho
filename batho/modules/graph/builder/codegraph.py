@@ -37,7 +37,11 @@ from batho.utils.file_io import read_file_bytes
 from batho.utils.hash import compute_bytes_hash
 from batho.utils.ignore import is_ignored, load_ignore_spec
 from batho.utils.logging import get_logger
-from batho.utils.memory_monitor import force_garbage_collection, memory_monitor
+from batho.utils.memory_monitor import (
+    cap_workers_by_ram,
+    force_garbage_collection,
+    memory_monitor,
+)
 
 from batho.modules.storage.cache.unified_cache import (
     BathoCache,
@@ -938,15 +942,23 @@ class CodeGraphIndexer:
             ):
                 raise ValueError("extensions must be a list of strings or None")
 
+        # Load config early so memory thresholds and worker caps are config-driven
+        cfg = get_config_cached()
+        memory_cfg = cfg.get("memory", {})
+        warning_threshold_mb = float(memory_cfg.get("warning_threshold_mb", 500.0))
+        critical_threshold_mb = float(memory_cfg.get("critical_threshold_mb", 800.0))
+        rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 650.0))
+        max_per_worker_mb = float(memory_cfg.get("max_per_worker_mb", 150.0))
+
         # Use memory monitoring for the entire indexing pipeline
         actual_workers: int = 1
         with memory_monitor(
-            "build_graph", warning_threshold_mb=300.0, critical_threshold_mb=800.0
+            "build_graph",
+            warning_threshold_mb=warning_threshold_mb,
+            critical_threshold_mb=critical_threshold_mb,
         ) as monitor:
             from batho.modules.extraction.submodules.parser_factory.detector import default_detector
             from batho.modules.extraction.submodules.parser_factory.registry import get_extractor as _registry_get_extractor
-
-            cfg = get_config_cached()
             configured_max_file_size_kb = (
                 max_file_size_kb
                 if max_file_size_kb is not None
@@ -1101,12 +1113,21 @@ class CodeGraphIndexer:
                     actual_workers = worker_cap
                 actual_workers = min(actual_workers, max(1, file_count))
 
+            # Cap by available RAM using configured per-worker footprint
+            actual_workers = cap_workers_by_ram(actual_workers, max_per_worker_mb)
+            self.logger.info(
+                "indexer_workers_selected",
+                workers=actual_workers,
+                configured_max=configured_max_workers,
+                max_per_worker_mb=max_per_worker_mb,
+            )
+
             errors = 0
 
             # Check memory usage after operation and cleanup if needed
             if monitor and hasattr(monitor, "get_memory_stats"):
                 final_stats = monitor.get_memory_stats()
-                if final_stats.rss_mb > 500:  # If memory usage is high
+                if final_stats.rss_mb > rss_flush_threshold_mb:  # If memory usage is high
                     gc_result = batho.utils.memory_monitor.force_garbage_collection()
                     self.logger.info(
                         "memory_cleanup_performed",

@@ -6,6 +6,30 @@ description: "Batho release history"
 
 # Changelog
 
+## v1.2.1 — 2026-07-20
+
+**Bug fixes, concurrency safety, and documentation alignment.**
+
+### Bug Fixes
+
+- **Critical: `patch.py` NameError on delete-only runs** — `indexer` variable was only defined inside the `if added_or_modified:` block; delete-only patch runs crashed with `NameError`. Fixed by initializing `indexer = None` and guarding the `getattr` call.
+- **`RepoRegistry` race condition** — `add()` and `remove()` performed load→mutate→save without locking. Concurrent MCP tool calls could lose entries. Fixed with `threading.Lock` and atomic file writes.
+- **`ResolutionCache` non-atomic writes** — `put_symbols()` and `_save_index()` wrote directly to cache files without temp+rename. Crash during write could corrupt the cache. Fixed with `tempfile.mkstemp` + `os.replace` pattern.
+
+### Improvements
+
+- **`graph_overview` truncation indicator** — Truncated output now appends a visible notice to the markdown, matching `graph_query` and `get_file_graph` behavior.
+- **`get_file_graph` cross-file ref performance** — Replaced per-entity `pc.equal()` loop with single `pc.is_in()` batch filter.
+- **`graph_overview` file entity counts** — Fixed hardcoded `entities: 0` in file list; now computes actual entity counts per file from the agent table.
+- **Dependency introspector input validation** — Added package name regex validation before subprocess execution.
+- **Git subprocess hardening** — Added `GIT_PAGER=cat` to environment to prevent pager invocation.
+
+### Documentation
+
+- Updated all version references from `v1.2.0` to `v1.2.1` across whitepaper, CI/CD, configuration, and test docs.
+
+---
+
 ## v1.2.0 — 2026-07-05
 
 **MCP server, multi-repo registry, and community detection — Batho becomes an AI agent platform.**

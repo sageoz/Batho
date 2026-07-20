@@ -103,5 +103,5 @@ flowchart TD
 1. **Branch strategy**: Run on `main` and all merge requests to catch issues early.
 2. **Retention**: Balance 90-day default with storage costs.
 3. **Incremental first**: Always prefer `load` + `patch` over full builds.
-4. **Version pinning**: Pin Python (`3.12`) and Batho (`v1.2.0`) for reproducible builds.
+4. **Version pinning**: Pin Python (`3.12`) and Batho (`v1.2.1`) for reproducible builds.
 5. **Monitor performance**: Track job duration to identify repositories needing optimization.
