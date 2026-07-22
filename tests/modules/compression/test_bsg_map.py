@@ -175,21 +175,24 @@ class TestBSGMapBuild:
         bsg = BSGMap.build(g, root=ROOT)
         assert "a.py" not in bsg._dependencies
 
-    def test_build_requires_inmemory_graph(self):
-        """Verify that BSGMap.build raises TypeError when not passed an InMemoryGraph.
+    def test_build_accepts_any_graph_backend(self):
+        """Verify BSGMap.build duck-types on the GraphBackend protocol.
 
         Scenario:
-            An invalid dictionary type is passed to BSGMap.build instead of InMemoryGraph.
+            A non-InMemoryGraph object exposing the graph backend surface
+            (entities view, relationships, get_entity) is passed to BSGMap.build.
 
         Execution Flow:
-            1. Invoke BSGMap.build with a dict.
-            2. Catch the expected TypeError.
+            1. Build a minimal duck-typed graph stand-in.
+            2. Invoke BSGMap.build with it.
 
         Expectations:
-            - A TypeError is raised containing "InMemoryGraph".
+            - No isinstance/TypeError is raised; the map is built.
         """
-        with pytest.raises(TypeError, match="InMemoryGraph"):
-            BSGMap.build({"entities": {}}, root=ROOT)  # type: ignore[arg-type]
+        e = _make_entity("fn", f"{ROOT}/duck.py", start_line=1)
+        g = _make_graph([e])
+        bsg = BSGMap.build(g, root=ROOT)
+        assert "duck.py" in bsg._by_file
 
     def test_build_root_normalised(self):
         """Verify the root path is normalized and stripped from entity file paths.
@@ -339,26 +342,28 @@ class TestBSGMapPatch:
         bsg.patch([change], g2)
         assert "b.py" not in bsg._dependencies.get("a.py", [])
 
-    def test_patch_requires_inmemory_graph(self, tmp_path):
-        """Verify that patch raises TypeError when not passed an InMemoryGraph.
+    def test_patch_accepts_any_graph_backend(self, tmp_path):
+        """Verify patch duck-types on the GraphBackend protocol.
 
         Scenario:
-            An invalid dictionary type is passed to patch as the new graph.
+            A valid graph backend (any object exposing the graph backend
+            surface) is passed to patch.
 
         Execution Flow:
             1. Build a BSGMap.
-            2. Invoke patch with a file change and a dict instead of InMemoryGraph.
-            3. Verify TypeError is raised.
+            2. Invoke patch with a file change and a valid graph.
+            3. Verify no isinstance/TypeError is raised and the patch applies.
 
         Expectations:
-            - A TypeError is raised containing "InMemoryGraph".
+            - The changed file's entities are refreshed from the new graph.
         """
         root = str(tmp_path)
         e1 = _make_entity("fn", f"{root}/a.py")
         bsg = BSGMap.build(_make_graph([e1]), root=root)
         change = _make_change(f"{root}/a.py", "modified")
-        with pytest.raises(TypeError, match="InMemoryGraph"):
-            bsg.patch([change], {})  # type: ignore[arg-type]
+        e2 = _make_entity("fn2", f"{root}/a.py")
+        bsg.patch([change], _make_graph([e2]))
+        assert [e.name for e in bsg._by_file["a.py"]] == ["fn2"]
 
     def test_patch_serialised_bsg_cleared(self, tmp_path):
         """Verify patch clears the cached serialized representation.

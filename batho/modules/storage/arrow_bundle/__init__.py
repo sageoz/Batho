@@ -1,4 +1,4 @@
-"""Arrow Bundle storage — pure Arrow IPC replacement for SQLite.
+"""Arrow Bundle storage — pure Arrow IPC replacement for legacy SQLite.
 
 Public API:
   BathoBundle     — unified façade (replaces BathoDatabase)

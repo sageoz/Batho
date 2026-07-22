@@ -165,13 +165,13 @@ def _enrich_cached_entities(
     """Reconstruct raw content, content hash, raw bytes, whitespace and hierarchy
     for cached entities in a single pass using ``Entity._evolve()``.
 
-    Because the SQLite cache stores entities in the *agent* view (no raw bytes),
-    we re-derive all byte-level attributes from the current file content on every
-    cache hit.  This keeps the cache compact while still providing full fidelity
-    on cache hits.
+    Because the AST cache (flat-file msgpack) stores entities in the *agent* view
+    (no raw bytes), we re-derive all byte-level attributes from the current file
+    content on every cache hit.  This keeps the cache compact while still
+    providing full fidelity on cache hits.
 
     Args:
-        entities: Entities deserialized from the SQLite cache (no raw_content).
+        entities: Entities deserialized from the AST cache (no raw_content).
         content: Current file content bytes (freshly read from disk).
         filepath: Repo-relative file path for warning messages.
 
@@ -376,7 +376,7 @@ def _initialize_worker(
     if root_path and rules_config and _WORKER_RULES_CACHE is None:
         try:
             from batho.modules.compression.rules import load_effective_rules
-            _WORKER_RULES_CACHE, _ = load_effective_rules(rules_config, Path(root_path))
+            _WORKER_RULES_CACHE, _ = load_effective_rules(rules_config, Path(root_path), quiet=True)
             _WORKER_ROOT_PATH = root_path
         except Exception as exc:
             logger.warning("worker_bsg_rules_init_failed", error=str(exc))
@@ -710,6 +710,8 @@ def extract_and_emit_parallel(
                 raw_results.append(res)
                 if result_callback is not None:
                     result_callback(res)
+                    # Heavy blobs are now streamed via callback; trim to save memory
+                    raw_results[-1] = res[:4] + (None, None) + res[6:]
     else:
         cpu_count = os.cpu_count() or 4
         actual_workers = min(cpu_count, max_workers, len(candidates))
@@ -790,6 +792,8 @@ def extract_and_emit_parallel(
                     raw_results.append(res)
                     if result_callback is not None and res is not None:
                         result_callback(res)
+                        # Heavy blobs are now streamed via callback; trim to save memory
+                        raw_results[-1] = res[:4] + (None, None) + res[6:]
         except Exception as exc:
             logger.warning("parallel_extract_and_emit_failed_fallback_sequential", error=str(exc))
             raw_results = []
@@ -807,6 +811,8 @@ def extract_and_emit_parallel(
                     raw_results.append(res)
                     if result_callback is not None:
                         result_callback(res)
+                        # Heavy blobs are now streamed via callback; trim to save memory
+                        raw_results[-1] = res[:4] + (None, None) + res[6:]
 
     valid_results = []
     from collections import defaultdict

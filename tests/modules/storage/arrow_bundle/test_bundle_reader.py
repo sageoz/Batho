@@ -386,7 +386,7 @@ class TestRunsReads:
         """Verify get_run_internal_id resolves the internal integer run ID for a given run UUID.
 
         Scenario:
-            Mapping run UUID string to its primary key/row index in the SQLite database.
+            Mapping run UUID string to its primary key/row index in the Arrow Bundle.
 
         Execution Flow:
             1. Setup the reader with runs "r1" and "r2" committed.

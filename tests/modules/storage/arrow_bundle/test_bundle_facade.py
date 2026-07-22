@@ -747,7 +747,7 @@ class TestBundleFacadeAdvanced:
         Scenario:
             When storing a patch changelog, the database references run integer IDs (`run_id`).
             The changelog logger must resolve the corresponding base run UUID string (`base_run_uuid`)
-            from historical runs in SQLite, ensuring correct linkage of incremental graph patches.
+            from historical runs in the Arrow Bundle, ensuring correct linkage of incremental graph patches.
 
         Execution Flow:
             1. Initialize `BathoBundle`.
@@ -756,7 +756,7 @@ class TestBundleFacadeAdvanced:
             4. Verify that the recorded changelog row has correctly mapped `base_run_uuid` to `second-uuid`.
 
         Expectations:
-            - Correct mapping from SQLite incremental primary key IDs to public UUID strings.
+            - Correct mapping from Arrow Bundle incremental primary key IDs to public UUID strings.
         """
         bundle = BathoBundle(tmp_path)
         

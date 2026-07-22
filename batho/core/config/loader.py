@@ -232,6 +232,49 @@ def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str,
         _env_bool("BATHO_GRAPH_ORPHAN_PRUNING_KEEP_EXPORTS", _safe_get_nested(base_cfg, ["graph", "orphan_pruning", "keep_exports"], True)),
     )
 
+    # Graph backend overrides
+    env_graph_backend = _env("BATHO_GRAPH_BACKEND")
+    if env_graph_backend is not None:
+        if env_graph_backend in ("auto", "in-memory", "arrow"):
+            _safe_set_nested(base_cfg, ["graph", "backend", "backend"], env_graph_backend)
+        else:
+            # An invalid env value must NOT reach Pydantic validation: a
+            # ValidationError here triggers full batho.yaml regeneration,
+            # discarding all user settings over a one-time typo.
+            _get_logger().warning(
+                "invalid_graph_backend_env_ignored",
+                value=env_graph_backend,
+                valid=["auto", "in-memory", "arrow"],
+            )
+    _safe_set_nested(
+        base_cfg,
+        ["graph", "backend", "auto_threshold_files"],
+        _env_int("BATHO_GRAPH_AUTO_THRESHOLD_FILES", _safe_get_nested(base_cfg, ["graph", "backend", "auto_threshold_files"], 500)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["graph", "backend", "auto_threshold_entities"],
+        _env_int("BATHO_GRAPH_AUTO_THRESHOLD_ENTITIES", _safe_get_nested(base_cfg, ["graph", "backend", "auto_threshold_entities"], 30_000)),
+    )
+    env_arrow_staging_dir = _env("BATHO_GRAPH_ARROW_STAGING_DIR")
+    if env_arrow_staging_dir is not None:
+        _safe_set_nested(base_cfg, ["graph", "backend", "arrow_staging_dir"], env_arrow_staging_dir)
+    _safe_set_nested(
+        base_cfg,
+        ["graph", "backend", "arrow_flush_rows"],
+        _env_int("BATHO_GRAPH_ARROW_FLUSH_ROWS", _safe_get_nested(base_cfg, ["graph", "backend", "arrow_flush_rows"], 5000)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["graph", "backend", "arrow_flush_bytes_mb"],
+        _env_float("BATHO_GRAPH_ARROW_FLUSH_BYTES_MB", _safe_get_nested(base_cfg, ["graph", "backend", "arrow_flush_bytes_mb"], 1.0)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["graph", "backend", "arrow_recompact_delta_ratio"],
+        _env_float("BATHO_GRAPH_ARROW_RECOMPACT_DELTA_RATIO", _safe_get_nested(base_cfg, ["graph", "backend", "arrow_recompact_delta_ratio"], 0.10)),
+    )
+
     # Flags overrides
     env_fail_on_warning = os.getenv("BATHO_FAIL_ON_WARNING")
     env_strict = os.getenv("BATHO_STRICT")
@@ -331,17 +374,17 @@ def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str,
     _safe_set_nested(
         base_cfg,
         ["memory", "warning_threshold_mb"],
-        _env_float("BATHO_MEMORY_WARNING_THRESHOLD_MB", _safe_get_nested(base_cfg, ["memory", "warning_threshold_mb"], 500.0)),
+        _env_float("BATHO_MEMORY_WARNING_THRESHOLD_MB", _safe_get_nested(base_cfg, ["memory", "warning_threshold_mb"], 800.0)),
     )
     _safe_set_nested(
         base_cfg,
         ["memory", "critical_threshold_mb"],
-        _env_float("BATHO_MEMORY_CRITICAL_THRESHOLD_MB", _safe_get_nested(base_cfg, ["memory", "critical_threshold_mb"], 800.0)),
+        _env_float("BATHO_MEMORY_CRITICAL_THRESHOLD_MB", _safe_get_nested(base_cfg, ["memory", "critical_threshold_mb"], 1500.0)),
     )
     _safe_set_nested(
         base_cfg,
         ["memory", "rss_flush_threshold_mb"],
-        _env_float("BATHO_MEMORY_RSS_FLUSH_THRESHOLD_MB", _safe_get_nested(base_cfg, ["memory", "rss_flush_threshold_mb"], 650.0)),
+        _env_float("BATHO_MEMORY_RSS_FLUSH_THRESHOLD_MB", _safe_get_nested(base_cfg, ["memory", "rss_flush_threshold_mb"], 1000.0)),
     )
     _safe_set_nested(
         base_cfg,

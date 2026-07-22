@@ -590,7 +590,7 @@ class Entity(BaseModel):
             "enclosing_start_byte": self.enclosing_start_byte,
             "enclosing_end_byte": self.enclosing_end_byte,
             "is_documentation": self.is_documentation,
-            # Persist children_order in agent view so it survives the SQLite cache.
+            # Persist children_order in agent view so it survives the AST cache.
             # Raw content is intentionally excluded from agent view to keep the
             # cache lightweight — it is dynamically regenerated on cache hits.
             "children_order": list(self.children_order),

@@ -1,6 +1,6 @@
 """batho/modules/storage/arrow_store — Apache Arrow IPC + zstd BSG scratch store.
 
-Replaces the four SQLite scratch tables (entity_dict, query_entities,
+Replaces the four legacy SQLite scratch tables (entity_dict, query_entities,
 query_relationships, dangling_references) with persistent Arrow IPC files
 stored under .batho/bsg/<run_uuid>/.
 

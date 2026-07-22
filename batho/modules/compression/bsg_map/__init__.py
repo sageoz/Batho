@@ -21,7 +21,7 @@ from .relativizer import PathRelativizer
 
 if TYPE_CHECKING:
     from batho.modules.storage.cache.unified_cache import BathoCache
-    from batho.modules.graph.builder.codegraph import InMemoryGraph
+    from batho.modules.graph.builder.protocol import GraphBackend
 
 
 def _get_file_change_type() -> type:
@@ -54,19 +54,12 @@ class BSGMap:
     def patch(
         self,
         changes: list[Any],
-        graph: "InMemoryGraph",
+        graph: "GraphBackend",
         cache: "BathoCache | None" = None,
     ) -> None:
         """
         Incrementally update the BSGMap for changed files only.
         """
-        from batho.modules.graph.builder.codegraph import InMemoryGraph
-
-        if not isinstance(graph, InMemoryGraph):
-            raise TypeError(
-                f"BSGMap.patch() requires an InMemoryGraph instance, got {type(graph).__name__}"
-            )
-
         _rel = PathRelativizer(self._root)
 
         changed_rel_paths: set[str] = set()
@@ -176,15 +169,8 @@ class BSGMap:
         opaque_snapshots: "list[FileSnapshot] | None" = None,
     ) -> "BSGMap":
         """
-        Build a BSGMap from an InMemoryGraph.
+        Build a BSGMap from a graph backend (InMemoryGraph or ArrowGraph).
         """
-        from batho.modules.graph.builder.codegraph import InMemoryGraph
-
-        if not isinstance(graph, InMemoryGraph):
-            raise TypeError(
-                f"BSGMap.build() requires an InMemoryGraph instance, got {type(graph).__name__}"
-            )
-
         _rel = PathRelativizer(root)
 
         by_file: dict[str, list[Entity]] = defaultdict(list)

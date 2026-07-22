@@ -2,7 +2,7 @@
 backend/context/codegraph.py — Production Code Graph Indexer.
 
 Improvements over prototype:
-- SQLite-based AST entity cache (stores extracted entities, not just file state)
+- AST entity cache (flat-file msgpack, stores extracted entities, not just file state)
 - AST entity caching: skips unchanged files entirely (no re-parsing)
 - Parallel file extraction using multiprocessing (CPU-bound, bypasses GIL)
 - Per-file exception isolation: one bad file never aborts the whole scan
@@ -27,7 +27,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Optional
+
+if TYPE_CHECKING:
+    from batho.modules.graph.builder.arrow_graph import ArrowGraph
+    from batho.modules.graph.builder.protocol import GraphBackend
 
 from batho.utils.ignore import walk_ignored_filtered
 
@@ -216,6 +220,92 @@ class InMemoryGraph:
         """Return entities of a specific type using secondary index (O(k))."""
         with self._lock:
             return [self.entities[eid] for eid in self._by_type.get(entity_type, []) if eid in self.entities]
+
+    def get_rels_by_endpoint(self, entity_id: str) -> list[Relationship]:
+        """Return all relationships where entity_id is source or target (O(k))."""
+        return list(self._rels_by_endpoint.get(entity_id, []))
+
+    def degree_by_endpoint(self, entity_id: str) -> int:
+        """Count relationships touching entity_id (O(1), matches len of endpoint list)."""
+        return len(self._rels_by_endpoint.get(entity_id, ()))
+
+    def entity_ids_by_type(self, entity_type: EntityType) -> list[str]:
+        """Return entity ids of a type without materializing entities (O(k))."""
+        with self._lock:
+            return [
+                eid
+                for eid in self._by_type.get(entity_type, ())
+                if eid in self.entities
+            ]
+
+    def update_entity(self, entity_id: str, entity: Entity) -> None:
+        """Insert or replace an entity, keeping secondary indexes consistent.
+
+        Handles file/type changes by discarding stale index entries before
+        re-adding under the new file/type.
+        """
+        with self._lock:
+            old = self.entities.get(entity_id)
+            if old is not None:
+                if old.file != entity.file:
+                    self._by_file[old.file].discard(entity_id)
+                if old.type != entity.type:
+                    self._by_type[old.type].discard(entity_id)
+            self.entities[entity_id] = entity
+            self._by_file[entity.file].add(entity_id)
+            self._by_type[entity.type].add(entity_id)
+
+    def update_relationships(self, relationships: list[Relationship]) -> None:
+        """Replace the full relationship list and rebuild dependent indexes."""
+        with self._lock:
+            self.relationships = list(relationships)
+            self._rel_ids = {r.id for r in self.relationships}
+            self._adj_out = None
+            self._adj_in = None
+            self._rels_by_endpoint.clear()
+            for rel in self.relationships:
+                self._rels_by_endpoint[rel.source_id].append(rel)
+                self._rels_by_endpoint[rel.target_id].append(rel)
+
+    def update_relationship(self, relationship: Relationship) -> None:
+        """Replace a single relationship (matched by id); add if missing."""
+        with self._lock:
+            idx = next(
+                (i for i, r in enumerate(self.relationships) if r.id == relationship.id),
+                None,
+            )
+            if idx is None:
+                if relationship.id in self._rel_ids:
+                    return
+                self._rel_ids.add(relationship.id)
+                self.relationships.append(relationship)
+                self._rels_by_endpoint[relationship.source_id].append(relationship)
+                self._rels_by_endpoint[relationship.target_id].append(relationship)
+                if self._adj_out is not None:
+                    self._adj_out.setdefault(relationship.source_id, []).append(relationship.target_id)
+                if self._adj_in is not None:
+                    self._adj_in.setdefault(relationship.target_id, []).append(relationship.source_id)
+                return
+
+            old = self.relationships[idx]
+            self.relationships[idx] = relationship
+            for endpoint in (old.source_id, old.target_id):
+                lst = self._rels_by_endpoint.get(endpoint)
+                if lst:
+                    try:
+                        lst.remove(old)
+                    except ValueError:
+                        pass
+            self._rels_by_endpoint[relationship.source_id].append(relationship)
+            self._rels_by_endpoint[relationship.target_id].append(relationship)
+            self._adj_out = None
+            self._adj_in = None
+
+    def compact(self) -> None:
+        """No-op lifecycle hook for GraphBackend parity (ArrowGraph compacts)."""
+
+    def close(self) -> None:
+        """No-op lifecycle hook for GraphBackend parity (ArrowGraph frees mmap)."""
 
     def _remove_entity_indexes(self, entity_id: str) -> None:
         """Remove an entity from secondary indexes."""
@@ -618,7 +708,7 @@ class IncrementalGraphUpdater:
                 "file_parse_failed", file_path=file_path, error=str(exc)
             )
 
-    def validate_graph_consistency(self, graph: InMemoryGraph) -> bool:
+    def validate_graph_consistency(self, graph: "GraphBackend") -> bool:
         """
         Check for broken relationships after updates.
 
@@ -694,7 +784,7 @@ class CodeGraphIndexer:
     Production code graph indexer for batho-v1.
 
     Features:
-    - AST entity caching with SQLite: skips unchanged files entirely
+    - AST entity caching with flat-file msgpack: skips unchanged files entirely
     - Parallel extraction with multiprocessing (bypasses GIL for CPU-bound parsing)
     - Per-file exception isolation
     - .gitignore support via pathspec
@@ -766,8 +856,12 @@ class CodeGraphIndexer:
             return self._cache.get_file_snapshot(path_or_rel)
         return None
 
-    def resolve_contextual_stubs(self, graph: InMemoryGraph, scope_manager: ScopeManager) -> None:
-        """Resolve contextual stubs in the graph using the global ScopeManager."""
+    def resolve_contextual_stubs(self, graph: "GraphBackend", scope_manager: ScopeManager) -> tuple[int, int]:
+        """Resolve contextual stubs in the graph using the global ScopeManager.
+
+        Returns:
+            (resolved_count, unresolved_count)
+        """
         self.logger.info("resolving_contextual_stubs")
         stubs = [ent for ent in graph.entities.values() if ent.is_contextual_stub]
         self.logger.info("stubs_found_in_graph", count=len(stubs))
@@ -800,9 +894,9 @@ class CodeGraphIndexer:
                 # This is tricky because InMemoryGraph doesn't easily expose 'parent' for stubs
                 # unless metadata was set. Let's look at incoming relationships to this stub.
                 # Use secondary index for O(k) lookup
-                incoming = [r for r in graph._rels_by_endpoint.get(stub.id, []) if r.target_id == stub.id]
+                incoming = [r for r in graph.get_rels_by_endpoint(stub.id) if r.target_id == stub.id]
                 for rel in incoming:
-                    source_ent = graph.entities.get(rel.source_id)
+                    source_ent = graph.get_entity(rel.source_id)
                     if source_ent and source_ent.is_contextual_stub:
                         parent_name = source_ent.metadata.get("target_name")
                         if parent_name:
@@ -845,22 +939,15 @@ class CodeGraphIndexer:
             else:
                 new_relationships.append(rel)
 
-        graph.relationships = new_relationships
-        graph._rel_ids = {r.id for r in graph.relationships}
-        graph._adj_out = None
-        graph._adj_in = None
-        graph._rels_by_endpoint.clear()
-        for rel in graph.relationships:
-            graph._rels_by_endpoint[rel.source_id].append(rel)
-            graph._rels_by_endpoint[rel.target_id].append(rel)
+        graph.update_relationships(new_relationships)
 
         for stub_id, target_id in stub_to_target.items():
-            stub = graph.entities.get(stub_id)
+            stub = graph.get_entity(stub_id)
             if stub:
                 updated_meta = dict(stub.metadata)
                 updated_meta["stub_resolution_state"] = "resolved"
                 updated_meta["resolved_target_id"] = target_id
-                graph.entities[stub_id] = stub._evolve(metadata=updated_meta)
+                graph.update_entity(stub_id, stub._evolve(metadata=updated_meta))
 
         self.logger.info(
             "contextual_stub_resolution_complete",
@@ -868,6 +955,8 @@ class CodeGraphIndexer:
             resolved=resolved_count,
             unresolved=unresolved_count,
         )
+
+        return resolved_count, unresolved_count
 
     def build_graph(
         self,
@@ -884,10 +973,11 @@ class CodeGraphIndexer:
         file_list: list[str] | None = None,
         write_callback: Callable[[str, dict], None] | None = None,
         external_scope_manager: ScopeManager | None = None,
-    ) -> InMemoryGraph:
+        graph_backend: str | None = None,
+    ) -> "InMemoryGraph | ArrowGraph":
         """
         Walk *root* recursively, index every matching source file, and return
-        a populated InMemoryGraph.
+        a populated graph (InMemoryGraph or ArrowGraph depending on backend).
 
         When *extractor* is None (default), the language is inferred from the
         file extension via the registry — a mixed-language repo is fully indexed
@@ -910,9 +1000,11 @@ class CodeGraphIndexer:
             include_gaps: Optional override for gap entities and file snapshots.
             file_list: Optional list of specific file paths to index. When provided,
                        directory walk is skipped and only these files are processed.
+            graph_backend: Optional backend override ("auto" | "in-memory" |
+                       "arrow"). None resolves from graph.backend config.
 
         Returns:
-            Populated InMemoryGraph.
+            Populated graph (compacted ArrowGraph when backend="arrow").
 
         Raises:
             ValueError: If input parameters are invalid.
@@ -945,9 +1037,9 @@ class CodeGraphIndexer:
         # Load config early so memory thresholds and worker caps are config-driven
         cfg = get_config_cached()
         memory_cfg = cfg.get("memory", {})
-        warning_threshold_mb = float(memory_cfg.get("warning_threshold_mb", 500.0))
-        critical_threshold_mb = float(memory_cfg.get("critical_threshold_mb", 800.0))
-        rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 650.0))
+        warning_threshold_mb = float(memory_cfg.get("warning_threshold_mb", 800.0))
+        critical_threshold_mb = float(memory_cfg.get("critical_threshold_mb", 1500.0))
+        rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 1000.0))
         max_per_worker_mb = float(memory_cfg.get("max_per_worker_mb", 150.0))
 
         # Use memory monitoring for the entire indexing pipeline
@@ -1158,7 +1250,71 @@ class CodeGraphIndexer:
             files_skipped = 0
             files_cached = 0
             start_ts = os.times().elapsed if hasattr(os, "times") else 0.0
-            graph = InMemoryGraph()
+
+            # --- Graph backend selection (in-memory vs arrow) ---
+            from batho.modules.graph.builder.factory import (
+                AVG_ENTITIES_PER_FILE,
+                create_graph,
+                resolve_graph_backend,
+            )
+
+            backend_cfg = cfg.get("graph", {}).get("backend", {})
+            from batho.core.config.models import GraphBackendConfig as _GBC
+
+            _gbd = _GBC()  # single source of truth for backend defaults
+            configured_backend = graph_backend or backend_cfg.get("backend", _gbd.backend)
+            estimated_entities = len(candidates) * AVG_ENTITIES_PER_FILE
+            resolved_backend = resolve_graph_backend(
+                configured_backend,
+                len(candidates),
+                estimated_entities,
+                backend_cfg.get("auto_threshold_files", _gbd.auto_threshold_files),
+                backend_cfg.get("auto_threshold_entities", _gbd.auto_threshold_entities),
+            )
+            self.logger.info(
+                "graph_backend_selected",
+                backend=resolved_backend,
+                candidates=len(candidates),
+                estimated_entities=estimated_entities,
+                configured=configured_backend,
+            )
+
+            staging_dir: Path | None = None
+            if resolved_backend == "arrow":
+                # Containment: arrow_staging_dir comes from the indexed repo's
+                # config/env — it must stay under <root>/.batho (absolute
+                # paths and ".." escapes are rejected) because close() removes
+                # staging artifacts at the end of the build.
+                from batho.utils.path_sanitizer import PathSecurityError
+
+                staging_cfg = backend_cfg.get("arrow_staging_dir", _gbd.arrow_staging_dir)
+                staging_dir = (root_path / staging_cfg).resolve()
+                batho_root = (root_path / ".batho").resolve()
+                if staging_dir != batho_root and batho_root not in staging_dir.parents:
+                    raise PathSecurityError(
+                        f"graph.backend.arrow_staging_dir escapes {batho_root}: {staging_cfg!r}"
+                    )
+                # Preflight: fall back to in-memory when the staging area is
+                # not writable (read-only mounts) instead of failing the build.
+                try:
+                    staging_dir.mkdir(parents=True, exist_ok=True)
+                    probe = staging_dir / ".write_probe"
+                    probe.write_bytes(b"")
+                    probe.unlink()
+                except OSError as exc:
+                    self.logger.warning(
+                        "graph_backend_arrow_unwritable_fallback",
+                        staging_dir=str(staging_dir),
+                        error=str(exc),
+                    )
+                    resolved_backend = "in-memory"
+                    staging_dir = None
+
+            graph = create_graph(
+                resolved_backend,
+                staging_dir=staging_dir,
+                arrow_config=backend_cfg,
+            )
 
             def _materialize_graph(
                 results: list[tuple[str, list[Entity], list[Relationship], bool]]
@@ -1200,8 +1356,9 @@ class CodeGraphIndexer:
             package_obj = detect_package_from_config(root_path)
             package_dict = package_obj.to_dict() if package_obj else None
 
-            # Store precompiled blobs for async persistence/file tracking
-            self._precompiled_blobs: dict[str, dict] = {}
+            # Store precompiled content hashes for async persistence/file tracking.
+            # Heavy blobs are streamed to persistence via write_callback instead.
+            self._precompiled_hashes: dict[str, str] = {}
 
             def on_result_extracted(res: tuple) -> None:
                 if res is None:
@@ -1213,12 +1370,7 @@ class CodeGraphIndexer:
                 agent_blob = res[4]
                 storage_blob = res[5]
 
-                self._precompiled_blobs[filepath] = {
-                    "content_hash": content_hash,
-                    "agent_blob": agent_blob,
-                    "storage_blob": storage_blob,
-                    "rels_blob": rel_bytes,
-                }
+                self._precompiled_hashes[filepath] = content_hash
 
                 if write_callback is not None:
                     try:
@@ -1299,7 +1451,13 @@ class CodeGraphIndexer:
             total_entities_tagged = 0
             total_rules_loaded = 0
 
-            for result in results:
+            # Capture indexed file paths up front so `results` can be freed
+            # incrementally during the materialization loop below.
+            indexed_files = [result[0] for result in results]
+
+            for i in range(len(results)):
+                result = results[i]
+                results[i] = None  # free heavy blobs as soon as consumed
                 try:
                     # New 8-tuple: (filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, global_manifest, local_hits)
                     filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, _, local_hits = result
@@ -1353,8 +1511,10 @@ class CodeGraphIndexer:
                     errors += 1
                     files_skipped += 1
 
+            results.clear()  # release any remaining extraction buffers
+
             # Batch resolve contextual stubs using populated ScopeManager
-            self.resolve_contextual_stubs(graph, scope_manager)
+            stub_resolved_count, stub_unresolved_count = self.resolve_contextual_stubs(graph, scope_manager)
 
             derived_hierarchy_edges = self._derive_hierarchy_relations(graph)
             derived_overrides_edges = self._derive_override_edges(graph)
@@ -1417,6 +1577,10 @@ class CodeGraphIndexer:
             import_cycle_count = cycle_counts.get("imports", 0)
             inherit_cycle_count = cycle_counts.get("inherits", 0)
 
+            # All post-processing complete: compact Arrow backend into its
+            # memory-mapped read-only form (no-op for the in-memory backend).
+            graph.compact()
+
             elapsed = (
                 (os.times().elapsed if hasattr(os, "times") else 0.0) - start_ts
                 if start_ts
@@ -1434,7 +1598,7 @@ class CodeGraphIndexer:
                 "elapsed_seconds": elapsed,
                 "workers_used": actual_workers,
                 "symbol_resolution_enabled": bool(symbol_resolution_enabled),
-                "symbol_index_size": 0,
+                "symbol_index_size": scope_manager.global_symbol_count,
                 "import_cycle_count": int(import_cycle_count),
                 "inherit_cycle_count": int(inherit_cycle_count),
                 "orphan_pruned_count": int(orphan_pruned_count),
@@ -1443,7 +1607,7 @@ class CodeGraphIndexer:
                     1 for e in graph.entities.values() if e.type in (EntityType.UNRESOLVED, EntityType.EXTERNAL_SYMBOL)
                 ),
                 "unresolved_pruned_count": 0,
-                "unresolved_resolved_count": 0,
+                "unresolved_resolved_count": int(stub_resolved_count),
                 "derived_hierarchy_edges": derived_hierarchy_edges,
                 "derived_overrides_edges": derived_overrides_edges,
                 "semantic_tags_added": int(semantic_stats.get("semantic_tags_added", 0)),
@@ -1521,7 +1685,7 @@ class CodeGraphIndexer:
                         "Initial graph build detected cyclic dependencies"
                     )
 
-            self._indexed_files = [result[0] for result in results]
+            self._indexed_files = indexed_files
 
             self._graph = graph
             return graph
@@ -1662,7 +1826,7 @@ class CodeGraphIndexer:
         rotations = [tuple(base[i:] + base[:i]) for i in range(len(base))]
         return min(rotations)
 
-    def _format_cycle_path(self, graph: InMemoryGraph, cycle: list[str]) -> str:
+    def _format_cycle_path(self, graph: "GraphBackend", cycle: list[str]) -> str:
         labels: list[str] = []
         for node_id in cycle:
             entity = graph.get_entity(node_id)
@@ -1670,11 +1834,13 @@ class CodeGraphIndexer:
         return " -> ".join(labels)
 
     def find_cycles(
-        self, graph: InMemoryGraph, relationship_type: RelationshipType
+        self, graph: "GraphBackend", relationship_type: RelationshipType
     ) -> list[list[str]]:
         adjacency: dict[str, list[str]] = defaultdict(list)
         for rel in graph.relationships:
             if rel.type == relationship_type:
+                if rel.source_id == rel.target_id and relationship_type == RelationshipType.IMPORTS:
+                    continue  # skip self-loops for imports (recursion, not a cycle)
                 adjacency[rel.source_id].append(rel.target_id)
 
         visited: set[str] = set()
@@ -1723,7 +1889,7 @@ class CodeGraphIndexer:
         return cycles
 
     def _collect_consistency_issues(
-        self, graph: InMemoryGraph
+        self, graph: "GraphBackend"
     ) -> tuple[list[str], dict[str, int], bool, bool]:
         cfg = get_config_cached()
         graph_cfg = cfg.get("graph", {}) if isinstance(cfg, dict) else {}
@@ -1765,7 +1931,7 @@ class CodeGraphIndexer:
 
         return issues, cycle_counts, broken_relationships, cycle_fatal
 
-    def validate_graph_consistency(self, graph: InMemoryGraph) -> list[str]:
+    def validate_graph_consistency(self, graph: "GraphBackend") -> list[str]:
         """Validate graph consistency and return a list of issues."""
         issues, _, _, _ = self._collect_consistency_issues(graph)
         return issues
@@ -1780,7 +1946,7 @@ class CodeGraphIndexer:
 
     def is_orphan(
         self,
-        graph: InMemoryGraph,
+        graph: "GraphBackend",
         node_id: str,
         *,
         keep_exports: bool | None = None,
@@ -1818,7 +1984,7 @@ class CodeGraphIndexer:
 
     def prune_orphan_nodes(
         self,
-        graph: InMemoryGraph,
+        graph: "GraphBackend",
         *,
         keep_exports: bool | None = None,
         keep_entry_points: bool | None = None,
@@ -1863,24 +2029,10 @@ class CodeGraphIndexer:
                 continue
             orphans.append(node_id)
 
-        with graph._lock:
-            for node_id in orphans:
-                ent = graph.entities.pop(node_id, None)
-                if ent:
-                    # Safely remove from secondary O(1) lookups
-                    if ent.type in graph._by_type:
-                        graph._by_type[ent.type].discard(node_id)
-                    if ent.file in graph._by_file:
-                        graph._by_file[ent.file].discard(node_id)
-
-                    # Pop endpoint relationships (already detached topologically)
-                    graph._rels_by_endpoint.pop(node_id, None)
-
-                    # Pop from adjacency dicts
-                    if graph._adj_out is not None:
-                        graph._adj_out.pop(node_id, None)
-                    if graph._adj_in is not None:
-                        graph._adj_in.pop(node_id, None)
+        for node_id in orphans:
+            # remove_node handles all index cleanup (orphans have no rels by
+            # construction, so this is equivalent to the previous inline pops).
+            graph.remove_node(node_id)
 
         if orphans:
             self.logger.info(
@@ -1981,7 +2133,7 @@ class CodeGraphIndexer:
                 refs.append(token)
         return refs
 
-    def _derive_hierarchy_relations(self, graph: InMemoryGraph) -> int:
+    def _derive_hierarchy_relations(self, graph: "GraphBackend") -> int:
         """Derive INHERITS/IMPLEMENTS edges from entity metadata."""
         if not graph.entities:
             return 0
@@ -2050,7 +2202,7 @@ class CodeGraphIndexer:
 
         return added
 
-    def _derive_override_edges(self, graph: InMemoryGraph) -> int:
+    def _derive_override_edges(self, graph: "GraphBackend") -> int:
         """Derive OVERRIDES edges from CONTAINS + INHERITS relationships."""
         if not graph.entities:
             return 0

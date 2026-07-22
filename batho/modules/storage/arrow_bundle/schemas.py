@@ -1,6 +1,6 @@
 """Arrow IPC schema definitions for the Batho Arrow Bundle.
 
-Seven tables replacing the SQLite database:
+Seven tables replacing the legacy SQLite database:
   runs              — index_runs
   string_dict       — global string dedup dictionary
   file_tracking     — file_path → hash/mtime/inode/size

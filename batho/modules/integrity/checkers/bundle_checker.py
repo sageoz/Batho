@@ -1,4 +1,4 @@
-"""Arrow Bundle health checker — replaces SQLiteHealthChecker."""
+"""Arrow Bundle health checker — replaces legacy SQLiteHealthChecker."""
 
 from __future__ import annotations
 

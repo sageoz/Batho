@@ -4,6 +4,12 @@ from .builder.codegraph import (
     IncrementalGraphUpdater as IncrementalGraphUpdater,
     CodeGraphIndexer as CodeGraphIndexer,
 )
+from .builder.arrow_graph import ArrowGraph as ArrowGraph
+from .builder.factory import (
+    create_graph as create_graph,
+    resolve_graph_backend as resolve_graph_backend,
+)
+from .builder.protocol import GraphBackend as GraphBackend
 from .reconstructor.reconstructor import FileReconstructor as FileReconstructor
 from .diff_engine.node_diff import NodeDiff as NodeDiff, diff_file_nodes as diff_file_nodes
 from .incremental import (
@@ -19,6 +25,10 @@ from .community import (
 
 __all__ = [
     "InMemoryGraph",
+    "ArrowGraph",
+    "GraphBackend",
+    "create_graph",
+    "resolve_graph_backend",
     "IncrementalGraphUpdater",
     "CodeGraphIndexer",
     "FileReconstructor",

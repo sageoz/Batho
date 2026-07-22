@@ -38,7 +38,7 @@ class MemoryMonitor:
     """Monitor memory usage during operations."""
 
     def __init__(
-        self, warning_threshold_mb: float = 500.0, critical_threshold_mb: float = 800.0
+        self, warning_threshold_mb: float = 800.0, critical_threshold_mb: float = 1500.0
     ):
         """
         Initialize memory monitor.
@@ -165,8 +165,8 @@ class MemoryMonitor:
 @contextmanager
 def memory_monitor(
     operation: str,
-    warning_threshold_mb: float = 500.0,
-    critical_threshold_mb: float = 800.0,
+    warning_threshold_mb: float = 800.0,
+    critical_threshold_mb: float = 1500.0,
 ):
     """
     Context manager for monitoring memory usage during an operation.

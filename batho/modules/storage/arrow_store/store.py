@@ -1,6 +1,6 @@
 """BsgScratchStore — Apache Arrow IPC persistent scratch store.
 
-Replaces the four SQLite scratch tables:
+Replaces the four legacy SQLite scratch tables:
   entity_dict, query_entities, query_relationships, dangling_references
 
 Directory layout:
@@ -422,7 +422,7 @@ class BsgScratchStore:
         """Resolve dangling references using in-memory dict join + proximity scoring.
 
         Mirrors the logic of engine.resolve_dangling_references() but operates
-        on Arrow files instead of SQLite tables.
+        on Arrow files instead of legacy SQLite tables.
         Returns the count of successfully resolved relationships.
         """
         if not self.dangling_path.exists():
@@ -594,7 +594,7 @@ class BsgScratchStore:
                     # Re-compact relationships to merge resolved rels
                     self._recompact_relationships_only()
 
-        # Patch bsg_rel_view blobs in SQLite file_artifacts
+        # Patch bsg_rel_view blobs in Arrow Bundle file_artifacts
         if resolution_map and db is not None:
             self._patch_rel_blobs(db, resolution_map)
 
@@ -636,7 +636,7 @@ class BsgScratchStore:
             stream_path.unlink(missing_ok=True)
 
     def _patch_rel_blobs(self, db: Any, resolution_map: dict[str, list[dict]]) -> None:
-        """Update bsg_rel_view blobs in SQLite file_artifacts for resolved targets."""
+        """Update bsg_rel_view blobs in Arrow Bundle file_artifacts for resolved targets."""
         import io
         import msgpack
         import zstandard as zstd

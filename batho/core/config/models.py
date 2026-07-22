@@ -96,7 +96,30 @@ class GraphOrphanPruningConfig(BaseModel):
     keep_exports: bool = Field(default=True)
 
 
+class GraphBackendConfig(BaseModel):
+    """Graph storage backend selection and Arrow-specific tuning."""
+
+    backend: str = Field(default="auto")  # "auto" | "in-memory" | "arrow"
+    auto_threshold_files: int = Field(default=500, ge=1)
+    auto_threshold_entities: int = Field(default=30_000, ge=1)
+    arrow_staging_dir: str = Field(default=".batho/graph_staging")
+    arrow_flush_rows: int = Field(default=5000, ge=100)
+    arrow_flush_bytes_mb: float = Field(default=1.0, ge=0.1)
+    # Reserved for future delta-overlay support (patch on Arrow); unused in Phase 1.
+    arrow_recompact_delta_ratio: float = Field(default=0.10, ge=0.01, le=1.0)
+
+    @field_validator("backend")
+    @classmethod
+    def _validate_backend(cls, v: str) -> str:
+        if v not in ("auto", "in-memory", "arrow"):
+            raise ValueError(
+                "graph.backend.backend must be 'auto', 'in-memory', or 'arrow'"
+            )
+        return v
+
+
 class GraphConfig(BaseModel):
+    backend: GraphBackendConfig = Field(default_factory=GraphBackendConfig)
     cycle_detection: GraphCycleDetectionConfig = Field(
         default_factory=GraphCycleDetectionConfig
     )
@@ -112,9 +135,9 @@ class CommunityDetectionConfig(BaseModel):
 
 
 class MemoryConfig(BaseModel):
-    warning_threshold_mb: float = Field(default=500.0, ge=1.0)
-    critical_threshold_mb: float = Field(default=800.0, ge=1.0)
-    rss_flush_threshold_mb: float = Field(default=650.0, ge=1.0)
+    warning_threshold_mb: float = Field(default=800.0, ge=1.0)
+    critical_threshold_mb: float = Field(default=1500.0, ge=1.0)
+    rss_flush_threshold_mb: float = Field(default=1000.0, ge=1.0)
     max_per_worker_mb: float = Field(default=150.0, ge=1.0)
 
 

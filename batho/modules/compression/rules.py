@@ -29,7 +29,7 @@ from batho.core.schemas import Entity, EntityType, Relationship, RelationshipTyp
 from batho.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from batho.modules.graph.builder.codegraph import InMemoryGraph
+    from batho.modules.graph.builder.protocol import GraphBackend
 
 
 _LOGGER = get_logger(__name__, component="bsg_rules")
@@ -1825,8 +1825,14 @@ def load_effective_rules(
     rules_config: dict[str, Any] | None,
     root_path: Path,
     logger: Any | None = None,
+    quiet: bool = False,
 ) -> tuple[list[RuleDefinition], dict[str, Any]]:
-    """Load, validate, and cache enabled built-in and custom rules."""
+    """Load, validate, and cache enabled built-in and custom rules.
+
+    Args:
+        quiet: When True, suppress info-level plugin discovery logging
+               (used in worker processes to avoid log spam).
+    """
 
     log = logger or _LOGGER
     cfg = rules_config or {}
@@ -1865,11 +1871,18 @@ def load_effective_rules(
     if auto_load_all:
         plugin_catalog = _discover_packaged_plugins()
         builtin_plugins = list(plugin_catalog.keys())
-        log.info(
-            "bsg_auto_loading_all_plugins",
-            plugin_count=len(builtin_plugins),
-            plugins=builtin_plugins,
-        )
+        if quiet:
+            log.debug(
+                "bsg_auto_loading_all_plugins",
+                plugin_count=len(builtin_plugins),
+                plugins=builtin_plugins,
+            )
+        else:
+            log.info(
+                "bsg_auto_loading_all_plugins",
+                plugin_count=len(builtin_plugins),
+                plugins=builtin_plugins,
+            )
     elif builtin_plugins is None:
         builtin_plugins = ["bsg_core"]
 
@@ -2202,7 +2215,7 @@ def _pattern_matches(text: str, patterns: tuple[str, ...]) -> bool:
 def _matches_content_patterns(
     file_path: str,
     patterns: tuple[str, ...],
-    graph: InMemoryGraph,
+    graph: "GraphBackend",
     file_content_cache: dict[str, str],
     root_path: Path,
 ) -> bool:
@@ -2211,7 +2224,7 @@ def _matches_content_patterns(
     Args:
         file_path: Relative file path
         patterns: Tuple of patterns to match (case-insensitive substring match)
-        graph: InMemoryGraph instance
+        graph: "GraphBackend" instance
         file_content_cache: Cache dict to avoid repeated file reads
 
     Returns:
@@ -2396,7 +2409,7 @@ def _infer_semantic_tags(entity: Entity, rel_file_path: str) -> set[str]:
     return tags
 
 
-def _apply_semantic_usn_tags(graph: InMemoryGraph, root_path: Path) -> int:
+def _apply_semantic_usn_tags(graph: "GraphBackend", root_path: Path) -> int:
     updated = 0
 
     for entity_id, entity in list(graph.entities.items()):
@@ -2430,13 +2443,10 @@ def _apply_semantic_usn_tags(graph: InMemoryGraph, root_path: Path) -> int:
 
         metadata["bsg.usn"] = merged
         updated_entity = entity.model_copy(update={"metadata": metadata, "type": new_type})
-        graph.entities[entity_id] = updated_entity
-        
-        # Keep graph._by_type index in sync!
-        if new_type != entity.type:
-            graph._by_type[entity.type].discard(entity_id)
-            graph._by_type[new_type].add(entity_id)
-            
+        # update_entity keeps the graph's secondary indexes (_by_type/_by_file)
+        # in sync on both backends.
+        graph.update_entity(entity_id, updated_entity)
+
         updated += 1
 
     return updated
@@ -2456,7 +2466,7 @@ def _looks_like_cleanup_target(entity: Entity) -> bool:
     return bool(tokens.intersection(_CLEANUP_HINT_TOKENS))
 
 
-def _derive_semantic_relations(graph: InMemoryGraph) -> list[Relationship]:
+def _derive_semantic_relations(graph: "GraphBackend") -> list[Relationship]:
     semantic_relations: list[Relationship] = []
     tags_by_entity = {
         entity_id: _entity_usn_tags(entity)
@@ -2568,8 +2578,8 @@ def _derive_semantic_relations(graph: InMemoryGraph) -> list[Relationship]:
                     "db_inside_loop_scope",
                 )
 
-    infra_entities = list(graph._by_type.get(EntityType.INFRASTRUCTURE_CONFIG, set()))
-    env_entities = list(graph._by_type.get(EntityType.ENVIRONMENT_VARIABLE, set()))
+    infra_entities = graph.entity_ids_by_type(EntityType.INFRASTRUCTURE_CONFIG)
+    env_entities = graph.entity_ids_by_type(EntityType.ENVIRONMENT_VARIABLE)
 
     infra_token_index: dict[str, set[str]] = defaultdict(set)
     infra_tokens_by_id: dict[str, set[str]] = {}
@@ -2627,7 +2637,7 @@ def _derive_semantic_relations(graph: InMemoryGraph) -> list[Relationship]:
 
 
 def _append_semantic_relations(
-    graph: InMemoryGraph, relations: list[Relationship]
+    graph: "GraphBackend", relations: list[Relationship]
 ) -> int:
     if not relations:
         return 0
@@ -2702,7 +2712,7 @@ def _target_matches_filters(
 def _count_edge_matches(
     entity_id: str,
     matcher: ASTEdgeMatcher,
-    graph: InMemoryGraph,
+    graph: "GraphBackend",
     outbound: dict[str, list[Any]],
     inbound: dict[str, list[Any]],
     get_entity_tags_fn = None,
@@ -2746,7 +2756,7 @@ def _count_edge_matches(
 def _matches_ast_edges(
     entity_id: str,
     match: RuleMatch,
-    graph: InMemoryGraph,
+    graph: "GraphBackend",
     outbound: dict[str, list[Any]],
     inbound: dict[str, list[Any]],
     get_entity_tags_fn = None,
@@ -2888,7 +2898,7 @@ def _matches_rule(
     entity_id: str,
     entity: Entity,
     rel_file_path: str,
-    graph: InMemoryGraph,
+    graph: "GraphBackend",
     outbound: dict[str, list[Any]],
     inbound: dict[str, list[Any]],
     file_content_cache: dict[str, str],
@@ -3182,7 +3192,7 @@ def _apply_rule_actions(
 
 
 def apply_semantic_overlay(
-    graph: InMemoryGraph,
+    graph: "GraphBackend",
     root_path: Path,
     logger: Any | None = None,
 ) -> dict[str, int]:
@@ -3212,7 +3222,7 @@ def apply_semantic_overlay(
 
 
 def apply_rule_plugins(
-    graph: InMemoryGraph,
+    graph: "GraphBackend",
     root_path: Path,
     rules_config: dict[str, Any] | None,
     logger: Any | None = None,
@@ -3223,7 +3233,7 @@ def apply_rule_plugins(
     """Apply configured BSG rules in-place and return execution stats.
 
     Args:
-        graph: InMemoryGraph to annotate.
+        graph: "GraphBackend" to annotate.
         root_path: Repository root; used for relative path matching and artifacts.
         rules_config: The `rules` block from batho.yaml (or equivalent dict).
         logger: Optional structured logger.
@@ -3397,7 +3407,7 @@ def apply_rule_plugins(
                 changed = True
 
         if changed:
-            graph.entities[entity_id] = entity.model_copy(update={"metadata": metadata})
+            graph.update_entity(entity_id, entity.model_copy(update={"metadata": metadata}))
             updated_entities += 1
 
     # Post-processing: Apply entry point name normalization
@@ -3407,8 +3417,9 @@ def apply_rule_plugins(
             entity.metadata.get("bsg.normalized_name") if entity.metadata else None
         )
         if normalized_name and entity.name != normalized_name:
-            graph.entities[entity_id] = entity.model_copy(
-                update={"name": normalized_name}
+            graph.update_entity(
+                entity_id,
+                entity.model_copy(update={"name": normalized_name}),
             )
 
     applied_count = sum(1 for count in rule_hits.values() if count > 0)

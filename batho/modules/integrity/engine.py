@@ -248,7 +248,7 @@ class FixEngine:
                     check_reports.append(results[p_num])
         else:
             # Sequential execution with fail-fast requirements
-            # 1. SQLiteHealthChecker (always first)
+            # 1. BundleHealthChecker (always first)
             p1_passed = True
             if 1 in scheduled:
                 report = c_db.run()

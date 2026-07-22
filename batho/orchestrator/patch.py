@@ -46,6 +46,9 @@ class PatchOptions:
     root: Path
     verbose: bool = False
     max_file_size_kb: int | None = None
+    # Accepted for API symmetry with build. Patch always uses the in-memory
+    # graph backend internally; a warning is logged when set to anything else.
+    graph_backend: str | None = None
 
 
 @dataclass
@@ -112,6 +115,13 @@ def run_patch(options: PatchOptions) -> PatchResult:
     t0 = time.monotonic()
     root = options.root.resolve()
 
+    if options.graph_backend and options.graph_backend != "in-memory":
+        LOGGER.warning(
+            "patch_ignoring_graph_backend",
+            requested=options.graph_backend,
+            reason="patch always uses in-memory; Arrow is build-only",
+        )
+
     if not root.exists():
         return PatchResult(
             success=False,
@@ -154,12 +164,12 @@ def run_patch(options: PatchOptions) -> PatchResult:
         cfg = get_config_cached()
         memory_cfg = cfg.get("memory", {})
         community_cfg = cfg.get("community_detection", {})
-        rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 650.0))
+        rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 1000.0))
 
         LOGGER.info(
             "effective_memory_config",
-            warning_threshold_mb=memory_cfg.get("warning_threshold_mb", 500.0),
-            critical_threshold_mb=memory_cfg.get("critical_threshold_mb", 800.0),
+            warning_threshold_mb=memory_cfg.get("warning_threshold_mb", 800.0),
+            critical_threshold_mb=memory_cfg.get("critical_threshold_mb", 1500.0),
             rss_flush_threshold_mb=rss_flush_threshold_mb,
             max_per_worker_mb=memory_cfg.get("max_per_worker_mb", 150.0),
         )
@@ -312,6 +322,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                             verbose=options.verbose,
                             index_id=run_uuid,
                             external_scope_manager=dep_scope_manager,
+                            graph_backend="in-memory",
                         )
                         for _, rel in indexer.get_unindexed_files():
                             unindexed_paths.add(rel)
@@ -405,12 +416,22 @@ def run_patch(options: PatchOptions) -> PatchResult:
                         if should_rss_flush:
                             gc.collect()
                             rss_after = get_rss_mb()
-                            LOGGER.info(
-                                "rss_flush_released_memory",
-                                rss_before_mb=round(rss_before, 1),
-                                rss_after_mb=round(rss_after, 1),
-                                recovered_mb=round(rss_before - rss_after, 1),
-                            )
+                            recovered = round(rss_before - rss_after, 1)
+                            if recovered < 0:
+                                LOGGER.warning(
+                                    "rss_flush_released_memory",
+                                    rss_before_mb=round(rss_before, 1),
+                                    rss_after_mb=round(rss_after, 1),
+                                    recovered_mb=recovered,
+                                    warning="gc.collect increased RSS; memory pressure may persist",
+                                )
+                            elif recovered > 0:
+                                LOGGER.info(
+                                    "rss_flush_released_memory",
+                                    rss_before_mb=round(rss_before, 1),
+                                    rss_after_mb=round(rss_after, 1),
+                                    recovered_mb=recovered,
+                                )
 
                     # Fetch base-run entities for this file and diff
                     if base_run_internal_id is not None:

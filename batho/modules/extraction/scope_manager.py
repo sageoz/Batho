@@ -319,6 +319,18 @@ class ScopeManager:
         
         return None
 
+    @property
+    def global_symbol_count(self) -> int:
+        """Return the total number of global symbols across all partitions."""
+        with self._global_lock:
+            partitions = list(self._partitioned_global.keys())
+        total = 0
+        for part in partitions:
+            lock = self._get_partition_lock(part)
+            with lock.read_lock():
+                total += len(self._partitioned_global[part])
+        return total
+
     def get_global_symbols(self) -> dict[str, dict[str, dict[str, Any]]]:
         """Serialize global symbol partitions."""
         with self._global_lock:

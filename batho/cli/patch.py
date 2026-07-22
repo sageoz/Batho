@@ -18,7 +18,7 @@ def register_patch_parser(subparsers: argparse._SubParsersAction) -> None:
         parents=[create_base_parser()],
         help="Incremental patch of an existing artifact database",
         description=(
-            "Detects changes natively using content hashing against the SQLite "
+            "Detects changes natively using content hashing against the Arrow Bundle "
             "file_tracking table. Unlike previous versions, this does not use Git "
             "status for change detection, eliminating false positives from "
             "uncommitted files."
@@ -29,6 +29,17 @@ def register_patch_parser(subparsers: argparse._SubParsersAction) -> None:
         type=int,
         default=None,
         help="Skip files exceeding this size in kilobytes during hash scan",
+    )
+    parser.add_argument(
+        "--graph-backend",
+        type=str,
+        choices=["auto", "in-memory", "arrow"],
+        default=None,
+        help=(
+            "Accepted for API symmetry with `build`. Patch always uses the "
+            "in-memory graph backend internally; a warning is logged if a "
+            "non-default backend is requested."
+        ),
     )
 
     parser.set_defaults(func=cmd_patch)
@@ -42,6 +53,7 @@ def cmd_patch(args: argparse.Namespace) -> int:
         root=args.root,
         verbose=args.verbose,
         max_file_size_kb=args.max_file_size_kb,
+        graph_backend=args.graph_backend,
     )
 
     result = run_patch(options)

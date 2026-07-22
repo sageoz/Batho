@@ -7,9 +7,12 @@ modularity partitioning, and produces Community summaries for MCP output.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from batho.modules.graph.builder.protocol import GraphBackend
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -37,7 +40,7 @@ class Community:
         }
 
 
-def _sample_graph_by_files(graph: Any, sample_threshold: int) -> tuple[set[str], list[Any]]:
+def _sample_graph_by_files(graph: "GraphBackend", sample_threshold: int) -> tuple[set[str], list[Any]]:
     """Sample graph by retaining whole files until entity count <= sample_threshold.
 
     Files are greedily kept in descending order of entity count, which preserves
@@ -74,11 +77,12 @@ def _sample_graph_by_files(graph: Any, sample_threshold: int) -> tuple[set[str],
     return kept_ids, filtered_rels
 
 
-def detect_communities(graph: Any, config: dict[str, Any] | None = None) -> list[Community]:
+def detect_communities(graph: "GraphBackend", config: dict[str, Any] | None = None) -> list[Community]:
     """Detect communities in the code graph using Leiden clustering.
 
     Args:
-        graph: InMemoryGraph with entities and relationships.
+        graph: Graph backend (InMemoryGraph or ArrowGraph) with entities and
+            relationships.
         config: Optional community detection configuration with keys:
             enabled, skip_threshold, sample_threshold.
 
@@ -108,6 +112,7 @@ def detect_communities(graph: Any, config: dict[str, Any] | None = None) -> list
         return []
 
     relationships = graph.relationships
+    sampled = False
     if entity_count > sample_threshold:
         LOGGER.info(
             "community_detection_sampling_graph",
@@ -115,6 +120,7 @@ def detect_communities(graph: Any, config: dict[str, Any] | None = None) -> list
             sample_threshold=sample_threshold,
         )
         kept_ids, relationships = _sample_graph_by_files(graph, sample_threshold)
+        sampled = True
         LOGGER.info(
             "community_detection_sampled_graph",
             kept_entities=len(kept_ids),
@@ -128,7 +134,7 @@ def detect_communities(graph: Any, config: dict[str, Any] | None = None) -> list
         LOGGER.warning("community_detection_deps_missing")
         return []
 
-    if relationships is graph.relationships:
+    if not sampled:
         entity_ids = list(graph.entities.keys())
     else:
         # Sampled graph: only kept entities participate
@@ -181,7 +187,7 @@ def detect_communities(graph: Any, config: dict[str, Any] | None = None) -> list
 
         degree_map: dict[str, int] = {}
         for eid in member_ids:
-            degree_map[eid] = len(graph._rels_by_endpoint.get(eid, []))
+            degree_map[eid] = graph.degree_by_endpoint(eid)
 
         top_sorted = sorted(member_ids, key=lambda e: degree_map.get(e, 0), reverse=True)
         top_names = [graph.entities[eid].name for eid in top_sorted[:10] if eid in graph.entities]

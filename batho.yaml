@@ -19,6 +19,14 @@ indexer:
   fail_on_warning: false
   strict: false
 graph:
+  backend:
+    backend: auto
+    auto_threshold_files: 500
+    auto_threshold_entities: 30000
+    arrow_staging_dir: .batho/graph_staging
+    arrow_flush_rows: 5000
+    arrow_flush_bytes_mb: 1.0
+    arrow_recompact_delta_ratio: 0.1
   cycle_detection:
     enabled: true
     fatal: false
@@ -68,9 +76,9 @@ persistence:
   batch_size: 500
   batch_bytes_threshold: 15728640
 memory:
-  warning_threshold_mb: 500.0
-  critical_threshold_mb: 800.0
-  rss_flush_threshold_mb: 650.0
+  warning_threshold_mb: 800.0
+  critical_threshold_mb: 1500.0
+  rss_flush_threshold_mb: 1000.0
   max_per_worker_mb: 150.0
 bsg:
   parallel:

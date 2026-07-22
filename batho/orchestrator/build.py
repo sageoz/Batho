@@ -77,6 +77,7 @@ class BuildOptions:
     verbose: bool = False
     max_workers: int | None = None
     max_file_size_kb: int | None = None
+    graph_backend: str | None = None  # "auto" | "in-memory" | "arrow"; None = config
 
 
 @dataclass
@@ -164,6 +165,7 @@ def run_build(options: BuildOptions) -> BuildResult:
 
     db = None
     store = None
+    graph = None
     run_uuid = ""
     try:
         with lock:
@@ -198,12 +200,12 @@ def run_build(options: BuildOptions) -> BuildResult:
                 bsg_cfg = cfg.get("bsg", {})
                 memory_cfg = cfg.get("memory", {})
                 community_cfg = cfg.get("community_detection", {})
-                rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 650.0))
+                rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 1000.0))
 
                 LOGGER.info(
                     "effective_memory_config",
-                    warning_threshold_mb=memory_cfg.get("warning_threshold_mb", 500.0),
-                    critical_threshold_mb=memory_cfg.get("critical_threshold_mb", 800.0),
+                    warning_threshold_mb=memory_cfg.get("warning_threshold_mb", 800.0),
+                    critical_threshold_mb=memory_cfg.get("critical_threshold_mb", 1500.0),
                     rss_flush_threshold_mb=rss_flush_threshold_mb,
                     max_per_worker_mb=memory_cfg.get("max_per_worker_mb", 150.0),
                 )
@@ -352,12 +354,22 @@ def run_build(options: BuildOptions) -> BuildResult:
                         if should_rss_flush:
                             gc.collect()
                             rss_after = get_rss_mb()
-                            LOGGER.info(
-                                "rss_flush_released_memory",
-                                rss_before_mb=round(rss_before, 1),
-                                rss_after_mb=round(rss_after, 1),
-                                recovered_mb=round(rss_before - rss_after, 1),
-                            )
+                            recovered = round(rss_before - rss_after, 1)
+                            if recovered < 0:
+                                LOGGER.warning(
+                                    "rss_flush_released_memory",
+                                    rss_before_mb=round(rss_before, 1),
+                                    rss_after_mb=round(rss_after, 1),
+                                    recovered_mb=recovered,
+                                    warning="gc.collect increased RSS; memory pressure may persist",
+                                )
+                            elif recovered > 0:
+                                LOGGER.info(
+                                    "rss_flush_released_memory",
+                                    rss_before_mb=round(rss_before, 1),
+                                    rss_after_mb=round(rss_after, 1),
+                                    recovered_mb=recovered,
+                                )
 
                 with CodeGraphIndexer(
                     cache_path=str(root), root=str(root), ast_cache_dir=ast_cache_dir
@@ -372,6 +384,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                         include_gaps=include_gaps_flag,
                         write_callback=write_precompiled_callback,
                         external_scope_manager=dep_scope_manager,
+                        graph_backend=options.graph_backend,
                     )
 
                     entity_count = len(graph.entities)
@@ -458,14 +471,14 @@ def run_build(options: BuildOptions) -> BuildResult:
                         precompiled_write_batch.clear()
                         precompiled_current_batch_bytes = 0
 
-                    # Check if indexer has precompiled blobs (from optimized worker)
-                    precompiled_blobs_abs = getattr(indexer, "_precompiled_blobs", {})
+                    # Check if indexer has precompiled content hashes (from optimized worker)
+                    precompiled_hashes_abs = getattr(indexer, "_precompiled_hashes", {})
                     precompiled_blobs = {}
                     root_str = str(root)
 
-                    for abs_path, blob_data in precompiled_blobs_abs.items():
+                    for abs_path, content_hash in precompiled_hashes_abs.items():
                         rel = abs_path[len(root_str)+1:] if abs_path.startswith(root_str) else abs_path
-                        precompiled_blobs[rel] = blob_data
+                        precompiled_blobs[rel] = content_hash
 
                     # Identify all indexed and graph files
                     indexed_rels = []
@@ -571,12 +584,22 @@ def run_build(options: BuildOptions) -> BuildResult:
                                 if should_rss_flush:
                                     gc.collect()
                                     rss_after = get_rss_mb()
-                                    LOGGER.info(
-                                        "rss_flush_released_memory",
-                                        rss_before_mb=round(rss_before, 1),
-                                        rss_after_mb=round(rss_after, 1),
-                                        recovered_mb=round(rss_before - rss_after, 1),
-                                    )
+                                    recovered = round(rss_before - rss_after, 1)
+                                    if recovered < 0:
+                                        LOGGER.warning(
+                                            "rss_flush_released_memory",
+                                            rss_before_mb=round(rss_before, 1),
+                                            rss_after_mb=round(rss_after, 1),
+                                            recovered_mb=recovered,
+                                            warning="gc.collect increased RSS; memory pressure may persist",
+                                        )
+                                    elif recovered > 0:
+                                        LOGGER.info(
+                                            "rss_flush_released_memory",
+                                            rss_before_mb=round(rss_before, 1),
+                                            rss_after_mb=round(rss_after, 1),
+                                            recovered_mb=recovered,
+                                        )
 
                         if legacy_write_batch:
                             _flush_legacy_batch(legacy_write_batch)
@@ -724,6 +747,11 @@ def run_build(options: BuildOptions) -> BuildResult:
                         pass
                 raise
             finally:
+                if graph is not None:
+                    try:
+                        graph.close()  # no-op for InMemoryGraph; frees Arrow mmap + staging
+                    except Exception:
+                        pass
                 if store is not None:
                     try:
                         store.cleanup_streams()
@@ -750,16 +778,16 @@ def _build_file_tracking(graph: Any, root: Path, indexer: Any = None, *, run_id:
     seen: set[str] = set()
     records: list[dict[str, Any]] = []
 
-    # Map absolute paths in indexer._precompiled_blobs to relative keys
-    precompiled_blobs = {}
+    # Map absolute paths in indexer._precompiled_hashes to relative keys
+    precompiled_hashes: dict[str, str] = {}
     if indexer is not None:
-        precompiled_blobs_abs = getattr(indexer, "_precompiled_blobs", {})
-        for abs_path, blob_data in precompiled_blobs_abs.items():
+        precompiled_hashes_abs = getattr(indexer, "_precompiled_hashes", {})
+        for abs_path, content_hash in precompiled_hashes_abs.items():
             try:
                 rel = Path(abs_path).relative_to(root).as_posix()
             except ValueError:
                 rel = abs_path
-            precompiled_blobs[rel] = blob_data
+            precompiled_hashes[rel] = content_hash
 
     if indexer is not None and getattr(indexer, "_indexed_files", None) is not None:
         for file_path in indexer._indexed_files:
@@ -781,8 +809,8 @@ def _build_file_tracking(graph: Any, root: Path, indexer: Any = None, *, run_id:
             try:
                 stat = full_path.stat()
                 content_hash = ""
-                if rel in precompiled_blobs:
-                    content_hash = precompiled_blobs[rel].get("content_hash", "")
+                if rel in precompiled_hashes:
+                    content_hash = precompiled_hashes.get(rel, "")
                 if not content_hash:
                     content_hash = compute_file_hash(full_path) or ""
                 records.append({
@@ -819,8 +847,8 @@ def _build_file_tracking(graph: Any, root: Path, indexer: Any = None, *, run_id:
         try:
             stat = full_path.stat()
             content_hash = ""
-            if rel in precompiled_blobs:
-                content_hash = precompiled_blobs[rel].get("content_hash", "")
+            if rel in precompiled_hashes:
+                content_hash = precompiled_hashes.get(rel, "")
             if not content_hash:
                 content_hash = compute_file_hash(full_path) or ""
             records.append({

@@ -12,6 +12,8 @@ from batho.modules.compression.bsg_map import BSGMap
 
 # Import and re-export public APIs from submodules
 from batho.modules.graph.builder.codegraph import CodeGraphIndexer, InMemoryGraph
+from batho.modules.graph.builder.arrow_graph import ArrowGraph
+from batho.modules.graph.builder.factory import create_graph
 
 from batho.utils.logging import get_logger
 
@@ -19,6 +21,8 @@ __all__ = [
     # Core indexing
     "CodeGraphIndexer",
     "InMemoryGraph",
+    "ArrowGraph",
+    "create_graph",
     # BSG rendering
     "BSGMap",
     # Config

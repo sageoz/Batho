@@ -221,9 +221,9 @@ class TestMemoryConfig:
     def test_memory_config_defaults(self):
         """Default memory config values match the expected safe defaults."""
         cfg = Config()
-        assert cfg.memory.warning_threshold_mb == 500.0
-        assert cfg.memory.critical_threshold_mb == 800.0
-        assert cfg.memory.rss_flush_threshold_mb == 650.0
+        assert cfg.memory.warning_threshold_mb == 800.0
+        assert cfg.memory.critical_threshold_mb == 1500.0
+        assert cfg.memory.rss_flush_threshold_mb == 1000.0
         assert cfg.memory.max_per_worker_mb == 150.0
 
     def test_memory_config_from_yaml(self, tmp_path: Path):
@@ -304,9 +304,9 @@ class TestMemoryConfig:
         cfg = get_config_with_root(tmp_path)
 
         assert "memory" in cfg
-        assert cfg["memory"]["warning_threshold_mb"] == 500.0
-        assert cfg["memory"]["critical_threshold_mb"] == 800.0
-        assert cfg["memory"]["rss_flush_threshold_mb"] == 650.0
+        assert cfg["memory"]["warning_threshold_mb"] == 800.0
+        assert cfg["memory"]["critical_threshold_mb"] == 1500.0
+        assert cfg["memory"]["rss_flush_threshold_mb"] == 1000.0
         assert cfg["memory"]["max_per_worker_mb"] == 150.0
 
         assert "community_detection" in cfg

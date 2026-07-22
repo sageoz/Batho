@@ -41,6 +41,17 @@ def register_build_parser(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="Skip files exceeding this size in kilobytes",
     )
+    parser.add_argument(
+        "--graph-backend",
+        type=str,
+        choices=["auto", "in-memory", "arrow"],
+        default=None,
+        help=(
+            "Graph storage backend: 'auto' (default, threshold-based), "
+            "'in-memory', or 'arrow' (columnar, memory-mapped). "
+            "Overrides graph.backend.backend in batho.yaml."
+        ),
+    )
     parser.set_defaults(func=cmd_build)
 
 
@@ -54,6 +65,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         verbose=args.verbose,
         max_workers=args.max_workers,
         max_file_size_kb=args.max_file_size_kb,
+        graph_backend=args.graph_backend,
     )
 
     result = run_build(options)

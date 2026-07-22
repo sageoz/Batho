@@ -58,9 +58,9 @@ dependency:
 
 # Memory-aware tuning. Thresholds are RSS values for the current process.
 memory:
-  warning_threshold_mb: 500.0
-  critical_threshold_mb: 800.0
-  rss_flush_threshold_mb: 650.0  # persist-and-release early, below critical
+  warning_threshold_mb: 800.0
+  critical_threshold_mb: 1500.0
+  rss_flush_threshold_mb: 1000.0  # persist-and-release early, below critical
   max_per_worker_mb: 150.0       # RAM-based worker cap; conservative for Python + tree-sitter
 
 # Fine-grained control over which blobs are written to the SQLite artifact.

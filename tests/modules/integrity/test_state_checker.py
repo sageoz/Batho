@@ -85,12 +85,12 @@ def test_crashed_run_recovery(tmp_path: Path):
 
     Execution Flow:
         1. Initialize on-disk `BathoBundle` at `tmp_path`.
-        2. Call `bundle.create_run` to save a run as 'running' in SQLite.
+        2. Call `bundle.create_run` to save a run as 'running' in the Arrow Bundle.
         3. Assert that database records it as 'running'.
         4. Mock `InterProcessLock.is_locked_by_other` to return False (simulating that the crashing process released the lock).
         5. Initialize `StateConsistencyChecker` and call `run()`.
         6. Assert that it flagged exactly 1 issue of type "stuck_run" and successfully executed exactly 1 repair.
-        7. Assert that the SQLite run database status was cleanly updated to "failed".
+        7. Assert that the Arrow Bundle run status was cleanly updated to "failed".
 
     Expectations:
         - Stuck runs are identified because they are marked 'running' but do not hold the inter-process lock.

@@ -2,7 +2,7 @@
 
 This module validates that the build pipeline:
 1. Rejects execution and yields warning results if another process holds the build lock.
-2. Cleans up files and marks the run as failed in SQLite when the build encounters a hard error.
+2. Cleans up files and marks the run as failed in the Arrow Bundle when the build encounters a hard error.
 3. Issues warnings when case-insensitive filename collisions are detected on case-insensitive filesystems.
 4. Marks oversized files as opaque snapshots and logs warnings without failing the entire build.
 """
@@ -65,7 +65,7 @@ def test_build_failed_cleanup(tmp_path: Path):
         1. Create repo directory and write a basic `batho.yaml`.
         2. Mock `CodeGraphIndexer`'s `build_graph` method to raise a `ValueError`.
         3. Run `run_build` and assert `res.success` is False.
-        4. Verify that the build run status in the SQLite database is recorded as "failed".
+        4. Verify that the build run status in the Arrow Bundle is recorded as "failed".
         5. Verify that the exception message is saved as the error message.
 
     Expectations:
@@ -90,7 +90,7 @@ def test_build_failed_cleanup(tmp_path: Path):
         assert res.success is False
         assert any("Mocked build failure" in w for w in res.warnings)
             
-    # Verify that run was marked as failed in SQLite db
+    # Verify that run was marked as failed in Arrow Bundle
     db = BathoBundle(root)
     runs = db._reader.get_all_runs()
     assert len(runs) == 1

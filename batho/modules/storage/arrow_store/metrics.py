@@ -57,7 +57,7 @@ def compute_run_metrics(store: "BsgScratchStore", db: Any, root: Path) -> dict:
     total_entities = len(ent_tbl)
     total_relationships = len(rel_tbl)
 
-    # --- File paths from db.file_artifacts (still SQLite) ---
+    # --- File paths from db.file_artifacts (Arrow Bundle) ---
     file_paths: list[str] = []
     try:
         with db.connection(read_only=True) as conn:
