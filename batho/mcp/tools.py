@@ -142,6 +142,46 @@ def _manifest_gen(reader: BathoBundleReader) -> int:
         return 0
 
 
+def _resolve_entity_id(query: str, reader: BathoBundleReader) -> str | list[dict]:
+    """Resolve an entity query to a concrete entity_id.
+
+    Tries exact entity_id match first, then falls back to exact name match.
+    Returns the entity_id string if uniquely resolved, or a list of candidate
+    dicts (with entity_id, name, type, file) for disambiguation if multiple
+    name matches exist. Returns empty list if no match.
+    """
+    agent_table = reader._get_table("agent_views")
+    if agent_table.num_rows == 0:
+        return []
+
+    # Try exact entity_id match first
+    mask = pc.equal(agent_table.column("entity_id"), query)
+    matched = agent_table.filter(mask)
+    if matched.num_rows > 0:
+        return query
+
+    # Fall back to exact name match
+    name_mask = pc.equal(agent_table.column("name"), query)
+    name_matched = agent_table.filter(name_mask)
+    if name_matched.num_rows == 0:
+        return []
+    if name_matched.num_rows == 1:
+        return name_matched.to_pylist()[0].get("entity_id", "")
+
+    # Multiple matches — return disambiguation list
+    file_paths = _file_paths_map(reader)
+    rows = name_matched.to_pylist()
+    return [
+        {
+            "entity_id": r.get("entity_id", ""),
+            "name": r.get("name", ""),
+            "type": r.get("entity_type", ""),
+            "file": file_paths.get(r.get("file_id", -1), ""),
+        }
+        for r in rows
+    ]
+
+
 def register_tools(
     app: FastMCP,
     default_root: str | None = None,
@@ -466,7 +506,8 @@ def register_tools(
         Do NOT use this for path tracing — use trace_path instead.
 
         Args:
-            entity_id: The entity ID from search_entities or graph_query results.
+            entity_id: Entity ID or display name from search_entities or graph_query results.
+                       If a display name is given and it uniquely matches one entity, it is resolved automatically.
             repo: Name of the registered repo. If None, uses the default repo.
             include_source: If True, includes source code from storage_views. Default: False.
             response_format: 'detailed' (default), 'concise'.
@@ -484,8 +525,29 @@ def register_tools(
         mask = pc.equal(agent_table.column("entity_id"), entity_id)
         matched = agent_table.filter(mask)
         if matched.num_rows == 0:
-            return _err(f"Entity not found: {entity_id}",
-                         error_type=CLIENT_ERROR, hint="Use search_entities to find the correct entity_id.")
+            # Fallback: try name-based lookup
+            resolved = _resolve_entity_id(entity_id, reader)
+            if isinstance(resolved, list):
+                if len(resolved) == 0:
+                    return _err(f"Entity not found: {entity_id}",
+                                 error_type=CLIENT_ERROR, hint="Use search_entities to find the correct entity_id.")
+                else:
+                    candidates = "\n".join(
+                        f"  - {c['name']} [{c['type']}] {c['file']} — `{c['entity_id']}`"
+                        for c in resolved
+                    )
+                    return _err(
+                        f"Multiple entities named '{entity_id}' found. Use one of these entity_ids:\n{candidates}",
+                        error_type=CLIENT_ERROR,
+                        hint="Pass the exact entity_id from the list above.",
+                    )
+            else:
+                entity_id = resolved
+                mask = pc.equal(agent_table.column("entity_id"), entity_id)
+                matched = agent_table.filter(mask)
+                if matched.num_rows == 0:
+                    return _err(f"Entity not found: {entity_id}",
+                                 error_type=CLIENT_ERROR, hint="Use search_entities to find the correct entity_id.")
 
         entity_row = matched.to_pylist()[0]
         file_paths = _file_paths_map(reader)
@@ -534,8 +596,10 @@ def register_tools(
         Use search_entities first to find entity_ids if you only have names.
 
         Args:
-            source_entity_id: Entity ID of the starting point.
-            target_entity_id: Entity ID of the destination.
+            source_entity_id: Entity ID or display name of the starting point.
+                              If a display name is given and uniquely matches, it is resolved automatically.
+            target_entity_id: Entity ID or display name of the destination.
+                              If a display name is given and uniquely matches, it is resolved automatically.
             repo: Name of the registered repo. If None, uses the default repo.
             max_depth: Maximum BFS depth. Default: 5. Maximum: 20.
             relation_types: Filter to specific relation types (e.g. ['CALLS']).
@@ -547,6 +611,33 @@ def register_tools(
             return _err(str(e), error_type=CLIENT_ERROR, hint="Call list_repos to see available repos.")
 
         max_depth = min(max(max_depth, 1), 20)
+
+        # Resolve entity_ids — try direct lookup first, fall back to name resolution on miss
+        agent_table = reader._get_table("agent_views")
+        for _field, _val in [("source", source_entity_id), ("target", target_entity_id)]:
+            _mask = pc.equal(agent_table.column("entity_id"), _val)
+            if agent_table.filter(_mask).num_rows > 0:
+                continue
+            resolved = _resolve_entity_id(_val, reader)
+            if isinstance(resolved, list):
+                if len(resolved) == 0:
+                    return _err(f"Entity not found: {_val}",
+                                 error_type=CLIENT_ERROR, hint="Use search_entities to find the correct entity_id.")
+                else:
+                    candidates = "\n".join(
+                        f"  - {c['name']} [{c['type']}] {c['file']} — `{c['entity_id']}`"
+                        for c in resolved
+                    )
+                    return _err(
+                        f"Multiple entities named '{_val}' found. Use one of these entity_ids:\n{candidates}",
+                        error_type=CLIENT_ERROR,
+                        hint="Pass the exact entity_id from the list above.",
+                    )
+            else:
+                if _field == "source":
+                    source_entity_id = resolved
+                else:
+                    target_entity_id = resolved
 
         rels_table = reader._get_table("rels_views")
         if rels_table.num_rows == 0:
@@ -697,6 +788,7 @@ def register_tools(
         """Search for entities by name using substring regex match.
 
         Returns matching entities with optional type filter and file locations.
+        Each result includes the entity_id in backticks for use with get_entity or trace_path.
         Use this to find entity_ids for get_entity or trace_path.
         Do NOT use grep — this is faster and returns structured results with entity_ids.
         Do NOT use graph_query for name search — this is optimized for name matching.
@@ -744,13 +836,14 @@ def register_tools(
         for row in rows:
             name = row.get("name", "")
             etype = row.get("entity_type", "")
+            eid = row.get("entity_id", "")
             fp = file_paths.get(row.get("file_id", -1), "")
             lr = ""
             sl = row.get("start_line")
             el = row.get("end_line")
             if sl:
                 lr = f"L{sl}" if not el or el == sl else f"L{sl}-{el}"
-            lines.append(f"- {name} [{etype}] {fp}:{lr}")
+            lines.append(f"- {name} [{etype}] {fp}:{lr} — `{eid}`")
 
         structured = {
             "results": [build_node_dict_simple(r, file_paths) for r in rows],

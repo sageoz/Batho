@@ -159,6 +159,7 @@ def format_concise(
                 ]
                 prefix += " ← " + ", ".join(in_parts)
             lines.append(prefix)
+            lines.append(f"  `{eid}`")
         lines.append("")
 
     footer = f"{len(agent_rows)} entities · {len(rels_rows)} relationships · {len(by_file)} files"
@@ -206,6 +207,7 @@ def format_detailed(
             name = row.get("name", "")
             lr = _line_range(row.get("start_line"), row.get("end_line"))
             lines.append(f"### {name} [{etype} {lr}]")
+            lines.append(f"`{eid}`")
             sig = row.get("signature")
             if sig:
                 lines.append(f"Signature: {sig}")

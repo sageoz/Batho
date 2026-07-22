@@ -54,7 +54,7 @@ Install Batho as a global command so `batho` is available on PATH across all ter
 batho --version
 ```
 
-If `batho` is found and prints a version, verify it is **v1.3.0 or newer**. If an older version is installed, upgrade it (see Workflow 5, Step 3) before proceeding. If it is already v1.3.0+, skip to Workflow 2.
+If `batho` is found and prints a version, verify it is **v1.3.1 or newer**. If an older version is installed, upgrade it (see Workflow 5, Step 3) before proceeding. If it is already v1.3.1+, skip to Workflow 2.
 
 #### Step 2: Install via fallback chain
 
@@ -358,7 +358,7 @@ When the user already has Batho configured but needs to update:
 
 1. **After code changes** — Run `batho patch --root /path/to/repo --verbose`. No MCP config changes needed. The server auto-serves the new generation.
 2. **After moving the repo** — Ask the agent to `remove_repo(name="old_name")` then `add_repo(name="new_name", path="/new/path")`. No client config changes needed.
-3. **After Batho upgrade** — `pip install --user --upgrade batho` (or `uv tool upgrade batho` or `pipx upgrade batho`). Verify the version with `batho --version` (should show **1.3.0+**). Restart all MCP clients.
+3. **After Batho upgrade** — `pip install --user --upgrade batho` (or `uv tool upgrade batho` or `pipx upgrade batho`). Verify the version with `batho --version` (should show **1.3.1+**). Restart all MCP clients.
 
 ### Workflow 7: Troubleshooting
 

@@ -8,7 +8,7 @@ description: "Benchmarks, scaling dimensions, and cache strategy"
 
 ## 10.1 Benchmarks
 
-Performance metrics from production workloads in Batho v1.3.0:
+Performance metrics from production workloads in Batho v1.3.1:
 
 | Metric | Value | Notes |
 |--------|-------|-------|

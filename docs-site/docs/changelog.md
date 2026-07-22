@@ -6,6 +6,26 @@ description: "Batho release history"
 
 # Changelog
 
+## v1.3.1 — 2026-07-22
+
+**Bug fixes and MCP UX improvements.**
+
+### Bug Fixes
+
+- **CLI root resolution crash**: `batho_cli.py` no longer crashes when `--root` is omitted or passed as a string. `args.root` is now wrapped in `Path()` and checked for `None` before calling `.resolve()`.
+- **MCP test isolation**: `test_repos_resource_no_registry` now uses `registry_path=tmp_path` instead of reading the real `~/.batho/mcp-repos.json`, preventing failures when a local registry exists.
+
+### MCP UX Improvements
+
+- **Entity ID visibility**: `search_entities`, `format_concise`, and `format_detailed` markdown output now include entity_ids in backticks, enabling agents to copy-paste them into `get_entity` and `trace_path`.
+- **Name-based lookup fallback**: `get_entity` and `trace_path` now accept display names as fallback when an exact entity_id is not found. If the name uniquely matches, it resolves automatically. If multiple matches exist, a disambiguation list with entity_ids is returned.
+
+### Tests
+
+- 9 new tests in `tests/mcp/test_entity_lookup.py` covering entity_id visibility and name-based lookup.
+- Updated `tests/mcp/test_dual_output.py` to reflect that entity_ids are now intentionally included in markdown.
+- Total: 609 tests passing.
+
 ## v1.3.0 — 2026-07-22
 
 **Arrow graph backend, build metrics accuracy, memory optimization, and documentation cleanup.**

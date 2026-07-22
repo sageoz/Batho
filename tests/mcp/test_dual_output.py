@@ -2,19 +2,19 @@
 
 Scenario:
     The MCP tools return both markdown `content` and JSON `structuredContent`.
-    Both must contain the same entities/edges, but content excludes internal
-    fields like IDs while structuredContent includes everything.
+    Both must contain the same entities/edges. Content includes entity_ids in
+    backticks for agent copy-paste; structuredContent includes full node/edge dicts.
 
 Execution Flow:
     1. Create mock rows with known entity/relationship data.
     2. Call build_dual_output.
-    3. Verify content contains entity names but not raw IDs.
+    3. Verify content contains entity names and entity_ids in backticks.
     4. Verify structuredContent contains full node/edge dicts with IDs.
 
 Expectations:
     - Entity names appear in both content and structuredContent.
     - structuredContent.nodes includes id, parent_id, metadata.
-    - content markdown does not contain entity_id strings.
+    - content markdown includes entity_id strings in backticks.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def test_entity_names_in_both_outputs():
     assert any(n["name"] == "main" for n in structured["graph"]["nodes"])
 
 
-def test_structured_has_ids_content_does_not():
+def test_structured_has_ids_content_also_has_ids():
     eid = "ent|func|main.py|0|10|1|5|main"
     rows = [
         {"entity_id": eid, "entity_type": "FUNCTION", "name": "main", "file_id": 1, "start_line": 1, "end_line": 5},
@@ -43,7 +43,7 @@ def test_structured_has_ids_content_does_not():
 
     markdown, structured = build_dual_output(rows, [], file_paths)
     assert structured["graph"]["nodes"][0]["id"] == eid
-    assert eid not in markdown
+    assert eid in markdown
 
 
 def test_edge_count_matches():

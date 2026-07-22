@@ -1,14 +1,14 @@
 ---
 sidebar_position: 1
 title: "Whitepaper Overview"
-description: "Batho v1.3.0 Technical Whitepaper — Bidirectional AST Traversal & Hypergraph Orchestrator"
+description: "Batho v1.3.1 Technical Whitepaper — Bidirectional AST Traversal & Hypergraph Orchestrator"
 ---
 
-# Batho v1.3.0 Technical Whitepaper
+# Batho v1.3.1 Technical Whitepaper
 
 ## Bidirectional AST Traversal & Hypergraph Orchestrator
 
-**Document Version:** 1.3.0  
+**Document Version:** 1.3.1  
 **Date:** July 2026  
 **Classification:** Public — Enterprise Technical Reference  
 **Author:** Batho Core Team  
@@ -18,7 +18,7 @@ description: "Batho v1.3.0 Technical Whitepaper — Bidirectional AST Traversal 
 
 ## Executive Summary
 
-Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic, production-grade code intelligence engine that transforms raw codebases into queryable, time-aware structured hypergraphs. Version 1.3.0 delivers a unified configuration schema (`batho.yaml`), a high-performance Arrow IPC Bundle storage format, lossless bidirectional traversal support, a streamlined 8-command CLI interface, and an Arrow-backed columnar graph backend with auto-selection for memory-efficient large-codebase indexing. Batho is designed for polyglot enterprises managing millions of lines of code across hundreds of repositories.
+Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic, production-grade code intelligence engine that transforms raw codebases into queryable, time-aware structured hypergraphs. Version 1.3.1 delivers a unified configuration schema (`batho.yaml`), a high-performance Arrow IPC Bundle storage format, lossless bidirectional traversal support, a streamlined 8-command CLI interface, and an Arrow-backed columnar graph backend with auto-selection for memory-efficient large-codebase indexing. Batho is designed for polyglot enterprises managing millions of lines of code across hundreds of repositories.
 
 **Key Value Propositions**
 
@@ -70,7 +70,7 @@ flowchart TB
     style Output fill:#fff3e0,stroke:#f57c00,stroke-width:2px
 ```
 
-**Figure 1: Batho v1.3.0 System Architecture Overview** - High-level data flow from source inputs through the core engine to consumption interfaces.
+**Figure 1: Batho v1.3.1 System Architecture Overview** - High-level data flow from source inputs through the core engine to consumption interfaces.
 
 ---
 
@@ -78,7 +78,7 @@ flowchart TB
 
 | Figure | Title | Section |
 |--------|-------|---------|
-| Figure 1 | Batho v1.3.0 System Architecture Overview | Overview |
+| Figure 1 | Batho v1.3.1 System Architecture Overview | Overview |
 | Figure 2 | High-Level System Architecture | Architecture Overview |
 | Figure 3 | Data Flow Pipeline | Architecture Overview |
 | Figure 4 | Subsystem Interactions | Core Subsystems |
@@ -135,6 +135,7 @@ flowchart TB
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.3.1 | 2026-07-22 | Batho Core Team | Entity ID UX gap fix, CLI root resolution bug fix, test isolation |
 | 1.3.0 | 2026-07-22 | Batho Core Team | Arrow graph backend with auto-selection, build metrics accuracy, memory optimization, documentation cleanup |
 | 1.2.1 | 2026-07-20 | Batho Core Team | Bug fixes (patch.py NameError, registry race, atomic cache writes), MCP tool improvements, docs version alignment |
 | 1.2.0 | 2026-07-05 | Batho Core Team | Added MCP Server, multi-repo registry, community detection, prompts/resources, SKILL.md |

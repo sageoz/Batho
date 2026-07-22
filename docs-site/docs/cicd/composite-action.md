@@ -6,7 +6,7 @@ The composite action (`action.yml`) is a self-contained GitHub Action that sets 
 
 ```mermaid
 flowchart TD
-    A["Consumer workflow calls sageoz/batho@v1.3.0"] --> B["Set up uv"]
+    A["Consumer workflow calls sageoz/batho@v1.3.1"] --> B["Set up uv"]
     B --> C["Install Python 3.12"]
     C --> D["Install Batho into isolated venv"]
     D --> E["batho build --root . --full"]
@@ -62,7 +62,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run Batho Index
-        uses: sageoz/batho@v1.3.0
+        uses: sageoz/batho@v1.3.1
         with:
           root: "."
           python-version: "3.12"
@@ -105,7 +105,7 @@ Pin a specific commit, tag, or branch:
 
 ```yaml
 with:
-  batho-ref: "v1.3.0"
+  batho-ref: "v1.3.1"
 ```
 
 ## Step Summary
