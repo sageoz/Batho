@@ -8,7 +8,7 @@ description: "Benchmarks, scaling dimensions, and cache strategy"
 
 ## 10.1 Benchmarks
 
-Performance metrics from production workloads in Batho v1.2.1:
+Performance metrics from production workloads in Batho v1.3.0:
 
 | Metric | Value | Notes |
 |--------|-------|-------|
@@ -16,7 +16,8 @@ Performance metrics from production workloads in Batho v1.2.1:
 | Full build (100K files) | ~3 minutes | Cold start, Python repository |
 | Incremental patch (50 files) | ~1.5 seconds | Content-hash based patch |
 | AST Cache hit rate | >95% | Typical pull request size |
-| Memory footprint | ~1.5GB | 100K Python files |
+| Memory footprint | ~1.5GB | 100K Python files (InMemoryGraph) |
+| Memory footprint (Arrow) | ~800MB | 100K Python files (ArrowGraph, streaming compaction) |
 | Arrow Bundle size | ~45MB | Compressed Arrow IPC Bundle database |
 | Agent BSG export size | ~3.5MB | 12K token budget |
 

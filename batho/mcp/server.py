@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
+from batho import __version__ as BATHO_MCP_VERSION
 from batho.mcp.instructions import INSTRUCTIONS
 from batho.mcp.tools import register_tools
 from batho.mcp.prompts import register_prompts
@@ -20,8 +21,6 @@ from batho.mcp.registry import RepoRegistry
 import structlog
 
 LOGGER = structlog.get_logger(__name__)
-
-BATHO_MCP_VERSION = "1.2.1"
 
 
 def create_app(

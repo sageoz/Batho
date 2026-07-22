@@ -35,7 +35,7 @@ description: "Batho — Bidirectional AST Traversal & Hypergraph Orchestrator"
 %%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart LR
     Sources["Source Code & batho.yaml"] --> Extractor["AST Extractor (tree-sitter)"]
-    Extractor --> Graph["InMemoryGraph"]
+    Extractor --> Graph["InMemoryGraph / ArrowGraph"]
     Graph --> BSG["BSGMap"]
     BSG --> Arrow["Arrow IPC / JSON"]
 
@@ -56,7 +56,7 @@ flowchart LR
 | Supported Languages | 40+ via tree-sitter |
 | Context Compression | Up to 10x for LLM injection |
 | Incremental Patch Speed | 10–100x faster than full re-index |
-| Test Coverage | 507 automated tests |
+| Test Coverage | 600 automated tests |
 | Cache Hit Rate | >95% on typical PR-sized changes |
 | Snapshot Retention | 90 days default, configurable |
 | Max Indexed Files | 200,000 per repository |

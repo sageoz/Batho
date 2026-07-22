@@ -187,7 +187,10 @@ def detect_communities(graph: "GraphBackend", config: dict[str, Any] | None = No
 
         degree_map: dict[str, int] = {}
         for eid in member_ids:
-            degree_map[eid] = graph.degree_by_endpoint(eid)
+            try:
+                degree_map[eid] = graph.degree_by_endpoint(eid)
+            except Exception:
+                degree_map[eid] = 0
 
         top_sorted = sorted(member_ids, key=lambda e: degree_map.get(e, 0), reverse=True)
         top_names = [graph.entities[eid].name for eid in top_sorted[:10] if eid in graph.entities]

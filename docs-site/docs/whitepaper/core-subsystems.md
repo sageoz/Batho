@@ -14,6 +14,7 @@ Batho is composed of tightly-integrated subsystems that work together to provide
 |-----------|---------|--------|
 | **AST Extraction** | tree-sitter based multi-language parsing | Production |
 | **Code Graph** | In-memory hypergraph with adjacency indexing | Production |
+| **Arrow Graph Backend** | Columnar memory-mapped graph storage with CSR/CSC adjacency indexes | Production |
 | **BSG Map & Compression** | Flat symbol index, priority token budgeting, and rule loaders | Production |
 | **Dependency Indexer** | stdlib and installed virtual environment dependency indexer | Production |
 | **Storage Registry** | Arrow IPC database manager, BSG scratch store, and unified cache | Production |
@@ -30,7 +31,7 @@ Batho is composed of tightly-integrated subsystems that work together to provide
 
 | Layer | Technology | Version |
 |-------|------------|---------|
-| Language Runtime | Python | 3.11+ |
+| Language Runtime | Python | 3.12+ |
 | AST Parsing | tree-sitter | 0.25+ |
 | Language Pack | tree-sitter-language-pack | Latest |
 | Configuration | Pydantic | 2.x |

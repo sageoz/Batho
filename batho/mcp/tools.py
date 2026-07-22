@@ -326,7 +326,7 @@ def register_tools(
         from batho.mcp.graph_builder import truncate_to_budget
         markdown, truncated = truncate_to_budget(markdown, max_tokens)
         if truncated:
-            markdown += f"\n\n---\nTruncated to fit {max_tokens} token budget."
+            markdown += f"\n\n---\nTruncated to fit {max_tokens} token budget. Use graph_query with file_path filters for detailed per-file data."
 
         structured = {
             "overview": {
@@ -410,8 +410,7 @@ def register_tools(
                 table = table.filter(pc.match_substring(table.column("name"), name_pattern))
 
         total_nodes = table.num_rows
-        rows = table.to_pylist()
-        rows = rows[offset:offset + limit]
+        rows = table.slice(offset, limit).to_pylist()
 
         rels_table = reader._get_table("rels_views")
         rels_rows: list[dict] = []
@@ -428,6 +427,17 @@ def register_tools(
                 rels_rows = [r for r in rels_rows if r.get("relation_type") in relation_types]
 
             rels_rows = [r for r in rels_rows if r.get("source_id") in entity_ids or r.get("target_id") in entity_ids]
+
+            # Deduplicate relationships by (source_id, target_id, relation_type)
+            # to avoid the same relationship appearing on multiple pages.
+            seen_rels: set[tuple[str, str, str]] = set()
+            deduped: list[dict] = []
+            for r in rels_rows:
+                key = (r.get("source_id", ""), r.get("target_id", ""), r.get("relation_type", ""))
+                if key not in seen_rels:
+                    seen_rels.add(key)
+                    deduped.append(r)
+            rels_rows = deduped
 
         file_paths = _file_paths_map(reader)
         gen = _manifest_gen(reader)

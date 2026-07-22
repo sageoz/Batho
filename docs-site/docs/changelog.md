@@ -87,7 +87,7 @@ description: "Batho release history"
 - **Community Detection**: Leiden clustering via `leidenalg` + `igraph` — automatically groups related entities into communities for codebase overview.
 - **Dual-Output Architecture**: All MCP tools return both markdown `content` (model-facing, ~34% fewer tokens) and JSON `structuredContent` (machine-facing).
 - **Token Budget Truncation**: Configurable `max_tokens` parameter on graph tools with automatic truncation and reporting.
-- **MCP Prompts**: Workflow-specific prompt templates for agent onboarding (`explore_codebase`, `trace_dependencies`, `security_audit`, `refactor_prep`).
+- **MCP Prompts**: Workflow-specific prompt templates for agent onboarding (`explore_codebase`, `understand_function`, `analyze_file`, `trace_dependency`, `review_changes`, `impact_analysis`, `architecture_overview`).
 - **MCP Resources**: Static schema and dynamic repo-list resources accessible via URI references.
 - **Structured Error Handling**: Typed errors (`CLIENT_ERROR`, `EXTERNAL_ERROR`) with retry hints and actionable messages.
 - **SKILL.md**: AI agent setup skill file for automated global install, MCP configuration across Claude Desktop, Cursor, Windsurf, and VS Code.

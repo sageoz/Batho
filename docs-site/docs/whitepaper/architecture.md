@@ -21,7 +21,7 @@ flowchart TB
     subgraph Core["Batho Core Engine"]
         Orchestrator["Orchestrator Layer<br/>(build / patch / export / load / gc)"]
         Extractor["Multi-Language AST Extractor<br/>(tree-sitter)"]
-        Graph["InMemoryGraph<br/>(Entities and Relationships)"]
+        Graph["InMemoryGraph / ArrowGraph<br/>(Entities and Relationships)"]
         Cache["AST Cache<br/>(msgpack)"]
         SymbolIndex["SymbolIndex<br/>(Cross-file Resolution)"]
         Incremental["IncrementalGraphUpdater"]
@@ -113,6 +113,7 @@ sequenceDiagram
 | **Orchestrator Layer** | High-level command implementations | Typed options/results, module delegation, error recovery |
 | **AST Extractor** | Multi-language parsing via tree-sitter | 40+ language support, parallel processing, mtime tracking |
 | **InMemoryGraph** | Hypergraph storage | Lazy adjacency indexing, relationship deduplication, cross-file resolution |
+| **ArrowGraph** | Columnar graph storage | Memory-mapped IPC, CSR/CSC adjacency indexes, streaming compaction, auto-selection |
 | **AST Cache** | Persistent entity cache | msgpack-backed, SHA-256 validation, automatic invalidation |
 | **SymbolIndex** | Cross-file symbol resolution | Two-pass resolution, unresolved target tracking |
 | **IncrementalUpdater** | Patch application | Diff-based updates, content-hash comparisons, rollback support |

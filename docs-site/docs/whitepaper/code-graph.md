@@ -45,6 +45,16 @@ The graph is built on two primitives: **Entities** and **Relationships**. This m
 
 The `InMemoryGraph` ensures deterministic processing through lazy indexing and automatic deduplication:
 
+### Arrow Graph Backend
+
+Batho v1.3.0 introduces `ArrowGraph`, a columnar, memory-mapped graph backend that serves as a drop-in alternative to `InMemoryGraph` for large codebases. It uses a three-phase lifecycle:
+
+1. **Stream**: Extracted rows are flushed to Arrow IPC stream files, keeping only entity/relationship ID sets in memory for dedup.
+2. **Dicts**: Stream files are read back into dictionaries with secondary indexes, mirroring `InMemoryGraph` semantics.
+3. **Compact**: Dictionaries are written to unified, uncompressed IPC files opened via `pyarrow.memory_map`, with CSR/CSC adjacency indexes. Phase-2 dictionaries are freed, bounding peak RSS.
+
+Backend selection is controlled by the `create_graph()` factory and `resolve_graph_backend()` heuristic, which auto-selects `ArrowGraph` when candidate files ≥ 500 or estimated entities ≥ 30,000.
+
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart LR
@@ -136,7 +146,7 @@ def create_user(name: str) -> User:
 
 ## 4.5 Bidirectional Traversal & Lossless Reconstruction
 
-Batho v1.2.1 supports lossless, bidirectional graph-to-code reconstruction, allowing a developer or LLM agent to rebuild the exact source file from the graph.
+Batho v1.3.0 supports lossless, bidirectional graph-to-code reconstruction, allowing a developer or LLM agent to rebuild the exact source file from the graph.
 
 ### The Role of `SYNTAX_GLUE`
 When `bsg.bidirectional.enabled` is `true`, the parser identifies not only AST elements (e.g. classes, functions) but also all intervening segments, such as whitespace, braces, skipped comments, and other non-semantic structures. These are emitted as `SYNTAX_GLUE` entities.

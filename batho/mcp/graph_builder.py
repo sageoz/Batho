@@ -153,8 +153,11 @@ def format_concise(
                 prefix += " → " + ", ".join(parts)
             incoming = rels_by_target.get(eid, [])
             if incoming:
-                sources = [name_by_id.get(r.get("source_id", ""), r.get("source_id", "")) for r in incoming]
-                prefix += f" ← called by: {', '.join(sources)}"
+                in_parts = [
+                    f"{_rel_arrow(r.get('relation_type', ''))}: {name_by_id.get(r.get('source_id', ''), r.get('source_id', ''))}"
+                    for r in incoming
+                ]
+                prefix += " ← " + ", ".join(in_parts)
             lines.append(prefix)
         lines.append("")
 

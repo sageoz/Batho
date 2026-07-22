@@ -598,6 +598,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 t_comm_0 = time.monotonic()
 
                 # Reconstruct graph from stored artifact tables
+                db._reader.invalidate()
                 agent_table = db._reader._get_table("agent_views")
                 rels_table = db._reader._get_table("rels_views")
                 tracking = db._reader.get_all_file_tracking()

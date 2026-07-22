@@ -10,6 +10,7 @@ import json
 
 from fastmcp import FastMCP
 
+from batho.core.schemas import EntityType, RelationshipType
 from batho.mcp.registry import RepoRegistry
 
 
@@ -29,16 +30,8 @@ def register_resources(
         - Response formats: summary, concise, detailed
         """
         schema_data = {
-            "entity_types": [
-                "FUNCTION", "CLASS", "METHOD", "MODULE",
-                "VARIABLE", "INTERFACE", "ENUM", "STRUCT",
-                "TYPE_ALIAS", "CONSTANT", "PROPERTY", "CONSTRUCTOR",
-            ],
-            "relation_types": [
-                "CALLS", "IMPORTS", "USES", "REFERENCES",
-                "DEFINES", "INHERITS", "IMPLEMENTS", "OVERRIDES",
-                "CONTAINS", "DECLARES",
-            ],
+            "entity_types": [e.name for e in EntityType],
+            "relation_types": [r.name for r in RelationshipType],
             "response_formats": {
                 "summary": "~200-500 tokens, high-level overview only",
                 "concise": "~50 tokens per entity, minimal detail",

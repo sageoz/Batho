@@ -8,7 +8,7 @@ description: "Set up your local development environment"
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (recommended)
 - Git
 

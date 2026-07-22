@@ -22,9 +22,9 @@ Yes. Batho is open-source under the Apache 2.0 license.
 
 ## Installation & Setup
 
-### Do I need Python 3.11+?
+### Do I need Python 3.12+?
 
-Yes. Batho uses modern Python features and requires 3.11 or newer.
+Yes. Batho uses modern Python features and requires 3.12 or newer.
 
 ### Can I use pip instead of uv?
 
