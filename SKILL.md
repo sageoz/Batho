@@ -273,7 +273,67 @@ If a user explicitly does not want a shared registry, they can use separate MCP 
 ```
 This creates multiple processes and requires config edits for every repo change. Prefer the registry pattern.
 
-### Workflow 4: Verify
+### Workflow 4: Manage Repos via MCP Tools (Post-Setup)
+
+Once MCP is configured and clients are restarted, all repo management is done through the MCP tools — **no CLI or config file edits needed**. The user interacts with their AI agent in chat.
+
+#### Add a Repo or Workspace
+
+Instruct the user to ask their agent:
+
+> "Add repo myproject at /path/to/repo"
+
+The agent calls:
+```
+add_repo(name="myproject", path="/path/to/repo")
+```
+
+This registers the repo in the shared registry (`~/.batho/mcp-repos.json`), verifies the artifact exists, and makes it immediately queryable by all configured clients.
+
+**Before adding a repo**, ensure it has been built:
+```bash
+batho build --root /path/to/repo --verbose
+```
+
+#### Remove a Repo
+
+> "Remove repo myproject from Batho"
+
+The agent calls:
+```
+remove_repo(name="myproject")
+```
+
+This removes the repo from the registry. The artifact on disk is not deleted — only the registry entry is removed.
+
+#### List All Registered Repos
+
+> "What repos are available in Batho?"
+
+The agent calls:
+```
+list_repos()
+```
+
+Returns all registered repos with their paths, entity counts, and artifact status.
+
+#### Query a Specific Repo
+
+After adding, the user can query any repo by passing the `repo` parameter:
+
+> "Give me an overview of backend"
+> "Search for functions named main in frontend"
+
+The agent calls `graph_overview(repo="backend")` or `search_entities(repo="frontend", query="main")`.
+
+#### Key Points
+
+- **One registry serves all clients** — adding a repo once makes it available to Claude Desktop, Cursor, Windsurf, and VS Code simultaneously
+- **No restart needed** — repos added via `add_repo` are immediately available without restarting clients
+- **Build first, then add** — the repo must have a `.batho/artifact/` directory before `add_repo` is called
+- **Use `batho patch` after code changes** — this updates the artifact in-place; the MCP server auto-serves the new generation
+
+### Workflow 5: Verify
 
 After restarting all configured clients, verify the setup:
 
@@ -292,7 +352,7 @@ If verification fails, check:
 - Repo is registered: ask agent to call `list_repos()`
 - Server starts manually: `batho mcp` (should not crash)
 
-### Workflow 5: Update Existing Setup
+### Workflow 6: Update Existing Setup
 
 When the user already has Batho configured but needs to update:
 
@@ -300,7 +360,7 @@ When the user already has Batho configured but needs to update:
 2. **After moving the repo** — Ask the agent to `remove_repo(name="old_name")` then `add_repo(name="new_name", path="/new/path")`. No client config changes needed.
 3. **After Batho upgrade** — `pip install --user --upgrade batho` (or `uv tool upgrade batho` or `pipx upgrade batho`). Verify the version with `batho --version` (should show **1.3.0+**). Restart all MCP clients.
 
-### Workflow 6: Troubleshooting
+### Workflow 7: Troubleshooting
 
 Common issues and solutions:
 
