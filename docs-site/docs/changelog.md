@@ -6,6 +6,44 @@ description: "Batho release history"
 
 # Changelog
 
+## v1.3.0 — 2026-07-22
+
+**Arrow graph backend, build metrics accuracy, memory optimization, and documentation cleanup.**
+
+### New Features
+
+- **Arrow Graph Backend**: Columnar memory-mapped graph storage (`ArrowGraph`) as an alternative to the default `InMemoryGraph`, enabling streaming compaction for large codebases without holding the entire graph in RAM.
+- **Graph Backend Auto-Selection**: Heuristic-based backend resolution using file count and estimated entity count thresholds (`auto_threshold_files=500`, `auto_threshold_entities=30,000`). Automatically selects Arrow for large repos.
+- **Graph Backend Protocol**: Formal `GraphBackend` protocol defining the contract between in-memory and Arrow backends.
+- **Public API Exports**: `ArrowGraph` and `create_graph` now exported from `batho` top-level package.
+
+### Bug Fixes
+
+- **`symbol_index_size` reporting**: Added `ScopeManager.global_symbol_count` property to accurately report total global symbols across all partitions instead of reporting 0.
+- **Unresolved stub resolution counts**: `resolve_contextual_stubs` now returns `(resolved_count, unresolved_count)` tuple, propagated to `build_stats` for accurate metrics.
+- **Self-loop cycle detection false positives**: `find_cycles` now skips self-loops only for `IMPORTS` relationships (where they're noise), preserving `INHERITS` self-loop detection (which indicates real circular inheritance).
+- **Negative RSS recovery logging**: `gc.collect()` that increases RSS now logs a warning instead of info, with a descriptive message about memory pressure.
+
+### Performance
+
+- **Memory optimization in extraction pipeline**: `agent_blob` and `storage_blob` are stripped from `raw_results` after being streamed via `result_callback`, preventing ~1.6 GB of redundant blob retention during graph materialization on large repos.
+- **Worker log suppression**: `load_effective_rules` accepts `quiet=True` to suppress info-level logging in worker processes, eliminating log spam during parallel extraction.
+- **RSS flush log spam reduction**: `rss_flush_released_memory` now only logs when memory was actually recovered (`> 0`) or when RSS increased (`< 0`), silencing no-op `gc.collect()` calls that recovered 0 MB.
+
+### Configuration
+
+- **Updated default memory thresholds**: `warning_threshold_mb` raised to 800 MB, `critical_threshold_mb` to 1,500 MB, `rss_flush_threshold_mb` to 1,000 MB — better suited for large codebase indexing.
+
+### Documentation
+
+- **Stale SQLite references cleanup**: Replaced all legacy "SQLite" references in docstrings and comments with accurate terminology ("AST cache (flat-file msgpack)", "Arrow Bundle") across 15 source and test files.
+
+### Tests
+
+- **600 tests** (up from 507) — new tests for Arrow graph backend, graph factory, backend config validation, and graph consistency.
+
+---
+
 ## v1.2.1 — 2026-07-20
 
 **Bug fixes, concurrency safety, and documentation alignment.**
