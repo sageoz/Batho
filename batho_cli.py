@@ -56,9 +56,10 @@ def main() -> None:
         sys.exit(0)
 
     # Resolve config from the target --root directory, not the invocation CWD.
-    if hasattr(args, "root"):
+    if hasattr(args, "root") and args.root is not None:
+        from pathlib import Path
         from batho.core.config import set_active_root
-        set_active_root(args.root.resolve())
+        set_active_root(Path(args.root).resolve())
 
     configure_logging_from_dict(get_config_cached()["logging"])
 

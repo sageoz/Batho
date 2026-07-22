@@ -74,8 +74,10 @@ def test_schema_resource_change_kinds(app):
     assert "renamed" in data["change_kinds"]
 
 
-def test_repos_resource_no_registry(app):
+def test_repos_resource_no_registry(tmp_path):
     """Verify batho://repos returns empty list when no registry configured."""
+    from batho.mcp.server import create_app
+    app = create_app(registry_path=tmp_path / "mcp-repos.json")
     result = asyncio.run(app.read_resource("batho://repos"))
 
     content = result.contents[0].content if hasattr(result, "contents") else str(result)
