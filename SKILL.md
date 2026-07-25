@@ -7,7 +7,7 @@ description: >-
   to Claude/Cursor/Windsurf. Triggers on phrases like setup batho, install
   batho, configure batho mcp, batho mcp setup, connect batho to agent, add
   batho to cursor, add batho to claude. Guides through global installation
-  (pip/uv tool/pipx fallback), code graph build, auto-detection and
+  (uv tool), code graph build, auto-detection and
   configuration of all installed AI clients, and verification. Supports
   single-repo and multi-repo registry workflows.
 license: MIT
@@ -28,7 +28,7 @@ You are a Batho integration specialist. Your job is to guide users through insta
 Use this skill when users need to:
 - Install Batho as a global command (cross-platform)
 - Set up Batho MCP server for their repository
-- Configure Batho MCP in Claude Desktop, Cursor, Windsurf, VS Code — or all of them at once
+- Configure Batho MCP in Claude Desktop, Cursor, Windsurf, VS Code, Antigravity — or all of them at once
 - Integrate Batho with their AI coding agent(s)
 - Set up Batho for multiple repositories via the registry
 
@@ -56,56 +56,31 @@ batho --version
 
 If `batho` is found and prints a version, verify it is **v1.3.1 or newer**. If an older version is installed, upgrade it (see Workflow 5, Step 3) before proceeding. If it is already v1.3.1+, skip to Workflow 2.
 
-#### Step 2: Install via fallback chain
+#### Step 2: Install via uv tool
 
-Try each method in order. Stop at the first one that succeeds.
-
-**Method A — pip / python -m pip / python3 -m pip (most universal, available everywhere)**
+**Ensure uv is installed globally first:**
 
 ```bash
-# Standard pip
-pip install --user batho
-
-# Or via python -m pip (if pip is not on PATH)
-python -m pip install --user batho
-
-# Or via python3 -m pip (on systems where python3 is the default)
-python3 -m pip install --user batho
-
-# Note: --user installs to ~/.local/bin (macOS/Linux) or %APPDATA%\Python\Scripts (Windows)
-# May require manually adding the bin/Scripts dir to PATH
-```
-
-**Method B — uv tool (fast, isolated install)**
-
-```bash
-# Check if uv is available
 uv --version
-
-# If uv is installed:
-uv tool install batho
-
-# If uv is NOT installed:
-# macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
-# Windows:     powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-# Then: uv tool install batho
 ```
 
-**Method C — pipx (isolated global install, most mature for CLI tools)**
+If `uv` is NOT installed, install it:
 
 ```bash
-# Check if pipx is available
-pipx --version
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# If pipx is installed:
-pipx install batho
-
-# If pipx is NOT installed, install it first:
-# macOS:  brew install pipx
-# Linux:  python -m pip install --user pipx && python -m pipx ensurepath
-# Windows: pip install --user pipx && python -m pipx ensurepath
-# Then: pipx install batho
+# Windows
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
+
+**Install Batho as a global tool:**
+
+```bash
+uv tool install batho
+```
+
+This installs `batho` as an isolated global command available on PATH across all terminals and applications.
 
 #### Step 3: Verify global install
 
@@ -119,8 +94,8 @@ If `batho` is not found on PATH after install:
 
 | OS | Fix |
 |----|-----|
-| **macOS/Linux** | Run `pipx ensurepath` or `uv tool update-shell`, then restart terminal. Or add `export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc` / `~/.zshrc`. |
-| **Windows** | Add `%USERPROFILE%\AppData\Roaming\Python\Python3x\Scripts` to PATH via System Environment Variables. For pipx: `%USERPROFILE%\.local\bin`. For uv: `%USERPROFILE%\.cargo\bin`. |
+| **macOS/Linux** | Run `uv tool update-shell`, then restart terminal. Or add `export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc` / `~/.zshrc`. |
+| **Windows** | Run `uv tool update-shell`, then restart terminal. Or add `%USERPROFILE%\.local\bin` to PATH via System Environment Variables. |
 
 ### Workflow 2: Build + Auto-Detect All Clients + Configure
 
@@ -151,6 +126,7 @@ Check the system for every supported client. **Do not ask the user which one** �
 | **Cursor** | Check `.cursor/` directory in project root, and `~/.cursor/` global config |
 | **Windsurf** | Check `~/.codeium/windsurf/` directory |
 | **VS Code** | Check `.vscode/` directory and presence of MCP-capable extension config |
+| **Antigravity** | Check `~/.gemini/antigravity/` directory (macOS/Linux), `%USERPROFILE%\.gemini\antigravity\` (Windows) |
 
 For each client found, **check if Batho MCP is already configured** before writing config:
 
@@ -206,12 +182,56 @@ For **each** client that does NOT already have Batho configured, write or merge 
 batho mcp
 ```
 
+**Antigravity** — `~/.gemini/antigravity/mcp_config.json` (macOS/Linux) / `%USERPROFILE%\.gemini\antigravity\mcp_config.json` (Windows):
+```json
+{
+  "mcpServers": {
+    "batho": {
+      "command": "batho",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+Note: Antigravity also supports a shared config at `~/.gemini/config/mcp_config.json` that applies to both Antigravity CLI and IDE. Either location works.
+
 Important notes:
 - If a config file already exists, **merge** the `batho` entry into existing `mcpServers` — do not overwrite other servers
 - If a config file doesn't exist, create it with the full JSON structure
-- Use the **absolute path** to `batho` if the client's environment doesn't inherit shell PATH (common on macOS GUI apps): e.g. `/Users/<user>/.local/bin/batho` for pipx, `/Users/<user>/.cargo/bin/batho` for uv tool
+- Use the **absolute path** to `batho` if the client's environment doesn't inherit shell PATH (common on macOS GUI apps): e.g. `/Users/<user>/.local/bin/batho`
 
-#### Step 4: Register the repo via agent chat
+#### Step 4: Install this skill as a global skill for each detected client
+
+For each client that was found and configured in Step 3, also install this `SKILL.md` as a global skill so the agent can auto-discover and use it across all projects — not just the current repo.
+
+| Client | Global Skills Directory | Action |
+|--------|------------------------|--------|
+| **Claude Code** | `~/.claude/skills/batho-setup/` | Copy `SKILL.md` to `~/.claude/skills/batho-setup/SKILL.md` |
+| **Cursor** | `~/.cursor/skills/batho-setup/` | Copy `SKILL.md` to `~/.cursor/skills/batho-setup/SKILL.md` |
+| **Antigravity** | `~/.gemini/skills/batho-setup/` | Copy `SKILL.md` to `~/.gemini/skills/batho-setup/SKILL.md` |
+| **Windsurf** | No global skills directory | Windsurf uses rules, not skills. Optionally add a reference in `~/.codeium/windsurf/memories/global_rules.md` |
+| **VS Code** | No native skills system | Skip — VS Code relies on MCP extensions for tool discovery |
+
+```bash
+# Claude Code
+mkdir -p ~/.claude/skills/batho-setup
+cp SKILL.md ~/.claude/skills/batho-setup/SKILL.md
+
+# Cursor
+mkdir -p ~/.cursor/skills/batho-setup
+cp SKILL.md ~/.cursor/skills/batho-setup/SKILL.md
+
+# Antigravity
+mkdir -p ~/.gemini/skills/batho-setup
+cp SKILL.md ~/.gemini/skills/batho-setup/SKILL.md
+```
+
+If `SKILL.md` is not in the current directory, download it first:
+```bash
+curl -fsSL https://raw.githubusercontent.com/sageoz/batho/main/SKILL.md -o SKILL.md
+```
+
+#### Step 5: Register the repo via agent chat
 
 After restarting any configured client, instruct the user to ask their agent:
 
@@ -219,9 +239,9 @@ After restarting any configured client, instruct the user to ask their agent:
 
 The agent calls `add_repo(name="myproject", path="/path/to/repo")` and confirms registration. The registry at `~/.batho/mcp-repos.json` is shared across all clients — one registration serves all.
 
-#### Step 5: Report
+#### Step 6: Report
 
-Summarize which clients were configured (new), which were skipped (already had Batho), and which were not installed. Instruct the user to restart all newly configured clients.
+Summarize which clients were configured (new), which were skipped (already had Batho), which were not installed, and which clients received the global skill installation. Instruct the user to restart all newly configured clients.
 
 ### Workflow 3: Multi-Repo Setup (Registry-First)
 
@@ -328,7 +348,7 @@ The agent calls `graph_overview(repo="backend")` or `search_entities(repo="front
 
 #### Key Points
 
-- **One registry serves all clients** — adding a repo once makes it available to Claude Desktop, Cursor, Windsurf, and VS Code simultaneously
+- **One registry serves all clients** — adding a repo once makes it available to Claude Desktop, Cursor, Windsurf, VS Code, and Antigravity simultaneously
 - **No restart needed** — repos added via `add_repo` are immediately available without restarting clients
 - **Build first, then add** — the repo must have a `.batho/artifact/` directory before `add_repo` is called
 - **Use `batho patch` after code changes** — this updates the artifact in-place; the MCP server auto-serves the new generation
@@ -358,7 +378,7 @@ When the user already has Batho configured but needs to update:
 
 1. **After code changes** — Run `batho patch --root /path/to/repo --verbose`. No MCP config changes needed. The server auto-serves the new generation.
 2. **After moving the repo** — Ask the agent to `remove_repo(name="old_name")` then `add_repo(name="new_name", path="/new/path")`. No client config changes needed.
-3. **After Batho upgrade** — `pip install --user --upgrade batho` (or `uv tool upgrade batho` or `pipx upgrade batho`). Verify the version with `batho --version` (should show **1.3.1+**). Restart all MCP clients.
+3. **After Batho upgrade** — `uv tool upgrade batho`. Verify the version with `batho --version` (should show **1.3.1+**). Restart all MCP clients.
 
 ### Workflow 7: Troubleshooting
 
@@ -366,7 +386,7 @@ Common issues and solutions:
 
 | Issue | Diagnosis | Solution |
 |-------|-----------|----------|
-| `batho` not found on PATH | Global install failed or PATH not updated | Run `uv tool update-shell` / `pipx ensurepath`, restart terminal. Or add bin dir to PATH manually. |
+| `batho` not found on PATH | Global install failed or PATH not updated | Run `uv tool update-shell`, restart terminal. Or add `~/.local/bin` to PATH manually. |
 | `batho` not found by GUI apps (Claude Desktop) | GUI apps don't inherit shell PATH | Use absolute path in config: `which batho` → put full path in `"command"` field |
 | Tools not appearing | Config file not found or invalid JSON | Verify config path, validate JSON with `python -m json.tool` |
 | "No Batho artifact found" | No `.batho/artifact/` at repo path | Run `batho build --root <path> --verbose` |
@@ -383,7 +403,7 @@ After completing setup, provide a summary:
 ```
 ## Batho MCP Setup Complete
 
-**Install method:** pip (global --user)
+**Install method:** uv tool (global)
 **Repository:** /path/to/repo
 **Artifact:** 1542 entities, 4823 relationships, 312 files
 
@@ -392,6 +412,12 @@ After completing setup, provide a summary:
 - ✓ Cursor — .cursor/mcp.json
 - ✗ Windsurf — not installed
 - ✗ VS Code — no MCP extension found
+- ✗ Antigravity — not installed
+
+### Global Skill Installed
+- ✓ Claude Code — ~/.claude/skills/batho-setup/SKILL.md
+- ✓ Cursor — ~/.cursor/skills/batho-setup/SKILL.md
+- ✓ Antigravity — ~/.gemini/skills/batho-setup/SKILL.md
 
 ### Registry
 - Repo "myproject" registered at /path/to/repo
@@ -410,7 +436,7 @@ After completing setup, provide a summary:
 
 ## Limitations
 
-- Requires Batho to be installed globally and on PATH (pip/uv tool recommended)
+- Requires Batho to be installed globally and on PATH (uv tool recommended)
 - GUI applications (Claude Desktop) may not inherit shell PATH — use absolute path in config if needed
 - Requires a pre-built artifact (`batho build` must run first)
 - Config file paths vary by OS — always verify the path exists
