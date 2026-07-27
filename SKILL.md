@@ -15,7 +15,7 @@ metadata:
   author: Batho Team
   version: 2.1.0
   created: 2026-07-02
-  last_reviewed: 2026-07-22
+  last_reviewed: 2026-07-27
   review_interval_days: 90
 ---
 
