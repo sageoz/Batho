@@ -6,6 +6,11 @@ description: "Batho release history"
 
 # Changelog
 
+## v1.3.2 — 2026-07-27
+
+- H2: Hardened path sanitization with shared canonicalization helper (`_canonicalize_untrusted_path`) to reject encoded, Unicode, and null-byte traversal vectors across `sanitize_path`, `safe_join`, `sanitize_diff_path`, and `is_safe_filename`.
+- H5: Added Unicode identifier support for Python and JavaScript entities in extraction and hierarchical descriptors; fallback parser regexes now match PEP 3131-style identifiers.
+
 ## v1.3.1 — 2026-07-22
 
 **Bug fixes and MCP UX improvements.**

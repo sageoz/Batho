@@ -5,8 +5,10 @@ Provides functions to safely handle file paths and prevent path traversal attack
 """
 
 import os
+import unicodedata
 from pathlib import Path
 from typing import Optional, Union
+from urllib.parse import unquote, urlsplit
 
 from batho.utils.logging import get_logger
 
@@ -17,6 +19,99 @@ class PathSecurityError(Exception):
     """Raised when a path is determined to be unsafe."""
 
     pass  # Required for exception class definition
+
+
+# Maximum percent-decode iterations to prevent nested encoding bypasses.
+_MAX_PERCENT_DECODE_ROUNDS = 5
+
+
+def _canonicalize_untrusted_path(value: Union[str, Path]) -> str:
+    """Canonicalize an untrusted path string before Path construction.
+
+    Performs defense-in-depth normalization and rejects common traversal
+    vectors (percent encoding, Unicode homoglyphs, URI schemes, backslashes,
+    absolute paths, null bytes, and parent-directory components). The returned
+    value is a safe relative POSIX-style path string that may still contain
+    benign dots and slashes.
+
+    Raises:
+        PathSecurityError: If the input cannot be made safe.
+    """
+    if not isinstance(value, (str, Path)):
+        raise PathSecurityError(f"Non-string path rejected: {type(value)!r}")
+
+    text = str(value)
+
+    if "\0" in text:
+        raise PathSecurityError("Null byte in path")
+
+    # Decode percent encoding in a bounded loop so %252f cannot bypass a single
+    # unquote() call. Use latin-1 as an intermediate representation because
+    # unquote() returns str in Py3, but repeated decoding should stabilize.
+    decoded = text
+    for _ in range(_MAX_PERCENT_DECODE_ROUNDS):
+        new = unquote(decoded)
+        if new == decoded:
+            break
+        decoded = new
+    else:
+        # If we never hit the break, encoding kept changing; treat as attack.
+        raise PathSecurityError(f"Percent decoding did not stabilize: {text!r}")
+
+    # Normalize Unicode so full-width dot/slash and lookalikes become canonical.
+    try:
+        decoded = unicodedata.normalize("NFKC", decoded)
+    except Exception as exc:
+        raise PathSecurityError(f"Unicode normalization failed: {exc}") from exc
+
+    # Reject explicit URI schemes (e.g. file:///etc/passwd). urlsplit on a path
+    # with no scheme returns an empty scheme.
+    parsed = urlsplit(decoded)
+    if parsed.scheme:
+        raise PathSecurityError(f"URI scheme not allowed: {parsed.scheme}")
+
+    # Convert backslashes to forward slashes for cross-platform validation.
+    decoded = decoded.replace("\\", "/")
+
+    # Reject null bytes that may have been introduced by percent-decoding (%00).
+    if "\0" in decoded:
+        raise PathSecurityError("Null byte in decoded path")
+
+    # Reject absolute paths after canonicalization.
+    if decoded.startswith("/"):
+        raise PathSecurityError(f"Absolute path not allowed: {text!r}")
+    # Windows drive-prefixed forms such as C: or C:/
+    if len(decoded) >= 2 and decoded[1] == ":":
+        raise PathSecurityError(f"Drive-prefixed path not allowed: {text!r}")
+    # UNC paths such as //server/share
+    if decoded.startswith("//"):
+        raise PathSecurityError(f"UNC path not allowed: {text!r}")
+
+    # Treat semicolons like path separators because some URL/web path parsers
+    # interpret ; as a path-parameter delimiter, enabling traversal evasions
+    # such as "..;/etc/passwd".
+    decoded = decoded.replace(";", "/")
+
+    # Collapse multiple consecutive slashes to a single slash so that
+    # "....//....//etc/passwd" cannot hide traversal behind empty components.
+    while "//" in decoded:
+        decoded = decoded.replace("//", "/")
+
+    # Reject .. components; do not reject benign filenames merely because they
+    # contain two consecutive dots.
+    parts = [p for p in decoded.split("/") if p]
+    if any(p == ".." for p in parts):
+        raise PathSecurityError(f"Path traversal component rejected: {text!r}")
+
+    # Defense against double-dot evasion patterns such as "....//" or
+    # "..%2e..%2e" which, after canonicalization, contain multiple consecutive
+    # dots. Removing every ".." substring must not collapse the path into an
+    # absolute path or into a traversal that starts with "..".
+    stripped = decoded.replace("..", "")
+    if stripped.startswith("/"):
+        raise PathSecurityError(f"Double-dot traversal evasion rejected: {text!r}")
+
+    return decoded
 
 
 def sanitize_path(
@@ -38,7 +133,11 @@ def sanitize_path(
     Raises:
         PathSecurityError: If the path is determined to be unsafe
     """
-    path_obj = Path(path)
+    # Canonicalize untrusted input before constructing a Path. For absolute-path
+    # mode we still canonicalize to reject encodings/URI schemes/null bytes, then
+    # check allow_absolute separately.
+    canonical = _canonicalize_untrusted_path(path)
+    path_obj = Path(canonical)
 
     # Convert to absolute path
     if base_dir:
@@ -93,9 +192,23 @@ def safe_join(base_dir: Union[str, Path], *paths: Union[str, Path]) -> Path:
     """
     base = Path(base_dir).resolve()
 
+    # Canonicalize each untrusted component before joining. This rejects percent
+    # encoding, URI schemes, null bytes, Unicode lookalikes, backslash-based
+    # traversal, and parent-directory components at the source.
+    canonical_components = []
+    for path_component in paths:
+        canonical = _canonicalize_untrusted_path(path_component)
+        # An absolute component from canonicalization should not happen because
+        # leading slashes are rejected, but guard against any accidental leak.
+        if Path(canonical).is_absolute():
+            raise PathSecurityError(
+                f"Absolute component not allowed in safe_join: {path_component!r}"
+            )
+        canonical_components.append(Path(canonical))
+
     # Join all path components
     result = base
-    for path_component in paths:
+    for path_component in canonical_components:
         result = result / path_component
 
     # Resolve to handle .. and .
@@ -170,25 +283,22 @@ def is_safe_filename(filename: str) -> bool:
     Returns:
         True if filename is safe, False otherwise
     """
-    import unicodedata
-    from urllib.parse import unquote
-
-    # Decode percent encoding and normalize to NFKC to resolve U+FF0F (fullwidth slash),
-    # U+FF3C (fullwidth backslash), %2F, and other alternative representations.
+    # Reuse shared canonicalization for percent encoding, NFKC, null bytes,
+    # traversal markers, URI schemes, and absolute paths.
     try:
-        normalized = unicodedata.normalize("NFKC", unquote(filename))
-    except Exception:
+        normalized = _canonicalize_untrusted_path(filename)
+    except PathSecurityError:
         return False
 
-    # Check for null bytes
-    if "\0" in normalized:
+    # _canonicalize_untrusted_path rejects null bytes, .. components, absolute
+    # paths, and URI schemes, but it normalizes backslashes to forward slashes
+    # so that path validation can use a single separator. A filename must not
+    # contain any path separator.
+    if "/" in normalized or "\\" in normalized:
         return False
 
-    # Check for path traversal
-    if ".." in normalized or "/" in normalized or "\\" in normalized:
-        return False
-
-    # Check for reserved names (Windows)
+    # Check for reserved names (Windows). Windows treats COM1.txt, LPT1.txt, etc.
+    # as the device name itself; strip a leading extension before matching.
     reserved_names = {
         "CON",
         "PRN",
@@ -213,7 +323,8 @@ def is_safe_filename(filename: str) -> bool:
         "LPT8",
         "LPT9",
     }
-    if normalized.upper() in reserved_names:
+    stem = normalized.split(".", 1)[0]
+    if stem.upper() in reserved_names:
         return False
 
     # Check for dangerous characters

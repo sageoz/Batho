@@ -86,7 +86,10 @@ class FallbackParser:
         # We run all patterns regardless of extension to salvage as much as possible.
 
         # 1. Python-style function definitions
-        py_func_pattern = r'^[ \t]*def\s+([a-zA-Z_]\w*)\s*\('
+        # Use Unicode-aware identifier matching so PEP 3131 identifiers are
+        # preserved when tree-sitter is unavailable. [^\W0-9] matches any
+        # Unicode letter or underscore for the first character.
+        py_func_pattern = r'^[ \t]*def\s+([^\W0-9]\w*)\s*\('
         for match in re.finditer(py_func_pattern, content, re.MULTILINE):
             end_idx = content.find('\n', match.end())
             if end_idx == -1:
@@ -106,7 +109,7 @@ class FallbackParser:
             ))
         
         # 2. Python-style class definitions
-        py_class_pattern = r'^[ \t]*class\s+([a-zA-Z_]\w*)'
+        py_class_pattern = r'^[ \t]*class\s+([^\W0-9]\w*)'
         for match in re.finditer(py_class_pattern, content, re.MULTILINE):
             end_idx = content.find('\n', match.end())
             if end_idx == -1:

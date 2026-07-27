@@ -218,7 +218,12 @@ def build_descriptor(name: str, suffix: DescriptorSuffix) -> str:
     """
     if not name:
         raise ValueError("Identifier name cannot be empty")
-    if not re.match(r'^[a-zA-Z_\$][a-zA-Z0-9_\$\[\]]*$', name):
+    # Allow Unicode identifiers (PEP 3131-style word characters) in addition to
+    # the ASCII-only subset and the $ / [ / ] characters used by Java/JS and
+    # parameter-hash suffixes. The first character may be a Unicode letter,
+    # underscore, or '$'; subsequent characters may also include digits and the
+    # parameter-hash brackets.
+    if not re.match(r'^(?:[^\W0-9]|\$)[\w\$\[\]]*$', name, re.UNICODE):
         raise ValueError(f"Invalid identifier: {name}")
     return f"{name}{suffix.value}"
 

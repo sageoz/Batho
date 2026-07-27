@@ -41,7 +41,7 @@ stateDiagram-v2
 **Figure 8: Incremental Patch Lifecycle** - State diagram showing the atomic update process using content-hash comparisons.
 
 ### Native Change Detection
-Unlike legacy versions of Batho, which delegated change detection to Git status, Batho v1.3.1 reads the `file_tracking` table in the Arrow database. It compares the current filesystem modification time (`mtime`) and SHA-256 hash of each file:
+Unlike legacy versions of Batho, which delegated change detection to Git status, Batho v1.3.2 reads the `file_tracking` table in the Arrow database. It compares the current filesystem modification time (`mtime`) and SHA-256 hash of each file:
 1. **Unchanged files**: Skipped immediately (saving tree-sitter parsing cycles).
 2. **Added/Modified files**: Parsed and merged into the hypergraph.
 3. **Deleted files**: Removed from the active nodes and relations index.
@@ -50,7 +50,7 @@ This native tracking eliminates false positives caused by untracked or uncommitt
 
 ## 7.3 CLI Commands
 
-Under the v1.3.1 command taxonomy, the Time Machine is controlled by the following commands:
+Under the v1.3.2 command taxonomy, the Time Machine is controlled by the following commands:
 
 ### `batho build`
 Performs the initial baseline build. If the database already exists, it prompts the developer to run `batho patch`. Use the `--full` option to wipe the database and perform a clean baseline build.
