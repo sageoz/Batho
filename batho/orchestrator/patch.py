@@ -895,7 +895,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 from batho.modules.storage.arrow_bundle.writer import write_simple_ipc
                 from batho.modules.storage.arrow_bundle import resolve_bundle_dir
                 from batho.modules.graph.builder.codegraph import InMemoryGraph
-                from batho.core.schemas import EntityType, RelationshipType
+                from batho.core.schemas import EntityType, RelationshipType, build_relationship_id
                 from types import SimpleNamespace
                 bundle_dir = resolve_bundle_dir(root)
                 t_comm_0 = time.monotonic()
@@ -930,6 +930,11 @@ def run_patch(options: PatchOptions) -> PatchResult:
                         except KeyError:
                             continue
                         relationships.append(SimpleNamespace(
+                            id=build_relationship_id(
+                                row.get("source_id", ""),
+                                row.get("target_id", ""),
+                                rtype.name,
+                            ),
                             source_id=row.get("source_id", ""),
                             target_id=row.get("target_id", ""),
                             type=rtype,
