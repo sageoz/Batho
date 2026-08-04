@@ -110,7 +110,37 @@ flowchart TB
 2. **Global pass**: Match unresolved imports against exported symbols across the repository.
 3. **Tracking**: Unresolved targets are tagged with `unresolved:` prefix and tracked for later resolution.
 
-## 4.4 Example: Cross-File Reference
+## 4.4 Stub Resolution Phases (v1.4.0)
+
+Contextual stubs — call sites whose target is not yet resolved — are settled in a multi-phase pipeline. Phases 1–3 (exact match, stdlib method, import-map) run during the initial cross-file resolution pass. Phases 4 and 5 were introduced in v1.4.0 to improve graph quality and reduce unnecessary work.
+
+### Phase 4: Confidence Scoring & Conservative Pruning
+
+Every resolved stub is tagged with a `resolution_confidence` score and a `resolution_strategy` label in its metadata, enabling downstream consumers (queries, visualizations, exports) to filter by confidence level.
+
+| Strategy | Confidence | Tier | Description |
+|----------|-----------|------|-------------|
+| `exact_match` | 0.95 | 1 | Direct dotpath lookup |
+| `stdlib_method` | 0.90 | 2 | Stdlib method / module prefix match |
+| `import_map` | 0.85 | 3 | Import-map cross-file resolution |
+| `parent_chain` | 0.75 | 4 | Parent stub chain building |
+| `scope_qualified` | 0.70 | 5 | Caller-scope qualified path |
+| `receiver_type` | 0.65 | 6 | Receiver-type inference (Phase 5) |
+| `unresolved` | 0.0 | 7 | No match found |
+
+Unresolved stubs whose target is a common stdlib method name on an unknown receiver type (e.g. `unwrap`, `map`, `then`, `append`) are conservatively **pruned** — marked `stub_resolution_state: "pruned"` with `prune_reason: "common_method_unknown_receiver"` — instead of being left as pending gaps. This prevents the graph from being cluttered with false "gaps" for ubiquitous methods that appear on many types.
+
+### Phase 5: Receiver-Type Inference & Lazy Resolution
+
+**Receiver-type inference** resolves method calls by inferring the receiver variable's declared type from scope, following the rust-analyzer two-phase method resolution pattern:
+
+1. **Scope lookup**: Infer the receiver variable's type from local declarations, parameters, and assignments in the caller's scope.
+2. **Metadata hint**: Fall back to the `receiver_type` hint captured by tree-sitter queries in the extractor.
+3. **Resolution**: If the receiver type is known, resolve the method call to the corresponding method entity on that type.
+
+**Lazy resolution mode** (`lazy=True`): When enabled, stubs are not resolved upfront during the build. They remain in `"pending"` state and can be resolved on-demand via `resolve_stub_on_demand()`. This implements the rust-analyzer/Pyright on-demand evaluation pattern, avoiding the cost of resolving stubs that no query will ever reference — a significant performance win for large codebases where only a fraction of stubs are ever queried.
+
+## 4.5 Example: Cross-File Reference
 
 Consider a Python project with two files:
 
@@ -144,7 +174,7 @@ def create_user(name: str) -> User:
 }
 ```
 
-## 4.5 Bidirectional Traversal & Lossless Reconstruction
+## 4.6 Bidirectional Traversal & Lossless Reconstruction
 
 Batho v1.4.0 supports lossless, bidirectional graph-to-code reconstruction, allowing a developer or LLM agent to rebuild the exact source file from the graph.
 

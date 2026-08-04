@@ -6,6 +6,41 @@ description: "Batho release history"
 
 # Changelog
 
+## v1.4.0 — 2026-08-04
+
+**Stdlib expansion, graph builder phases 4-5, BSG interceptors, and security/performance hardening.**
+
+### New Features
+
+- **Stdlib expansion to 27 languages**: Standard library symbol tables now cover 27 languages (up from 5), including C/C++, Java, Ruby, C#, PHP, Kotlin, Swift, Scala, Dart, Haskell, Lua, R, Perl, Julia, Zig, Bash, Objective-C, Erlang, OCaml, Hack, and Verilog.
+- **Multi-ecosystem dependency introspection**: Live introspection now supports five package ecosystems — Python (venv), npm (`node_modules/`), Cargo (`~/.cargo/registry/`), Go modules (`~/go/pkg/mod/`), and Maven (`~/.m2/repository/`) — with package-name validation on all ecosystems to prevent path traversal.
+- **Graph builder Phase 4 — Confidence scoring**: Every resolved stub is tagged with a `resolution_confidence` score (0.0–0.95) and `resolution_strategy` label across 6 tiers, enabling downstream consumers to filter by confidence level.
+- **Graph builder Phase 4 — Conservative pruning**: Unresolved stubs targeting common stdlib method names on unknown receiver types are pruned instead of left as false gaps, reducing graph noise.
+- **Graph builder Phase 5 — Receiver-type inference**: Method calls are resolved by inferring the receiver variable's declared type from scope, following the rust-analyzer two-phase resolution pattern.
+- **Graph builder Phase 5 — Lazy resolution**: When `lazy=True`, stubs remain pending and are resolved on-demand via `resolve_stub_on_demand()`, avoiding unnecessary work for stubs that no query will ever reference.
+- **9 BSG interceptor plugins enhanced**: API Contract Guardian, Auth Boundary Shield, Dependency Blast Radius, Hardcoded Secret Catcher, IaC Drift Sentinel, N+1 Query Catcher, Resource Leak Preventer, Schema Migration Enforcer, and Silent Failure Catcher updated with improved detection patterns.
+
+### Security Hardening
+
+- **Custom rules path sanitization**: `_resolve_custom_rules_path` now routes through `batho.utils.path_sanitizer.sanitize_path`, rejecting traversal and unsafe absolute paths.
+- **Log file path sanitization**: `configure_logging` sanitizes the configured log file path before creating directories or opening a FileHandler.
+- **Non-Python introspector validation**: All language introspectors (npm, Cargo, Go, Maven) now validate package names with `_is_safe_dependency_name` and use safe-join path construction.
+
+### Bug Fixes
+
+- **External symbol double-write**: Removed duplicate `EXTERNAL_SYMBOL` entity insertion in the build pipeline that inflated `entity_count` metrics and produced duplicate Arrow rows.
+- **Atomic scope manager cache writes**: Scope manager cache IPC is now written to `.tmp` files and atomically `Path.replace`d into place, preventing partial writes on interruption.
+- **Agent views filtering in patch**: `agent_views` table is now filtered with `pyarrow.compute` before `to_pylist()`, materializing only needed rows and reducing RSS on large repos.
+
+### Other Changes
+
+- Capped `structlog` dependency to `<26` to prevent breaking changes.
+- Added stdlib resolution benchmark (`benchmarks/bench_stdlib_resolution.py`).
+- Added 9 new test modules covering stdlib expansion, pipeline serialization, sentinel cache, graph phases 4-5, and incremental synthetic paths.
+- **864 tests** (up from 609).
+
+---
+
 ## v1.3.2 — 2026-07-27
 
 - H2: Hardened path sanitization with shared canonicalization helper (`_canonicalize_untrusted_path`) to reject encoded, Unicode, and null-byte traversal vectors across `sanitize_path`, `safe_join`, `sanitize_diff_path`, and `is_safe_filename`.

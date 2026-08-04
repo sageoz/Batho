@@ -56,7 +56,7 @@ flowchart LR
 | Supported Languages | 40+ via tree-sitter |
 | Context Compression | Up to 10x for LLM injection |
 | Incremental Patch Speed | 10–100x faster than full re-index |
-| Test Coverage | 600 automated tests |
+| Test Coverage | 864 automated tests |
 | Cache Hit Rate | >95% on typical PR-sized changes |
 | Snapshot Retention | 90 days default, configurable |
 | Max Indexed Files | 200,000 per repository |

@@ -6,7 +6,7 @@ description: "Multi-ecosystem dependency indexing, manifest parsing, stdlib tabl
 
 # 6. Dependency Intelligence
 
-Batho's dependency subsystem resolves and indexes third-party and standard-library dependencies across 40+ languages. It populates the scope manager with resolved symbols, enabling cross-file reference resolution and external symbol entity creation.
+Batho's dependency subsystem resolves and indexes third-party and standard-library dependencies across 40+ languages. It populates the scope manager with resolved symbols, enabling cross-file reference resolution and external symbol entity creation. As of v1.4.0, stdlib symbol tables cover 27 languages and live introspection supports five package ecosystems (Python, npm, Cargo, Go modules, and Maven).
 
 ## 6.1 Indexing Pipeline
 
@@ -83,15 +83,39 @@ The parser uses pre-compiled regex patterns for each manifest format, ensuring h
 
 ## 6.3 Standard Library Symbol Tables
 
-Batho ships with curated, static symbol tables for standard libraries that ship with each language runtime. These are bundled directly with Batho and require no network access.
+Batho ships with curated, static symbol tables for standard libraries that ship with each language runtime. These are bundled directly with Batho and require no network access. As of v1.4.0, stdlib tables cover 27 languages.
 
 | Language | Modules Covered | Example Symbols |
 |----------|----------------|-----------------|
 | Python | `json`, `os`, `os.path`, `pathlib`, `re`, `datetime`, `sys`, `typing`, `collections`, `math`, `time`, `threading`, `subprocess`, `logging` | `dumps`, `Path`, `compile`, `Thread` |
 | JavaScript | `fs`, `path`, `http`, `https`, `crypto`, `stream`, `events`, `os`, `util`, `process` | `readFile`, `join`, `createServer` |
+| TypeScript | `fs`, `path`, `http`, `crypto`, `stream`, `events` | `readFile`, `join`, `createServer` |
 | Go | `fmt`, `strings`, `io`, `net/http`, `encoding/json`, `os`, `time` | `Println`, `Reader`, `HandleFunc` |
 | Rust | `std::collections`, `std::io`, `std::fs`, `std::path` | `HashMap`, `Read`, `PathBuf` |
+| C | `stdio`, `stdlib`, `string`, `math`, `time` | `printf`, `malloc`, `strcpy` |
+| C++ | `std::vector`, `std::string`, `std::map`, `std::iostream`, `std::algorithm` | `vector`, `string`, `sort` |
 | Java | `java.util`, `java.io`, `java.net` | `List`, `InputStream`, `Socket` |
+| Ruby | `Enumerable`, `File`, `Dir`, `JSON`, `Net::HTTP` | `each`, `open`, `parse` |
+| C# | `System`, `System.IO`, `System.Collections`, `System.Net` | `Console`, `File`, `List` |
+| PHP | `stdClass`, `array`, `string`, `json`, `curl` | `json_encode`, `curl_init` |
+| Kotlin | `kotlin.collections`, `kotlin.io`, `kotlin.text` | `listOf`, `println`, `split` |
+| Swift | `Foundation`, `Swift`, `Dispatch`, `Combine` | `URL`, `Data`, `Task` |
+| Scala | `scala.collection`, `scala.io`, `scala.util` | `List`, `Map`, `Try` |
+| Dart | `dart:core`, `dart:io`, `dart:convert`, `dart:async` | `List`, `File`, `jsonDecode` |
+| Haskell | `Prelude`, `Data.List`, `Data.Map`, `System.IO` | `map`, `filter`, `foldr` |
+| Lua | `table`, `string`, `math`, `io`, `os` | `insert`, `format`, `open` |
+| R | `base`, `stats`, `utils`, `graphics` | `c`, `mean`, `plot` |
+| Perl | `strict`, `warnings`, `File::Spec`, `JSON` | `bless`, `catfile` |
+| Julia | `Base`, `Stdlib`, `LinearAlgebra`, `Dates` | `push!`, `length`, `Date` |
+| Zig | `std`, `std.mem`, `std.io`, `std.fs` | `alloc`, `print`, `open` |
+| Bash | `builtin`, `test`, `read`, `echo` | `echo`, `read`, `test` |
+| Objective-C | `Foundation`, `UIKit`, `CoreFoundation` | `NSObject`, `NSString` |
+| Erlang | `erlang`, `lists`, `io`, `os` | `length`, `foreach`, `format` |
+| OCaml | `Stdlib`, `List`, `Map`, `String` | `map`, `fold`, `length` |
+| Hack | `HH\\Lib\\C`, `HH\\Lib\\Str`, `HH\\Lib\\Vec` | `map`, `filter`, `length` |
+| Verilog | `$display`, `$finish`, `$monitor` | `display`, `finish` |
+
+Languages with lighter stdlib coverage (e.g. Bash, Verilog) register their built-in functions and pragmas so that imports are tracked even when full module hierarchies are not applicable.
 
 ---
 
@@ -109,7 +133,19 @@ When a declared dependency is found in the popular packages database, its symbol
 
 ## 6.5 Third-Party Introspector
 
-The third-party introspector performs live introspection of installed third-party packages in the local virtual environment. It is subprocess-isolated to maintain Batho's zero-code-execution guarantee on untrusted code — the introspected packages are the developer's own installed dependencies, not the analyzed source code.
+The third-party introspector performs live introspection of installed third-party packages across five package ecosystems. It is subprocess-isolated to maintain Batho's zero-code-execution guarantee on untrusted code — the introspected packages are the developer's own installed dependencies, not the analyzed source code.
+
+### Supported Ecosystems
+
+| Ecosystem | Introspector | Source | Method |
+|-----------|-------------|--------|--------|
+| Python | `introspect_python` | Active virtual environment | `dir()` + `inspect` in subprocess |
+| npm | `introspect_npm` | `node_modules/` directory | Parse `package.json` exports + `require()` probe |
+| Cargo | `introspect_crate` | Cargo registry cache (`~/.cargo/registry/`) | Parse crate metadata and public API |
+| Go | `introspect_go_module` | Go module cache (`~/go/pkg/mod/`) | Parse exported declarations from module source |
+| Maven | `introspect_jar` | Maven local repo (`~/.m2/repository/`) | Parse JAR class entries via `jar`/`unzip` listing |
+
+### Python Introspection Modes
 
 | Mode | Behavior | Use Case |
 |------|----------|----------|
@@ -120,6 +156,7 @@ The third-party introspector performs live introspection of installed third-part
 - Runs in a subprocess with a timeout (default: 5 seconds).
 - Uses a pre-compiled script template injected with the package name.
 - Extracts only public symbols (filters `_`-prefixed names).
+- All package/module/crate names are validated with `_is_safe_dependency_name` before any filesystem path is constructed, preventing traversal attacks outside the package cache.
 - Reports failures as non-fatal errors; unresolved packages are tagged as `unresolved:` in the graph.
 
 ---
