@@ -77,13 +77,25 @@ def get_current_branch(repo_root: Path) -> str | None:
 
 
 def _collect_candidate_files(root: Path) -> list[Path]:
-    """Collect all non-ignored files under root."""
-    from batho.utils.ignore import walk_ignored_filtered
+    """Collect all non-ignored files under root using os.scandir for speed."""
+    import os
+    from batho.utils.ignore import load_ignore_spec, should_ignore_path
 
+    spec = load_ignore_spec(root)
     candidates = []
-    for dirpath, dirnames, filenames in walk_ignored_filtered(root):
-        for filename in filenames:
-            file_path = dirpath / filename
-            if file_path.is_file():
-                candidates.append(file_path)
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    full_path = Path(entry.path)
+                    if should_ignore_path(full_path, root, spec, include_hidden=True):
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(full_path)
+                    elif entry.is_file(follow_symlinks=False):
+                        candidates.append(full_path)
+        except (OSError, PermissionError):
+            continue
     return candidates

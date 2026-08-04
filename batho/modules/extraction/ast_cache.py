@@ -12,7 +12,6 @@ Thread-safe within a process, but designed for multiprocessing safety through:
 from __future__ import annotations
 
 import hashlib
-import logging
 import os
 import tempfile
 import threading
@@ -34,9 +33,11 @@ except ImportError:
 
 import contextlib
 
+import structlog
+
 from batho.core.schemas import Entity, Relationship
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class AstCache:
@@ -168,7 +169,7 @@ class AstCache:
                                 data = msgpack.unpackb(f.read())
                             if data.get("content_hash") != content_hash:
                                 cache_file.unlink()
-                                logger.debug("ast_cache_cleanup_stale", file=file_path, cache_file=str(cache_file))
+                                logger.debug("ast_cache_cleanup_stale", file_path=file_path, cache_file=str(cache_file))
                             else:
                                 updated_hashes.append(existing_hash)
                         except Exception:
@@ -186,7 +187,7 @@ class AstCache:
                 manifest[file_path] = updated_hashes
                 self._save_manifest_for_gc()
             except Exception as e:
-                logger.debug("ast_cache_manifest_add_failed", file=file_path, error=str(e))
+                logger.debug("ast_cache_manifest_add_failed", file_path=file_path, error=str(e))
 
     def get_ast(
         self,
@@ -210,7 +211,7 @@ class AstCache:
             with open(cache_file, "rb") as f:
                 data = msgpack.unpackb(f.read())
         except Exception as e:
-            logger.debug("ast_cache_read_failed", file=file_path, error=str(e))
+            logger.debug("ast_cache_read_failed", file_path=file_path, error=str(e))
             return None
 
         # Check staleness directly from embedded metadata (no manifest needed)
@@ -241,7 +242,7 @@ class AstCache:
                     continue
             relationships.append(Relationship(**r))
 
-        logger.debug("ast_cache_hit", file=file_path, variant=variant or "")
+        logger.debug("ast_cache_hit", file_path=file_path, variant=variant or "")
         return entities, relationships
 
     def set_ast(
@@ -289,10 +290,10 @@ class AstCache:
                 f.write(msgpack.packb(payload))
             os.replace(tmp_path, cache_file)  # Atomic operation
             tmp_path = None
-            logger.debug("ast_cache_write", file=file_path, variant=variant or "")
+            logger.debug("ast_cache_write", file_path=file_path, variant=variant or "")
             self._add_to_manifest(file_path, cache_hash, content_hash)
         except Exception as e:
-            logger.debug("ast_cache_write_failed", file=file_path, error=str(e))
+            logger.debug("ast_cache_write_failed", file_path=file_path, error=str(e))
             # Clean up temp file if it exists
             if tmp_path is not None:
                 try:
@@ -339,9 +340,9 @@ class AstCache:
                         if cache_file.exists():
                             cache_file.unlink()
                             deleted_count += 1
-                            logger.debug("ast_cache_deleted", file=file_path, cache_file=str(cache_file))
+                            logger.debug("ast_cache_deleted", file_path=file_path, cache_file=str(cache_file))
                     except OSError as e:
-                        logger.debug("ast_cache_delete_failed", file=file_path, cache_file=str(cache_file), error=str(e))
+                        logger.debug("ast_cache_delete_failed", file_path=file_path, cache_file=str(cache_file), error=str(e))
                 self._save_manifest_for_gc()
                 return deleted_count
 
@@ -361,9 +362,9 @@ class AstCache:
                         try:
                             cache_file.unlink()
                             deleted_count += 1
-                            logger.debug("ast_cache_deleted", file=file_path, cache_file=str(cache_file))
+                            logger.debug("ast_cache_deleted", file_path=file_path, cache_file=str(cache_file))
                         except OSError as e:
-                            logger.debug("ast_cache_delete_failed", file=file_path, cache_file=str(cache_file), error=str(e))
+                            logger.debug("ast_cache_delete_failed", file_path=file_path, cache_file=str(cache_file), error=str(e))
                 except Exception as e:
                     logger.debug("ast_cache_read_failed_during_delete", cache_file=str(cache_file), error=str(e))
                     continue

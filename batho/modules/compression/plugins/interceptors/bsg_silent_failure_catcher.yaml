@@ -22,3 +22,26 @@ rules:
         bsg.intercept.message: Exception handling may suppress actionable failures; ensure explicit handling and telemetry.
       add_usn_tags:
         - SilentFailureRisk
+  - rule_id: silent-failure-content
+    name: silent-failure-content
+    description: Detect empty or pass-style exception handlers via file content matching.
+    severity: warning
+    priority: 298
+    enabled: true
+    matchers:
+      entity_types:
+        - function
+        - method
+        - entry_point
+      content_patterns:
+        - 'except'
+        - 'except:'
+        - 'except exception:'
+        - 'pass'
+        - 'return none'
+    actions:
+      metadata:
+        bsg.intercept.category: RELIABILITY
+        bsg.intercept.message: Silent failure pattern detected in file content; ensure explicit handling and telemetry.
+      add_usn_tags:
+        - SilentFailureRisk

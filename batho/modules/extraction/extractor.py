@@ -133,6 +133,15 @@ _CAPTURE_REL_MAP: dict[str, RelationshipType] = {
     "ref.write": RelationshipType.REFERENCES,
 }
 
+# Captures that provide type linkage for CONTAINS relationship synthesis.
+# These are not standard references — they link methods to their enclosing
+# struct/enum/trait types across disjoint AST nodes (e.g. Rust impl blocks,
+# Go receiver methods).
+_CONTAINS_HINT_CAPTURES: frozenset[str] = frozenset({
+    "ref.impl_type",
+    "ref.receiver_type",
+})
+
 
 _BUILTINS_BY_LANG: dict[str, set[str]] = {
     "python": {"int", "str", "float", "bool", "dict", "list", "set", "tuple", "len", "range", "print", "self", "cls", "None", "True", "False", "object", "type", "open", "Exception", "ValueError", "TypeError", "KeyError", "IndexError", "any", "all", "sum", "min", "max", "zip", "enumerate", "map", "filter", "isinstance", "id", "hash", "super", "getattr", "setattr", "hasattr", "iter", "next"},
@@ -249,6 +258,11 @@ def _normalize_import_target(raw: str) -> str:
         text = text[1:-1].strip()
     elif text.startswith("<") and text.endswith(">"):
         text = text[1:-1].strip()
+
+    # Normalize Node.js builtin prefix: node:fs -> fs
+    # Both forms are valid per Node.js spec; resolution is prefix-insensitive.
+    if text.startswith("node:"):
+        text = text[5:]
 
     text = text.replace("::", ".")
     return text.strip()
@@ -860,6 +874,9 @@ class ASTExtractor(abc.ABC):
             ref_text: str, line: int, rel_type: RelationshipType, caller_scope: str
         ) -> Entity:
             stub_id = f"unresolved:{caller_scope}::{ref_text}"
+            # Extract receiver variable: "cursor.execute" -> "cursor"
+            # Used by receiver-type-aware method resolution (Phase 2).
+            receiver_var = ref_text.split(".")[0] if "." in ref_text else None
             meta: dict[str, Any] = {
                 "reference_type": rel_type.name.lower(),
                 "resolution_reason": "contextual_stub",
@@ -868,6 +885,7 @@ class ASTExtractor(abc.ABC):
                 "stub_resolution_state": "pending",
                 "caller_scope": caller_scope,
                 "target_name": ref_text,
+                "receiver_var": receiver_var,
             }
             return Entity(
                 type=EntityType.UNRESOLVED,
@@ -999,6 +1017,69 @@ class ASTExtractor(abc.ABC):
                     break
                 idx -= 1
             return best
+
+        # ───────────────────────────────────────────────────────────────────
+        # CONTAINS synthesis: link methods to their struct/enum/trait types
+        # via ref.impl_type (Rust) or ref.receiver_type (Go) captures.
+        # These types and methods are disjoint AST nodes — the byte-range
+        # CONTAINS logic above cannot detect the relationship.
+        # ───────────────────────────────────────────────────────────────────
+        _CONTAINS_TYPE_ENTITIES = frozenset({
+            EntityType.STRUCT, EntityType.ENUM, EntityType.TRAIT,
+            EntityType.INTERFACE, EntityType.CLASS,
+        })
+        for cap_name, nodes in captures.items():
+            if cap_name not in _CONTAINS_HINT_CAPTURES:
+                continue
+            for node in nodes:
+                type_name = _node_text(node, source)
+                if not type_name:
+                    continue
+                type_ent = by_name.get(type_name)
+                if type_ent is None or type_ent.type not in _CONTAINS_TYPE_ENTITIES:
+                    continue
+
+                if cap_name == "ref.impl_type":
+                    # Rust: the type_identifier is in the impl_item header,
+                    # not inside any method. Find all METHOD entities within
+                    # the impl block's byte range (node.parent = impl_item).
+                    impl_node = node.parent
+                    if impl_node is None:
+                        continue
+                    impl_start = impl_node.start_byte
+                    impl_end = impl_node.end_byte
+                    for method_ent in entities:
+                        if method_ent.type != EntityType.METHOD:
+                            continue
+                        if method_ent.id == type_ent.id:
+                            continue
+                        if impl_start <= method_ent.start_byte and method_ent.end_byte <= impl_end:
+                            _add(
+                                type_ent.id,
+                                method_ent.id,
+                                RelationshipType.CONTAINS,
+                                method_ent.start_line,
+                                extra_metadata={"synthesized": True, "capture": "ref.impl_type"},
+                                definition_start_byte=method_ent.start_byte,
+                                definition_end_byte=method_ent.end_byte,
+                            )
+                else:
+                    # Go: the type_identifier is inside the method_declaration's
+                    # receiver, so _find_enclosing will locate the method entity.
+                    method_ent = _find_enclosing(node.start_byte)
+                    if method_ent is None or method_ent.type != EntityType.METHOD:
+                        continue
+                    if method_ent.id == type_ent.id:
+                        continue
+                    _add(
+                        type_ent.id,
+                        method_ent.id,
+                        RelationshipType.CONTAINS,
+                        method_ent.start_line,
+                        extra_metadata={"synthesized": True, "capture": "ref.receiver_type"},
+                        definition_start_byte=method_ent.start_byte,
+                        definition_end_byte=method_ent.end_byte,
+                    )
 
         for cap_name, nodes in captures.items():
             rel_type, capture_variant = _relationship_capture_info(cap_name)

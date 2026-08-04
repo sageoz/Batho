@@ -27,3 +27,38 @@ rules:
         bsg.intercept.message: Database execution appears inside a loop; evaluate batching or join-based rewrite.
       add_usn_tags:
         - PerformanceSensitive
+  - rule_id: nplus1-query-content
+    name: nplus1-query-content
+    description: Detect database execution patterns inside loops via file content matching.
+    severity: warning
+    priority: 309
+    enabled: true
+    matchers:
+      entity_types:
+        - function
+        - method
+        - entry_point
+      content_patterns:
+        - 'for user in users:'
+        - 'for order in orders:'
+        - 'for item in items:'
+        - 'for row in rows:'
+        - 'for record in records:'
+        - 'cursor.execute("SELECT'
+        - 'cursor.execute("INSERT'
+        - 'cursor.execute("UPDATE'
+        - 'cursor.execute("DELETE'
+        - '.objects.filter('
+        - '.objects.get('
+        - '.objects.all()'
+        - 'session.query('
+        - '.query('
+        - '.execute('
+        - '.findMany('
+        - '.findFirst('
+    actions:
+      metadata:
+        bsg.intercept.category: PERFORMANCE
+        bsg.intercept.message: Database execution pattern detected in file content; evaluate batching or join-based rewrite.
+      add_usn_tags:
+        - PerformanceSensitive

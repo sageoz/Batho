@@ -106,14 +106,20 @@ class ScopeManager:
 
     def __init__(self) -> None:
         self._local_data = threading.local()
-        
+
         # Partitioned locks and data stores
         self._global_lock = threading.RLock()
         self._locks: Dict[str, ReadWriteLock] = {}
-        
+
         # Maps partition_key -> (name -> SymbolInfo)
         self._partitioned_global: Dict[str, Dict[str, SymbolInfo]] = {}
         self._partitioned_local: Dict[str, Dict[str, Dict[str, SymbolInfo]]] = {}
+
+        # Sentinel cache for failed lookups (Eclipse JDT TheNotFoundType pattern).
+        # Avoids repeated O(n) lookups for names known to be unresolvable.
+        # Must be cleared via clear_failed_lookups() after registering new symbols.
+        self._failed_lookups: Set[str] = set()
+        self._failed_lock = threading.Lock()
 
     @property
     def _scope_stack(self) -> List[str]:
@@ -284,10 +290,36 @@ class ScopeManager:
 
     def resolve_symbol_strict(self, name: str) -> Optional[SymbolInfo]:
         """
-        Resolve symbol with exact match only — no fuzzy fallback.
-        Currently equivalent to resolve_symbol as fuzzy matching is not implemented.
+        Resolve symbol with exact match only, with sentinel caching.
+
+        Uses a failed-lookup cache (Eclipse JDT's TheNotFoundType pattern) to
+        avoid repeated O(n) lookups for names known to be unresolvable.
+        Call clear_failed_lookups() after registering new symbols so that
+        previously-failed lookups are retried.
         """
-        return self.resolve_symbol(name)
+        # Fast path: check failed-lookup cache
+        with self._failed_lock:
+            if name in self._failed_lookups:
+                return None
+
+        result = self.resolve_symbol(name)
+
+        # Cache failures
+        if result is None:
+            with self._failed_lock:
+                self._failed_lookups.add(name)
+
+        return result
+
+    def clear_failed_lookups(self) -> None:
+        """Clear the failed-lookup sentinel cache.
+
+        Call this after registering new symbols (e.g., after
+        _register_project_symbols or _materialize_external_symbols) so
+        previously-failed lookups are retried against the new symbols.
+        """
+        with self._failed_lock:
+            self._failed_lookups.clear()
 
     def resolve_symbol_dotpath(self, name: str) -> Optional[SymbolInfo]:
         """

@@ -117,6 +117,18 @@ COMMUNITIES_SCHEMA: pa.Schema = pa.schema([
     pa.field("top_entities", pa.list_(pa.utf8()), nullable=True),
     pa.field("description", pa.large_utf8(), nullable=True),
     pa.field("file_paths", pa.list_(pa.utf8()), nullable=True),
+    pa.field("member_entity_ids", pa.list_(pa.utf8()), nullable=True),
+    pa.field("is_singleton", pa.bool_(), nullable=False),
+])
+
+SCOPE_MANAGER_CACHE_SCHEMA: pa.Schema = pa.schema([
+    pa.field("partition", pa.utf8(), nullable=False),
+    pa.field("name", pa.large_utf8(), nullable=False),
+    pa.field("symbol_id", pa.large_utf8(), nullable=False),
+    pa.field("symbol_type", pa.utf8(), nullable=False),
+    pa.field("scope_path", pa.utf8(), nullable=False),
+    pa.field("is_external", pa.bool_(), nullable=False),
+    pa.field("is_heuristic", pa.bool_(), nullable=False),
 ])
 
 ALL_SCHEMAS: dict[str, pa.Schema] = {

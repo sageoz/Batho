@@ -98,9 +98,9 @@ def configure_logging(
 
     render_json = json_format if json_format is not None else not sys.stderr.isatty()
     renderer = (
-        structlog.processors.JSONRenderer()
-        if render_json
-        else structlog.dev.ConsoleRenderer(colors=True)
+        structlog.dev.ConsoleRenderer(colors=True)
+        if not render_json
+        else structlog.processors.JSONRenderer()
     )
 
     structlog.configure(
@@ -118,7 +118,7 @@ def configure_logging(
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=True,
+        cache_logger_on_first_use=False,
     )
 
     # Align stdlib logging with structlog pipeline.
@@ -140,13 +140,24 @@ def configure_logging(
     root_logger.addHandler(stderr_handler)
 
     if file:
-        file_path = Path(file)
-        if file_path.parent and not file_path.parent.exists():
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(file)
-        file_handler.setFormatter(logging.Formatter(fmt))
-        file_handler.setLevel(effective_level)
-        root_logger.addHandler(file_handler)
+        # Sanitize the configured log path before creating directories or opening
+        # a file handle. This rejects traversal, null bytes, URI schemes, etc.
+        # Import is local to avoid a circular import with path_sanitizer.
+        from batho.utils.path_sanitizer import PathSecurityError, sanitize_path
+
+        try:
+            file_path = sanitize_path(file, base_dir=Path.cwd())
+        except PathSecurityError as exc:
+            # Logging must never crash the process. Fall back to stderr-only and
+            # emit a clear warning through the standard logging pipeline.
+            logging.warning("log_file_path_unsafe", unsafe_path=file, error=str(exc))
+        else:
+            if file_path.parent and not file_path.parent.exists():
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(str(file_path))
+            file_handler.setFormatter(logging.Formatter(fmt))
+            file_handler.setLevel(effective_level)
+            root_logger.addHandler(file_handler)
 
     # Keep named stdlib loggers aligned with the chosen process-wide threshold.
     for logger in logging.root.manager.loggerDict.values():

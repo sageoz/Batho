@@ -27,6 +27,7 @@ except Exception:  # pragma: no cover - handled by runtime error in validator in
 from batho.core.schemas import Entity, EntityType, Relationship, RelationshipType
 
 from batho.utils.logging import get_logger
+from batho.utils.path_sanitizer import PathSecurityError, sanitize_path
 
 if TYPE_CHECKING:
     from batho.modules.graph.builder.protocol import GraphBackend
@@ -884,6 +885,18 @@ def _normalize_rule_dict(raw_rule: dict[str, Any]) -> dict[str, Any]:
 
     normalized = dict(raw_rule)
 
+    # Normalize severity aliases before schema validation so that
+    # "warn" -> "warning" and "error"/"critical" -> "block".
+    sev_raw = normalized.get("severity")
+    if isinstance(sev_raw, str):
+        sev_lower = sev_raw.lower().strip()
+        if sev_lower in ("warn", "warning"):
+            normalized["severity"] = "warning"
+        elif sev_lower in ("error", "critical", "block"):
+            normalized["severity"] = "block"
+        elif sev_lower == "info":
+            normalized["severity"] = "info"
+
     matchers_raw = normalized.get("matchers")
     if matchers_raw is None:
         matchers_raw = normalized.get("match")
@@ -1527,10 +1540,12 @@ def _read_yaml_with_text(path: Path) -> tuple[Any, str]:
 
 
 def _resolve_custom_rules_path(path_value: str, root_path: Path) -> Path:
-    candidate = Path(path_value).expanduser()
-    if candidate.is_absolute():
-        return candidate
-    return (root_path / candidate).resolve()
+    """Resolve a user-supplied custom rules path relative to the repo root.
+
+    The result is routed through `sanitize_path` so that absolute paths,
+    traversal, and other unsafe inputs are rejected before the file is read.
+    """
+    return sanitize_path(path_value, base_dir=root_path, allow_absolute=True)
 
 
 def _compute_source_hashes(
@@ -1757,6 +1772,71 @@ def _apply_rule_overrides(
         _handle_error("plugins.overrides must be a mapping")
         return updated
 
+    def _apply_patch_to_rule(
+        existing: RuleDefinition,
+        patch: dict[str, Any],
+        override_key: str,
+    ) -> None:
+        """Apply a single patch dict to an existing rule and re-register it."""
+        merged_rule = _merge_dict(_rule_to_document(existing), patch)
+        try:
+            normalized = _normalize_rule_dict(merged_rule)
+            wrapper_doc = {
+                "schema_version": existing.schema_version,
+                "plugin_id": existing.plugin,
+                "name": existing.plugin,
+                "version": "1.0.0",
+                "enabled": True,
+                "rules": [normalized],
+            }
+            _validate_plugin_document(
+                wrapper_doc,
+                f"override:{override_key}",
+                "",
+                schema_version=existing.schema_version,
+            )
+            compiled = _rule_from_plugin_rule(
+                existing.plugin,
+                normalized,
+                schema_version=existing.schema_version,
+                plugin_bidirectional=existing.bidirectional,
+            )
+        except Exception as exc:
+            _handle_error(f"Invalid override for {override_key}: {exc}")
+            return
+
+        lookup = existing.name.lower()
+        if compiled.name.lower() != lookup:
+            updated.pop(lookup, None)
+        _register_rule(updated, compiled, stats)
+        stats["overrides_applied"] = int(stats.get("overrides_applied", 0)) + 1
+
+    # Detect flat rule_overrides format: {rule_name: {severity: ...}}
+    # vs nested plugins_overrides format: {plugin_id: {rule_name: {severity: ...}}}
+    rule_names_lower = {k.lower() for k in updated.keys()}
+    override_keys_lower = [str(k).lower() for k in overrides.keys()]
+    is_flat = bool(rule_names_lower) and all(
+        k in rule_names_lower for k in override_keys_lower
+    )
+
+    if is_flat:
+        # Flat format: {rule_name: patch_dict}
+        for rule_name, patch in overrides.items():
+            if not isinstance(patch, dict):
+                _handle_error(f"rule_overrides.{rule_name} must be a mapping")
+                continue
+            lookup = str(rule_name).strip().lower()
+            if not lookup:
+                _handle_error("rule_overrides contains an empty rule name")
+                continue
+            existing = updated.get(lookup)
+            if existing is None:
+                _handle_error(f"Override target not found: rule={rule_name}")
+                continue
+            _apply_patch_to_rule(existing, patch, f"rule:{rule_name}")
+        return updated
+
+    # Nested format: {plugin_id: {rule_name: patch_dict}}
     for plugin_name, plugin_overrides in overrides.items():
         plugin_key = str(plugin_name)
         if not isinstance(plugin_overrides, dict):
@@ -1784,39 +1864,7 @@ def _apply_rule_overrides(
                 )
                 continue
 
-            merged_rule = _merge_dict(_rule_to_document(existing), patch)
-            try:
-                normalized = _normalize_rule_dict(merged_rule)
-                wrapper_doc = {
-                    "schema_version": existing.schema_version,
-                    "plugin_id": existing.plugin,
-                    "name": existing.plugin,
-                    "version": "1.0.0",
-                    "enabled": True,
-                    "rules": [normalized],
-                }
-                _validate_plugin_document(
-                    wrapper_doc,
-                    f"override:{plugin_key}.{rule_name}",
-                    "",
-                    schema_version=existing.schema_version,
-                )
-                compiled = _rule_from_plugin_rule(
-                    existing.plugin,
-                    normalized,
-                    schema_version=existing.schema_version,
-                    plugin_bidirectional=existing.bidirectional,
-                )
-            except Exception as exc:
-                _handle_error(
-                    f"Invalid override for plugin={plugin_key} rule={rule_name}: {exc}"
-                )
-                continue
-
-            if compiled.name.lower() != lookup:
-                updated.pop(lookup, None)
-            _register_rule(updated, compiled, stats)
-            stats["overrides_applied"] = int(stats.get("overrides_applied", 0)) + 1
+            _apply_patch_to_rule(existing, patch, f"{plugin_key}.{rule_name}")
 
     return updated
 
@@ -2076,7 +2124,7 @@ def load_effective_rules(
 
     rules_by_name = _apply_rule_overrides(
         rules_by_name=rules_by_name,
-        overrides=cfg.get("plugins_overrides") or {},
+        overrides=cfg.get("plugins_overrides") or cfg.get("rule_overrides") or {},
         strict_validation=strict_validation,
         stats=stats,
         logger=log,
@@ -2328,6 +2376,32 @@ def _infer_semantic_tags(entity: Entity, rel_file_path: str) -> set[str]:
         or _path_has_hint_tokens(rel_file_path, _API_HINT_TOKENS)
     ):
         tags.add("ApiBoundary")
+
+    # Decorator-based ApiBoundary detection: check entity metadata for
+    # decorators that indicate an externally exposed API route, regardless
+    # of the function name. This catches functions like `admin_action` that
+    # are decorated with `@app.route` / `@router.get` / `@GetMapping`.
+    if entity.type in {
+        EntityType.FUNCTION,
+        EntityType.METHOD,
+        EntityType.CLASS,
+        EntityType.ENTRY_POINT,
+    } and "ApiBoundary" not in tags:
+        metadata = entity.metadata if isinstance(entity.metadata, dict) else {}
+        decorators = metadata.get("decorators")
+        if isinstance(decorators, list):
+            for dec in decorators:
+                dec_str = str(dec).lower()
+                if any(token in dec_str for token in _API_HINT_TOKENS):
+                    tags.add("ApiBoundary")
+                    break
+                # Route decorator patterns not covered by _API_HINT_TOKENS
+                if any(
+                    pat in dec_str
+                    for pat in ("@app.route", "@router.", "@api_view", "mapping", "endpoint")
+                ):
+                    tags.add("ApiBoundary")
+                    break
 
     if tokens.intersection(_AUTH_HINT_TOKENS) or _path_has_hint_tokens(
         rel_file_path,
@@ -3435,6 +3509,19 @@ def apply_rule_plugins(
         if hit_count > 0:
             interception_totals[plugin_id] = hit_count
 
+    # Build per-plugin rule_details with severity for J10 override compliance.
+    # Maps plugin_id -> list of {rule, severity, hits} for rules with hits > 0.
+    plugin_rule_details: dict[str, list[dict[str, Any]]] = {}
+    for rule in rules:
+        hit_count = int(rule_hits.get(rule.name, 0))
+        if hit_count <= 0:
+            continue
+        plugin_rule_details.setdefault(rule.plugin, []).append({
+            "rule": rule.name,
+            "severity": rule.severity,
+            "hits": hit_count,
+        })
+
     security_audit = {
         "schema_version": "interception-stats.v1",
         "plugins": {
@@ -3442,6 +3529,7 @@ def apply_rule_plugins(
                 "plugin_id": plugin_id,
                 "name": _plugin_display_name(plugin_id),
                 "interceptions": hit_count,
+                "rule_details": plugin_rule_details.get(plugin_id, []),
             }
             for plugin_id, hit_count in interception_totals.items()
         }
@@ -3734,6 +3822,7 @@ def apply_bsg_rules_to_entities(
         "plugins": {},
     }
     plugin_hits: dict[str, int] = {}
+    file_rule_hits: dict[str, int] = {}  # rule_name -> hit count (per-file)
 
     for entity in entities:
         entity_id = entity.id
@@ -3809,6 +3898,7 @@ def apply_bsg_rules_to_entities(
 
             matched_rules.append(rule.name)
             plugin_hits[rule.plugin] = plugin_hits.get(rule.plugin, 0) + 1
+            file_rule_hits[rule.name] = file_rule_hits.get(rule.name, 0) + 1
 
             action_changed, entity_tags = _apply_rule_actions(
                 rule, entity, rel_file_path, metadata, entity_tags_cache
@@ -3830,12 +3920,20 @@ def apply_bsg_rules_to_entities(
             updated_entities.append(entity)
 
     # Build per-file security_audit fragment
+    rule_severity_map = {r.name: r.severity for r in rules}
     for plugin_id, hits in plugin_hits.items():
         if hits > 0:
+            # Collect per-rule details for this plugin
+            details = [
+                {"rule": name, "severity": rule_severity_map.get(name, "unknown"), "hits": count}
+                for name, count in file_rule_hits.items()
+                if count > 0 and any(r.name == name and r.plugin == plugin_id for r in rules)
+            ]
             file_security_audit["plugins"][plugin_id] = {
                 "plugin_id": plugin_id,
                 "name": _plugin_display_name(plugin_id),
                 "interceptions": hits,
+                "rule_details": details,
             }
 
     return updated_entities, file_security_audit

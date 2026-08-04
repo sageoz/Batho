@@ -27,3 +27,38 @@ rules:
         bsg.intercept.message: API boundary lacks expected authentication wrapping.
       add_usn_tags:
         - SecurityCritical
+  - rule_id: unsecured-api-boundary-content
+    name: unsecured-api-boundary-content
+    description: Flag externally exposed API routes detected via route decorators in file content.
+    severity: block
+    priority: 359
+    enabled: true
+    matchers:
+      entity_types:
+        - function
+        - method
+        - entry_point
+        - class
+      content_patterns:
+        - '@app.route'
+        - '@router.'
+        - '@api_view'
+        - '@GetMapping'
+        - '@PostMapping'
+        - '@RequestMapping'
+        - 'app.get('
+        - 'app.post('
+        - 'app.put('
+        - 'app.delete('
+        - 'router.get('
+        - 'router.post('
+        - 'def admin_'
+        - 'def delete_'
+        - 'def update_'
+        - 'def create_'
+    actions:
+      metadata:
+        bsg.intercept.category: SECURITY
+        bsg.intercept.message: API boundary detected via route decorator; verify authentication wrapping.
+      add_usn_tags:
+        - SecurityCritical

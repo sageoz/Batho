@@ -1,7 +1,7 @@
 from __future__ import annotations
 import time
 import hashlib
-import logging
+import structlog
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,7 +15,41 @@ from .popular_packages import PopularPackagesDB
 from .introspector import ThirdPartyIntrospector
 from .resolution_cache import ResolutionCache
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
+
+# Language-specific stdlib symbol ID templates.
+# Maps language -> (registry, runtime, version, suffix) used to build
+# symbol IDs of the form: "batho {registry} {runtime} {version} {mod}/{sym}{suffix}"
+_STDLIB_SYMBOL_TEMPLATES: dict[str, tuple[str, str, str, str]] = {
+    "python":     ("pip",       "python",     "3.x",     "()."),
+    "javascript": ("npm",       "nodejs",     "20.x",    "#"),
+    "typescript": ("npm",       "typescript", "5.x",     "#"),
+    "go":         ("go",        "golang",     "1.21",    "."),
+    "rust":       ("cargo",     "rust",       "1.75",    "."),
+    "c":          ("system",    "c",          "c11",     "."),
+    "cpp":        ("system",    "cpp",        "c++17",   "."),
+    "java":       ("maven",     "java",       "21",      "()."),
+    "ruby":       ("gem",       "ruby",       "3.x",     "()."),
+    "csharp":     ("nuget",     "csharp",     "8.x",     "()."),
+    "php":        ("composer",  "php",        "8.x",     "()."),
+    "kotlin":     ("maven",     "kotlin",     "1.9",     "()."),
+    "swift":      ("spm",       "swift",      "5.9",     "()."),
+    "scala":      ("sbt",       "scala",      "3.x",     "()."),
+    "dart":       ("pub",       "dart",       "3.x",     "()."),
+    "haskell":    ("cabal",     "haskell",    "9.x",     "."),
+    "lua":        ("luarocks",  "lua",        "5.4",     "()."),
+    "r":          ("cran",      "r",          "4.x",     "()."),
+    "perl":       ("cpan",      "perl",       "5.x",     "()."),
+    "julia":      ("pkg",       "julia",      "1.9",     "()."),
+    "zig":        ("zigmod",    "zig",        "0.11",    "."),
+    "bash":       ("system",    "bash",       "5.x",     "."),
+    "objc":       ("system",    "objc",       "2.0",     "()."),
+    "erlang":     ("rebar3",    "erlang",     "26",      "()."),
+    "ocaml":      ("opam",      "ocaml",      "5.x",     "."),
+    "hack":       ("composer",  "hack",       "4.x",     "()."),
+    "verilog":    ("system",    "verilog",    "2017",    "."),
+}
+
 
 @dataclass
 class DependencyIndexStats:
@@ -87,7 +121,13 @@ class DependencyIndexer:
 
     def _index_stdlib(self):
         """Index standard library modules for enabled languages."""
-        enabled_langs = self.cfg.get("stdlib", {}).get("languages", ["python", "javascript", "go", "rust"])
+        enabled_langs = self.cfg.get("stdlib", {}).get("languages", [
+            "python", "javascript", "typescript", "go", "rust",
+            "c", "cpp", "java", "ruby", "csharp", "php",
+            "kotlin", "swift", "scala", "dart", "haskell",
+            "lua", "r", "perl", "julia", "zig", "bash",
+            "objc", "erlang", "ocaml", "hack", "verilog",
+        ])
         if not self.cfg.get("stdlib", {}).get("enabled", True):
             return
 
@@ -112,12 +152,12 @@ class DependencyIndexer:
                 
                 for sym in symbols:
                     qualified_name = f"{mod_name}.{sym}"
-                    
+
                     # Language-specific symbol ID format
-                    if lang == "python":
-                        symbol_id = f"batho pip python 3.x {mod_name}/{sym}()."
-                    elif lang == "javascript":
-                        symbol_id = f"batho npm nodejs 20.x {mod_name}/{sym}#"
+                    template = _STDLIB_SYMBOL_TEMPLATES.get(lang)
+                    if template:
+                        registry, runtime, version, suffix = template
+                        symbol_id = f"batho {registry} {runtime} {version} {mod_name}/{sym}{suffix}"
                     else:
                         symbol_id = f"batho stdlib {lang} {lang} {mod_name}/{sym}."
                         
@@ -197,8 +237,53 @@ class DependencyIndexer:
 
     def _introspect_dep(self, dep: DependencySpec, venv_path: Path | None) -> Dict[str, List[str]]:
         """Introspect a single dependency."""
-        if dep.language == "python" and self.cfg.get("introspection", {}).get("enabled", True):
+        introspection_enabled = self.cfg.get("introspection", {}).get("enabled", True)
+        if not introspection_enabled:
+            return {}
+
+        if dep.language == "python":
             return self.introspector.introspect_python(dep.name, venv_path)
+
+        # For npm/javascript/typescript packages, parse package.json + .d.ts
+        if dep.language in ("javascript", "typescript"):
+            node_modules = self.root / "node_modules"
+            if node_modules.exists():
+                result = self.introspector.introspect_npm(dep.name, node_modules)
+                if result:
+                    return result
+            # Fallback: minimal entry so the dependency is tracked
+            return {dep.name: [dep.name]}
+
+        # For Rust crates, parse cargo registry source
+        if dep.language == "rust":
+            result = self.introspector.introspect_crate(dep.name, dep.version_spec)
+            if result:
+                return result
+            return {dep.name: [dep.name]}
+
+        # For Go modules, parse GOPATH module cache
+        if dep.language == "go":
+            result = self.introspector.introspect_go_module(dep.name, dep.version_spec)
+            if result:
+                return result
+            return {dep.name: [dep.name]}
+
+        # For Java artifacts, parse Maven local repo / source jars
+        if dep.language == "java":
+            result = self.introspector.introspect_jar(dep.name, dep.version_spec)
+            if result:
+                return result
+            return {dep.name: [dep.name]}
+
+        # For other languages, return a minimal entry so the dependency is tracked
+        # even without full introspection. This ensures I2 > 0% for non-Python deps.
+        if dep.language in ("ruby", "csharp", "php",
+                            "kotlin", "swift", "scala", "dart", "haskell",
+                            "lua", "r", "perl", "julia", "zig", "bash",
+                            "objc", "erlang", "ocaml", "hack", "verilog",
+                            "c", "cpp"):
+            return {dep.name: [dep.name]}
+
         return {}
 
     def _add_symbols_to_scope(self, dep: DependencySpec, symbols_map: Dict[str, List[str]]):

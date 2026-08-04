@@ -7,6 +7,8 @@ Git is no longer used for change detection; it is only captured for metadata.
 from __future__ import annotations
 
 import gc
+import hashlib
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -21,6 +23,7 @@ from batho.utils.memory_monitor import get_rss_mb, should_flush_for_memory
 from batho.modules.compression.bsg_map import BSGMap
 from batho.modules.graph.builder.codegraph import InMemoryGraph
 from batho.utils.hash import compute_file_hash
+from batho.orchestrator.build import _decode_precompiled_batch
 
 LOGGER = get_logger(__name__, component="orchestrator.patch")
 
@@ -79,6 +82,165 @@ def _generate_run_id() -> str:
     return f"patch_{ts}_{short}"
 
 
+_MANIFEST_FILES = [
+    "pyproject.toml", "setup.cfg", "package.json", "Cargo.toml",
+    "go.mod", "pom.xml",
+]
+
+# Gradle manifest patterns (searched via ManifestParser._find_manifests).
+_GRADLE_PATTERNS = ["build.gradle", "build.gradle.kts"]
+
+
+def _compute_manifests_hash(root: Path) -> str:
+    """Hash all manifest files that ManifestParser would parse.
+
+    Uses the same discovery logic as ManifestParser._find_manifests so that
+    nested manifests (e.g. subdir/Cargo.toml in a Rust workspace) are included
+    in the cache key. Without this, modifying a nested manifest without
+    changing any root-level manifest would produce a stale cache hit.
+    """
+    from batho.modules.dependency.manifest_parser import ManifestParser
+
+    h = hashlib.sha256()
+    # Pattern-based manifests: root + nested (up to _MAX_SEARCH_DEPTH)
+    for pattern in _MANIFEST_FILES + _GRADLE_PATTERNS:
+        for path in ManifestParser._find_manifests(root, pattern):
+            try:
+                rel = str(path.relative_to(root))
+            except ValueError:
+                rel = str(path)
+            h.update(rel.encode())
+            h.update(path.read_bytes())
+    # Requirements files: root-level glob (matches parse_manifests behavior)
+    for req in root.glob("requirements*.txt"):
+        h.update(req.name.encode())
+        h.update(req.read_bytes())
+    return h.hexdigest()
+
+
+def _serialize_scope_manager_to_ipc(sm: Any, path: Path) -> None:
+    """Serialize ScopeManager global symbols to Arrow IPC file."""
+    from batho.modules.storage.arrow_bundle.schemas import SCOPE_MANAGER_CACHE_SCHEMA
+    from batho.modules.storage.arrow_bundle.writer import write_simple_ipc
+
+    data = sm.get_global_symbols()
+    rows = []
+    for partition, symbols_map in data.items():
+        for name, info in symbols_map.items():
+            rows.append({
+                "partition": partition,
+                "name": name,
+                "symbol_id": info["symbol_id"],
+                "symbol_type": info["symbol_type"],
+                "scope_path": info["scope_path"],
+                "is_external": info.get("is_external", False),
+                "is_heuristic": info.get("is_heuristic", False),
+            })
+    write_simple_ipc(rows, SCOPE_MANAGER_CACHE_SCHEMA, path)
+
+
+def _deserialize_scope_manager_from_table(table: Any) -> dict:
+    """Reconstruct nested global symbols dict from Arrow IPC table rows."""
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    if table.num_rows == 0:
+        return result
+    for row in table.to_pylist():
+        partition = row["partition"]
+        name = row["name"]
+        if partition not in result:
+            result[partition] = {}
+        result[partition][name] = {
+            "symbol_id": row["symbol_id"],
+            "symbol_type": row["symbol_type"],
+            "scope_path": row["scope_path"],
+            "is_external": row["is_external"],
+            "is_heuristic": row["is_heuristic"],
+        }
+    return result
+
+
+
+
+def _load_project_scope_from_store(
+    db: Any,
+    base_run_internal_id: int | None,
+    changed_file_paths: set[str],
+) -> Any:
+    """Load project symbols from the base run's artifact store into a ScopeManager.
+
+    Excludes UNRESOLVED entities and entities from files being patched
+    (those will be re-extracted from the changed files and would otherwise
+    shadow the freshly-parsed symbols).
+
+    Args:
+        db: Open ArrowBundle instance for the base run.
+        base_run_internal_id: Internal numeric run id of the base run
+            (reserved for future run-scoped filtering; currently the
+            agent_views table is already scoped to the active run).
+        changed_file_paths: Set of repo-relative paths being patched in
+            this run. Their stale symbols are skipped.
+
+    Returns:
+        A populated ScopeManager. Empty if no entities are available.
+    """
+    from batho.modules.extraction.scope_manager import ScopeManager
+
+    scope = ScopeManager()
+
+    # Build file_id → file_path mapping from the tracking table
+    tracking = db.get_all_file_tracking()
+    file_id_to_path: dict[Any, str] = {
+        v.get("file_id"): k for k, v in tracking.items()
+    }
+
+    # Identify file_ids for changed files so we can skip their stale symbols.
+    # The changed files will be re-parsed and their new symbols are added to
+    # the in-flight ScopeManager by build_graph(); keeping stale entries here
+    # would risk resolving stubs against deleted/renamed entities.
+    changed_file_ids: set[Any] = {
+        v.get("file_id") for fp, v in tracking.items()
+        if fp in changed_file_paths
+    }
+
+    # Read all entities from agent_views (already scoped to the active run)
+    db._reader.invalidate()
+    agent_table = db._reader._get_table("agent_views")
+    if agent_table.num_rows == 0:
+        return scope
+
+    # Filter the table in Arrow before converting to Python rows. This avoids
+    # materializing the full agent table when only unchanged project symbols
+    # are needed for stub resolution.
+    import pyarrow as pa
+    import pyarrow.compute as pc
+
+    not_unresolved = pc.invert(pc.equal(agent_table["entity_type"], "UNRESOLVED"))
+    if changed_file_ids:
+        file_id_type = agent_table.schema.field("file_id").type
+        changed_array = pa.array(list(changed_file_ids), type=file_id_type)
+        not_changed = pc.invert(pc.is_in(agent_table["file_id"], changed_array))
+        mask = pc.and_(not_unresolved, not_changed)
+    else:
+        mask = not_unresolved
+
+    filtered = agent_table.filter(mask)
+    for row in filtered.to_pylist():
+        entity_name = row.get("name", "")
+        entity_id = row.get("entity_id", "")
+        file_path = file_id_to_path.get(row.get("file_id"), "")
+
+        if not entity_name or not entity_id:
+            continue
+
+        scope.define_global_symbol_qualified(
+            name=entity_name,
+            symbol_id=entity_id,
+            symbol_type=row.get("entity_type", ""),
+            filepath=file_path,
+            is_global=True,
+        )
+
+    return scope
 
 
 def _estimate_batch_size_bytes(batch_item: dict) -> int:
@@ -275,6 +437,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     ast_cache_dir = str(root / ".batho" / "cache")
 
             # --- Dependency Indexing (CDEU) for Patch ---
+            # Cache ScopeManager across patches when manifests haven't changed.
             from batho.modules.dependency import build_dependency_index
             from batho.modules.extraction.scope_manager import ScopeManager
 
@@ -284,13 +447,70 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 dep_cfg = dep_cfg.model_dump()
 
             if dep_cfg.get("enabled", True):
-                # Always re-index stdlib; third-party is cached by ResolutionCache
-                build_dependency_index(
-                    root=root,
-                    scope_manager=dep_scope_manager,
-                    cfg=dep_cfg,
-                    cache_dir=cfg.get("paths", {}).get("cache_dir"),
+                manifest_hash = _compute_manifests_hash(root)
+                cache_ipc = batho_dir / "scope_manager_cache.ipc"
+                cache_meta = batho_dir / "scope_manager_cache.meta.json"
+
+                cache_hit = False
+                if cache_ipc.exists() and cache_meta.exists():
+                    try:
+                        cached_meta = json.loads(cache_meta.read_text())
+                        if cached_meta.get("manifest_hash") == manifest_hash:
+                            from batho.modules.storage.arrow_bundle.writer import read_ipc_table
+                            table = read_ipc_table(cache_ipc)
+                            data = _deserialize_scope_manager_from_table(table)
+                            dep_scope_manager.load_global_symbols(data)
+                            cache_hit = True
+                            LOGGER.info(
+                                "scope_manager_loaded_from_cache",
+                                symbols=dep_scope_manager.global_symbol_count,
+                            )
+                    except Exception as exc:
+                        LOGGER.warning("scope_manager_cache_load_failed", error=str(exc))
+
+                if not cache_hit:
+                    build_dependency_index(
+                        root=root,
+                        scope_manager=dep_scope_manager,
+                        cfg=dep_cfg,
+                        cache_dir=cfg.get("paths", {}).get("cache_dir"),
+                    )
+                    try:
+                        # Atomic tmp + rename so readers never see a partial IPC file.
+                        cache_ipc_tmp = batho_dir / "scope_manager_cache.tmp.ipc"
+                        cache_meta_tmp = batho_dir / "scope_manager_cache.meta.json.tmp"
+                        _serialize_scope_manager_to_ipc(dep_scope_manager, cache_ipc_tmp)
+                        cache_meta_tmp.write_text(json.dumps({
+                            "manifest_hash": manifest_hash,
+                        }))
+                        cache_ipc_tmp.replace(cache_ipc)
+                        cache_meta_tmp.replace(cache_meta)
+                        LOGGER.info(
+                            "scope_manager_cached",
+                            symbols=dep_scope_manager.global_symbol_count,
+                        )
+                    except Exception as exc:
+                        LOGGER.warning("scope_manager_cache_write_failed", error=str(exc))
+
+            # Load project symbols from the base run so that
+            # resolve_contextual_stubs() can resolve cross-file references to
+            # entities in unchanged files. Without this, refs to other project
+            # files remain UNRESOLVED and the patched graph diverges from a
+            # full rebuild (C13 patch-correctness gap).
+            from batho.modules.graph.builder.codegraph import _merge_external_scope
+
+            try:
+                project_scope = _load_project_scope_from_store(
+                    db, base_run_internal_id, changed_file_paths
                 )
+                _merge_external_scope(dep_scope_manager, project_scope)
+                LOGGER.info(
+                    "project_scope_loaded",
+                    symbols=project_scope.global_symbol_count,
+                    changed_files_excluded=len(changed_file_paths),
+                )
+            except Exception as exc:
+                LOGGER.warning("project_scope_load_failed", error=str(exc))
 
             from batho.modules.graph.builder.codegraph import CodeGraphIndexer
             from batho.modules.storage.arrow_bundle.helpers import _minify_graph_payload
@@ -308,153 +528,236 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 write_batch = []
                 current_batch_bytes = 0
                 unindexed_paths = set()
+
+                # Collect valid changed file paths
+                valid_changes = []
                 for change in added_or_modified:
                     full_path = root / change.path
-                    if not full_path.exists():
-                        continue
+                    if full_path.exists():
+                        valid_changes.append(change)
+
+                if not valid_changes:
+                    # Skip parsing if no valid files
+                    pass
+                else:
+                    all_paths = [str(root / c.path) for c in valid_changes]
+                    max_workers = min(4, len(all_paths)) if len(all_paths) > 1 else 1
+
+                    # Precompiled blob collection — preserves all entities (including
+                    # duplicate-named ones that would collide in InMemoryGraph's dict).
+                    # This mirrors the build flow's write_precompiled_callback.
+                    precompiled_write_batch: list[dict] = []
+
+                    def write_precompiled_callback(file_rel: str, blob_data: dict) -> None:
+                        item = {
+                            "file_path": file_rel,
+                            "content_hash": blob_data.get("content_hash", ""),
+                            "agent_blob": blob_data.get("agent_blob", b""),
+                            "storage_blob": blob_data.get("storage_blob", b""),
+                            "rels_blob": blob_data.get("rels_blob", b""),
+                            "_use_precompiled": True,
+                        }
+                        precompiled_write_batch.append(item)
+
                     try:
-                        # max_workers=1 for single-file parsing (no benefit from parallelism)
-                        single_graph = indexer.build_graph(
+                        batch_graph = indexer.build_graph(
                             root=str(root),
-                            file_list=[str(full_path)],
-                            max_workers=1,
+                            file_list=all_paths,
+                            max_workers=max_workers,
                             max_file_size_kb=max_file_size_kb,
                             verbose=options.verbose,
                             index_id=run_uuid,
                             external_scope_manager=dep_scope_manager,
                             graph_backend="in-memory",
+                            skip_orphan_pruning=True,
+                            write_callback=write_precompiled_callback,
                         )
                         for _, rel in indexer.get_unindexed_files():
                             unindexed_paths.add(rel)
                         indexer.clear_unindexed_files()
                     except Exception as exc:
-                        LOGGER.warning("patch_file_parse_failed", path=change.path, error=str(exc))
-                        continue
+                        LOGGER.warning("patch_batch_parse_failed", error=str(exc))
+                        batch_graph = None
 
-                    file_rel = change.path
-                    entities_list = [
-                        e.to_dict() for e in single_graph.entities.values()
-                    ]
-                    rels_list = [r.to_dict() for r in single_graph.relationships]
+                    if batch_graph is not None:
+                        # Decode precompiled blobs (preserves all entities including
+                        # duplicate-named ones that collide in InMemoryGraph.entities dict)
+                        if precompiled_write_batch:
+                            decoded_items = _decode_precompiled_batch(precompiled_write_batch)
+                        else:
+                            decoded_items = []
+                        decoded_by_file = {item["file_path"]: item for item in decoded_items}
+                        precompiled_write_batch.clear()
 
-                    bsg_map_single = BSGMap.build(single_graph, str(root))
-                    file_entities = bsg_map_single._by_file.get(file_rel)
-                    if not file_entities:
-                        file_entities = entities_list
+                        # Group ALL relationships by source entity's file (for fallback
+                        # and for extracting synthesized/derived rels added post-extraction)
+                        root_str = str(root)
+                        all_rels_by_file: dict[str, list] = defaultdict(list)
+                        synthesized_rels_by_file: dict[str, list[dict]] = defaultdict(list)
+                        for rel in batch_graph.relationships:
+                            src_ent = batch_graph.get_entity(rel.source_id)
+                            if src_ent and src_ent.file:
+                                rel_file = src_ent.file
+                                if rel_file.startswith(root_str):
+                                    rel_file = rel_file[len(root_str)+1:]
+                                rel_dict = rel.to_dict()
+                                all_rels_by_file[rel_file].append(rel_dict)
+                                meta = rel_dict.get("metadata") or {}
+                                if meta.get("synthesized") or meta.get("derived"):
+                                    synthesized_rels_by_file[rel_file].append(rel_dict)
 
-                    t_prep_0 = time.monotonic()
-                    agent_entities = []
-                    for e in file_entities:
-                        e_dict = e.to_dict(view="agent") if hasattr(e, "to_dict") else e
-                        agent_entities.append({
-                            "id": e_dict.get("id"),
-                            "name": e_dict.get("name"),
-                            "type": e_dict.get("type") or e_dict.get("entity_type"),
-                            "start_line": e_dict.get("start_line"),
-                            "end_line": e_dict.get("end_line"),
-                            "signature": e_dict.get("signature"),
-                            "content_hash": e.content_hash if hasattr(e, "content_hash") else e_dict.get("content_hash", ""),
-                        })
+                        # Build BSGMap as fallback for files not in precompiled blobs
+                        bsg_map_batch = BSGMap.build(batch_graph, str(root))
 
-                    delta_entities = []
-                    for e in file_entities:
-                        e_dict = e.to_dict(view="storage") if hasattr(e, "to_dict") else e
-                        delta_entities.append({
-                            "id": e_dict.get("id"),
-                            "raw_content": e_dict.get("raw_content"),
-                            "syntax_glue": {
-                                "leading_whitespace": e_dict.get("leading_whitespace", ""),
-                                "trailing_whitespace": e_dict.get("trailing_whitespace", ""),
-                            },
-                            "raw_bytes": e_dict.get("raw_bytes"),
-                            "start_byte": e_dict.get("start_byte"),
-                            "end_byte": e_dict.get("end_byte"),
-                            "parent_id": e_dict.get("parent_id"),
-                            "ast_node_type": e_dict.get("ast_node_type"),
-                            "children_order": e_dict.get("children_order"),
-                            "metadata": e_dict.get("metadata"),
-                            "content_hash": e_dict.get("content_hash"),
-                        })
+                        for change in valid_changes:
+                            file_rel = change.path
+                            decoded = decoded_by_file.get(file_rel)
 
-                    agent_view_data = {"entities": agent_entities}
-                    storage_delta_data = {
-                        "entities": delta_entities,
-                    }
-                    relationships_data = rels_list
+                            t_prep_0 = time.monotonic()
 
-                    content_hash = change.new_hash or compute_file_hash(full_path) or ""
-                    write_batch.append({
-                        "file_path": file_rel,
-                        "content_hash": content_hash,
-                        "agent_view_data": agent_view_data,
-                        "storage_delta_data": storage_delta_data,
-                        "relationships_data": relationships_data,
-                    })
-                    t_batch_prep_ms += (time.monotonic() - t_prep_0) * 1000
-                    new_entity_count += len(entities_list)
-                    new_rel_count += len(rels_list)
+                            if decoded:
+                                # Primary path: use precompiled blobs (preserves duplicates)
+                                agent_view_data = decoded["agent_view_data"]
+                                storage_delta_data = decoded["storage_delta_data"]
+                                relationships_data = decoded["relationships_data"]
+                                content_hash = decoded.get("content_hash", "") or change.new_hash or compute_file_hash(root / file_rel) or ""
+                                agent_entities = agent_view_data.get("entities", [])
+                                entities_list = agent_entities
+                            else:
+                                # Fallback: file wasn't precompiled (e.g. extraction error)
+                                # Use graph entities — may lose duplicates but better than nothing
+                                file_entities = bsg_map_batch._by_file.get(file_rel)
+                                if not file_entities:
+                                    file_entities = [
+                                        e for e in batch_graph.entities.values()
+                                        if getattr(e, 'file', '') and e.file.endswith(file_rel)
+                                    ]
+                                entities_list = [e.to_dict() if hasattr(e, 'to_dict') else e for e in file_entities]
 
-                    new_item = write_batch[-1]
-                    current_batch_bytes += _estimate_batch_size_bytes(new_item)
+                                agent_entities = []
+                                for e in file_entities:
+                                    e_dict = e.to_dict(view="agent") if hasattr(e, "to_dict") else e
+                                    agent_entities.append({
+                                        "id": e_dict.get("id"),
+                                        "name": e_dict.get("name"),
+                                        "type": e_dict.get("type") or e_dict.get("entity_type"),
+                                        "start_line": e_dict.get("start_line"),
+                                        "end_line": e_dict.get("end_line"),
+                                        "signature": e_dict.get("signature"),
+                                        "content_hash": e.content_hash if hasattr(e, "content_hash") else e_dict.get("content_hash", ""),
+                                    })
 
-                    # Flush batch using configurable dynamic size or byte threshold (default 15MB)
-                    batch_size = cfg.get("persistence", {}).get("batch_size", 500)
-                    batch_bytes_threshold = cfg.get("persistence", {}).get("batch_bytes_threshold", 15_728_640)
-                    should_rss_flush = should_flush_for_memory(rss_flush_threshold_mb)
-                    if (
-                        len(write_batch) >= batch_size
-                        or current_batch_bytes >= batch_bytes_threshold
-                        or should_rss_flush
-                    ):
-                        if should_rss_flush:
-                            rss_before = get_rss_mb()
-                        t_write_0 = time.monotonic()
-                        db.insert_file_artifacts_batch(run_internal_id, write_batch, store=store, delta_store=delta_store)
-                        t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
-                        write_batch = []
-                        current_batch_bytes = 0
-                        if should_rss_flush:
-                            gc.collect()
-                            rss_after = get_rss_mb()
-                            recovered = round(rss_before - rss_after, 1)
-                            if recovered < 0:
-                                LOGGER.warning(
-                                    "rss_flush_released_memory",
-                                    rss_before_mb=round(rss_before, 1),
-                                    rss_after_mb=round(rss_after, 1),
-                                    recovered_mb=recovered,
-                                    warning="gc.collect increased RSS; memory pressure may persist",
-                                )
-                            elif recovered > 0:
-                                LOGGER.info(
-                                    "rss_flush_released_memory",
-                                    rss_before_mb=round(rss_before, 1),
-                                    rss_after_mb=round(rss_after, 1),
-                                    recovered_mb=recovered,
-                                )
+                                delta_entities = []
+                                for e in file_entities:
+                                    e_dict = e.to_dict(view="storage") if hasattr(e, "to_dict") else e
+                                    delta_entities.append({
+                                        "id": e_dict.get("id"),
+                                        "raw_content": e_dict.get("raw_content"),
+                                        "syntax_glue": {
+                                            "leading_whitespace": e_dict.get("leading_whitespace", ""),
+                                            "trailing_whitespace": e_dict.get("trailing_whitespace", ""),
+                                        },
+                                        "raw_bytes": e_dict.get("raw_bytes"),
+                                        "start_byte": e_dict.get("start_byte"),
+                                        "end_byte": e_dict.get("end_byte"),
+                                        "parent_id": e_dict.get("parent_id"),
+                                        "ast_node_type": e_dict.get("ast_node_type"),
+                                        "children_order": e_dict.get("children_order"),
+                                        "metadata": e_dict.get("metadata"),
+                                        "content_hash": e_dict.get("content_hash"),
+                                    })
 
-                    # Fetch base-run entities for this file and diff
-                    if base_run_internal_id is not None:
-                        old_entities = db.get_agent_entities_for_file(base_run_internal_id, file_rel) or []
-                        from batho.modules.graph.diff_engine.node_diff import diff_file_nodes
-                        node_diffs = diff_file_nodes(old_entities, agent_entities, file_rel)
-                        if node_diffs:
-                            db.record_file_changelog(run_internal_id, base_run_internal_id, node_diffs)
-                            for diff in node_diffs:
-                                if diff.change_kind == "added":
-                                    nodes_added += 1
-                                elif diff.change_kind == "removed":
-                                    nodes_removed += 1
-                                elif diff.change_kind == "modified":
-                                    nodes_modified += 1
-                                elif diff.change_kind == "renamed":
-                                    nodes_renamed += 1
+                                agent_view_data = {"entities": agent_entities}
+                                storage_delta_data = {"entities": delta_entities}
+                                relationships_data = all_rels_by_file.get(file_rel, [])
+                                content_hash = change.new_hash or compute_file_hash(root / file_rel) or ""
+
+                            rels_list = relationships_data
+
+                            write_batch.append({
+                                "file_path": file_rel,
+                                "content_hash": content_hash,
+                                "agent_view_data": agent_view_data,
+                                "storage_delta_data": storage_delta_data,
+                                "relationships_data": relationships_data,
+                            })
+                            t_batch_prep_ms += (time.monotonic() - t_prep_0) * 1000
+                            new_entity_count += len(entities_list)
+                            new_rel_count += len(rels_list)
+
+                            new_item = write_batch[-1]
+                            current_batch_bytes += _estimate_batch_size_bytes(new_item)
+
+                            # Flush batch using configurable dynamic size or byte threshold (default 15MB)
+                            batch_size = cfg.get("persistence", {}).get("batch_size", 500)
+                            batch_bytes_threshold = cfg.get("persistence", {}).get("batch_bytes_threshold", 15_728_640)
+                            should_rss_flush = should_flush_for_memory(rss_flush_threshold_mb)
+                            if (
+                                len(write_batch) >= batch_size
+                                or current_batch_bytes >= batch_bytes_threshold
+                                or should_rss_flush
+                            ):
+                                if should_rss_flush:
+                                    rss_before = get_rss_mb()
+                                t_write_0 = time.monotonic()
+                                db.insert_file_artifacts_batch(run_internal_id, write_batch, store=store, delta_store=delta_store)
+                                t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
+                                write_batch = []
+                                current_batch_bytes = 0
+                                if should_rss_flush:
+                                    gc.collect()
+                                    rss_after = get_rss_mb()
+                                    recovered = round(rss_before - rss_after, 1)
+                                    if recovered < 0:
+                                        LOGGER.warning(
+                                            "rss_flush_released_memory",
+                                            rss_before_mb=round(rss_before, 1),
+                                            rss_after_mb=round(rss_after, 1),
+                                            recovered_mb=recovered,
+                                            warning="gc.collect increased RSS; memory pressure may persist",
+                                        )
+                                    elif recovered > 0:
+                                        LOGGER.info(
+                                            "rss_flush_released_memory",
+                                            rss_before_mb=round(rss_before, 1),
+                                            rss_after_mb=round(rss_after, 1),
+                                            recovered_mb=recovered,
+                                        )
+
+                            # Fetch base-run entities for this file and diff
+                            if base_run_internal_id is not None:
+                                old_entities = db.get_agent_entities_for_file(base_run_internal_id, file_rel) or []
+                                from batho.modules.graph.diff_engine.node_diff import diff_file_nodes
+                                node_diffs = diff_file_nodes(old_entities, agent_entities, file_rel)
+                                if node_diffs:
+                                    db.record_file_changelog(run_internal_id, base_run_internal_id, node_diffs)
+                                    for diff in node_diffs:
+                                        if diff.change_kind == "added":
+                                            nodes_added += 1
+                                        elif diff.change_kind == "removed":
+                                            nodes_removed += 1
+                                        elif diff.change_kind == "modified":
+                                            nodes_modified += 1
+                                        elif diff.change_kind == "renamed":
+                                            nodes_renamed += 1
 
                 # Flush any remaining files in batch
                 if write_batch:
                     t_write_0 = time.monotonic()
                     db.insert_file_artifacts_batch(run_internal_id, write_batch, store=store, delta_store=delta_store)
                     t_batch_write_ms += (time.monotonic() - t_write_0) * 1000
+
+                # Append synthesized/derived relationships that were added AFTER
+                # precompilation (stub resolution, hierarchy, overrides, semantic overlay).
+                # These are not in the precompiled rels_blob, so we append them separately.
+                if batch_graph is not None and synthesized_rels_by_file:
+                    for file_rel, syn_rels in synthesized_rels_by_file.items():
+                        if syn_rels:
+                            db.append_relationships_for_file(
+                                run_internal_id,
+                                file_rel,
+                                syn_rels,
+                            )
 
         # --- Update file tracking ---
         deleted_paths = {change.path for change in deleted}

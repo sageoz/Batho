@@ -25,3 +25,37 @@ rules:
         bsg.intercept.message: Resource allocation detected; verify deterministic cleanup behavior.
       add_usn_tags:
         - CleanupCritical
+  - rule_id: resource-allocation-content
+    name: resource-allocation-content
+    description: Detect resource allocation patterns via file content matching.
+    severity: warning
+    priority: 304
+    enabled: true
+    matchers:
+      entity_types:
+        - function
+        - method
+        - entry_point
+      content_patterns:
+        - 'sqlite3.connect('
+        - 'open('
+        - 'socket.socket('
+        - 'subprocess.Popen('
+        - 'psycopg2.connect('
+        - 'mysql.connector.connect('
+        - 'redis.Redis('
+        - 'pymongo.MongoClient('
+        - 'connect('
+        - 'acquire('
+        - 'allocate('
+        - 'fopen('
+        - 'File.open('
+        - 'os.Open('
+        - 'new FileInputStream('
+        - 'new SqlConnection('
+    actions:
+      metadata:
+        bsg.intercept.category: RELIABILITY
+        bsg.intercept.message: Resource allocation detected via file content; verify deterministic cleanup behavior.
+      add_usn_tags:
+        - CleanupCritical

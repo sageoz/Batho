@@ -290,6 +290,10 @@ RUST_QUERY = r"""
       parameters: (parameters) @def.method.params
       return_type: (_)? @def.method.return_type)))
 
+; ── Impl block target type (for CONTAINS linkage) ───────────────────────────
+(impl_item
+  type: (type_identifier) @ref.impl_type)
+
 ; ── Use declarations (imports) ────────────────────────────────────────────────
 (use_declaration
   argument: (_) @ref.import.module)
@@ -321,6 +325,16 @@ GO_QUERY = r"""
   name: (field_identifier) @def.method.name
   parameters: (parameter_list) @def.method.params
   result: (_)? @def.method.return_type)
+
+; ── Method receiver type (for CONTAINS linkage) ──────────────────────────────
+(method_declaration
+  receiver: (parameter_list
+    (parameter_declaration
+      type: [
+        (type_identifier) @ref.receiver_type
+        (pointer_type
+          (type_identifier) @ref.receiver_type)
+      ])))
 
 ; ── Struct type declarations ─────────────────────────────────────────────────
 (type_declaration

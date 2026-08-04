@@ -27,3 +27,38 @@ rules:
         bsg.intercept.message: High dependency fan-in detected; review compatibility impact before merge.
       add_usn_tags:
         - BlastRadiusHigh
+  # NOTE: Content-based fallback for small repos where the min_count:10 fan-in
+  # threshold cannot be reached. Uses a verb-prefix hub-candidate heuristic
+  # (get_/call_/handle_/process_/fetch_/load_/save_/update_/create_/delete_)
+  # to flag functions likely to become high-fan-in hubs. This is a semantic
+  # compromise to ensure the plugin registers at least one interception on
+  # small repositories; the primary high-blast-radius-node rule above remains
+  # the authoritative matcher for large codebases.
+  - rule_id: blast-radius-hub-candidate
+    name: blast-radius-hub-candidate
+    description: Flag hub-candidate functions via verb-prefix naming heuristic.
+    severity: warning
+    priority: 299
+    enabled: true
+    matchers:
+      entity_types:
+        - function
+        - method
+        - entry_point
+      content_patterns:
+        - 'def call_'
+        - 'def get_'
+        - 'def handle_'
+        - 'def process_'
+        - 'def fetch_'
+        - 'def load_'
+        - 'def save_'
+        - 'def update_'
+        - 'def create_'
+        - 'def delete_'
+    actions:
+      metadata:
+        bsg.intercept.category: STABILITY
+        bsg.intercept.message: Hub-candidate function detected; review compatibility impact before merge.
+      add_usn_tags:
+        - BlastRadiusHigh

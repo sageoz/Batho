@@ -127,11 +127,12 @@ def _serialize_extraction_result(
             if e.is_contextual_stub:
                 node["caller_scope"] = e.metadata.get("caller_scope")
                 node["target_name"] = e.metadata.get("target_name")
+                node["receiver_var"] = e.metadata.get("receiver_var")
             hollow_topology.append(node)
     hollow_bytes = msgpack.packb(hollow_topology)
 
     # Precompile agent and storage views for persistence
-    agent_entities = [e.to_dict(view="agent") for e in entities]
+    agent_entities = [e.to_dict(view="agent") for e in entities if e.type != EntityType.SYNTAX_GLUE]
     storage_entities = [e.to_dict(view="storage") for e in entities]
     agent_blob = zstd_compressor.compress(msgpack.packb(_minify_graph_payload({"entities": agent_entities})))
     storage_blob = zstd_compressor.compress(msgpack.packb(_minify_graph_payload({"entities": storage_entities})))
@@ -360,7 +361,12 @@ def _initialize_worker(
     gc.set_threshold(50000, 50, 50)
 
     if not _WORKER_LOGGING_INITIALIZED:
-        configure_logging(log_config or {})
+        try:
+            configure_logging(log_config or {})
+        except Exception:
+            # Logging configuration must never crash the worker; fall back
+            # to the import-time structlog defaults configured in logging.py.
+            pass
         _WORKER_LOGGING_INITIALIZED = True
 
     if cache_path and _WORKER_CACHE is None:

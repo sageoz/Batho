@@ -1,12 +1,12 @@
 import re
-import logging
+import structlog
 from pathlib import Path
 from typing import List
 
 from batho.core.schemas import Entity, EntityType
 from batho.modules.extraction.extraction_result import ExtractionResult, ExtractionStatus, ExtractionError
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 class FallbackParser:
     """

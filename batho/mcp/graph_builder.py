@@ -256,13 +256,22 @@ def format_summary(
     total_entities = stats.get("total_entities", 0)
     total_rels = stats.get("total_relationships", 0)
     total_files = stats.get("total_files", 0)
-    lines.append(f"- {total_entities} entities across {total_files} files")
+    indexed_files = sum(1 for f in stats.get("files", []) if f.get("indexed", False))
+    lines.append(f"- {total_entities} entities across {total_files} files ({indexed_files} indexed)")
     lines.append(f"- {total_rels} relationships")
 
-    rel_breakdown = stats.get("relationship_breakdown", {})
-    if rel_breakdown:
-        parts = [f"{k}: {v}" for k, v in sorted(rel_breakdown.items(), key=lambda x: -x[1])]
-        lines.append(f"  ({', '.join(parts)})")
+    # Scale classification
+    if total_entities > 50000:
+        scale = "very large"
+    elif total_entities > 10000:
+        scale = "large"
+    elif total_entities > 1000:
+        scale = "medium"
+    elif total_entities > 100:
+        scale = "small"
+    else:
+        scale = "minimal"
+    lines.append(f"- Scale: {scale} codebase")
 
     gen = stats.get("artifact_generation")
     if gen is not None:
@@ -274,6 +283,147 @@ def format_summary(
     if git_commit:
         lines.append(f"  · git {git_commit}")
     lines.append("")
+
+    # Entity type breakdown
+    entity_breakdown = stats.get("entity_breakdown", {})
+    if entity_breakdown:
+        lines.append("### Entity Types")
+        parts = [f"{k}: {v}" for k, v in sorted(entity_breakdown.items(), key=lambda x: -x[1])]
+        lines.append(" | ".join(parts))
+        lines.append("")
+
+    # Relationship type distribution
+    rel_breakdown = stats.get("relationship_breakdown", {})
+    if rel_breakdown:
+        lines.append("### Relationships")
+        parts = [f"{k}: {v}" for k, v in sorted(rel_breakdown.items(), key=lambda x: -x[1])]
+        lines.append(" | ".join(parts))
+        lines.append("")
+
+    # Top files by entity count
+    files_list = stats.get("files", [])
+    if files_list:
+        top_files = sorted(files_list, key=lambda f: f.get("entities", 0), reverse=True)
+        top_files = [f for f in top_files if f.get("entities", 0) > 0][:10]
+        if top_files:
+            lines.append("### Top Files")
+            file_parts = [f"{f['path']}: {f['entities']} entities" for f in top_files]
+            lines.append(" | ".join(file_parts))
+            lines.append("")
+
+    # Top-level directory structure
+    if files_list:
+        dir_counts: dict[str, int] = {}
+        dir_file_counts: dict[str, int] = {}
+        for f in files_list:
+            path = f.get("path", "")
+            parts = path.split("/")
+            top_dir = parts[0] if len(parts) > 1 else "(root)"
+            ent = f.get("entities", 0)
+            dir_counts[top_dir] = dir_counts.get(top_dir, 0) + ent
+            dir_file_counts[top_dir] = dir_file_counts.get(top_dir, 0) + 1
+        # Only show directories with entities, or top 5 by file count if none have entities
+        sorted_dirs = sorted(dir_counts.items(), key=lambda x: -x[1])
+        dirs_with_entities = [(d, c) for d, c in sorted_dirs if c > 0]
+        if dirs_with_entities:
+            sorted_dirs = dirs_with_entities[:8]
+            lines.append("### Module Structure")
+            dir_parts = [f"{d}/: {c} entities ({dir_file_counts[d]} files)" for d, c in sorted_dirs]
+            lines.append(" | ".join(dir_parts))
+            lines.append("")
+        elif total_files > 0:
+            # No entities in any directory — show top dirs by file count
+            sorted_by_files = sorted(dir_file_counts.items(), key=lambda x: -x[1])[:5]
+            lines.append("### Module Structure")
+            dir_parts = [f"{d}/: {fc} files" for d, fc in sorted_by_files]
+            lines.append(" | ".join(dir_parts))
+            lines.append("")
+
+    # Density metrics
+    if total_files > 0 and total_entities > 0:
+        avg_ent_per_file = total_entities / total_files
+        avg_rel_per_ent = total_rels / total_entities if total_entities else 0
+        files_with_entities = sum(1 for f in files_list if f.get("entities", 0) > 0) if files_list else 0
+        lines.append("### Density")
+        lines.append(f"Avg {avg_ent_per_file:.1f} entities/file | Avg {avg_rel_per_ent:.1f} relationships/entity")
+        if files_with_entities > 0:
+            lines.append(f"{files_with_entities} files with entities | {total_files - files_with_entities} files without")
+        lines.append("")
+
+    # Connectivity assessment
+    if total_entities > 0 and total_rels > 0:
+        connectivity_ratio = total_rels / total_entities
+        if connectivity_ratio > 3.0:
+            connectivity = "highly connected"
+        elif connectivity_ratio > 1.5:
+            connectivity = "moderately connected"
+        elif connectivity_ratio > 0.5:
+            connectivity = "loosely connected"
+        else:
+            connectivity = "sparse"
+        lines.append("### Connectivity")
+        lines.append(f"{connectivity_ratio:.1f} rels/entity — {connectivity}")
+        lines.append("")
+
+    # Architectural patterns (heuristic-based)
+    patterns: list[str] = []
+    if entity_breakdown:
+        unresolved_count = entity_breakdown.get("UNRESOLVED", 0)
+        if total_entities > 0 and unresolved_count / total_entities > 0.20:
+            pct = int(unresolved_count / total_entities * 100)
+            patterns.append(f"External dependencies significant ({pct}% unresolved)")
+        function_count = entity_breakdown.get("FUNCTION", 0) + entity_breakdown.get("METHOD", 0)
+        class_count = entity_breakdown.get("CLASS", 0)
+        if class_count > 0 and function_count > class_count * 3:
+            patterns.append("Function-centric codebase")
+        elif class_count > 0:
+            patterns.append("Class-oriented architecture")
+    if rel_breakdown:
+        imports_count = rel_breakdown.get("IMPORTS", 0)
+        inherits_count = rel_breakdown.get("INHERITS", 0)
+        calls_count = rel_breakdown.get("CALLS", 0)
+        contains_count = rel_breakdown.get("CONTAINS", 0)
+        if imports_count > 0 and total_entities > 0 and imports_count / total_entities > 0.15:
+            patterns.append("Modular architecture with explicit imports")
+        if inherits_count > 0:
+            patterns.append("OOP with class inheritance")
+        if calls_count > 0 and contains_count > 0 and calls_count > contains_count:
+            patterns.append("Call-heavy interaction graph")
+        if contains_count > 0 and total_entities > 0 and contains_count / total_entities > 0.3:
+            patterns.append("Nested entity structure")
+    if patterns:
+        lines.append("### Patterns")
+        lines.append(" | ".join(patterns))
+        lines.append("")
+
+    # Key observations — descriptive summary for orientation
+    observations: list[str] = []
+    if entity_breakdown and total_entities > 0:
+        top_type = max(entity_breakdown.items(), key=lambda x: x[1])
+        pct = int(top_type[1] / total_entities * 100)
+        observations.append(f"Dominant entity type: {top_type[0]} ({pct}% of all entities)")
+    if rel_breakdown and total_rels > 0:
+        top_rel = max(rel_breakdown.items(), key=lambda x: x[1])
+        pct = int(top_rel[1] / total_rels * 100)
+        observations.append(f"Dominant relationship: {top_rel[0]} ({pct}% of all relationships)")
+    if files_list and total_files > 0:
+        files_with_ent = sum(1 for f in files_list if f.get("entities", 0) > 0)
+        if files_with_ent > 0:
+            max_file = max(files_list, key=lambda f: f.get("entities", 0))
+            observations.append(f"Largest file: {max_file['path']} ({max_file['entities']} entities)")
+            coverage = int(files_with_ent / total_files * 100)
+            observations.append(f"Entity coverage: {files_with_ent}/{total_files} files ({coverage}%)")
+    if total_entities > 0 and total_rels > 0:
+        ratio = total_rels / total_entities
+        if ratio > 2.0:
+            observations.append("High relationship density suggests complex interdependencies")
+        elif ratio < 0.5:
+            observations.append("Low relationship density suggests isolated components")
+    if observations:
+        lines.append("### Key Observations")
+        for obs in observations:
+            lines.append(f"- {obs}")
+        lines.append("")
 
     if communities:
         for comm in communities:
@@ -288,14 +438,6 @@ def format_summary(
             if top:
                 lines.append(f"Key entities: {', '.join(top[:5])}")
             lines.append("")
-
-    files_list = stats.get("files", [])
-    if files_list:
-        lines.append("## Files")
-        file_parts = [f"{f['path']}: {f['entities']} entities" for f in files_list[:20]]
-        lines.append(" · ".join(file_parts))
-        if len(files_list) > 20:
-            lines.append(f"  ... and {len(files_list) - 20} more")
 
     return "\n".join(lines)
 

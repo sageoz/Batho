@@ -23,6 +23,8 @@ indexer:
   default_patterns_file: null  # Path to custom patterns YAML (null = built-in)
   fail_on_warning: false
   strict: false             # Treat parse warnings as errors
+  strict_hashing: false     # true = force SHA-256 content hash on every tracked file
+                            # false (default) = skip hashing when mtime+inode+size match
 
 graph:
   cycle_detection:
@@ -50,7 +52,14 @@ dependency:
     popular_packages_db_path: null # null = use bundled DB
   stdlib:
     enabled: true           # Index built-in language standard libraries
-    languages: ["python", "javascript", "go", "rust"]
+    languages:
+      ["python", "javascript", "typescript", "go", "rust",
+       "c", "cpp", "java", "ruby", "csharp", "php",
+       "kotlin", "swift", "scala", "dart", "haskell",
+       "lua", "r", "perl", "julia", "zig", "bash",
+       "objc", "erlang", "ocaml", "hack", "verilog"]
+    # Introspection now supports npm, Cargo, Go modules, and Maven artifacts
+    # in addition to Python packages.
   cache:
     enabled: true           # Persist indexed symbols across runs
     ttl_days: 90

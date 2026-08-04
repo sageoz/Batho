@@ -5,14 +5,14 @@ Replaces batho/modules/extraction/incremental_engine.py — no SQLite dependency
 
 from __future__ import annotations
 
-import logging
+import structlog
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from batho.utils.hash import compute_file_hash_cached
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = structlog.get_logger(__name__)
 
 
 class FileChangeType:
@@ -75,6 +75,11 @@ class IncrementalEngine:
                 changes.append(FileChange(rel, FileChangeType.ADDED, new_hash=new_hash))
                 continue
 
+            # Fast path: skip hashing if mtime+inode+size all match.
+            # This avoids reading file contents for unchanged files.
+            # Disabled when strict_hashing=True — users who opt into strict
+            # hashing want forced content hashing on every tracked file
+            # (e.g. to detect content changes that preserve mtime+size).
             if not strict_hashing:
                 tracked_mtime_ns = tracked.get("mtime_ns")
                 tracked_ino = tracked.get("inode")
@@ -104,6 +109,12 @@ class IncrementalEngine:
 
         for rel, tracked in known_tracking.items():
             if rel not in current_files:
+                # Skip synthetic file paths (e.g. __external_symbols__, .)
+                # that are created by the build flow for EXTERNAL_SYMBOL
+                # entities. These have no on-disk file and would otherwise
+                # always appear as "deleted" on every patch.
+                if rel == "__external_symbols__" or rel == "." or rel == "":
+                    continue
                 changes.append(FileChange(rel, FileChangeType.DELETED, old_hash=tracked["content_hash"]))
 
         return changes

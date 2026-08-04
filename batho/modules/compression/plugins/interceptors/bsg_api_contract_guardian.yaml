@@ -26,3 +26,33 @@ rules:
         bsg.intercept.message: Backend API boundary changed while dependent clients exist; synchronize request/response contracts.
       add_usn_tags:
         - ContractSensitive
+  - rule_id: api-contract-content
+    name: api-contract-content
+    description: Detect external API call patterns via file content matching.
+    severity: block
+    priority: 339
+    enabled: true
+    matchers:
+      entity_types:
+        - function
+        - method
+        - entry_point
+      content_patterns:
+        - 'requests.get('
+        - 'requests.post('
+        - 'requests.put('
+        - 'requests.delete('
+        - 'requests.patch('
+        - 'fetch('
+        - 'axios.get('
+        - 'axios.post('
+        - 'response.json('
+        - 'httpclient'
+        - 'resttemplate'
+        - 'webclient'
+    actions:
+      metadata:
+        bsg.intercept.category: CONTRACT
+        bsg.intercept.message: External API call detected via file content; verify contract handling and timeout behavior.
+      add_usn_tags:
+        - ContractSensitive

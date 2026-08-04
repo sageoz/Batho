@@ -120,7 +120,9 @@ class BathoBundle:
         self._run_uuid_by_internal_id: dict[int, str] = {}
 
         self._next_file_id: int = self._compute_next_file_id()
-        self._file_id_cache: dict[str, int] = self._load_file_id_cache()
+        self._file_id_cache: dict[str, int] = {}
+        self._existing_id_to_path: dict[int, str] = {}
+        self._load_file_id_cache_into_fields()
 
         self._writers: dict[int, BathoBundleWriter] = {}
         self._current_run_internal_id: int = 0
@@ -150,16 +152,19 @@ class BathoBundle:
             return 1
         return int(max_id) + 1
 
-    def _load_file_id_cache(self) -> dict[str, int]:
+    def _load_file_id_cache_into_fields(self) -> None:
+        """Populate _file_id_cache and _existing_id_to_path from file_tracking table."""
         p = self._active_or_empty("file_tracking")
         if p is None:
-            return {}
+            return
         table = read_ipc_table(p)
         if table.num_rows == 0 or "file_path" not in table.schema.names:
-            return {}
+            return
         paths = table.column("file_path").to_pylist()
         ids = table.column("file_id").to_pylist()
-        return dict(zip(paths, ids))
+        for path, fid in zip(paths, ids):
+            self._file_id_cache[path] = fid
+            self._existing_id_to_path[fid] = path
 
     def _active_or_empty(self, name: str) -> Path | None:
         return self._manager.active_path(name)
@@ -170,8 +175,12 @@ class BathoBundle:
             if file_path in self._file_id_cache:
                 return self._file_id_cache[file_path]
             fid = self._next_file_id
-            self._next_file_id += 1
+            while fid in self._existing_id_to_path:
+                fid = self._next_file_id
+                self._next_file_id += 1
+            self._next_file_id = fid + 1
             self._file_id_cache[file_path] = fid
+            self._existing_id_to_path[fid] = file_path
             return fid
 
     def _flush_runs(self, run_uuid: str) -> None:
@@ -485,6 +494,32 @@ class BathoBundle:
                         entity_ids_in_batch=entity_ids_in_batch,
                         delta_store=delta_store,
                     )
+
+    def append_relationships_for_file(
+        self,
+        run_internal_id: int,
+        file_path: str,
+        rels: list[dict[str, Any]],
+    ) -> None:
+        """Append additional relationships for a file to the bundle.
+
+        Used to add synthesized CONTAINS relationships (from Rust impl blocks
+        and Go receivers) that weren't in the original per-file extraction rels.
+        Does NOT reset existing rels — appends only.
+
+        Args:
+            run_internal_id: The run's internal ID.
+            file_path: Repo-relative file path.
+            rels: List of relationship dicts to append.
+        """
+        if not rels:
+            return
+        with self._lock:
+            writer = self._writers.get(run_internal_id)
+            if writer is None:
+                return
+            file_id = self._get_or_create_file_id(file_path)
+            writer.write_rels_only(file_id, rels)
 
     def get_file_artifacts(
         self,

@@ -52,5 +52,13 @@ def format_community_summary(community: dict[str, Any]) -> dict[str, Any]:
 
 
 def format_communities_for_overview(communities: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Format all communities for the graph_overview structured output."""
-    return [format_community_summary(c) for c in communities]
+    """Format all communities for the graph_overview structured output.
+
+    Filters out singleton communities (1 entity) from display — they are not
+    useful for users but are stored in the IPC file for benchmark coverage metrics.
+    """
+    return [
+        format_community_summary(c)
+        for c in communities
+        if not c.get("is_singleton", False) and c.get("entity_count", 0) >= 2
+    ]

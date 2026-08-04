@@ -119,6 +119,32 @@ class BathoBundleWriter:
             if self._row_count >= FLUSH_THRESHOLD_ROWS:
                 self._flush_buffers_locked()
 
+    def write_rels_only(
+        self,
+        file_id: int,
+        rels: list[dict[str, Any]],
+    ) -> None:
+        """Write relationships for a file without agent/storage entities.
+
+        Used during post-graph rels rewrite to persist synthesized
+        relationships (e.g., CONTAINS from Rust impl blocks / Go receivers).
+        """
+        with self._lock:
+            for rel in rels:
+                self._rels_buf["file_id"].append(file_id)
+                self._rels_buf["source_id"].append(str(rel.get("source_id", "")))
+                self._rels_buf["target_id"].append(str(rel.get("target_id", "")))
+                self._rels_buf["relation_type"].append(
+                    str(rel.get("relation_type") or rel.get("type") or rel.get("relationship_type", ""))
+                )
+                meta = rel.get("metadata")
+                import json as _json
+                self._rels_buf["metadata_json"].append(_json.dumps(meta) if meta else None)
+
+            self._row_count += len(rels)
+            if self._row_count >= FLUSH_THRESHOLD_ROWS:
+                self._flush_buffers_locked()
+
     def _flush_buffers_locked(self) -> None:
         if self._row_count == 0:
             return

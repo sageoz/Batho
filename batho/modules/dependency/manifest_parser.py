@@ -1,7 +1,7 @@
 from __future__ import annotations
 import hashlib
 import json
-import logging
+import structlog
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -10,7 +10,7 @@ from typing import List, Optional, Any, Callable
 
 from batho.core.schemas import PackageManager, PackageMetadata
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Safe import for tomllib
 try:
@@ -47,47 +47,96 @@ class ManifestParser:
     Returns list[DependencySpec] which contains declared dependencies.
     """
     
+    # Directories to skip when searching for nested manifest files.
+    _SKIP_DIRS = frozenset({
+        ".git", ".hg", ".svn", ".batho", "__pycache__", "node_modules",
+        "target", "vendor", ".venv", "venv", ".tox", "dist", "build",
+        ".eggs", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        "site-packages", "Cargo.lock", ".idea", ".vscode",
+    })
+
+    # Maximum depth for recursive manifest search (root = depth 0).
+    _MAX_SEARCH_DEPTH = 3
+
+    @classmethod
+    def _find_manifests(cls, root: Path, pattern: str) -> list[Path]:
+        """Find manifest files matching *pattern* in root and nested subdirectories.
+
+        Checks the root first (most common case), then searches recursively
+        up to _MAX_SEARCH_DEPTH levels deep, skipping irrelevant directories.
+        """
+        root = Path(root)
+        found: list[Path] = []
+
+        # Root-level check (fast path)
+        root_file = root / pattern
+        if root_file.is_file():
+            found.append(root_file)
+
+        # Recursive search for nested manifests (e.g. tokenizers/tokenizers/Cargo.toml)
+        # Always search — monorepos and Rust workspaces have both root and
+        # nested manifests (e.g. root Cargo.toml + member crates at subdir/Cargo.toml).
+        seen = set(found)
+        for path in root.rglob(pattern):
+            if path in seen:
+                continue
+            # Skip if any path component is in the skip set
+            if any(part in cls._SKIP_DIRS for part in path.parts):
+                continue
+            # Enforce max depth relative to root
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                continue
+            depth = len(rel.parts) - 1  # exclude the filename itself
+            if depth <= cls._MAX_SEARCH_DEPTH:
+                found.append(path)
+                seen.add(path)
+
+        return found
+
     def parse_manifests(self, root: Path) -> List[DependencySpec]:
-        """Parse all detected manifests in the root directory."""
+        """Parse all detected manifests in the root directory tree.
+
+        Searches the root directory first, then recursively up to 3 levels
+        deep for nested manifest files (e.g. monorepo workspaces, Rust
+        sub-crates at repo/subdir/Cargo.toml).
+        """
         all_deps = []
         root = Path(root)
-        
+
         # 1. Pip/Poetry/Setuptools (Python)
         for req_file in root.glob("requirements*.txt"):
             all_deps.extend(self._parse_requirements_txt(req_file))
-        
-        pyproject = root / "pyproject.toml"
-        if pyproject.is_file():
+
+        for pyproject in self._find_manifests(root, "pyproject.toml"):
             all_deps.extend(self._parse_pyproject_toml(pyproject))
-            
-        setup_cfg = root / "setup.cfg"
-        if setup_cfg.is_file():
+
+        for setup_cfg in self._find_manifests(root, "setup.cfg"):
             all_deps.extend(self._parse_setup_cfg(setup_cfg))
-            
+
         # 2. NPM (JavaScript)
-        pkg_json = root / "package.json"
-        if pkg_json.is_file():
+        for pkg_json in self._find_manifests(root, "package.json"):
             all_deps.extend(self._parse_package_json(pkg_json))
-            
+
         # 3. Cargo (Rust)
-        cargo_toml = root / "Cargo.toml"
-        if cargo_toml.is_file():
+        for cargo_toml in self._find_manifests(root, "Cargo.toml"):
             all_deps.extend(self._parse_cargo_toml(cargo_toml))
-            
+
         # 4. Go (Go)
-        go_mod = root / "go.mod"
-        if go_mod.is_file():
+        for go_mod in self._find_manifests(root, "go.mod"):
             all_deps.extend(self._parse_go_mod(go_mod))
-            
+
         # 5. Maven (Java)
-        pom_xml = root / "pom.xml"
-        if pom_xml.is_file():
+        for pom_xml in self._find_manifests(root, "pom.xml"):
             all_deps.extend(self._parse_pom_xml(pom_xml))
-            
+
         # 6. Gradle (Java)
-        for gradle_file in root.glob("build.gradle*"):
+        for gradle_file in self._find_manifests(root, "build.gradle"):
             all_deps.extend(self._parse_build_gradle(gradle_file))
-            
+        for gradle_file in self._find_manifests(root, "build.gradle.kts"):
+            all_deps.extend(self._parse_build_gradle(gradle_file))
+
         return all_deps
 
     @staticmethod
@@ -137,53 +186,50 @@ class ManifestParser:
 
     @classmethod
     def detect_project_metadata(cls, root: Path, cache=None) -> PackageMetadata | None:
-        """Detect the project's own package metadata from root configuration files."""
+        """Detect the project's own package metadata from root configuration files.
+
+        Checks the root directory first, then falls back to nested manifests
+        (up to 3 levels deep) for repos where the project lives in a subdirectory.
+        """
         root = Path(root)
 
         # 1. NPM (package.json)
-        package_json = root / "package.json"
-        if package_json.is_file():
+        for package_json in cls._find_manifests(root, "package.json"):
             result = cls._with_cache(cache, package_json, lambda: cls._parse_npm_metadata(package_json))
             if result:
                 return result
 
         # 2. PIP / Poetry (pyproject.toml)
-        pyproject_toml = root / "pyproject.toml"
-        if pyproject_toml.is_file():
+        for pyproject_toml in cls._find_manifests(root, "pyproject.toml"):
             result = cls._with_cache(cache, pyproject_toml, lambda: cls._parse_pyproject_metadata(pyproject_toml))
             if result:
                 return result
 
         # 3. Cargo (Cargo.toml)
-        cargo_toml = root / "Cargo.toml"
-        if cargo_toml.is_file():
+        for cargo_toml in cls._find_manifests(root, "Cargo.toml"):
             result = cls._with_cache(cache, cargo_toml, lambda: cls._parse_cargo_metadata(cargo_toml))
             if result:
                 return result
 
         # 4. Go (go.mod)
-        go_mod = root / "go.mod"
-        if go_mod.is_file():
+        for go_mod in cls._find_manifests(root, "go.mod"):
             result = cls._with_cache(cache, go_mod, lambda: cls._parse_go_metadata(go_mod))
             if result:
                 return result
 
         # 5. Maven (pom.xml)
-        pom_xml = root / "pom.xml"
-        if pom_xml.is_file():
+        for pom_xml in cls._find_manifests(root, "pom.xml"):
             result = cls._with_cache(cache, pom_xml, lambda: cls._parse_maven_metadata(pom_xml))
             if result:
                 return result
 
-        # 6. Gradle (build.gradle / settings.gradle)
-        build_gradle = root / "build.gradle"
-        build_gradle_kts = root / "build.gradle.kts"
-        if build_gradle.is_file() or build_gradle_kts.is_file():
-            result = cls._with_cache(
-                cache,
-                build_gradle if build_gradle.is_file() else build_gradle_kts,
-                lambda: cls._parse_gradle_metadata(root, build_gradle, build_gradle_kts)
-            )
+        # 6. Gradle (build.gradle / build.gradle.kts)
+        for build_gradle in cls._find_manifests(root, "build.gradle"):
+            result = cls._with_cache(cache, build_gradle, lambda: cls._parse_gradle_metadata(root, build_gradle, None))
+            if result:
+                return result
+        for build_gradle_kts in cls._find_manifests(root, "build.gradle.kts"):
+            result = cls._with_cache(cache, build_gradle_kts, lambda: cls._parse_gradle_metadata(root, None, build_gradle_kts))
             if result:
                 return result
 

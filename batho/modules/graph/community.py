@@ -27,6 +27,8 @@ class Community:
     top_entities: list[str] = field(default_factory=list)
     description: str = ""
     file_paths: list[str] = field(default_factory=list)
+    member_entity_ids: list[str] = field(default_factory=list)
+    is_singleton: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -37,6 +39,8 @@ class Community:
             "top_entities": self.top_entities,
             "description": self.description,
             "file_paths": self.file_paths,
+            "member_entity_ids": self.member_entity_ids,
+            "is_singleton": self.is_singleton,
         }
 
 
@@ -173,11 +177,12 @@ def detect_communities(graph: "GraphBackend", config: dict[str, Any] | None = No
 
     communities: list[Community] = []
     for comm_idx, member_indices in enumerate(partition):
-        if len(member_indices) < 2:
+        if len(member_indices) < 1:
             continue
 
         member_ids = [idx_to_id[i] for i in member_indices]
         member_entities = [graph.entities[eid] for eid in member_ids if eid in graph.entities]
+        is_singleton = len(member_indices) == 1
 
         file_set: set[str] = set()
         entity_names: list[str] = []
@@ -207,6 +212,8 @@ def detect_communities(graph: "GraphBackend", config: dict[str, Any] | None = No
             top_entities=top_names,
             description=description,
             file_paths=sorted(file_set),
+            member_entity_ids=member_ids,
+            is_singleton=is_singleton,
         ))
 
     communities.sort(key=lambda c: c.entity_count, reverse=True)

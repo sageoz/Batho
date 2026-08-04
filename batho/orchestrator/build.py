@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel
 from batho.core.config import get_config_cached, set_active_root
+from batho.core.schemas import EntityType
 from batho.utils.hash import _is_binary, compute_file_hash
 from batho.utils.logging import get_logger
 from batho.utils.memory_monitor import get_rss_mb, should_flush_for_memory
@@ -501,6 +502,22 @@ def run_build(options: BuildOptions) -> BuildResult:
                             if rel in store_files:
                                 entities_by_file[rel].append(entity.to_dict())
 
+                        # Collect EXTERNAL_SYMBOL entities (already written above
+                        # via the direct DB insert, but also add to entities_by_file
+                        # so the legacy write path and store_files include them).
+                        external_entities = [
+                            e for e in graph.entities.values()
+                            if e.type == EntityType.EXTERNAL_SYMBOL
+                        ]
+                        if external_entities:
+                            external_file_rel = "__external_symbols__"
+                            store_files.add(external_file_rel)
+                            all_file_paths.add(external_file_rel)
+                            legacy_files.add(external_file_rel)
+                            entities_by_file[external_file_rel] = [
+                                e.to_dict() for e in external_entities
+                            ]
+
                         rels_by_source_file = defaultdict(list)
                         for rel in graph.relationships:
                             source_ent = graph.get_entity(rel.source_id)
@@ -508,6 +525,33 @@ def run_build(options: BuildOptions) -> BuildResult:
                             rel_file_rel = rel_file[len(root_str)+1:] if rel_file.startswith(root_str) else rel_file
                             if rel_file_rel in store_files:
                                 rels_by_source_file[rel_file_rel].append(rel.to_dict())
+
+                        # ───────────────────────────────────────────────────────────────
+                        # Append synthesized CONTAINS relationships
+                        #
+                        # The precompiled write path (during extraction) wrote
+                        # per-file relationships to the bundle BEFORE graph
+                        # synthesis ran. Those rels are missing synthesized
+                        # CONTAINS relationships (Rust impl→struct, Go receiver→struct).
+                        #
+                        # Append ONLY the synthesized rels to the bundle, preserving
+                        # the existing pre-synthesis rels that cover all agent_views
+                        # entities (including those pruned from the graph).
+                        # ───────────────────────────────────────────────────────────────
+                        synthesized_rels_by_file: dict[str, list[dict]] = defaultdict(list)
+                        for file_rel, file_rels in rels_by_source_file.items():
+                            for rel in file_rels:
+                                meta = rel.get("metadata") or {}
+                                if meta.get("synthesized"):
+                                    synthesized_rels_by_file[file_rel].append(rel)
+
+                        if synthesized_rels_by_file:
+                            for file_rel, syn_rels in synthesized_rels_by_file.items():
+                                db.append_relationships_for_file(
+                                    run_internal_id,
+                                    file_rel,
+                                    syn_rels,
+                                )
 
                         legacy_write_batch = []
                         legacy_current_batch_bytes = 0
@@ -558,6 +602,10 @@ def run_build(options: BuildOptions) -> BuildResult:
                             relationships_data = rels_by_source_file.get(file_rel, [])
 
                             content_hash = compute_file_hash(root / file_rel) or ""
+                            # Synthetic file paths (e.g. __external_symbols__) have
+                            # no on-disk file; use a stable placeholder hash.
+                            if not content_hash and file_rel == "__external_symbols__":
+                                content_hash = "__external__"
                             item = {
                                 "file_path": file_rel,
                                 "content_hash": content_hash,
@@ -864,6 +912,21 @@ def _build_file_tracking(graph: Any, root: Path, indexer: Any = None, *, run_id:
             })
         except OSError:
             continue
+
+    # Add a synthetic file tracking record for EXTERNAL_SYMBOL entities so the
+    # reader can resolve their file_id back to the __external_symbols__ path.
+    if any(e.type == EntityType.EXTERNAL_SYMBOL for e in graph.entities.values()):
+        records.append({
+            "file_path": "__external_symbols__",
+            "content_hash": "__external__",
+            "mtime": 0.0,
+            "mtime_ns": 0,
+            "inode": 0,
+            "size": 0,
+            "is_indexed": 1,
+            "last_run_id": run_id or None,
+            "encoding": "utf-8",
+        })
 
     if indexer is not None:
         for _abs_path, rel in indexer.get_unindexed_files():

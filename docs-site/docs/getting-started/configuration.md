@@ -45,6 +45,7 @@ Controls indexing limits and warning/strict levels.
 - `default_patterns_file`: Custom patterns file path.
 - `fail_on_warning`: Treat indexing warnings as failure.
 - `strict`: Parse strictly, treating warnings as errors.
+- `strict_hashing`: When `true`, force SHA-256 content hashing on every tracked file during patch change detection. When `false` (default), skip hashing when `mtime`+`inode`+`size` all match (fast-path).
 
 ### 5. `graph`
 Configures hypergraph consistency.
@@ -66,7 +67,7 @@ Top-level parser execution controls.
 Consolidated Dependency Extraction Utility (CDEU) settings.
 - `enabled`: Enable indexing of stdlib and third-party dependencies.
 - `introspection`:
-  - `enabled`: Introspect installed packages (e.g. from `.venv`).
+  - `enabled`: Introspect installed packages. Supports Python (venv), npm (`node_modules`), Cargo (registry cache), Go modules (GOPATH cache), and Maven artifacts (`~/.m2`).
   - `mode`: `shallow` (exports only) or `deep` (recursive).
   - `venv_auto_detect`: Find `.venv` directories automatically.
   - `timeout_seconds`: Timeout for introspecting one package.
@@ -74,7 +75,7 @@ Consolidated Dependency Extraction Utility (CDEU) settings.
   - `popular_packages_db_path`: Custom popular packages path.
 - `stdlib`:
   - `enabled`: Index built-in language libraries.
-  - `languages`: Languages to index (e.g., `["python", "javascript", "go", "rust"]`).
+  - `languages`: Languages to index. Defaults to 27 languages: `python`, `javascript`, `typescript`, `go`, `rust`, `c`, `cpp`, `java`, `ruby`, `csharp`, `php`, `kotlin`, `swift`, `scala`, `dart`, `haskell`, `lua`, `r`, `perl`, `julia`, `zig`, `bash`, `objc`, `erlang`, `ocaml`, `hack`, `verilog`. See `batho.yaml.example` for the full list.
 - `cache`:
   - `enabled`: Cache dependency lookups.
   - `ttl_days`: Days before dependency cache entries expire.

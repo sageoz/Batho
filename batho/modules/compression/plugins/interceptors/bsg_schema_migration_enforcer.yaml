@@ -21,3 +21,35 @@ rules:
         bsg.intercept.message: Database structure changed; ensure migration artifacts are generated and reviewed.
       add_usn_tags:
         - MigrationSensitive
+  - rule_id: schema-migration-content
+    name: schema-migration-content
+    description: Detect schema/ORM/SQL patterns via file content matching.
+    severity: block
+    priority: 329
+    enabled: true
+    matchers:
+      entity_types:
+        - function
+        - method
+        - entry_point
+        - class
+      content_patterns:
+        - 'CREATE TABLE'
+        - 'ALTER TABLE'
+        - 'DROP TABLE'
+        - 'ADD COLUMN'
+        - 'class Model'
+        - 'models.Model'
+        - 'models.'
+        - 'schema'
+        - 'migration'
+        - 'SELECT'
+        - 'INSERT INTO'
+        - 'UPDATE'
+        - 'DELETE FROM'
+    actions:
+      metadata:
+        bsg.intercept.category: DATA
+        bsg.intercept.message: Database schema/ORM pattern detected via file content; ensure migration artifacts are generated and reviewed.
+      add_usn_tags:
+        - MigrationSensitive

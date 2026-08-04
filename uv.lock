@@ -131,7 +131,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-igraph", specifier = ">=0.11" },
     { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "structlog", specifier = ">=25.1.0" },
+    { name = "structlog", specifier = ">=25.1.0,<26" },
     { name = "tree-sitter", specifier = ">=0.25.0" },
     { name = "tree-sitter-language-pack", specifier = ">=0.6.0,<1.0.0" },
     { name = "zstandard", specifier = ">=0.22.0" },

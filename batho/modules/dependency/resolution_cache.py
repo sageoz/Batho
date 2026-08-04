@@ -1,6 +1,6 @@
 from __future__ import annotations
 import hashlib
-import logging
+import structlog
 import msgpack
 import os
 import tempfile
@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 class ResolutionCache:
     """

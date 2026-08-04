@@ -1,11 +1,11 @@
 from __future__ import annotations
 import os
-import logging
+import structlog
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 class PopularPackagesDB:
     """

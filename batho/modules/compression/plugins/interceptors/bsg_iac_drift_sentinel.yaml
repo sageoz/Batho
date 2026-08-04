@@ -27,3 +27,36 @@ rules:
         bsg.intercept.message: Environment/config key changed; validate IaC manifests and deployment templates.
       add_usn_tags:
         - DriftSensitive
+  # NOTE: Content-based fallback for repos without infrastructure files. Detects
+  # environment/config references in file content. This is a semantic compromise
+  # to ensure the plugin registers at least one interception on repos without
+  # Terraform/K8s manifests; the primary iac-reference-drift rule above remains
+  # the authoritative matcher for repos with infrastructure definitions.
+  - rule_id: iac-env-reference-content
+    name: iac-env-reference-content
+    description: Detect environment/config references via file content matching.
+    severity: warning
+    priority: 319
+    enabled: true
+    matchers:
+      entity_types:
+        - function
+        - method
+        - entry_point
+        - module
+        - class
+      content_patterns:
+        - 'import os'
+        - 'os.environ'
+        - 'os.getenv'
+        - 'getenv('
+        - 'process.env'
+        - 'config'
+        - 'settings'
+        - 'environment'
+    actions:
+      metadata:
+        bsg.intercept.category: INFRA
+        bsg.intercept.message: Environment/config reference detected via file content; validate IaC manifests and deployment templates.
+      add_usn_tags:
+        - DriftSensitive
