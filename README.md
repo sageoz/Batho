@@ -138,7 +138,7 @@ Batho's CI/CD strategy is **incremental**: download the previous artifact → `b
 **GitHub Actions composite action:**
 
 ```yaml
-- uses: sageoz/batho@v1.2.0
+- uses: sageoz/batho@v1.4.0
   with:
     root: "."
     artifact-name: "batho-index"
@@ -176,6 +176,8 @@ uv run python batho_cli.py --help
 - [Whitepaper](https://batho.sageoz.org/docs/whitepaper) — Deep technical reference
 - [CLI Reference](https://batho.sageoz.org/docs/cli-reference) — Complete command documentation
 - [CI/CD](https://batho.sageoz.org/docs/cicd) — GitHub Actions, GitLab CI, and more
+- [Changelog](https://batho.sageoz.org/docs/changelog) — Release history and version notes
+- [Releases](https://github.com/sageoz/batho/releases) — Detailed release notes for each version
 
 ---
 
