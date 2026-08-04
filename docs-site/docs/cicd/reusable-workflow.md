@@ -7,7 +7,7 @@ The reusable workflow (`batho-index.yml`) wraps the composite action into a call
 ```mermaid
 flowchart TD
     A["Consumer repo calls reusable workflow"] --> B["actions/checkout@v7"]
-    B --> C["sageoz/batho@v1.3.2 composite action"]
+    B --> C["sageoz/batho@v1.4.0 composite action"]
     C --> D["Outputs forwarded to caller"]
 ```
 
@@ -18,7 +18,7 @@ Add this to any workflow in a consumer repository:
 ```yaml
 jobs:
   batho:
-    uses: sageoz/batho/.github/workflows/batho-index.yml@v1.3.2
+    uses: sageoz/batho/.github/workflows/batho-index.yml@v1.4.0
     with:
       root: "."
       python-version: "3.12"
@@ -73,7 +73,7 @@ permissions:
 
 jobs:
   batho:
-    uses: sageoz/batho/.github/workflows/batho-index.yml@v1.3.2
+    uses: sageoz/batho/.github/workflows/batho-index.yml@v1.4.0
     with:
       root: "."
       python-version: "3.12"
@@ -96,5 +96,5 @@ Consumer workflows only need `contents: read` to check out the repository. The c
 ## Why Use the Reusable Workflow?
 
 - **One-liner integration**: No step definitions needed.
-- **Always up to date**: Pin to a tag (`v1.3.2`) or follow `main` for latest features.
+- **Always up to date**: Pin to a tag (`v1.4.0`) or follow `main` for latest features.
 - **Centralized defaults**: Batho maintainers can update defaults without touching consumer repos.

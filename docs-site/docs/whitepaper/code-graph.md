@@ -47,7 +47,7 @@ The `InMemoryGraph` ensures deterministic processing through lazy indexing and a
 
 ### Arrow Graph Backend
 
-Batho v1.3.2 introduces `ArrowGraph`, a columnar, memory-mapped graph backend that serves as a drop-in alternative to `InMemoryGraph` for large codebases. It uses a three-phase lifecycle:
+Batho v1.4.0 introduces `ArrowGraph`, a columnar, memory-mapped graph backend that serves as a drop-in alternative to `InMemoryGraph` for large codebases. It uses a three-phase lifecycle:
 
 1. **Stream**: Extracted rows are flushed to Arrow IPC stream files, keeping only entity/relationship ID sets in memory for dedup.
 2. **Dicts**: Stream files are read back into dictionaries with secondary indexes, mirroring `InMemoryGraph` semantics.
@@ -146,7 +146,7 @@ def create_user(name: str) -> User:
 
 ## 4.5 Bidirectional Traversal & Lossless Reconstruction
 
-Batho v1.3.2 supports lossless, bidirectional graph-to-code reconstruction, allowing a developer or LLM agent to rebuild the exact source file from the graph.
+Batho v1.4.0 supports lossless, bidirectional graph-to-code reconstruction, allowing a developer or LLM agent to rebuild the exact source file from the graph.
 
 ### The Role of `SYNTAX_GLUE`
 When `bsg.bidirectional.enabled` is `true`, the parser identifies not only AST elements (e.g. classes, functions) but also all intervening segments, such as whitespace, braces, skipped comments, and other non-semantic structures. These are emitted as `SYNTAX_GLUE` entities.

@@ -20,7 +20,7 @@ Batho works out of the box with zero config. For production use, configure with 
 The `batho.yaml` config is structured into the following sections:
 
 ### 1. `schema_version`
-String identifier for configuration schema compatibility. For v1.3.2, this is `"batho-config.v1"`.
+String identifier for configuration schema compatibility. For v1.4.0, this is `"batho-config.v1"`.
 
 ### 2. `logging`
 Controls process-wide logging and CLI verbosity behavior.
