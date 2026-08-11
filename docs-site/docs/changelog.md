@@ -144,7 +144,7 @@ description: "Batho release history"
   - `get_delta` — incremental changes from the latest patch
   - `list_repos` / `add_repo` / `remove_repo` — multi-repo registry management
 - **Multi-Repo Registry**: JSON-based registry at `~/.batho/mcp-repos.json` — one MCP config entry serves all repos. Register repos at runtime via `add_repo` tool.
-- **Community Detection**: Leiden clustering via `leidenalg` + `igraph` — automatically groups related entities into communities for codebase overview.
+- **Community Detection**: Greedy modularity clustering via `networkx` — automatically groups related entities into communities for codebase overview.
 - **Dual-Output Architecture**: All MCP tools return both markdown `content` (model-facing, ~34% fewer tokens) and JSON `structuredContent` (machine-facing).
 - **Token Budget Truncation**: Configurable `max_tokens` parameter on graph tools with automatic truncation and reporting.
 - **MCP Prompts**: Workflow-specific prompt templates for agent onboarding (`explore_codebase`, `understand_function`, `analyze_file`, `trace_dependency`, `review_changes`, `impact_analysis`, `architecture_overview`).
@@ -153,7 +153,7 @@ description: "Batho release history"
 - **SKILL.md**: AI agent setup skill file for automated global install, MCP configuration across Claude Desktop, Cursor, Windsurf, and VS Code.
 - **GitHub Actions Fleet Indexer**: Automated code graph indexing workflow with incremental patching on every push/PR.
 - **New CLI Command**: `batho mcp` — starts the MCP server (8th CLI command).
-- **New Dependencies**: `fastmcp>=2.14.0`, `leidenalg>=0.10`, `python-igraph>=0.11`
+- **New Dependencies**: `fastmcp>=3.4.0`, `networkx>=3.0`, `watchdog>=6.0.0`
 
 ### Tests
 

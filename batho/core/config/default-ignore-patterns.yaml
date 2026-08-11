@@ -64,6 +64,8 @@ patterns:
   - ".roo/"
   - ".cline/"
   - ".kilo/"
+  - ".devin/"
+  - ".windsurf/"
 
   # Framework build directories
   - ".next/"

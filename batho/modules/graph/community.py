@@ -1,7 +1,10 @@
-"""Community detection via Leiden clustering.
+"""Community detection via greedy modularity clustering.
 
-Builds an igraph.Graph from InMemoryGraph relationships, runs Leiden
-modularity partitioning, and produces Community summaries for MCP output.
+Builds a networkx.Graph from InMemoryGraph relationships, runs greedy
+modularity community detection, and produces Community summaries for MCP output.
+
+Uses networkx (BSD-3-Clause) instead of leidenalg (GPL-3.0) / python-igraph
+(GPL-2.0) to maintain Apache-2.0 license compatibility.
 """
 
 from __future__ import annotations
@@ -132,8 +135,7 @@ def detect_communities(graph: "GraphBackend", config: dict[str, Any] | None = No
         )
 
     try:
-        import igraph as ig
-        import leidenalg
+        import networkx as nx
     except ImportError:
         LOGGER.warning("community_detection_deps_missing")
         return []
@@ -154,29 +156,27 @@ def detect_communities(graph: "GraphBackend", config: dict[str, Any] | None = No
         id_to_idx[eid] = i
         idx_to_id[i] = eid
 
+    nx_graph = nx.Graph()
+    nx_graph.add_nodes_from(range(len(entity_ids)))
     edges: list[tuple[int, int]] = []
     for rel in relationships:
         src_idx = id_to_idx.get(rel.source_id)
         tgt_idx = id_to_idx.get(rel.target_id)
         if src_idx is not None and tgt_idx is not None and src_idx != tgt_idx:
             edges.append((src_idx, tgt_idx))
+    nx_graph.add_edges_from(edges)
 
-    if not edges:
+    if nx_graph.number_of_edges() == 0:
         return []
 
-    ig_graph = ig.Graph(n=len(entity_ids), edges=edges, directed=True)
-
     try:
-        partition = leidenalg.find_partition(
-            ig_graph,
-            leidenalg.ModularityVertexPartition,
-        )
+        communities_sets = nx.community.greedy_modularity_communities(nx_graph)
     except Exception as exc:
         LOGGER.warning("community_detection_failed", error=str(exc))
         return []
 
     communities: list[Community] = []
-    for comm_idx, member_indices in enumerate(partition):
+    for comm_idx, member_indices in enumerate(communities_sets):
         if len(member_indices) < 1:
             continue
 

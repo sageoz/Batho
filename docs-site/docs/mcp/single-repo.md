@@ -41,7 +41,7 @@ This creates `.batho/artifact/` containing Arrow IPC files:
 - `storage_views.ipc` — source code snippets
 - `file_tracking.ipc` — file metadata
 - `runs.ipc` — build run history
-- `communities.ipc` — Leiden community detection results
+- `communities.ipc` — Greedy modularity community detection results
 
 ## Step 3: Start the MCP Server
 

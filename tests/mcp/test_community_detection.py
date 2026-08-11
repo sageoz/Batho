@@ -1,4 +1,4 @@
-"""Tests for community detection via Leiden clustering.
+"""Tests for community detection via greedy modularity clustering.
 
 Scenario:
     Community detection runs on an InMemoryGraph and produces Community
@@ -91,7 +91,7 @@ def test_communities_to_rows():
 def test_communities_ipc_written(built_artifact: Path):
     artifact_dir = built_artifact / ".batho" / "artifact"
     communities_path = artifact_dir / "communities.ipc"
-    # communities.ipc may not exist if leidenalg is not installed
+    # communities.ipc may not exist if networkx is not installed
     if communities_path.exists():
         import pyarrow as pa
         import pyarrow.ipc as ipc

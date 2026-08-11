@@ -63,7 +63,7 @@ def test_detect_communities_disabled_by_config():
 
 
 def test_detect_communities_skips_above_threshold():
-    """Graphs with more entities than skip_threshold should not run Leiden."""
+    """Graphs with more entities than skip_threshold should not run community detection."""
     files = {f"f{i}.py": [f"e{i}"] for i in range(10)}
     graph = _make_graph(files, [])
     result = detect_communities(graph, {"skip_threshold": 5, "sample_threshold": 2})
@@ -90,9 +90,8 @@ def test_detect_communities_samples_between_thresholds(monkeypatch):
 
     monkeypatch.setattr("batho.modules.graph.community._sample_graph_by_files", fake_sample)
 
-    # Mock out igraph/leidenalg so the test does not depend on optional deps
-    monkeypatch.setitem(__import__("sys").modules, "igraph", MagicMock())
-    monkeypatch.setitem(__import__("sys").modules, "leidenalg", MagicMock())
+    # Mock out networkx so the test does not depend on optional deps
+    monkeypatch.setitem(__import__("sys").modules, "networkx", MagicMock())
 
     detect_communities(graph, {"skip_threshold": 10, "sample_threshold": 2})
     assert called["sampled"]
