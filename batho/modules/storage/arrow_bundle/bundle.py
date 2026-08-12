@@ -796,8 +796,14 @@ class BathoBundle:
         *,
         limit: int = 50,
         since_completed_at: str | None = None,
+        since_run_uuid: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._reader.get_file_node_history(entity_id)[:limit]
+        return self._reader.get_file_node_history(
+            entity_id,
+            since_run_uuid=since_run_uuid,
+            since_completed_at=since_completed_at,
+        )[:limit]
+
 
     def get_run_file_changelog(self, run_uuid: str) -> list[dict[str, Any]]:
         return self._reader.get_file_changelog_raw(since_run_uuid=run_uuid)

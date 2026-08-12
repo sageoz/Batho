@@ -186,7 +186,11 @@ class BathoBundleReader:
             return []
         return table.to_pylist()
 
+    def get_manifest(self) -> dict[str, Any]:
+        return self._manager.load_manifest()
+
     def get_run(self, run_uuid: str) -> dict[str, Any] | None:
+
         table = self._get_table("runs")
         if table.num_rows == 0:
             return None
@@ -245,6 +249,7 @@ class BathoBundleReader:
         entity_id: str,
         *,
         since_run_uuid: str | None = None,
+        since_completed_at: str | None = None,
     ) -> list[dict[str, Any]]:
         table = self._get_table("file_changelog")
         if table.num_rows == 0:
@@ -252,7 +257,20 @@ class BathoBundleReader:
         import pyarrow.compute as pc
         mask = pc.equal(table.column("entity_id"), entity_id)
         result = table.filter(mask)
-        return result.to_pylist()
+        rows = result.to_pylist()
+
+        runs = self.get_all_runs()
+        run_times = {r.get("run_uuid"): r.get("completed_at", "") or r.get("started_at", "") for r in runs}
+
+        threshold = since_completed_at
+        if since_run_uuid and not threshold:
+            threshold = run_times.get(since_run_uuid)
+
+        if threshold:
+            rows = [r for r in rows if run_times.get(r.get("run_uuid", ""), "") >= threshold]
+
+        return rows
+
 
     # ------------------------------------------------------------------
     # Run artifacts reads

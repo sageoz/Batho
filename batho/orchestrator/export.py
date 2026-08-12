@@ -122,7 +122,12 @@ def _load_bsg_map_from_bundle(
                 for e in entities_data:
                     if isinstance(e, dict):
                         e["file"] = abs_file_path
+                        if e.get("leading_whitespace") is None:
+                            e["leading_whitespace"] = ""
+                        if e.get("trailing_whitespace") is None:
+                            e["trailing_whitespace"] = ""
                 entities = [Entity.from_dict(e) for e in entities_data if isinstance(e, dict)]
+
                 if entities:
                     by_file[file_path] = sorted(entities, key=lambda e: e.start_line)
 

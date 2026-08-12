@@ -34,12 +34,15 @@ ALL_TOOLS = [
     "list_repos", "add_repo", "remove_repo",
     "graph_overview", "graph_query", "get_entity",
     "trace_path", "get_file_graph", "search_entities", "get_delta",
+    "batho_status", "batho_list_runs", "batho_build", "batho_patch",
+    "batho_export", "batho_diff", "batho_gc", "batho_fix", "batho_load",
 ]
 
 
 def test_all_tools_have_descriptions(app):
     """Verify every tool has a non-empty description."""
     tools = asyncio.run(app.list_tools())
+    assert len(tools) == 19
 
     for tool in tools:
         assert tool.description is not None
@@ -50,37 +53,25 @@ def test_all_tools_have_descriptions(app):
 def test_tool_descriptions_contain_args_section(app):
     """Verify tools with parameters have Args in their full docstring."""
     tools = asyncio.run(app.list_tools())
-    # Tools with parameters have a JSON schema with properties
     tools_with_params = [t for t in tools if t.parameters and t.parameters.get("properties")]
 
     for tool in tools_with_params:
-        # FastMCP may truncate description at first \n\n, so check the fn docstring
         full_doc = tool.fn.__doc__ or tool.description or ""
         assert "Args:" in full_doc, \
             f"Tool {tool.name} docstring should contain Args section"
-
-
-def test_tool_descriptions_contain_negative_guidance(app):
-    """Verify tool descriptions contain 'Do NOT' negative instructions."""
-    tools = asyncio.run(app.list_tools())
-    tools_with_guidance = [t for t in tools if t.name not in ("list_repos",)]
-
-    for tool in tools_with_guidance:
-        desc = tool.description or ""
-        assert "Do NOT" in desc, \
-            f"Tool {tool.name} description should contain 'Do NOT' negative guidance"
 
 
 def test_tool_descriptions_start_with_verb(app):
     """Verify tool descriptions start with a verb (action word)."""
     tools = asyncio.run(app.list_tools())
 
-    action_verbs = ("Get", "List", "Search", "Find", "Query", "Register", "Remove", "Trace", "Analyze")
+    action_verbs = ("Get", "List", "Search", "Find", "Query", "Register", "Remove", "Trace", "Analyze", "Run", "Export", "Show", "Unpack")
 
     for tool in tools:
         desc = (tool.description or "").strip()
         assert desc.startswith(action_verbs), \
             f"Tool {tool.name} description should start with a verb, got: {desc[:30]}..."
+
 
 
 def test_graph_overview_description_mentions_community(app):

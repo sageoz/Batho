@@ -25,6 +25,12 @@ def register_mcp_parser(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="Repository root containing .batho artifact. Defaults to current working directory.",
     )
+    parser.add_argument(
+        "--no-watch",
+        action="store_true",
+        default=False,
+        help="Do not start the watcher engine.",
+    )
     parser.set_defaults(func=cmd_mcp)
 
 
@@ -35,5 +41,6 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     from batho.mcp.server import run_server
 
     root = args.root or os.getcwd()
-    run_server(root=root)
+    run_server(root=root, watch=not args.no_watch)
     return 0
+

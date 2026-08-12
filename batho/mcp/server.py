@@ -7,6 +7,7 @@ artifacts and serves code-graph intelligence to AI agents.
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 
 from fastmcp import FastMCP
@@ -17,6 +18,7 @@ from batho.mcp.tools import register_tools
 from batho.mcp.prompts import register_prompts
 from batho.mcp.resources import register_resources
 from batho.mcp.registry import RepoRegistry
+from batho.mcp.watcher import BathoWatcherEngine
 
 import structlog
 
@@ -26,6 +28,8 @@ LOGGER = structlog.get_logger(__name__)
 def create_app(
     root: str | None = None,
     registry_path: Path | None = None,
+    watcher: BathoWatcherEngine | None = None,
+    registry: RepoRegistry | None = None,
 ) -> FastMCP:
     """Create and configure the FastMCP application with all Batho tools.
 
@@ -33,9 +37,17 @@ def create_app(
         root: Repository root containing .batho artifact. If None,
               tools will require repo parameter in each call.
         registry_path: Path to mcp-repos.json. If None, uses default
-                       (~/.batho/mcp-repos.json).
+                       (~/.batho/mcp-repos.json). Ignored when ``registry``
+                       is supplied.
+        watcher: Optional BathoWatcherEngine instance for file watching.
+        registry: Optional pre-constructed RepoRegistry instance. When
+                  supplied, this exact instance is reused (avoiding a
+                  second instance with an independent lock that races on
+                  the same JSON file). When None, a new registry is built
+                  from ``registry_path``.
     """
-    registry = RepoRegistry(config_path=registry_path)
+    if registry is None:
+        registry = RepoRegistry(config_path=registry_path)
     entries = registry.list_all()
 
     if entries:
@@ -50,7 +62,12 @@ def create_app(
         instructions=INSTRUCTIONS,
         version=BATHO_MCP_VERSION,
     )
-    register_tools(app, default_root=root, registry=registry if entries else None)
+    register_tools(
+        app,
+        default_root=root,
+        registry=registry,
+        watcher=watcher,
+    )
     register_prompts(app)
     register_resources(app, registry=registry if entries else None)
     return app
@@ -59,6 +76,7 @@ def create_app(
 def run_server(
     root: str | None = None,
     registry_path: Path | None = None,
+    watch: bool = True,
 ) -> None:
     """Start the MCP server on stdio transport.
 
@@ -67,6 +85,7 @@ def run_server(
               defaults to current working directory.
         registry_path: Path to mcp-repos.json. If None, uses default
                        (~/.batho/mcp-repos.json).
+        watch: If True, starts the BathoWatcherEngine for watched repos.
     """
     import os
 
@@ -80,13 +99,30 @@ def run_server(
     else:
         LOGGER.info("batho_mcp_starting", root=root, artifact_dir=str(artifact_dir))
 
-    app = create_app(root=root, registry_path=registry_path)
+    registry = RepoRegistry(config_path=registry_path)
+    watcher = BathoWatcherEngine(registry) if watch else None
+    if watcher:
+        watcher.start()
+        for entry in registry.list_all():
+            if entry.watch:
+                threading.Thread(
+                    target=watcher.catch_up,
+                    args=(entry.name,),
+                    daemon=True,
+                    name=f"batho-catchup-{entry.name}",
+                ).start()
+
+    app = create_app(root=root, registry_path=registry_path, watcher=watcher, registry=registry)
     try:
         app.run(transport="stdio")
     except KeyboardInterrupt:
         LOGGER.info("batho_mcp_stopped")
         sys.exit(0)
+    finally:
+        if watcher:
+            watcher.stop()
 
 
 if __name__ == "__main__":
     run_server()
+

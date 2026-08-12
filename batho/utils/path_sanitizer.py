@@ -25,7 +25,9 @@ class PathSecurityError(Exception):
 _MAX_PERCENT_DECODE_ROUNDS = 5
 
 
-def _canonicalize_untrusted_path(value: Union[str, Path]) -> str:
+def _canonicalize_untrusted_path(
+    value: Union[str, Path], allow_absolute: bool = False
+) -> str:
     """Canonicalize an untrusted path string before Path construction.
 
     Performs defense-in-depth normalization and rejects common traversal
@@ -33,6 +35,10 @@ def _canonicalize_untrusted_path(value: Union[str, Path]) -> str:
     absolute paths, null bytes, and parent-directory components). The returned
     value is a safe relative POSIX-style path string that may still contain
     benign dots and slashes.
+
+    When ``allow_absolute`` is True, leading-slash absolute paths are permitted
+    (used only for trusted, operator-supplied paths such as registry entries
+    and the ``--root`` CLI flag). All other defenses still apply.
 
     Raises:
         PathSecurityError: If the input cannot be made safe.
@@ -77,8 +83,9 @@ def _canonicalize_untrusted_path(value: Union[str, Path]) -> str:
     if "\0" in decoded:
         raise PathSecurityError("Null byte in decoded path")
 
-    # Reject absolute paths after canonicalization.
-    if decoded.startswith("/"):
+    # Reject absolute paths after canonicalization, unless explicitly allowed
+    # for trusted operator-supplied paths (registry entries, --root CLI flag).
+    if decoded.startswith("/") and not allow_absolute:
         raise PathSecurityError(f"Absolute path not allowed: {text!r}")
     # Windows drive-prefixed forms such as C: or C:/
     if len(decoded) >= 2 and decoded[1] == ":":
@@ -105,10 +112,12 @@ def _canonicalize_untrusted_path(value: Union[str, Path]) -> str:
 
     # Defense against double-dot evasion patterns such as "....//" or
     # "..%2e..%2e" which, after canonicalization, contain multiple consecutive
-    # dots. Removing every ".." substring must not collapse the path into an
-    # absolute path or into a traversal that starts with "..".
+    # dots. Removing every ".." substring must not collapse a non-absolute path
+    # into an absolute path or into a traversal that starts with "..". For
+    # trusted absolute paths (allow_absolute=True) this check is skipped since
+    # the leading slash is expected.
     stripped = decoded.replace("..", "")
-    if stripped.startswith("/"):
+    if not allow_absolute and stripped.startswith("/"):
         raise PathSecurityError(f"Double-dot traversal evasion rejected: {text!r}")
 
     return decoded
@@ -136,7 +145,7 @@ def sanitize_path(
     # Canonicalize untrusted input before constructing a Path. For absolute-path
     # mode we still canonicalize to reject encodings/URI schemes/null bytes, then
     # check allow_absolute separately.
-    canonical = _canonicalize_untrusted_path(path)
+    canonical = _canonicalize_untrusted_path(path, allow_absolute=allow_absolute)
     path_obj = Path(canonical)
 
     # Convert to absolute path
