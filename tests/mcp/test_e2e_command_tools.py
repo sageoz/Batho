@@ -27,7 +27,7 @@ def registry(tmp_path: Path) -> RepoRegistry:
 @pytest.mark.asyncio
 async def test_e2e_build_then_query(repo_dir: Path, registry: RepoRegistry):
     registry.add("cmd_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     build_res = await app.call_tool("batho_build", {"repo": "cmd_repo"})
     assert not build_res.is_error
@@ -41,7 +41,7 @@ async def test_e2e_build_then_query(repo_dir: Path, registry: RepoRegistry):
 @pytest.mark.asyncio
 async def test_e2e_patch_then_delta(repo_dir: Path, registry: RepoRegistry):
     registry.add("cmd_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     await app.call_tool("batho_build", {"repo": "cmd_repo"})
 
@@ -63,7 +63,7 @@ async def test_e2e_export_then_load(repo_dir: Path, registry: RepoRegistry, tmp_
     dest_repo.mkdir()
     registry.add("dest_repo", str(dest_repo))
 
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     await app.call_tool("batho_build", {"repo": "source_repo"})
 
@@ -84,7 +84,7 @@ async def test_e2e_export_then_load(repo_dir: Path, registry: RepoRegistry, tmp_
 @pytest.mark.asyncio
 async def test_e2e_gc_status_after_build(repo_dir: Path, registry: RepoRegistry):
     registry.add("cmd_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     await app.call_tool("batho_build", {"repo": "cmd_repo"})
 
@@ -96,7 +96,7 @@ async def test_e2e_gc_status_after_build(repo_dir: Path, registry: RepoRegistry)
 @pytest.mark.asyncio
 async def test_e2e_fix_after_build(repo_dir: Path, registry: RepoRegistry):
     registry.add("cmd_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     await app.call_tool("batho_build", {"repo": "cmd_repo"})
 

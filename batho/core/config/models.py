@@ -147,6 +147,35 @@ class FlagsConfig(BaseModel):
     audit_log_enabled: bool = Field(default=True)
 
 
+class McpToolsConfig(BaseModel):
+    """Tool exposure controls for the MCP server.
+
+    disabled: blocklist of tool names not registered on the MCP app.
+              Default disables expensive administrative tools (build/export/load/gc)
+              so the agent surface stays focused on retrieval + diagnostics.
+              Set to [] to expose all 19 tools to the agent.
+    enabled:  optional allowlist. If set, ONLY these tools are registered
+              (disabled is ignored). None = no allowlist filtering.
+    """
+    disabled: list[str] = Field(
+        default_factory=lambda: ["batho_build", "batho_export", "batho_load", "batho_gc"]
+    )
+    enabled: list[str] | None = Field(default=None)
+
+    @field_validator("disabled", "enabled")
+    @classmethod
+    def _normalize_tool_names(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        return [name.strip() for name in v if name.strip()]
+
+
+class McpConfig(BaseModel):
+    """MCP server configuration."""
+    enabled: bool = Field(default=True)
+    tools: McpToolsConfig = Field(default_factory=McpToolsConfig)
+
+
 class RulesConfig(BaseModel):
     enabled: bool = Field(default=True)
     auto_load_all_plugins: bool = Field(default=True)
@@ -283,6 +312,7 @@ class Config(BaseModel):
     indexer: IndexerConfig = Field(default_factory=IndexerConfig)
     graph: GraphConfig = Field(default_factory=GraphConfig)
     flags: FlagsConfig = Field(default_factory=FlagsConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
     rules: RulesConfig = Field(default_factory=RulesConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     artifact_blobs: ArtifactBlobsConfig = Field(default_factory=ArtifactBlobsConfig)

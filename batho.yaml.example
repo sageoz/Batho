@@ -40,6 +40,21 @@ flags:
   strict: false
   audit_log_enabled: true   # Enable patch audit trail in run_artifacts
 
+# MCP server tool exposure
+mcp:
+  enabled: true
+  tools:
+    # Tools not registered on the MCP app (disappear from tools/list).
+    # Default: expensive administrative tools are CLI-only — the agent
+    # detects missing/stale artifacts and instructs the user to run them
+    # in the terminal, matching the Sourcegraph/Cursor/CodeGraph pattern.
+    # Set to [] to expose all 19 tools to the agent.
+    disabled: [batho_build, batho_export, batho_load, batho_gc]
+    # Optional allowlist — if set, ONLY these tools are registered
+    # (disabled is ignored). null = no allowlist filtering.
+    # Example: [list_repos, graph_overview, graph_query, get_entity, search_entities]
+    enabled: null
+
 # Consolidated Dependency Extraction Utility (CDEU)
 dependency:
   enabled: true             # Enable stdlib and third-party dependency indexing

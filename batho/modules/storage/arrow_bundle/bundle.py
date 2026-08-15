@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.ipc as ipc
 
 from batho.utils.logging import get_logger
@@ -317,6 +318,7 @@ class BathoBundle:
         rel_count: int = 0,
         file_count: int = 0,
         duration_ms: int | None = None,
+        is_patch: bool = False,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
@@ -360,6 +362,10 @@ class BathoBundle:
                 streams = writer.finalize()
 
             self._flush_file_tracking(run_uuid)
+
+            if is_patch and streams:
+                streams = self._merge_patch_views(run_uuid, streams)
+
             if streams:
                 for name, path in streams.items():
                     p = path
@@ -435,6 +441,185 @@ class BathoBundle:
     def get_relationship_count(self, run_uuid: str) -> int:
         run = self.get_run(run_uuid)
         return run["rel_count"] if run else 0
+
+    # ------------------------------------------------------------------
+    # Patch view merge helpers
+    # ------------------------------------------------------------------
+
+    def _write_ipc_table(self, table: pa.Table, path: Path) -> None:
+        """Write a pyarrow Table to an IPC file, creating parent dirs if needed."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with ipc.new_file(str(path), table.schema) as writer:
+            writer.write_table(table)
+
+    def _build_entity_id_remap(
+        self,
+        base_path: Path,
+        new_path: Path,
+        replaced_file_ids: set[int],
+    ) -> dict[str, str]:
+        """Return old entity_id -> new entity_id for changed files.
+
+        Match is by (name, entity_type, start_line) within the replaced file set.
+        """
+        remap: dict[str, str] = {}
+        base_table = read_ipc_table(base_path)
+        if base_table.num_rows == 0 or not base_table.column_names:
+            return remap
+        new_table = read_ipc_table(new_path)
+        if new_table.num_rows == 0 or not new_table.column_names:
+            return remap
+
+        base_filter = pc.is_in(base_table["file_id"], pa.array(list(replaced_file_ids)))
+        base_changed = base_table.filter(base_filter)
+        new_filter = pc.is_in(new_table["file_id"], pa.array(list(replaced_file_ids)))
+        new_changed = new_table.filter(new_filter)
+
+        new_by_key: dict[tuple[str, str, int], str] = {}
+        for row in new_changed.to_pylist():
+            key = (row.get("name", ""), row.get("entity_type", ""), int(row.get("start_line", 0)))
+            new_by_key[key] = row.get("entity_id", "")
+
+        for row in base_changed.to_pylist():
+            key = (row.get("name", ""), row.get("entity_type", ""), int(row.get("start_line", 0)))
+            old_id = row.get("entity_id", "")
+            new_id = new_by_key.get(key)
+            if new_id and old_id and new_id != old_id:
+                remap[old_id] = new_id
+        return remap
+
+    def _merge_view_table(
+        self,
+        logical_name: str,
+        base_path: Path,
+        new_path: Path,
+        run_uuid: str,
+        valid_file_ids: set[int],
+        replaced_file_ids: set[int],
+        entity_id_remap: dict[str, str] | None = None,
+    ) -> Path:
+        """Merge a base view table with a patch run table.
+
+        Drops base rows for files that were changed or deleted and appends the
+        new rows. For rels_views, remaps target_id values for entities that
+        were re-issued IDs during the patch.
+        """
+        new_table = read_ipc_table(new_path)
+        base_table = read_ipc_table(base_path)
+
+        if new_table.num_rows == 0 and not new_table.column_names:
+            if base_table.num_rows == 0 or not base_table.column_names:
+                return new_path
+            keep = pc.and_(
+                pc.is_in(base_table["file_id"], pa.array(list(valid_file_ids))),
+                pc.invert(pc.is_in(base_table["file_id"], pa.array(list(replaced_file_ids)))),
+            )
+            merged = base_table.filter(keep)
+        elif base_table.num_rows == 0 or not base_table.column_names:
+            merged = new_table
+        else:
+            keep = pc.and_(
+                pc.is_in(base_table["file_id"], pa.array(list(valid_file_ids))),
+                pc.invert(pc.is_in(base_table["file_id"], pa.array(list(replaced_file_ids)))),
+            )
+            base_kept = base_table.filter(keep)
+            merged = pa.concat_tables([base_kept, new_table])
+
+        if logical_name == "rels_views" and entity_id_remap and merged.num_rows > 0:
+            columns = merged.to_pydict()
+            columns["target_id"] = [entity_id_remap.get(t, t) for t in columns["target_id"]]
+            merged = pa.Table.from_pydict(columns, schema=merged.schema)
+
+        if merged.num_rows > 0:
+            sort_idx = pc.sort_indices(merged, sort_keys=[("file_id", "ascending")])
+            merged = merged.take(sort_idx)
+
+        out = self._artifact_dir / f"{logical_name}.merged.{run_uuid}.tmp.ipc"
+        self._write_ipc_table(merged, out)
+        LOGGER.info(
+            "view_table_merged",
+            logical_name=logical_name,
+            merged_rows=merged.num_rows,
+            base_rows=base_table.num_rows,
+            new_rows=new_table.num_rows,
+            output=str(out),
+        )
+        return out
+
+    def _merge_patch_views(
+        self,
+        run_uuid: str,
+        streams: dict[str, Path],
+    ) -> dict[str, Path]:
+        """Return merged view paths for a patch run.
+
+        Reads the previous active generation, merges it with the per-run
+        view tables produced by the patch, and remaps dangling target IDs.
+        """
+        merged: dict[str, Path] = dict(streams)
+        LOGGER.info("patch_view_merge_started", run_uuid=run_uuid, streams=list(streams.keys()))
+
+        tracking = self._reader.get_all_file_tracking()
+        valid_file_ids = {info["file_id"] for info in tracking.values()}
+        replaced_file_ids = {
+            info["file_id"] for info in tracking.values()
+            if info.get("last_run_uuid") == run_uuid
+        }
+
+        base_agent_path = self._manager.active_path("agent_views")
+        base_storage_path = self._manager.active_path("storage_views")
+        base_rels_path = self._manager.active_path("rels_views")
+
+        entity_id_remap: dict[str, str] = {}
+        if "agent_views" in streams and base_agent_path is not None and base_agent_path.exists():
+            entity_id_remap = self._build_entity_id_remap(
+                base_agent_path,
+                streams["agent_views"],
+                replaced_file_ids,
+            )
+
+        for logical_name, base_path in [
+            ("agent_views", base_agent_path),
+            ("storage_views", base_storage_path),
+            ("rels_views", base_rels_path),
+        ]:
+            new_path = streams.get(logical_name)
+            if new_path is None:
+                if base_path is not None and base_path.exists():
+                    dummy = self._artifact_dir / f"{logical_name}.empty.{run_uuid}.tmp.ipc"
+                    merged[logical_name] = self._merge_view_table(
+                        logical_name,
+                        base_path,
+                        dummy,
+                        run_uuid,
+                        valid_file_ids,
+                        replaced_file_ids,
+                        entity_id_remap if logical_name == "rels_views" else None,
+                    )
+                continue
+
+            if base_path is None or not base_path.exists():
+                continue
+
+            merged[logical_name] = self._merge_view_table(
+                logical_name,
+                base_path,
+                new_path,
+                run_uuid,
+                valid_file_ids,
+                replaced_file_ids,
+                entity_id_remap if logical_name == "rels_views" else None,
+            )
+
+        LOGGER.info(
+            "patch_view_merge_complete",
+            run_uuid=run_uuid,
+            merged_views=list(merged.keys()),
+            valid_files=len(valid_file_ids),
+            replaced_files=len(replaced_file_ids),
+            remapped_entities=len(entity_id_remap),
+        )
+        return merged
 
     # ------------------------------------------------------------------
     # File Artifacts

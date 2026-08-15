@@ -409,6 +409,19 @@ def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str,
         _env_int("BATHO_COMMUNITY_DETECTION_SAMPLE_THRESHOLD", _safe_get_nested(base_cfg, ["community_detection", "sample_threshold"], 100_000)),
     )
 
+    # MCP overrides
+    _safe_set_nested(
+        base_cfg,
+        ["mcp", "enabled"],
+        _env_bool("BATHO_MCP_ENABLED", _safe_get_nested(base_cfg, ["mcp", "enabled"], True)),
+    )
+    env_mcp_tools_disabled = _env_list("BATHO_MCP_TOOLS_DISABLED")
+    if env_mcp_tools_disabled is not None:
+        _safe_set_nested(base_cfg, ["mcp", "tools", "disabled"], env_mcp_tools_disabled)
+    env_mcp_tools_enabled = _env_list("BATHO_MCP_TOOLS_ENABLED")
+    if env_mcp_tools_enabled is not None:
+        _safe_set_nested(base_cfg, ["mcp", "tools", "enabled"], env_mcp_tools_enabled)
+
     # BSG overrides
     _safe_set_nested(
         base_cfg,

@@ -831,6 +831,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
             rel_count=total_rels,
             file_count=file_count,
             duration_ms=elapsed_ms,
+            is_patch=True,
         )
 
         # --- Finalize Run Artifacts ---
@@ -978,8 +979,8 @@ def run_patch(options: PatchOptions) -> PatchResult:
             added=sum(1 for c in changes if c.change_type == FileChangeType.ADDED),
             modified=sum(1 for c in changes if c.change_type == FileChangeType.MODIFIED),
             deleted=sum(1 for c in changes if c.change_type == FileChangeType.DELETED),
-            entity_count=new_entity_count,
-            relationship_count=new_rel_count,
+            entity_count=total_entities,
+            relationship_count=total_rels,
             duration_ms=elapsed_ms,
             nodes_added=nodes_added,
             nodes_removed=nodes_removed,

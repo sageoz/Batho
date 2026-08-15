@@ -27,7 +27,7 @@ def registry(tmp_path: Path) -> RepoRegistry:
 @pytest.mark.asyncio
 async def test_build_success(repo_dir: Path, registry: RepoRegistry):
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     res = await app.call_tool("batho_build", {"repo": "my_repo"})
     assert not res.is_error
@@ -38,7 +38,7 @@ async def test_build_success(repo_dir: Path, registry: RepoRegistry):
 @pytest.mark.asyncio
 async def test_build_already_built(repo_dir: Path, registry: RepoRegistry):
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     # First build
     res1 = await app.call_tool("batho_build", {"repo": "my_repo"})
@@ -53,7 +53,7 @@ async def test_build_already_built(repo_dir: Path, registry: RepoRegistry):
 @pytest.mark.asyncio
 async def test_build_full_flag(repo_dir: Path, registry: RepoRegistry):
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     await app.call_tool("batho_build", {"repo": "my_repo"})
     res = await app.call_tool("batho_build", {"repo": "my_repo", "full": True})

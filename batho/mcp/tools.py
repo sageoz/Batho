@@ -6,6 +6,7 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Iterator
 import dataclasses
+import datetime
 import json
 
 from pathlib import Path
@@ -285,10 +286,53 @@ def register_tools(
     default_root: str | None = None,
     registry: RepoRegistry | None = None,
     watcher: BathoWatcherEngine | None = None,
+    disabled_tools: set[str] | None = None,
+    enabled_tools: set[str] | None = None,
 ) -> None:
-    """Register all Batho MCP tools on the FastMCP app."""
+    """Register all Batho MCP tools on the FastMCP app.
+
+    All 19 tools are registered via decorators, then disabled tools are removed
+    from the app's tool registry so they disappear from ``tools/list``. This
+    matches Sourcegraph's ``mcp.tools.disabled`` semantics and keeps the agent's
+    tool surface focused on retrieval + diagnostics by default.
+
+    Args:
+        app: FastMCP application to register tools on.
+        default_root: Fallback repository root when no registry entries exist.
+        registry: Repo registry for multi-repo resolution.
+        watcher: Optional watcher engine for staleness banners.
+        disabled_tools: blocklist of tool names NOT to register. When None,
+            defaults to the secure-by-default Tier-3 set
+            (batho_build, batho_export, batho_load, batho_gc).
+        enabled_tools: optional allowlist. If set, ONLY tools in this set are
+            registered (disabled_tools is ignored). None = no allowlist filtering.
+    """
     global _pool
     _pool = _ReaderPool(registry=registry)
+
+    # Secure-by-default: if caller did not specify a filter, disable the
+    # expensive/administrative Tier-3 tools so the agent surface stays
+    # focused on retrieval + diagnostics.
+    if disabled_tools is None and enabled_tools is None:
+        disabled_tools = {"batho_build", "batho_export", "batho_load", "batho_gc"}
+    disabled_tools = disabled_tools or set()
+
+    # All 19 tool names — used to compute the removal set when an allowlist
+    # is specified (remove everything NOT in the allowlist).
+    _ALL_TOOL_NAMES = {
+        "list_repos", "add_repo", "remove_repo",
+        "graph_overview", "graph_query", "get_entity", "trace_path",
+        "get_file_graph", "search_entities", "get_delta",
+        "batho_status", "batho_list_runs", "batho_diff",
+        "batho_build", "batho_patch", "batho_export",
+        "batho_gc", "batho_fix", "batho_load",
+    }
+
+    def _tools_to_remove() -> set[str]:
+        if enabled_tools is not None:
+            # Allowlist mode: remove everything not in the allowlist
+            return _ALL_TOOL_NAMES - enabled_tools
+        return disabled_tools
 
     def _inject_banner(res: ToolResult, repo_name: str, file_path: str | None = None) -> ToolResult:
         if not watcher:
@@ -1253,6 +1297,10 @@ def register_tools(
         Detects changes using content hashing. Use this after editing files to update the code graph.
         Do NOT use this on unbuilt repositories — run batho_build first.
 
+        Note: If the watcher engine is running (default), it auto-patches on file
+        changes. Only call this manually if the watcher is off (--no-watch) or
+        to force a refresh. May block briefly if the watcher is mid-patch.
+
         Args:
             repo: Name of the registered repo or root path. If None, uses default repo.
             max_file_size_kb: Skip files larger than this size in KB.
@@ -1267,6 +1315,14 @@ def register_tools(
         artifact_dir = Path(root_path) / ".batho" / "artifact"
         if not artifact_dir.exists():
             return _err(f"No artifact found at {artifact_dir}.", error_type=EXTERNAL_ERROR, hint="Run batho_build first to create the initial artifact.")
+
+        LOGGER.info(
+            "mcp_tool_invocation",
+            tool="batho_patch",
+            repo=repo_name,
+            principal="mcp-client",
+            timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        )
 
         from batho.orchestrator.patch import run_patch, PatchOptions
 
@@ -1597,6 +1653,14 @@ def register_tools(
         if not artifact_dir.exists():
             return _err(f"No artifact bundle found at {artifact_dir}.", error_type=EXTERNAL_ERROR)
 
+        LOGGER.info(
+            "mcp_tool_invocation",
+            tool="batho_fix",
+            repo=repo_name,
+            principal="mcp-client",
+            timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        )
+
         from batho.modules.integrity.engine import FixEngine
         from batho.modules.integrity.report import ReportGenerator
 
@@ -1702,6 +1766,20 @@ def register_tools(
         except Exception as exc:
             LOGGER.error("batho_load_failed", repo=repo_name, error=str(exc))
             return _err(f"Load failed: {exc}", error_type=EXTERNAL_ERROR)
+
+    # -------------------------------------------------------------------
+    # Post-registration: remove disabled tools from the app so they
+    # disappear from tools/list. This is done AFTER all decorators have
+    # run (which register the tools) rather than conditionally wrapping
+    # each function definition, to avoid re-indenting 19 multi-line bodies.
+    # -------------------------------------------------------------------
+    for tool_name in _tools_to_remove():
+        try:
+            app.remove_tool(tool_name)
+            LOGGER.info("mcp_tool_disabled", tool=tool_name)
+        except Exception:
+            # Tool may not exist if it was never registered; safe to skip.
+            pass
 
 
 def build_node_dict_simple(row: dict, file_paths: dict[int, str]) -> dict:

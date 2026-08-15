@@ -120,7 +120,7 @@ def test_resolve_root_path_falls_back_to_default_root(registry: RepoRegistry, tm
 async def test_export_rejects_absolute_output(repo_dir: Path, registry: RepoRegistry, tmp_path: Path):
     """batho_export must reject an absolute output path outside the repo root."""
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
     outside = tmp_path / "escape.json"
     res = await app.call_tool("batho_export", {"repo": "my_repo", "view": "storage", "output": str(outside)})
     assert res.is_error
@@ -130,7 +130,7 @@ async def test_export_rejects_absolute_output(repo_dir: Path, registry: RepoRegi
 async def test_load_rejects_absolute_artifact_path(repo_dir: Path, registry: RepoRegistry, tmp_path: Path):
     """batho_load must reject an absolute artifact_path outside the repo root."""
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
     outside = tmp_path / "escape.zip"
     res = await app.call_tool("batho_load", {"repo": "my_repo", "artifact_path": str(outside)})
     assert res.is_error
@@ -145,7 +145,7 @@ def test_create_app_reuses_passed_registry_instance(tmp_path: Path):
     """create_app must reuse the supplied RepoRegistry, not build a new one."""
     cfg = tmp_path / "mcp-repos.json"
     reg = RepoRegistry(config_path=cfg)
-    app = create_app(registry_path=cfg, registry=reg)
+    app = create_app(registry_path=cfg, registry=reg, disabled_tools=set())
     # The registry instance is stored on the tools module global pool.
     import batho.mcp.tools as tools_mod
     assert tools_mod._pool is not None
@@ -161,7 +161,7 @@ def test_create_app_reuses_passed_registry_instance(tmp_path: Path):
 async def test_fix_rejects_invalid_target(repo_dir: Path, registry: RepoRegistry):
     """batho_fix must reject target values not recognized by FixEngine."""
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
     # 'schema', 'storage', 'nodes', 'edges' are the OLD wrong enum values.
     for bad in ("schema", "storage", "nodes", "edges"):
         res = await app.call_tool("batho_fix", {"repo": "my_repo", "dry_run": True, "target": bad})
@@ -173,7 +173,7 @@ async def test_fix_rejects_invalid_target(repo_dir: Path, registry: RepoRegistry
 async def test_fix_accepts_valid_targets(repo_dir: Path, registry: RepoRegistry):
     """batho_fix must accept the FixEngine-aligned target values."""
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
     for good in ("all", "bundle", "state", "blobs", "graph"):
         res = await app.call_tool("batho_fix", {"repo": "my_repo", "dry_run": True, "target": good})
         assert not res.is_error, f"target={good!r} should be accepted: {res.content[0].text if res.is_error else ''}"
@@ -190,7 +190,7 @@ async def test_fix_metrics_read_from_summary(repo_dir: Path, registry: RepoRegis
     non-zero on a fresh build due to info-level bundle findings).
     """
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
     res = await app.call_tool("batho_fix", {"repo": "my_repo", "dry_run": True})
     assert not res.is_error
     sc = res.structured_content

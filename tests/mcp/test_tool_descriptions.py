@@ -27,7 +27,7 @@ import pytest
 @pytest.fixture
 def app():
     from batho.mcp.server import create_app
-    return create_app()
+    return create_app(disabled_tools=set())
 
 
 ALL_TOOLS = [

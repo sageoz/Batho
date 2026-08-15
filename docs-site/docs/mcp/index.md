@@ -14,7 +14,8 @@ The Batho MCP (Model Context Protocol) server exposes your codebase's structural
 |-----------|-------------|
 | **Zero-copy reads** | Memory-mapped Arrow IPC — no database, no parsing at query time |
 | **Dual-output** | Compact markdown for the model (34–38% fewer tokens) + structured JSON for programmatic use |
-| **10 tools** | `list_repos`, `add_repo`, `remove_repo`, `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `search_entities`, `get_delta` |
+| **15 tools (default)** | 13 read-only + 2 destructive: `list_repos`, `add_repo`, `remove_repo`, `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `search_entities`, `get_delta`, `batho_status`, `batho_list_runs`, `batho_diff`, `batho_patch`, `batho_fix` |
+| **4 admin tools (opt-in)** | `batho_build`, `batho_export`, `batho_load`, `batho_gc` — disabled by default, enable via `batho.yaml` (`mcp.tools.disabled: []`) or `--enable-tool` CLI flag |
 | **Community detection** | Greedy modularity clustering produces architectural summaries at build time |
 | **Multi-repo registry** | Register multiple repos via `add_repo` tool — one MCP config entry serves all repos |
 | **Incremental updates** | After `batho patch`, the server serves the latest generation — no restart needed |

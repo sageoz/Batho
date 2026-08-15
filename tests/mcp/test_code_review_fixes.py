@@ -72,7 +72,7 @@ async def test_batho_export_valid_and_invalid_views(repo_dir: Path, tmp_path: Pa
     registry = RepoRegistry(config_path=reg_path)
     registry.add("sample", str(repo_dir))
 
-    app = create_app(registry_path=reg_path)
+    app = create_app(registry_path=reg_path, disabled_tools=set())
 
     # Valid view: overview
     res_overview = await app.call_tool("batho_export", {"repo": "sample", "view": "overview"})

@@ -57,6 +57,19 @@ Use prompts when available — they include explicit tool routing and negative g
 - If no path is found, try increasing max_depth or verify entity_ids via search_entities.
 - If no patch runs are found, run 'batho patch --root <path>' first.
 
+## Tool availability
+Some administrative tools (batho_build, batho_export, batho_load, batho_gc) are
+disabled by default and will NOT appear in your tool list. This is intentional —
+they are expensive or administrative operations that should run in the terminal
+or CI, not mid-conversation. This matches the Sourcegraph/Cursor/CodeGraph pattern
+where indexing is a background/automatic process and the agent is a pure consumer.
+- If a repo has no artifact: tell the user to run `batho build --root <path>` in their terminal.
+- If the artifact is stale and batho_patch is available: call batho_patch.
+- If the artifact is corrupted and batho_fix is available: call batho_fix.
+- Do NOT attempt to call tools that are not in your tool list.
+- Users can enable disabled tools via batho.yaml (mcp.tools.disabled: []) or
+  `batho mcp --enable-tool <tool_name>`.
+
 ## Tips
 - Start with list_repos to see available repos.
 - Start with graph_overview for unfamiliar codebases.

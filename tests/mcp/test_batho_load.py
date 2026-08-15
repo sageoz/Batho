@@ -36,7 +36,7 @@ async def test_load_success(repo_dir: Path, registry: RepoRegistry, tmp_path: Pa
     run_export(ExportOptions(root=repo_dir, pack=True, output=zip_path))
 
     registry.add("target", str(target_repo))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     res = await app.call_tool("batho_load", {"repo": "target", "artifact_path": "artifact.zip", "force": True})
     assert not res.is_error
@@ -46,7 +46,7 @@ async def test_load_success(repo_dir: Path, registry: RepoRegistry, tmp_path: Pa
 @pytest.mark.asyncio
 async def test_load_no_file(repo_dir: Path, registry: RepoRegistry):
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     res = await app.call_tool("batho_load", {"repo": "my_repo", "artifact_path": "nonexistent.zip"})
     assert res.is_error
@@ -57,7 +57,7 @@ async def test_load_no_file(repo_dir: Path, registry: RepoRegistry):
 async def test_load_rejects_path_outside_repo(repo_dir: Path, registry: RepoRegistry, tmp_path: Path):
     """artifact_path outside the repo root must be rejected (path containment)."""
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
     outside = tmp_path / "escape.zip"
 
     res = await app.call_tool("batho_load", {"repo": "my_repo", "artifact_path": str(outside)})

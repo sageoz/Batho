@@ -30,6 +30,8 @@ def create_app(
     registry_path: Path | None = None,
     watcher: BathoWatcherEngine | None = None,
     registry: RepoRegistry | None = None,
+    disabled_tools: set[str] | None = None,
+    enabled_tools: set[str] | None = None,
 ) -> FastMCP:
     """Create and configure the FastMCP application with all Batho tools.
 
@@ -45,6 +47,13 @@ def create_app(
                   second instance with an independent lock that races on
                   the same JSON file). When None, a new registry is built
                   from ``registry_path``.
+        disabled_tools: blocklist of MCP tool names NOT to register. When
+                        None, loaded from batho.yaml ``mcp.tools.disabled``
+                        (secure-by-default: batho_build, batho_export,
+                        batho_load, batho_gc).
+        enabled_tools: optional allowlist. If set, ONLY these tools are
+                       registered. When None, loaded from batho.yaml
+                       ``mcp.tools.enabled`` (default: no allowlist).
     """
     if registry is None:
         registry = RepoRegistry(config_path=registry_path)
@@ -57,6 +66,25 @@ def create_app(
     else:
         LOGGER.warning("batho_mcp_no_repos")
 
+    # Resolve tool filter from config when not explicitly provided.
+    # Both None means "load from batho.yaml / env vars / defaults".
+    if disabled_tools is None and enabled_tools is None:
+        from batho.core.config import get_config_with_root
+        cfg_root = Path(root).resolve() if root else Path.cwd().resolve()
+        cfg = get_config_with_root(cfg_root)
+        mcp_cfg = cfg.get("mcp", {})
+        if not mcp_cfg.get("enabled", True):
+            # Whole MCP surface disabled — register nothing
+            enabled_tools = set()
+        else:
+            tools_cfg = mcp_cfg.get("tools", {})
+            disabled = tools_cfg.get("disabled")
+            if disabled is not None:
+                disabled_tools = set(disabled)
+            enabled = tools_cfg.get("enabled")
+            if enabled is not None:
+                enabled_tools = set(enabled)
+
     app = FastMCP(
         name="batho",
         instructions=INSTRUCTIONS,
@@ -67,6 +95,8 @@ def create_app(
         default_root=root,
         registry=registry,
         watcher=watcher,
+        disabled_tools=disabled_tools,
+        enabled_tools=enabled_tools,
     )
     register_prompts(app)
     register_resources(app, registry=registry if entries else None)
@@ -77,6 +107,8 @@ def run_server(
     root: str | None = None,
     registry_path: Path | None = None,
     watch: bool = True,
+    disabled_tools: set[str] | None = None,
+    enabled_tools: set[str] | None = None,
 ) -> None:
     """Start the MCP server on stdio transport.
 
@@ -86,6 +118,9 @@ def run_server(
         registry_path: Path to mcp-repos.json. If None, uses default
                        (~/.batho/mcp-repos.json).
         watch: If True, starts the BathoWatcherEngine for watched repos.
+        disabled_tools: blocklist of tool names NOT to register. When None,
+                        loaded from batho.yaml (secure-by-default).
+        enabled_tools: optional allowlist. If set, ONLY these tools register.
     """
     import os
 
@@ -112,7 +147,14 @@ def run_server(
                     name=f"batho-catchup-{entry.name}",
                 ).start()
 
-    app = create_app(root=root, registry_path=registry_path, watcher=watcher, registry=registry)
+    app = create_app(
+        root=root,
+        registry_path=registry_path,
+        watcher=watcher,
+        registry=registry,
+        disabled_tools=disabled_tools,
+        enabled_tools=enabled_tools,
+    )
     try:
         app.run(transport="stdio")
     except KeyboardInterrupt:

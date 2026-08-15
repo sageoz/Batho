@@ -29,7 +29,7 @@ def registry(tmp_path: Path) -> RepoRegistry:
 @pytest.mark.asyncio
 async def test_export_json_storage_view(repo_dir: Path, registry: RepoRegistry, tmp_path: Path):
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
     # Output must be a relative path under the repo root (path containment).
     out_file = repo_dir / "export.json"
 
@@ -41,7 +41,7 @@ async def test_export_json_storage_view(repo_dir: Path, registry: RepoRegistry, 
 @pytest.mark.asyncio
 async def test_export_pack_mode(repo_dir: Path, registry: RepoRegistry, tmp_path: Path):
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
     # Output must be a relative path under the repo root (path containment).
     out_pack = repo_dir / "artifact.zip"
 
@@ -54,7 +54,7 @@ async def test_export_pack_mode(repo_dir: Path, registry: RepoRegistry, tmp_path
 async def test_export_rejects_path_outside_repo(repo_dir: Path, registry: RepoRegistry, tmp_path: Path):
     """Export output outside the repo root must be rejected (path containment)."""
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
     outside = tmp_path / "escape.json"
 
     res = await app.call_tool("batho_export", {"repo": "my_repo", "view": "storage", "output": str(outside)})

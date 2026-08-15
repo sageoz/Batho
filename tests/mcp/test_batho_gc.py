@@ -29,7 +29,7 @@ def registry(tmp_path: Path) -> RepoRegistry:
 @pytest.mark.asyncio
 async def test_gc_status(repo_dir: Path, registry: RepoRegistry):
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     res = await app.call_tool("batho_gc", {"repo": "my_repo", "subcommand": "status"})
     assert not res.is_error
@@ -39,7 +39,7 @@ async def test_gc_status(repo_dir: Path, registry: RepoRegistry):
 @pytest.mark.asyncio
 async def test_gc_vacuum(repo_dir: Path, registry: RepoRegistry):
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     res = await app.call_tool("batho_gc", {"repo": "my_repo", "subcommand": "vacuum"})
     assert not res.is_error
@@ -48,7 +48,7 @@ async def test_gc_vacuum(repo_dir: Path, registry: RepoRegistry):
 @pytest.mark.asyncio
 async def test_gc_run_requires_uuid(repo_dir: Path, registry: RepoRegistry):
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     res = await app.call_tool("batho_gc", {"repo": "my_repo", "subcommand": "run"})
     assert res.is_error
@@ -58,7 +58,7 @@ async def test_gc_run_requires_uuid(repo_dir: Path, registry: RepoRegistry):
 @pytest.mark.asyncio
 async def test_gc_runs_requires_older_than(repo_dir: Path, registry: RepoRegistry):
     registry.add("my_repo", str(repo_dir))
-    app = create_app(registry_path=registry.config_path)
+    app = create_app(registry_path=registry.config_path, disabled_tools=set())
 
     res = await app.call_tool("batho_gc", {"repo": "my_repo", "subcommand": "runs"})
     assert res.is_error
