@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 import json
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,10 @@ class FixContext:
     dry_run: bool = False
     audit_log: list[dict] = field(default_factory=list)
     run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    _previous_hash: str = field(init=False)
+
+    def __post_init__(self):
+        self._previous_hash = hashlib.sha256(b'genesis').hexdigest()
 
     # Cached data (lazy loaded)
     _index_runs: list[dict] | None = None
@@ -57,6 +62,9 @@ class FixContext:
             "action": action,
             "details": details,
         }
+        entry['previous_hash'] = self._previous_hash
+        entry['hash'] = hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()
+        self._previous_hash = entry['hash']
         self.audit_log.append(entry)
         LOGGER.info("audit_log_entry", **entry)
 

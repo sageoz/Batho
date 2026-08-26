@@ -342,7 +342,8 @@ class ManifestParser:
             tree = safe_parse(path)
         except ImportError:
             content = path.read_text(encoding="utf-8")
-            if "&" in content and ("<!ENTITY" in content or "<!DOCTYPE" in content):
+            content_upper = content.upper()
+            if "&" in content and ("<!ENTITY" in content_upper or "<!DOCTYPE" in content_upper):
                 raise ValueError("XML contains entity references - skipping for security")
             tree = ET.parse(path)
 
@@ -574,7 +575,8 @@ class ManifestParser:
                 tree = safe_parse(path)
             except ImportError:
                 content = path.read_text(encoding="utf-8")
-                if "&" in content and ("<!ENTITY" in content or "<!DOCTYPE" in content):
+                content_upper = content.upper()
+                if "&" in content and ("<!ENTITY" in content_upper or "<!DOCTYPE" in content_upper):
                     raise ValueError("XML contains entity references - skipping for security")
                 tree = ET.parse(path)
             root = tree.getroot()

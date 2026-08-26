@@ -143,8 +143,17 @@ class ResolutionCache:
             self._metadata_cache = data
 
             try:
-                with open(cache_file, "wb") as f:
-                    f.write(msgpack.packb(data))
+                fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, prefix="project_metadata.", suffix=".tmp")
+                try:
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(msgpack.packb(data))
+                    os.replace(tmp_path, str(cache_file))
+                except Exception:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise
             except Exception as e:
                 logger.debug(f"Failed to write metadata cache: {e}")
 

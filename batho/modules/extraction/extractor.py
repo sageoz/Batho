@@ -62,7 +62,7 @@ from batho.modules.extraction.scope_manager import ScopeManager
 
 def _sanitize_identifier(name: str) -> str:
     # Replace invalid characters with underscore
-    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    sanitized = re.sub(r'[^\w]', '_', name)
     if not sanitized:
         return "_"
     if sanitized[0].isdigit():

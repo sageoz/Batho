@@ -170,39 +170,22 @@ class TestConfigSecurityAndRecovery:
             get_config_with_root(tmp_path)
         assert "Unsafe config path artifact_dir escaping repository root" in str(exc_info.value)
 
-    def test_config_backup_recovery(self, tmp_path: Path):
-        """Verify that an invalid config file is backed up to .yaml.bak and replaced with default config.
+    def test_config_invalid_fails_explicitly(self, tmp_path: Path):
+        """Verify that an invalid config file fails explicitly with a clear error.
 
         Scenario:
             A `batho.yaml` file exists but contains invalid values (e.g. integer where string logging level
-            is expected). The loader must backup the corrupt config to `batho.yaml.bak` and cleanly
-            recreate a correct, default `batho.yaml`.
-
-        Execution Flow:
-            1. Write invalid config content ("level: 12345") to `batho.yaml`.
-            2. Invoke `get_config_with_root(tmp_path)`.
-            3. Assert that backup file `batho.yaml.bak` is created and contains the original corrupt value.
-            4. Assert that `batho.yaml` is regenerated with default values and is readable.
-
-        Expectations:
-            - Automatic recovery from invalid configurations.
-            - Keeps the backup of user's custom (even if broken) configuration to prevent data loss.
+            is expected). The loader must fail with a clear RuntimeError detailing the validation failure
+            rather than silently overwriting user config.
         """
         cfg_path = tmp_path / "batho.yaml"
         # Write invalid config (e.g. invalid type for logging level)
         cfg_path.write_text("logging:\n  level: 12345\n", encoding="utf-8")
         
-        cfg = get_config_with_root(tmp_path)
+        with pytest.raises(RuntimeError) as exc_info:
+            get_config_with_root(tmp_path)
         
-        # Assert that backup file was created
-        backup_path = tmp_path / "batho.yaml.bak"
-        assert backup_path.exists()
-        assert "level: 12345" in backup_path.read_text(encoding="utf-8")
-        
-        # Assert that config was regenerated with valid default values
-        assert cfg["logging"]["level"] in {10, 20, 30, 40, 50}
-        assert cfg_path.exists()
-        assert "level: 12345" not in cfg_path.read_text(encoding="utf-8")
+        assert "Invalid Batho configuration in 'batho.yaml'" in str(exc_info.value)
 
     def test_community_detection_config_parsed(self, tmp_path: Path):
         """Verify that community_detection config is parsed and not stripped by Pydantic validation."""

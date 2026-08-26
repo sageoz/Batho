@@ -49,6 +49,9 @@ Controls indexing limits and warning/strict levels.
 
 ### 5. `graph`
 Configures hypergraph consistency.
+- `backend`: Graph storage backend (`auto`, `in-memory`, `arrow`).
+- `auto_threshold_files`: File count threshold to switch backend (default `500`).
+- `auto_threshold_entities`: Entity count threshold to switch backend (default `30000`).
 - `cycle_detection`:
   - `enabled`: Detect inheritance or import cycles.
   - `fatal`: If `true`, fails the build when a cycle is detected.
@@ -138,6 +141,19 @@ Configures the AST parser cache.
   - `enabled`: Cache parsed AST structures.
   - `ttl_days`: Expiry for AST entries.
   - `max_entries`: Max files in the cache.
+
+### 13. `community_detection`
+Configures graph clustering and community detection algorithms.
+- `enabled`: Enable community detection (`true`).
+- `skip_threshold`: Skip detection if node count exceeds this (`200000`).
+- `sample_threshold`: Sample graph if node count exceeds this (`100000`).
+
+### 14. `memory`
+Configures memory usage limits and warnings.
+- `warning_threshold_mb`: Memory usage warning threshold (`800`).
+- `critical_threshold_mb`: Critical memory usage threshold (`1500`).
+- `rss_flush_threshold_mb`: Memory threshold to force cache flush (`1000`).
+- `max_per_worker_mb`: Maximum memory allowed per worker process (`150`).
 
 ---
 

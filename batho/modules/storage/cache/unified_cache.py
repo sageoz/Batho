@@ -188,8 +188,8 @@ class BathoCache:
             "mtime_ns": int(mtime * 1e9),
             "inode": None,
             "size": size,
-            "is_indexed": int(is_indexed),
-            "last_run_id": None,
+            "is_indexed": bool(is_indexed),
+            "last_run_uuid": None,
         }])
 
     def delete_file_hash(self, file_path: str) -> None:
@@ -225,8 +225,8 @@ class BathoCache:
                 "mtime_ns": getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1e9)),
                 "inode": getattr(stat, "st_ino", None),
                 "size": stat.st_size,
-                "is_indexed": int(is_indexed),
-                "last_run_id": None,
+                "is_indexed": bool(is_indexed),
+                "last_run_uuid": None,
             })
         if records and self._db is not None:
             self._db.upsert_file_tracking(records)

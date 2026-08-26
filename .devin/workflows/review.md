@@ -195,7 +195,7 @@ For every changed file, ask:
 - **Structlog logging:** All modules use `structlog.get_logger(__name__)`. Event names are snake_case (e.g., `community_detection_complete`).
 
 ### 15. Tests & Benchmarks
-- **Test suite:** ~600+ automated tests across 77 `test_*.py` files. Key directories: `tests/mcp/` (20 files), `tests/modules/` (43 files), `tests/orchestrator/` (8 files), `tests/cli/`, `tests/core/`, `tests/utils/`.
+- **Test suite:** ~864 automated tests across 94 `test_*.py` files. Key directories: `tests/mcp/` (20 files), `tests/modules/` (43 files), `tests/orchestrator/` (8 files), `tests/cli/`, `tests/core/`, `tests/utils/`.
 - **Coverage:** Minimum 60% line coverage across active v1.4.0 modules (`docs-site/docs/tests/index.md`).
 - **Benchmarks:** Production targets include ~1,000 files/sec, ~1.5GB in-memory / ~800MB Arrow for 100K files, ~45MB Arrow Bundle. New files under `benchmarks/` should follow these baselines.
 - **Test relevance:** When reviewing changes, confirm corresponding tests exist and cover edge cases. If a new test file is untracked, review it as part of the change.

@@ -27,7 +27,7 @@ from batho.mcp.community_summaries import load_communities, format_communities_f
 from batho.mcp.delta_reader import read_delta, format_delta_markdown, build_delta_structured
 from batho.mcp.registry import RepoRegistry, RepoEntry
 from batho.mcp.errors import _err, CLIENT_ERROR, EXTERNAL_ERROR
-from batho.utils.path_sanitizer import sanitize_path, PathSecurityError
+from batho.utils.path_sanitizer import sanitize_path, _canonicalize_untrusted_path, PathSecurityError
 
 if TYPE_CHECKING:
     from batho.mcp.watcher import BathoWatcherEngine
@@ -625,7 +625,7 @@ def register_tools(
         table = agent_table
 
         if file_path:
-            norm_fp = str(file_path).replace("\\", "/")
+            norm_fp = _canonicalize_untrusted_path(str(file_path))
             fid = reader.file_id_for_path(norm_fp)
             if fid is None:
                 return _err(f"File not indexed: {norm_fp}",
@@ -930,7 +930,7 @@ def register_tools(
         except ValueError as e:
             return _err(str(e), error_type=CLIENT_ERROR, hint="Call list_repos to see available repos.")
 
-        norm_fp = str(file_path).replace("\\", "/")
+        norm_fp = _canonicalize_untrusted_path(str(file_path))
         fid = reader.file_id_for_path(norm_fp)
         if fid is None:
             return _err(f"File not indexed: {norm_fp}",
@@ -1468,7 +1468,7 @@ def register_tools(
             return ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
         except Exception as exc:
             LOGGER.error("batho_export_failed", repo=repo_name, error=str(exc))
-            return _err(f"Export failed: {exc}", error_type=EXTERNAL_ERROR)
+            return _err(f"Export failed: {exc}", error_type=EXTERNAL_ERROR, hint="Check logs for details and retry.")
 
     @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
     def batho_diff(
@@ -1492,9 +1492,9 @@ def register_tools(
         """
         targets = [t for t in (run_id, entity_id, file_path) if t is not None]
         if len(targets) != 1:
-            return _err("Must specify exactly ONE of run_id, entity_id, or file_path.", error_type=CLIENT_ERROR)
+            return _err("Must specify exactly ONE of run_id, entity_id, or file_path.", error_type=CLIENT_ERROR, hint="Provide exactly one target parameter.")
         if since and not entity_id:
-            return _err("Parameter 'since' can only be used with 'entity_id'.", error_type=CLIENT_ERROR)
+            return _err("Parameter 'since' can only be used with 'entity_id'.", error_type=CLIENT_ERROR, hint="Remove 'since' or use it with 'entity_id'.")
 
         try:
             root_path = _resolve_root_path(repo, default_root, registry)
@@ -1550,7 +1550,7 @@ def register_tools(
             structured = {"entity_id": entity_id, "history": history}
 
         else:  # file_path
-            norm_fp = str(file_path).replace("\\", "/")
+            norm_fp = _canonicalize_untrusted_path(str(file_path))
             results = db.get_file_changelog_raw(norm_fp)
             lines = [f"## Node Changes for File `{norm_fp}`", ""]
             if not results:
@@ -1613,7 +1613,7 @@ def register_tools(
             return ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
         except Exception as exc:
             LOGGER.error("batho_gc_failed", repo=repo_name, error=str(exc))
-            return _err(f"GC failed: {exc}", error_type=EXTERNAL_ERROR)
+            return _err(f"GC failed: {exc}", error_type=EXTERNAL_ERROR, hint="Check logs for details and retry.")
 
     @app.tool(annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=False, destructiveHint=True))
     async def batho_fix(
@@ -1704,7 +1704,7 @@ def register_tools(
             return ToolResult(content=[TextContent(type="text", text=markdown_report)], structured_content=structured)
         except Exception as exc:
             LOGGER.error("batho_fix_failed", repo=repo_name, error=str(exc))
-            return _err(f"Fix failed: {exc}", error_type=EXTERNAL_ERROR)
+            return _err(f"Fix failed: {exc}", error_type=EXTERNAL_ERROR, hint="Check logs for details and retry.")
 
     @app.tool(annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=False, destructiveHint=True))
     async def batho_load(

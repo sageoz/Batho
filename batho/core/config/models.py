@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -306,7 +306,7 @@ class ExtractionConfig(BaseModel):
 
 
 class Config(BaseModel):
-    schema_version: str = Field(default=SCHEMA_VERSIONS["config"])
+    schema_version: Literal["batho-config.v1"] = Field(default=SCHEMA_VERSIONS["config"])
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     indexer: IndexerConfig = Field(default_factory=IndexerConfig)

@@ -194,6 +194,7 @@ class AstCache:
         file_path: str,
         content_hash: str,
         variant: str | None = None,
+        mtime: float | None = None,
     ) -> tuple[list[Entity], list[Relationship]] | None:
         """Retrieve cached AST results for a file.
 
@@ -219,6 +220,10 @@ class AstCache:
         cached_content_hash = data.get("content_hash")
         if cached_file_path != file_path or cached_content_hash != content_hash:
             # Hash collision or file rename - treat as stale
+            return None
+
+        cached_mtime = data.get("mtime")
+        if mtime is not None and cached_mtime is not None and cached_mtime != mtime:
             return None
 
         # Check TTL

@@ -112,7 +112,9 @@ class BlobRepairer:
             deleted = original_count - filtered.num_rows
 
             tmp = self.db._artifact_dir / "file_changelog.tmp.ipc"
-            write_simple_ipc(filtered.to_pylist(), FILE_CHANGELOG_SCHEMA, tmp)
+            import pyarrow as pa
+            with pa.ipc.new_file(str(tmp), FILE_CHANGELOG_SCHEMA) as writer:
+                writer.write_table(filtered)
             self.db._manager.commit_patch({"file_changelog": tmp}, run_uuid)
             self.db._reader.invalidate("file_changelog")
             return RepairResult(issue=issue, success=True, rows_affected=deleted)

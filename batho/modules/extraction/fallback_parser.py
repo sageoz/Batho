@@ -129,7 +129,7 @@ class FallbackParser:
             ))
             
         # 3. JS/TS/Java/C-style function declarations
-        js_func_pattern = r'(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([a-zA-Z_]\w*)\s*\('
+        js_func_pattern = r'(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([^\W0-9]\w*)\s*\('
         for match in re.finditer(js_func_pattern, content):
             end_idx = content.find('\n', match.end())
             if end_idx == -1:
@@ -148,7 +148,7 @@ class FallbackParser:
             ))
             
         # 4. JS/TS/Java/C-style class declarations
-        js_class_pattern = r'(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([a-zA-Z_]\w*)'
+        js_class_pattern = r'(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([^\W0-9]\w*)'
         for match in re.finditer(js_class_pattern, content):
             end_idx = content.find('\n', match.end())
             if end_idx == -1:

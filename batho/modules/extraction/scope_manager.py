@@ -353,7 +353,11 @@ class ScopeManager:
 
     @property
     def global_symbol_count(self) -> int:
-        """Return the total number of global symbols across all partitions."""
+        """Return the total number of global symbols across all partitions.
+        
+        Note: Under concurrent access, this count is an approximation
+        as partition locks are acquired sequentially, not atomically.
+        """
         with self._global_lock:
             partitions = list(self._partitioned_global.keys())
         total = 0

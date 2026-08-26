@@ -407,6 +407,9 @@ def run_build(options: BuildOptions) -> BuildResult:
                         relationships=rel_count,
                     )
 
+                    # Clean up streams early to free memory before intensive community detection phase
+                    store.cleanup_streams()
+
                     # --- Community Detection ---
                     community_cfg = cfg.get("community_detection", {})
                     if community_cfg.get("enabled", True):
@@ -755,9 +758,6 @@ def run_build(options: BuildOptions) -> BuildResult:
                         },
                         blob_config=artifact_blobs_cfg,
                     )
-
-                    store.cleanup_streams()
-
                     LOGGER.info(
                         "build_complete",
                         run_id=run_id,

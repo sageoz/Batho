@@ -3761,6 +3761,7 @@ def apply_bsg_rules_to_entities(
     rules: list[RuleDefinition],
     root_path: str,
     file_path: str,
+    security_audit_enabled: bool = False,
 ) -> tuple[list[Entity], dict[str, Any]]:
     """Apply non-bidirectional BSG rules to a single file's entities.
 
@@ -3921,19 +3922,20 @@ def apply_bsg_rules_to_entities(
 
     # Build per-file security_audit fragment
     rule_severity_map = {r.name: r.severity for r in rules}
-    for plugin_id, hits in plugin_hits.items():
-        if hits > 0:
-            # Collect per-rule details for this plugin
-            details = [
-                {"rule": name, "severity": rule_severity_map.get(name, "unknown"), "hits": count}
-                for name, count in file_rule_hits.items()
-                if count > 0 and any(r.name == name and r.plugin == plugin_id for r in rules)
-            ]
-            file_security_audit["plugins"][plugin_id] = {
-                "plugin_id": plugin_id,
-                "name": _plugin_display_name(plugin_id),
-                "interceptions": hits,
-                "rule_details": details,
-            }
+    if security_audit_enabled:
+        for plugin_id, hits in plugin_hits.items():
+            if hits > 0:
+                # Collect per-rule details for this plugin
+                details = [
+                    {"rule": name, "severity": rule_severity_map.get(name, "unknown"), "hits": count}
+                    for name, count in file_rule_hits.items()
+                    if count > 0 and any(r.name == name and r.plugin == plugin_id for r in rules)
+                ]
+                file_security_audit["plugins"][plugin_id] = {
+                    "plugin_id": plugin_id,
+                    "name": _plugin_display_name(plugin_id),
+                    "interceptions": hits,
+                    "rule_details": details,
+                }
 
     return updated_entities, file_security_audit

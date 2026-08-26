@@ -57,11 +57,8 @@ class BathoBundleReader:
                     with ipc.open_file(mmap) as reader:
                         table = reader.read_all()
 
-                # Ensure the table is globally sorted by file_id if present to support NP point lookup slices
-                if "file_id" in table.schema.names and table.num_rows > 0:
-                    import pyarrow.compute as pc
-                    indices = pc.sort_indices(table, sort_keys=[("file_id", "ascending")])
-                    table = table.take(indices)
+                # Instead of sorting the table, just build the index from the existing data
+                # The writer already writes data in sorted file_id order
 
                 self._tables[logical_name] = table
 
@@ -73,24 +70,34 @@ class BathoBundleReader:
                 LOGGER.error("bundle_reader_mmap_failed", table=logical_name, error=str(exc))
                 return pa.table({})
 
-    def _build_offset_index(self, table: pa.Table) -> dict[int, slice]:
-        """Build dict[file_id → slice] using numpy for O(1) row lookup.
+    def _build_offset_index(self, table: pa.Table) -> dict[int, Any]:
+        """Build dict[file_id → slice | list[slice]] for O(1) row lookup.
 
-        Assumes rows are sorted by file_id (guaranteed by BathoBundleWriter).
+        Preserves zero-copy by indexing chunks directly without copying or sorting the table.
         """
         if table.num_rows == 0:
             return {}
 
         file_ids = table.column("file_id").combine_chunks().to_numpy(zero_copy_only=False)
-        unique_ids, start_indices = np.unique(file_ids, return_index=True)
+        if len(file_ids) == 0:
+            return {}
 
-        index: dict[int, slice] = {}
-        n = len(unique_ids)
-        for i in range(n):
-            fid = int(unique_ids[i])
-            start = int(start_indices[i])
-            end = int(start_indices[i + 1]) if i + 1 < n else table.num_rows
-            index[fid] = slice(start, end)
+        diffs = np.where(file_ids[:-1] != file_ids[1:])[0] + 1
+        starts = np.insert(diffs, 0, 0)
+        ends = np.append(diffs, len(file_ids))
+
+        index: dict[int, Any] = {}
+        for s, e in zip(starts, ends):
+            fid = int(file_ids[s])
+            sl = slice(int(s), int(e))
+            if fid not in index:
+                index[fid] = sl
+            else:
+                prev = index[fid]
+                if isinstance(prev, slice):
+                    index[fid] = [prev, sl]
+                else:
+                    prev.append(sl)
 
         return index
 
@@ -99,11 +106,19 @@ class BathoBundleReader:
             table = self._get_table(logical_name)
             if table.num_rows == 0:
                 return []
-            row_slice = self._indices.get(logical_name, {}).get(file_id)
-            if row_slice is None:
+            loc = self._indices.get(logical_name, {}).get(file_id)
+            if loc is None:
                 return []
-            sliced = table.slice(row_slice.start, row_slice.stop - row_slice.start)
-            return sliced.to_pylist()
+            if isinstance(loc, slice):
+                sliced = table.slice(loc.start, loc.stop - loc.start)
+                return sliced.to_pylist()
+            elif isinstance(loc, list):
+                rows: list[dict[str, Any]] = []
+                for sl in loc:
+                    sliced = table.slice(sl.start, sl.stop - sl.start)
+                    rows.extend(sliced.to_pylist())
+                return rows
+            return []
 
     # ------------------------------------------------------------------
     # File artifact reads

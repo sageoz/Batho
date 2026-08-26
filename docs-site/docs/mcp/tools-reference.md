@@ -61,6 +61,9 @@ Register a repository in the Batho MCP registry. The repo must have a `.batho` a
 |-----------|------|----------|---------|-------------|
 | `name` | string | Yes | — | Repo name (unique identifier in registry) |
 | `path` | string | Yes | — | Absolute path to the repository root |
+| `watch` | `boolean` | No | `false` | Enable file watching for automatic re-indexing |
+| `debounce_ms` | `integer` | No | `2000` | Debounce interval in milliseconds for file watch events |
+| `max_file_size_kb` | `integer` | No | `null` | Maximum file size in KB to index (null for default) |
 
 ### Example
 

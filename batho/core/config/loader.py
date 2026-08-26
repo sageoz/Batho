@@ -502,38 +502,10 @@ def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str,
     try:
         cfg = Config.model_validate(base_cfg)
     except ValidationError as exc:
-        _get_logger().warning(
-            "config_validation_failed_regenerating",
-            config_file=cfg_path.name,
-            error=str(exc),
-        )
-        # No backward compatibility: regenerate with current defaults
-        try:
-            cfg = Config()
-            if cfg_path.exists():
-                try:
-                    # Back up the invalid config file to prevent silent data destruction
-                    backup_path = cfg_path.with_suffix(".yaml.bak")
-                    import shutil
-                    shutil.copyfile(cfg_path, backup_path)
-                    _get_logger().warning(
-                        "config_validation_failed_backup_created",
-                        config_file=str(cfg_path),
-                        backup_file=str(backup_path),
-                    )
-                    cfg_path.write_text(
-                        yaml.safe_dump(cfg.model_dump(), default_flow_style=False, sort_keys=False),
-                        encoding="utf-8",
-                    )
-                    _get_logger().info("config_regenerated", config_file=str(cfg_path))
-                except OSError as write_exc:
-                    _get_logger().warning(
-                        "config_regenerate_failed",
-                        config_file=str(cfg_path),
-                        error=str(write_exc),
-                    )
-        except ValidationError:
-            cfg = Config.model_construct()
+        raise RuntimeError(
+            f"Invalid Batho configuration in '{cfg_path.name}': {exc}\n"
+            f"Please fix the configuration file or delete it to regenerate defaults."
+        ) from exc
 
     cfg_dict = cfg.model_dump()
     cfg_dict["logging"]["level"] = cfg.logging.std_level

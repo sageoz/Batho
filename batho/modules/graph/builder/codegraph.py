@@ -99,7 +99,13 @@ class InMemoryGraph:
         entities: dict[str, Entity] | None = None,
         relationships: list[Relationship] | None = None,
     ) -> None:
-        self._lock = threading.Lock()
+        # RLock (reentrant) so public methods that already acquire _lock
+        # (add_entity, add_relationship, ...) can be invoked safely from
+        # within an outer `with self._lock:` critical section in callers
+        # such as GraphUpdater.remove_entities_for_file /
+        # add_entities_for_file. This keeps each multi-entity mutation
+        # atomic without deadlocking.
+        self._lock = threading.RLock()
         self.entities: dict[str, Entity] = entities if entities is not None else {}
         self.relationships: list[Relationship] = (
             relationships if relationships is not None else []
@@ -506,6 +512,14 @@ class IncrementalGraphUpdater:
         Removes existing entities for the file and re-parses to add new ones.
         Handles parse errors gracefully by logging and leaving graph unchanged.
 
+        Atomicity contract (BUG-02): ``remove_entities_for_file`` and the
+        mutation phase of ``add_entities_for_file`` each acquire
+        ``graph._lock`` (a reentrant ``RLock``) so that neither phase exposes
+        a partially-mutated graph to concurrent readers. The two phases are
+        not held under a *single* lock acquisition because file I/O and
+        parsing happen between them; under the single-threaded patch
+        orchestrator this is safe, and each phase is individually atomic.
+
         Args:
             graph: The InMemoryGraph to update
             file_path: Absolute path to the modified file
@@ -524,123 +538,128 @@ class IncrementalGraphUpdater:
         Uses secondary indexes for O(removed × degree) complexity instead of O(F×R).
         Updates adjacency cache incrementally instead of full invalidation.
 
-        NOTE on threading (BUG-02): This method mutates graph structures without
-        acquiring graph._lock. This is a design decision; patch operations (including
-        this method and add_entities_for_file) are executed sequentially on the main
-        thread inside a single-threaded orchestrator. No concurrent mutations occur
-        during patch execution.
+        NOTE on threading (BUG-02): This method acquires ``graph._lock`` (a
+        reentrant ``RLock``) for the duration of its mutations so that the
+        removal is atomic with respect to concurrent readers/writers. The
+        public ``add_entity`` / ``add_relationship`` methods also acquire the
+        same lock; the ``RLock`` allows ``add_entities_for_file`` to wrap its
+        own mutation loop in ``with graph._lock:`` without deadlocking. Under
+        the single-threaded patch orchestrator the lock is uncontended, but
+        holding it keeps the ``GraphBackend`` thread-safe mutation contract
+        consistent across all update paths.
 
         Args:
             graph: The InMemoryGraph to update
             file_path: Absolute path to the deleted file
         """
-        # Use _by_file index for O(k) lookup instead of O(N) scan
-        entities_to_remove = list(graph._by_file.get(file_path, set()))
+        with graph._lock:
+            # Use _by_file index for O(k) lookup instead of O(N) scan
+            entities_to_remove = list(graph._by_file.get(file_path, set()))
  
-        # Collect all relationships to remove using _rels_by_endpoint index
-        rel_ids_to_remove: set[str] = set()
-        for eid in entities_to_remove:
-            for rel in graph._rels_by_endpoint.get(eid, []):
-                if rel.id in graph._rel_ids:
-                    rel_ids_to_remove.add(rel.id)
- 
-        # Build new relationships list (filtering out removed ones)
-        relationships_to_keep = [r for r in graph.relationships if r.id not in rel_ids_to_remove]
- 
-        # Snapshot for rollback in case of partial mutation failure (BUG-03)
-        original_entities = {eid: graph.entities[eid] for eid in entities_to_remove if eid in graph.entities}
-        original_by_file = set(graph._by_file.get(file_path, set()))
-        original_by_type = {
-            ent.type: set(graph._by_type.get(ent.type, set()))
-            for ent in original_entities.values()
-        }
-        original_relationships = list(graph.relationships)
-        original_rel_ids = set(graph._rel_ids)
-        original_rels_by_endpoint = {k: list(v) for k, v in graph._rels_by_endpoint.items()}
-        original_stale_relations_count = graph._stale_relations_count
-        original_adj_out = {k: list(v) for k, v in graph._adj_out.items()} if graph._adj_out is not None else None
-        original_adj_in = {k: list(v) for k, v in graph._adj_in.items()} if graph._adj_in is not None else None
-
-        # Apply all changes atomically
-        try:
-            # Remove entities and update secondary indexes
+            # Collect all relationships to remove using _rels_by_endpoint index
+            rel_ids_to_remove: set[str] = set()
             for eid in entities_to_remove:
-                if eid in graph.entities:
-                    entity = graph.entities[eid]
-                    del graph.entities[eid]
-                    # Update secondary indexes
-                    graph._by_file[entity.file].discard(eid)
-                    graph._by_type[entity.type].discard(eid)
+                for rel in graph._rels_by_endpoint.get(eid, []):
+                    if rel.id in graph._rel_ids:
+                        rel_ids_to_remove.add(rel.id)
  
-            # Update relationships
-            graph.relationships = relationships_to_keep
-            graph._rel_ids = {r.id for r in relationships_to_keep}
+            # Build new relationships list (filtering out removed ones)
+            relationships_to_keep = [r for r in graph.relationships if r.id not in rel_ids_to_remove]
  
-            # Lazy/batch eviction of relationship endpoints
-            for eid in entities_to_remove:
-                graph._rels_by_endpoint.pop(eid, None)
- 
-            graph._stale_relations_count += len(rel_ids_to_remove)
- 
-            # Rebuild relationship index if threshold exceeded (e.g. 20% of total relationships or 1000)
-            threshold = max(1000, len(graph.relationships) // 5)
-            if graph._stale_relations_count > threshold:
-                graph._rels_by_endpoint.clear()
-                for rel in graph.relationships:
-                    graph._rels_by_endpoint[rel.source_id].append(rel)
-                    graph._rels_by_endpoint[rel.target_id].append(rel)
-                graph._stale_relations_count = 0
- 
-            # Incremental adjacency cache update (if cache exists)
-            if graph._adj_out is not None:
-                for eid in entities_to_remove:
-                    if eid in graph._adj_out:
-                        del graph._adj_out[eid]
-                    # Remove entries where eid is a target
-                    for src, targets in list(graph._adj_out.items()):
-                        if eid in targets:
-                            targets.remove(eid)
-            if graph._adj_in is not None:
-                for eid in entities_to_remove:
-                    if eid in graph._adj_in:
-                        del graph._adj_in[eid]
-                    # Remove entries where eid is a source
-                    for tgt, sources in list(graph._adj_in.items()):
-                        if eid in sources:
-                            sources.remove(eid)
- 
-            self.logger.debug(
-                "removed_entities_for_file",
-                file_path=file_path,
-                entity_count=len(entities_to_remove),
-                relationship_count=len(rel_ids_to_remove),
-            )
- 
-        except Exception as e:
-            # Rollback mutations to ensure transactional atomicity
-            graph.entities.update(original_entities)
-            graph._by_file[file_path] = original_by_file
-            for etype, original_set in original_by_type.items():
-                graph._by_type[etype] = original_set
-            graph.relationships = original_relationships
-            graph._rel_ids = original_rel_ids
-            graph._rels_by_endpoint = original_rels_by_endpoint
-            graph._stale_relations_count = original_stale_relations_count
-            graph._adj_out = original_adj_out
-            graph._adj_in = original_adj_in
+            # Snapshot for rollback in case of partial mutation failure (BUG-03)
+            original_entities = {eid: graph.entities[eid] for eid in entities_to_remove if eid in graph.entities}
+            original_by_file = set(graph._by_file.get(file_path, set()))
+            original_by_type = {
+                ent.type: set(graph._by_type.get(ent.type, set()))
+                for ent in original_entities.values()
+            }
+            original_relationships = list(graph.relationships)
+            original_rel_ids = set(graph._rel_ids)
+            original_rels_by_endpoint = {k: list(v) for k, v in graph._rels_by_endpoint.items()}
+            original_stale_relations_count = graph._stale_relations_count
+            original_adj_out = {k: list(v) for k, v in graph._adj_out.items()} if graph._adj_out is not None else None
+            original_adj_in = {k: list(v) for k, v in graph._adj_in.items()} if graph._adj_in is not None else None
 
-            if isinstance(e, (KeyError, ValueError, RuntimeError)):
-                self.logger.error(
-                    "remove_entities_recoverable_error",
+            # Apply all changes atomically
+            try:
+                # Remove entities and update secondary indexes
+                for eid in entities_to_remove:
+                    if eid in graph.entities:
+                        entity = graph.entities[eid]
+                        del graph.entities[eid]
+                        # Update secondary indexes
+                        graph._by_file[entity.file].discard(eid)
+                        graph._by_type[entity.type].discard(eid)
+ 
+                # Update relationships
+                graph.relationships = relationships_to_keep
+                graph._rel_ids = {r.id for r in relationships_to_keep}
+ 
+                # Lazy/batch eviction of relationship endpoints
+                for eid in entities_to_remove:
+                    graph._rels_by_endpoint.pop(eid, None)
+ 
+                graph._stale_relations_count += len(rel_ids_to_remove)
+ 
+                # Rebuild relationship index if threshold exceeded (e.g. 20% of total relationships or 1000)
+                threshold = max(1000, len(graph.relationships) // 5)
+                if graph._stale_relations_count > threshold:
+                    graph._rels_by_endpoint.clear()
+                    for rel in graph.relationships:
+                        graph._rels_by_endpoint[rel.source_id].append(rel)
+                        graph._rels_by_endpoint[rel.target_id].append(rel)
+                    graph._stale_relations_count = 0
+ 
+                # Incremental adjacency cache update (if cache exists)
+                if graph._adj_out is not None:
+                    for eid in entities_to_remove:
+                        if eid in graph._adj_out:
+                            del graph._adj_out[eid]
+                        # Remove entries where eid is a target
+                        for src, targets in list(graph._adj_out.items()):
+                            if eid in targets:
+                                targets.remove(eid)
+                if graph._adj_in is not None:
+                    for eid in entities_to_remove:
+                        if eid in graph._adj_in:
+                            del graph._adj_in[eid]
+                        # Remove entries where eid is a source
+                        for tgt, sources in list(graph._adj_in.items()):
+                            if eid in sources:
+                                sources.remove(eid)
+ 
+                self.logger.debug(
+                    "removed_entities_for_file",
                     file_path=file_path,
-                    error=str(e),
-                    entities_targeted=len(entities_to_remove),
-                    relationships_targeted=len(rel_ids_to_remove),
+                    entity_count=len(entities_to_remove),
+                    relationship_count=len(rel_ids_to_remove),
                 )
-                raise GraphConsistencyError(f"Failed to remove entities for {file_path}: {e}") from e
-            else:
-                self.logger.exception("Unexpected error in remove_entities_for_file")
-                raise
+ 
+            except Exception as e:
+                # Rollback mutations to ensure transactional atomicity
+                graph.entities.update(original_entities)
+                graph._by_file[file_path] = original_by_file
+                for etype, original_set in original_by_type.items():
+                    graph._by_type[etype] = original_set
+                graph.relationships = original_relationships
+                graph._rel_ids = original_rel_ids
+                graph._rels_by_endpoint = original_rels_by_endpoint
+                graph._stale_relations_count = original_stale_relations_count
+                graph._adj_out = original_adj_out
+                graph._adj_in = original_adj_in
+
+                if isinstance(e, (KeyError, ValueError, RuntimeError)):
+                    self.logger.error(
+                        "remove_entities_recoverable_error",
+                        file_path=file_path,
+                        error=str(e),
+                        entities_targeted=len(entities_to_remove),
+                        relationships_targeted=len(rel_ids_to_remove),
+                    )
+                    raise GraphConsistencyError(f"Failed to remove entities for {file_path}: {e}") from e
+                else:
+                    self.logger.exception("Unexpected error in remove_entities_for_file")
+                    raise
 
     def add_entities_for_file(
         self,
@@ -653,6 +672,15 @@ class IncrementalGraphUpdater:
 
         Parses the file and adds all entities and relationships to the graph.
         Handles parse errors gracefully by logging and skipping the file.
+
+        NOTE on threading (BUG-02): File I/O and parsing happen *outside* the
+        lock; only the graph mutation phase (the ``add_entity`` /
+        ``add_relationship`` loop) is wrapped in ``with graph._lock:`` so the
+        multi-entity add is atomic with respect to concurrent readers. The
+        lock is a reentrant ``RLock``, so the inner ``add_entity`` /
+        ``add_relationship`` calls (which also acquire it) do not deadlock.
+        Combined with the locked ``remove_entities_for_file``, this makes
+        each phase of ``update_entities_for_file`` individually atomic.
 
         Args:
             graph: The InMemoryGraph to update
@@ -692,11 +720,13 @@ class IncrementalGraphUpdater:
             # Parse file
             entities, relationships = file_extractor.parse_file(file_path, content)
 
-            # Add to graph
-            for entity in entities:
-                graph.add_entity(entity)
-            for rel in relationships:
-                graph.add_relationship(rel)
+            # Add to graph atomically (lock held only for the mutation phase;
+            # file I/O and parsing already completed above without the lock).
+            with graph._lock:
+                for entity in entities:
+                    graph.add_entity(entity)
+                for rel in relationships:
+                    graph.add_relationship(rel)
 
             self.logger.debug(
                 "added_entities_for_file",
