@@ -6,6 +6,43 @@ description: "Batho release history"
 
 # Changelog
 
+## v1.4.1 — 2026-08-26
+
+**Review hardening, thread safety, path sanitization, atomic writes, and documentation updates.**
+
+### Bug Fixes
+
+- **Thread safety in graph mutations**: `InMemoryGraph._lock` upgraded from `Lock` to `RLock`; `remove_entities_for_file` and `add_entities_for_file` now wrap mutations in `with graph._lock:` for atomic multi-entity updates without deadlocking.
+- **Path sanitization in MCP tools**: Replaced naive `str.replace("\\", "/")` with `_canonicalize_untrusted_path()` in `graph_overview`, `graph_query`, `get_file_graph`, and `batho_diff` for proper canonicalization per the path sanitization ADR.
+- **Config validation fail-fast**: `get_config_with_root` now raises `RuntimeError` on invalid config instead of silently backing up and overwriting the user's `batho.yaml`.
+- **Atomic resolution cache writes**: `ResolutionCache` metadata writes now use `tempfile.mkstemp` + `os.replace` to prevent cache corruption on interruption.
+- **AST cache mtime invalidation**: `AstCache.get` now accepts an optional `mtime` parameter to detect stale entries even when content hash matches.
+- **Unicode identifier extraction**: `extractor.py` and `fallback_parser.py` regexes updated from `[a-zA-Z_]` to `[^\W0-9]` for PEP 3131 compliance, preserving non-ASCII identifiers.
+- **Case-insensitive XML entity detection**: `manifest_parser.py` now uppercases content before checking for `<!ENTITY`/`<!DOCTYPE`, matching XML's case-insensitive grammar.
+- **Unified cache field types**: `is_indexed` changed from `int` to `bool`; `last_run_id` renamed to `last_run_uuid` to match the actual schema.
+- **Bundle reader zero-copy preservation**: Removed redundant sort in `BathoBundleReader` (writer already sorts by `file_id`); index now handles non-contiguous `file_id` ranges with multi-slice support.
+- **Blob repairer memory**: `blob_repairer.py` now uses `pa.ipc.new_file` with a table directly instead of `to_pylist()`, avoiding unnecessary row materialization.
+
+### Security Hardening
+
+- **Tamper-evident audit log**: `FixContext` audit entries now include `previous_hash` and `hash` fields forming a SHA-256 chain, enabling tamper detection.
+- **Security audit flag gating**: BSG plugin hit collection in `apply_bsg_rules_to_entities` is now guarded behind `security_audit_enabled`, avoiding unnecessary work when the flag is off.
+
+### Performance
+
+- **Early stream cleanup**: `store.cleanup_streams()` moved before community detection in `build.py` to free memory earlier in the pipeline.
+
+### Other Changes
+
+- `schema_version` in `Config` now uses `Literal["batho-config.v1"]` for stricter validation.
+- Added error `hint` parameters to `_err()` calls in `batho_export`, `batho_diff`, `batho_gc`, and `batho_fix` MCP tools.
+- Documentation: added `graph`, `community_detection`, and `memory` config sections; documented `watch`, `debounce_ms`, `max_file_size_kb` params for `add_repo`.
+- Added `CITATION.cff` to the bump-version script's file list for future releases.
+- Fixed `CHANGELOG_PATH` `NameError` in `generate_changelog_entry.py`.
+- **966 tests** (up from 864).
+
+---
+
 ## v1.4.0 — 2026-08-04
 
 **Stdlib expansion, graph builder phases 4-5, BSG interceptors, and security/performance hardening.**
