@@ -155,6 +155,11 @@ class BathoWatcherEngine:
 
     def unwatch(self, repo_name: str) -> None:
         """Stop watching a specific repo."""
+        # Pop the watch entry and cancel its timer under the lock, but
+        # stop/join the observer *outside* the lock.  The watchdog observer
+        # thread calls _on_change which acquires self._lock; if we hold
+        # self._lock while waiting for observer.stop()/join() we deadlock
+        # with the observer thread.
         with self._lock:
             watch = self._watches.pop(repo_name, None)
             if not watch:
@@ -164,21 +169,30 @@ class BathoWatcherEngine:
                 watch.debounce_timer.cancel()
                 watch.debounce_timer = None
 
-            if watch.observer:
-                try:
-                    watch.observer.stop()
-                    watch.observer.join(timeout=2.0)
-                except Exception as exc:
-                    LOGGER.warning("watcher_stop_error", repo=repo_name, error=str(exc))
+            observer = watch.observer
+            watch.observer = None
 
-            LOGGER.info("watcher_stopped", repo=repo_name)
+        # Stop and join the observer outside self._lock so the observer's
+        # event-dispatch thread (which may be blocked in _on_change waiting
+        # for self._lock) can drain and exit.
+        if observer is not None:
+            try:
+                observer.stop()
+                observer.join(timeout=2.0)
+            except Exception as exc:
+                LOGGER.warning("watcher_stop_error", repo=repo_name, error=str(exc))
+
+        LOGGER.info("watcher_stopped", repo=repo_name)
 
     def stop(self) -> None:
         """Stop all watchers and clean up."""
         with self._lock:
             self._running = False
-            for repo_name in list(self._watches.keys()):
-                self.unwatch(repo_name)
+            repo_names = list(self._watches.keys())
+        # Unwatch each repo outside self._lock to avoid the observer-stop
+        # deadlock described in unwatch().
+        for repo_name in repo_names:
+            self.unwatch(repo_name)
 
     def _on_change(self, repo_name: str, rel_path: str, full_path: Path) -> None:
         """Callback from file watcher — adds to pending and schedules debounced patch."""

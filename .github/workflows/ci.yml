@@ -36,6 +36,7 @@ jobs:
       - name: Run all tests with coverage
         run: |
           uv run pytest \
+            --timeout=60 \
             --cov=batho \
             --cov=batho_cli \
             --cov-report=xml \
