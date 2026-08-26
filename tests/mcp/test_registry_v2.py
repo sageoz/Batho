@@ -28,13 +28,13 @@ def test_load_v1_schema_defaults(tmp_path: Path):
     assert e.last_synced is None
 
 
-def test_save_writes_v2_schema(tmp_path: Path):
+def test_save_writes_current_schema_version(tmp_path: Path):
     cfg = tmp_path / "mcp-repos.json"
     reg = RepoRegistry(config_path=cfg)
     reg.add("repo2", "/path/to/repo2", watch=True, debounce_ms=1500)
 
     data = json.loads(cfg.read_text(encoding="utf-8"))
-    assert data.get("version") == 2
+    assert data.get("version") == 3
     r = data["repos"][0]
     assert r["name"] == "repo2"
     assert r["watch"] is True

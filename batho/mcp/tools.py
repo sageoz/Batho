@@ -1775,7 +1775,7 @@ def register_tools(
     # -------------------------------------------------------------------
     for tool_name in _tools_to_remove():
         try:
-            app.remove_tool(tool_name)
+            app.local_provider.remove_tool(tool_name)
             LOGGER.info("mcp_tool_disabled", tool=tool_name)
         except Exception:
             # Tool may not exist if it was never registered; safe to skip.

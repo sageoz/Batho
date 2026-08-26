@@ -357,7 +357,7 @@ The agent calls `graph_overview(repo="backend")` or `search_entities(repo="front
 
 After restarting all configured clients, verify the setup:
 
-1. **Tool list** — Ask the agent to list available tools. Expect 10 Batho tools: `list_repos`, `add_repo`, `remove_repo`, `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `search_entities`, `get_delta`
+1. **Tool list** — Ask the agent to list available tools. Expect 15 Batho tools by default: `list_repos`, `add_repo`, `remove_repo`, `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `search_entities`, `get_delta`, `batho_status`, `batho_list_runs`, `batho_diff`, `batho_patch`, `batho_fix`. Four administrative tools (`batho_build`, `batho_export`, `batho_load`, `batho_gc`) are disabled by default — enable them via `batho.yaml` (`mcp.tools.disabled: []`), env var (`BATHO_MCP_TOOLS_DISABLED=""`), or CLI flag (`batho mcp --enable-tool batho_build`). With all tools enabled, 19 tools are available.
 
 2. **List repos** — Ask: "What repos are available?" The agent should call `list_repos()` and show registered repos with status.
 
@@ -395,6 +395,7 @@ Common issues and solutions:
 | Server crashes | `batho` not on PATH in client's environment | Use absolute path: `which batho` → use full path in config |
 | Stale data | Server holding old generation cache | Restart the client (server auto-invalidates on next call, but restart is cleanest) |
 | `batho mcp` hangs | Normal behavior — stdio server waits for input | This is expected. The client manages the process. |
+| Administrative tool missing (batho_build, etc.) | Tool disabled by default (tiered exposure) | Enable via `batho.yaml` (`mcp.tools.disabled: []`), env (`BATHO_MCP_TOOLS_DISABLED=""`), or CLI (`batho mcp --enable-tool batho_build`) |
 
 ## Output Format
 
@@ -429,9 +430,10 @@ After completing setup, provide a summary:
 3. Then ask: "Give me an overview of myproject"
 4. After code changes, run: `batho patch --root /path/to/repo --verbose`
 
-### Tools Available (10)
-- list_repos, add_repo, remove_repo
-- graph_overview, graph_query, get_entity, trace_path, get_file_graph, search_entities, get_delta
+### Tools Available (15 by default, 19 with admin tools enabled)
+- **Tier 1 (read-only, always enabled):** list_repos, add_repo, remove_repo, graph_overview, graph_query, get_entity, trace_path, get_file_graph, search_entities, get_delta, batho_status, batho_list_runs, batho_diff
+- **Tier 2 (destructive, always enabled):** batho_patch, batho_fix
+- **Tier 3 (disabled by default, opt-in):** batho_build, batho_export, batho_load, batho_gc
 ```
 
 ## Limitations

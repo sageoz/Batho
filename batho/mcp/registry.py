@@ -10,7 +10,9 @@ import json
 import os
 import tempfile
 import threading
+import uuid
 from dataclasses import dataclass, asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +22,12 @@ LOGGER = structlog.get_logger(__name__)
 
 DEFAULT_CONFIG_PATH = Path.home() / ".batho" / "mcp-repos.json"
 
+REGISTRY_SCHEMA_VERSION = 3
+
 
 @dataclass
 class RepoEntry:
-    """A single registered repository."""
+    """A single registered repository (v3 schema)."""
 
     name: str
     path: str
@@ -32,6 +36,13 @@ class RepoEntry:
     max_file_size_kb: int | None = None
     last_synced: str | None = None  # ISO 8601 timestamp
     sync_state: str = "idle"  # idle | pending | patching | error
+    # Dashboard additions (v3 schema)
+    id: str = ""  # uuid4 hex, generated on add
+    mode: str = "local"  # local | github
+    branch: str | None = None
+    status: str = "not_indexed"  # not_indexed | indexing | ready | stale | error
+    last_built_at: str | None = None  # ISO 8601 timestamp
+    created_at: str = ""  # ISO 8601 timestamp
 
     @property
     def artifact_dir(self) -> Path:
@@ -42,10 +53,12 @@ class RepoRegistry:
     """Manages a JSON registry of Batho repos at ~/.batho/mcp-repos.json."""
 
     VALID_SYNC_STATES = {"idle", "pending", "patching", "error"}
+    VALID_STATUSES = {"not_indexed", "indexing", "ready", "stale", "error"}
+    VALID_MODES = {"local", "github"}
 
     def __init__(self, config_path: Path | None = None) -> None:
         self.config_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     @staticmethod
     def _clamp_debounce_ms(val: Any) -> int:
@@ -67,6 +80,7 @@ class RepoRegistry:
         
         repos = data.get("repos", []) if isinstance(data, dict) else []
         entries: list[RepoEntry] = []
+        migrated = False
         for r in repos:
             if not isinstance(r, dict) or "name" not in r or "path" not in r:
                 continue
@@ -84,23 +98,72 @@ class RepoRegistry:
             sync_state = str(r.get("sync_state", "idle"))
             if sync_state not in self.VALID_SYNC_STATES:
                 sync_state = "idle"
-            entries.append(
-                RepoEntry(
-                    name=name,
-                    path=path,
-                    watch=watch,
-                    debounce_ms=debounce_ms,
-                    max_file_size_kb=max_file_size_kb,
-                    last_synced=last_synced,
-                    sync_state=sync_state,
-                )
+
+            # v3 fields — v2 entries are genuinely migrated, not just defaulted:
+            # the dashboard keys/routes by `id`, so it must exist and persist.
+            is_legacy = "id" not in r
+            entry_id = str(r.get("id", ""))
+            if not entry_id:
+                entry_id = uuid.uuid4().hex
+                migrated = True
+            created_at = str(r.get("created_at", ""))
+            if not created_at:
+                created_at = datetime.now(timezone.utc).isoformat()
+                migrated = True
+
+            mode = str(r.get("mode", "local"))
+            if mode not in self.VALID_MODES:
+                mode = "local"
+            branch = str(r["branch"]) if r.get("branch") is not None else None
+
+            entry = RepoEntry(
+                name=name,
+                path=path,
+                watch=watch,
+                debounce_ms=debounce_ms,
+                max_file_size_kb=max_file_size_kb,
+                last_synced=last_synced,
+                sync_state=sync_state,
+                id=entry_id,
+                mode=mode,
+                branch=branch,
+                created_at=created_at,
             )
+
+            # Status: keep explicit v3 values; derive legacy entries from the
+            # artifact on disk so pre-built repos show as "ready".
+            if is_legacy:
+                if entry.artifact_dir.exists():
+                    entry.status = "ready"
+                    entry.last_built_at = datetime.fromtimestamp(
+                        entry.artifact_dir.stat().st_mtime, tz=timezone.utc
+                    ).isoformat()
+                migrated = True
+            else:
+                status = str(r.get("status", "not_indexed"))
+                entry.status = status if status in self.VALID_STATUSES else "not_indexed"
+                entry.last_built_at = (
+                    str(r["last_built_at"]) if r.get("last_built_at") is not None else None
+                )
+            entries.append(entry)
+
+        # Persist the migration so ids/statuses are stable across processes
+        # (MCP server, sidecar, CLI all load this file). Acquire the lock so a
+        # concurrent writer (add/update/remove) cannot interleave its own
+        # load+save between our read here and the migration save below.
+        if migrated:
+            with self._lock:
+                try:
+                    self.save(entries)
+                    LOGGER.info("registry_migrated_v3", path=str(self.config_path), count=len(entries))
+                except OSError as exc:
+                    LOGGER.warning("registry_migration_save_failed", error=str(exc))
         return entries
 
     def save(self, entries: list[RepoEntry]) -> None:
         """Write entries to the JSON config file atomically. Creates parent dirs if needed."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"version": 2, "repos": [asdict(e) for e in entries]}
+        data = {"version": REGISTRY_SCHEMA_VERSION, "repos": [asdict(e) for e in entries]}
         fd, tmp_path = tempfile.mkstemp(dir=self.config_path.parent, prefix="mcp-repos.", suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -132,7 +195,16 @@ class RepoRegistry:
                 watch=watch,
                 debounce_ms=clamped_debounce,
                 max_file_size_kb=max_file_size_kb,
+                id=uuid.uuid4().hex,
+                created_at=datetime.now(timezone.utc).isoformat(),
             )
+            # Reflect on-disk artifact state so pre-built repos do not briefly
+            # misreport as not_indexed. Mirrors the v2→v3 migration logic.
+            if self.has_artifact(entry):
+                entry.status = "ready"
+                entry.last_built_at = datetime.fromtimestamp(
+                    entry.artifact_dir.stat().st_mtime, tz=timezone.utc
+                ).isoformat()
             # Upsert: replace if name exists, otherwise append
             entries = [e for e in entries if e.name != name]
             entries.append(entry)
@@ -181,6 +253,42 @@ class RepoRegistry:
             if entry.name == name:
                 return entry
         return None
+
+    def get_by_id(self, entry_id: str) -> RepoEntry | None:
+        """Look up a repo entry by uuid (v3 `id` field)."""
+        for entry in self.load():
+            if entry.id == entry_id:
+                return entry
+        return None
+
+    def update_status(
+        self,
+        name: str,
+        status: str,
+        last_built_at: str | None = None,
+    ) -> RepoEntry | None:
+        """Update the dashboard build status (and optionally last_built_at) for a repo."""
+        if status not in self.VALID_STATUSES:
+            status = "error"
+        with self._lock:
+            entries = self.load()
+            target_entry: RepoEntry | None = None
+            for e in entries:
+                if e.name == name:
+                    e.status = status
+                    if last_built_at is not None:
+                        e.last_built_at = last_built_at
+                    target_entry = e
+                    break
+            if target_entry:
+                self.save(entries)
+                LOGGER.debug(
+                    "registry_update_status",
+                    name=name,
+                    status=status,
+                    last_built_at=last_built_at,
+                )
+            return target_entry
 
     def list_all(self) -> list[RepoEntry]:
         """Return all registered repo entries."""

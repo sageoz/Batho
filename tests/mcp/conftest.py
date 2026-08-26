@@ -13,6 +13,21 @@ import pytest
 from batho.orchestrator.build import run_build, BuildOptions
 
 
+@pytest.fixture(autouse=True)
+def _isolate_default_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Redirect the default MCP registry path to a temp file.
+
+    Without this, tests that call create_app()/RepoRegistry() without an
+    explicit config_path read the developer's real ~/.batho/mcp-repos.json,
+    and _resolve_repo() prefers registry entries over the test's root.
+    """
+    import batho.mcp.registry as registry_mod
+
+    monkeypatch.setattr(
+        registry_mod, "DEFAULT_CONFIG_PATH", tmp_path / "isolated-mcp-repos.json"
+    )
+
+
 @pytest.fixture
 def sample_repo(tmp_path: Path) -> Path:
     """Create a minimal Python repository with functions, classes, and relationships.
