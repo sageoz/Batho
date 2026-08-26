@@ -59,7 +59,7 @@ const config: Config = {
     },
     announcementBar: {
       id: 'v1-release',
-      content: 'Batho v1.4.0 is now available! 🎉 Check out the <a href="/docs/whitepaper">Whitepaper</a> for complete documentation.',
+      content: 'Batho v1.4.1 is now available! 🎉 Check out the <a href="/docs/whitepaper">Whitepaper</a> for complete documentation.',
       backgroundColor: '#2563EB',
       textColor: '#ffffff',
       isCloseable: true,

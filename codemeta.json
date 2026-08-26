@@ -6,7 +6,7 @@
   "description": "Enterprise-grade multi-language source code indexer and semantic code intelligence engine powered by tree-sitter AST parsing, BSG compression, and relational code graph snapshots.",
   "codeRepository": "https://github.com/sageoz/batho",
   "license": "https://spdx.org/licenses/Apache-2.0",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "author": [
     {
       "@type": "Person",

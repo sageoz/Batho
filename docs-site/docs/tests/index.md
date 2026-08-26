@@ -10,7 +10,7 @@ Batho features a comprehensive, multi-layered test suite to ensure the correctne
 :::info Test Suite Summary
 - **Total Tests:** 864 tests
 - **Primary Tooling:** `pytest` + `uv`
-- **Minimum Target Coverage:** >60% line coverage across active v1.4.0 modules
+- **Minimum Target Coverage:** >60% line coverage across active v1.4.1 modules
 :::
 
 ---
