@@ -1,41 +1,50 @@
-# Website
+# Batho Documentation Site
 
-This website is built using [Docusaurus](https://docusaurus.io/), a modern static website generator.
+The official documentation site for [Batho](https://github.com/sageoz/batho) — graph-powered code intelligence for AI coding agents.
 
-## Installation
+Built with [Docusaurus](https://docusaurus.io/).
 
-```bash
-yarn
-```
-
-## Local Development
+## Development
 
 ```bash
-yarn start
+npm install
+npm start
 ```
 
-This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
+This starts a local development server at `http://localhost:3000`. Most changes are reflected live without restarting.
 
 ## Build
 
 ```bash
-yarn build
+npm run build
 ```
 
-This command generates static content into the `build` directory and can be served using any static contents hosting service.
+Generates static content into the `build/` directory, ready to be served by any static host.
 
-## Deployment
+## Deploy
 
-Using SSH:
+Deploy to GitHub Pages:
 
 ```bash
-USE_SSH=true yarn deploy
+GIT_USER=<your-github-username> npm run deploy
 ```
 
-Not using SSH:
+This builds the site and pushes to the `gh-pages` branch.
 
-```bash
-GIT_USER=<Your GitHub username> yarn deploy
+## Structure
+
+```
+docs-site/
+├── docs/              # Documentation markdown files
+├── src/
+│   ├── components/    # React components (HomepageFeatures, AgentIntegration)
+│   ├── css/           # Custom CSS (Batho design system)
+│   └── pages/         # Standalone pages (homepage)
+├── static/img/        # Logos, favicons, social cards
+├── docusaurus.config.ts
+└── sidebars.ts
 ```
 
-If you are using GitHub pages for hosting, this command is a convenient way to build the website and push to the `gh-pages` branch.
+## License
+
+Copyright (c) Sageoz. All rights reserved.

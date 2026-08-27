@@ -5,7 +5,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'BATHO',
   tagline: 'Give your AI coding agent a map of your codebase. Reduce token spend, eliminate hallucinations, and ship faster with graph-powered code intelligence.',
-  favicon: 'img/batho-logo.svg',
+  favicon: 'img/favicon.ico',
 
   future: {
     v4: true,
@@ -52,7 +52,7 @@ const config: Config = {
   },
 
   themeConfig: {
-    image: 'img/batho-logo.svg',
+    image: 'img/batho-social-card.jpg',
     colorMode: {
       defaultMode: 'dark',
       respectPrefersColorScheme: true,
