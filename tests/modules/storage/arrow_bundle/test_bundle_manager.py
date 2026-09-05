@@ -16,6 +16,7 @@ from batho.modules.storage.arrow_bundle.bundle import resolve_bundle_dir
 from batho.utils.path_sanitizer import PathSecurityError
 from batho.modules.storage.arrow_bundle.schemas import (
     BUNDLE_SCHEMA_VERSION,
+    COMMUNITIES_SCHEMA,
     FILE_TRACKING_SCHEMA,
     RUNS_SCHEMA,
 )
@@ -306,6 +307,69 @@ class TestGarbageCollect:
         mgr = BathoBundleManager(tmp_path)
         assert mgr.garbage_collect() == 0
 
+    def test_gc_preserves_non_versioned_ipc(self, tmp_path):
+        """Verify garbage_collect does NOT delete non-versioned .ipc files.
+
+        Scenario:
+            A non-versioned side-table (e.g. communities.ipc) exists in the
+            artifact dir alongside versioned generational files.  It is not
+            listed in the manifest's active_files.
+
+        Execution Flow:
+            1. Commit a runs table (generation 1).
+            2. Create a bare ``communities.ipc`` file (no .vN. suffix).
+            3. Call garbage_collect.
+            4. Assert communities.ipc still exists.
+
+        Expectations:
+            - Non-versioned .ipc files are preserved because they are not
+              generational artifacts managed by commit_patch.
+        """
+        mgr = BathoBundleManager(tmp_path)
+        tmp = _write_tmp_ipc(tmp_path, "runs", [_run_row("r1")], RUNS_SCHEMA)
+        mgr.commit_patch({"runs": tmp}, "r1")
+
+        communities_path = tmp_path / "communities.ipc"
+        write_simple_ipc([], RUNS_SCHEMA, communities_path)  # any schema; content irrelevant
+        assert communities_path.exists()
+
+        mgr.garbage_collect()
+        assert communities_path.exists(), "non-versioned .ipc was deleted by garbage_collect"
+
+    def test_gc_preserves_registered_simple_file(self, tmp_path):
+        """Verify garbage_collect preserves a file registered via register_simple_file.
+
+        Scenario:
+            A non-versioned file is registered in the manifest so GC treats it
+            as active even though it has no .vN. suffix.
+
+        Execution Flow:
+            1. Commit a runs table.
+            2. Create communities.ipc and register it.
+            3. Commit a second generation (orphaning gen-1 runs).
+            4. Call garbage_collect.
+            5. Assert communities.ipc survives and gen-1 runs is deleted.
+
+        Expectations:
+            - Registered simple files survive GC.
+            - Orphaned generational files are still cleaned up.
+        """
+        mgr = BathoBundleManager(tmp_path)
+        tmp1 = _write_tmp_ipc(tmp_path, "runs", [_run_row("r1")], RUNS_SCHEMA)
+        mgr.commit_patch({"runs": tmp1}, "r1")
+
+        communities_path = tmp_path / "communities.ipc"
+        write_simple_ipc([], RUNS_SCHEMA, communities_path)
+        mgr.register_simple_file("communities", "communities.ipc")
+
+        tmp2 = _write_tmp_ipc(tmp_path, "runs", [_run_row("r2")], RUNS_SCHEMA)
+        mgr.commit_patch({"runs": tmp2}, "r2")
+
+        deleted = mgr.garbage_collect()
+        assert not (tmp_path / "runs.v1.ipc").exists()
+        assert (tmp_path / "runs.v2.ipc").exists()
+        assert communities_path.exists()
+
 
 class TestExportUnpack:
     def _build_bundle(self, artifact_dir: Path) -> BathoBundleManager:
@@ -484,6 +548,316 @@ class TestExportUnpack:
         dst_mgr = BathoBundleManager(dst_dir)
         with pytest.raises(RuntimeError, match="schema mismatch"):
             dst_mgr.unpack_artifact(zip_path)
+
+    def test_export_unpack_communities_roundtrip(self, tmp_path):
+        """Verify communities.ipc survives an export → unpack round-trip.
+
+        Scenario:
+            A bundle has both versioned tables (runs) and a non-versioned
+            simple file (communities.ipc) registered in the manifest.
+
+        Execution Flow:
+            1. Build a bundle with a runs table.
+            2. Write communities.ipc and register it via register_simple_file.
+            3. Export to ZIP.
+            4. Unpack into a fresh destination directory.
+            5. Verify communities.ipc exists (not stamped with .vN.) and is readable.
+
+        Expectations:
+            - communities.ipc is exported as communities.ipc.zst in the ZIP.
+            - After unpack, the file is named communities.ipc (no generation stamp).
+            - The manifest's active_files lists "communities": "communities.ipc".
+        """
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        mgr = self._build_bundle(src_dir)
+
+        communities_rows = [
+            {"community_id": 0, "name": "test_community", "entity_count": 5,
+             "file_count": 2, "top_entities": ["A", "B"], "description": "test",
+             "file_paths": ["a.py", "b.py"], "member_entity_ids": ["1", "2"],
+             "is_singleton": False},
+        ]
+        comm_path = src_dir / "communities.ipc"
+        write_simple_ipc(communities_rows, COMMUNITIES_SCHEMA, comm_path)
+        mgr.register_simple_file("communities", "communities.ipc")
+
+        zip_path = tmp_path / "bundle.batho"
+        mgr.export_artifact(zip_path)
+
+        # Verify communities is in the ZIP
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            assert "communities.ipc.zst" in zf.namelist()
+
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+        dst_mgr = BathoBundleManager(dst_dir)
+        manifest = dst_mgr.unpack_artifact(zip_path)
+
+        # File should be communities.ipc, not communities.vN.ipc
+        assert manifest["active_files"]["communities"] == "communities.ipc"
+        assert (dst_dir / "communities.ipc").exists()
+        assert not any(dst_dir.glob("communities.v*.ipc"))
+
+        # Content should be readable
+        table = read_ipc_table(dst_dir / "communities.ipc")
+        assert table.num_rows == 1
+        assert table.column("name").to_pylist() == ["test_community"]
+
+    def test_unpack_versioned_table_keeps_generation_stamp(self, tmp_path):
+        """Verify unpack_artifact restores MVCC .vN.ipc naming for versioned tables.
+
+        Scenario:
+            A versioned table (runs) is committed at generation 1, exported,
+            and unpacked into a fresh destination. The previous bug overwrote
+            active_files with ZIP member names, causing unpack to write
+            "runs.ipc" instead of "runs.v1.ipc" and break the MVCC contract.
+
+        Execution Flow:
+            1. Build a bundle and commit a "runs" table (generation 1).
+            2. Export to ZIP.
+            3. Unpack into a fresh destination directory.
+            4. Assert the unpacked file is named runs.v1.ipc (not runs.ipc)
+               and that active_files maps "runs" to "runs.v1.ipc".
+
+        Expectations:
+            - MVCC generation stamps survive the export → unpack round-trip.
+        """
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        mgr = self._build_bundle(src_dir)
+
+        zip_path = tmp_path / "bundle.batho"
+        mgr.export_artifact(zip_path)
+
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+        dst_mgr = BathoBundleManager(dst_dir)
+        manifest = dst_mgr.unpack_artifact(zip_path)
+
+        # The unpacked file must retain its generation stamp.
+        assert manifest["active_files"]["runs"] == "runs.v1.ipc"
+        assert (dst_dir / "runs.v1.ipc").exists()
+        assert not (dst_dir / "runs.ipc").exists()
+
+        # No stray non-versioned runs file should be left behind.
+        assert not any(p.name == "runs.ipc" for p in dst_dir.glob("runs*.ipc"))
+
+    def test_unpack_versioned_table_higher_generation(self, tmp_path):
+        """Verify unpack restores the correct stamp across multiple generations.
+
+        Scenario:
+            A bundle is committed twice (generation 2 active) before export.
+
+        Execution Flow:
+            1. Commit runs twice so generation == 2.
+            2. Export and unpack into a fresh destination.
+            3. Assert the unpacked file is runs.v2.ipc.
+
+        Expectations:
+            - The active generation's stamp is preserved on unpack.
+        """
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        mgr = BathoBundleManager(src_dir)
+        tmp = _write_tmp_ipc(src_dir, "runs", [_run_row("r1")], RUNS_SCHEMA)
+        mgr.commit_patch({"runs": tmp}, "r1")
+        tmp = _write_tmp_ipc(src_dir, "runs", [_run_row("r2")], RUNS_SCHEMA)
+        mgr.commit_patch({"runs": tmp}, "r2")
+        assert mgr.load_manifest()["generation"] == 2
+
+        zip_path = tmp_path / "bundle.batho"
+        mgr.export_artifact(zip_path)
+
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+        dst_mgr = BathoBundleManager(dst_dir)
+        manifest = dst_mgr.unpack_artifact(zip_path)
+
+        assert manifest["active_files"]["runs"] == "runs.v2.ipc"
+        assert (dst_dir / "runs.v2.ipc").exists()
+
+    def test_unpack_legacy_export_forces_generation_stamp(self, tmp_path):
+        """Verify unpack_artifact forces the MVCC stamp for legacy exports.
+
+        Scenario:
+            Legacy batho export stored ZIP member names (e.g. "runs.ipc.zst")
+            in active_files instead of the on-disk generation-stamped name
+            (e.g. "runs.v1.ipc"). The unpacker must detect this and force
+            the f"{logical}.v{generation}.ipc" stamp so the MVCC contract
+            (active_files name matches manifest generation) is preserved.
+
+        Execution Flow:
+            1. Build a bundle, commit runs at generation 1, and export.
+            2. Rewrite the ZIP manifest to simulate a legacy export: set
+               active_files["runs"] = "runs.ipc.zst" (the ZIP member name).
+            3. Unpack into a fresh destination.
+            4. Assert the unpacked file is runs.v1.ipc (not runs.ipc) and
+               active_files maps "runs" to "runs.v1.ipc".
+
+        Expectations:
+            - Legacy versioned tables are restored with the generation stamp.
+            - No non-versioned runs.ipc is left on disk.
+        """
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        mgr = self._build_bundle(src_dir)
+
+        zip_path = tmp_path / "legacy.batho"
+        mgr.export_artifact(zip_path)
+
+        # Simulate a legacy export: rewrite manifest.json so active_files
+        # contains ZIP member names (with .zst suffix) instead of on-disk names.
+        import shutil as _shutil
+        tmp_zip = zip_path.with_suffix(".tmp.batho")
+        with zipfile.ZipFile(zip_path, "r") as src_zf, zipfile.ZipFile(tmp_zip, "w") as dst_zf:
+            manifest = json.loads(src_zf.read("manifest.json"))
+            # Legacy format: active_files held ZIP member names, not on-disk names
+            manifest["active_files"] = {
+                name: f"{name}.ipc.zst" for name in manifest["active_files"]
+            }
+            for item in src_zf.infolist():
+                if item.filename != "manifest.json":
+                    dst_zf.writestr(item, src_zf.read(item.filename))
+            dst_zf.writestr("manifest.json", json.dumps(manifest))
+        _shutil.move(str(tmp_zip), str(zip_path))
+
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+        dst_mgr = BathoBundleManager(dst_dir)
+        manifest = dst_mgr.unpack_artifact(zip_path)
+
+        assert manifest["active_files"]["runs"] == "runs.v1.ipc"
+        assert (dst_dir / "runs.v1.ipc").exists()
+        assert not (dst_dir / "runs.ipc").exists(), \
+            "legacy unpack must not restore a non-versioned runs.ipc"
+
+    def test_unpack_legacy_export_preserves_non_versioned_side_table(self, tmp_path):
+        """Verify legacy unpack keeps non-versioned side tables un-stamped.
+
+        Scenario:
+            A legacy export contains both a versioned table (runs) and a
+            non-versioned side table (communities). Both have ZIP member
+            names in active_files. The unpacker must force the stamp for
+            runs but leave communities.ipc un-stamped.
+
+        Execution Flow:
+            1. Build a bundle with runs (gen 1) and communities (simple file).
+            2. Export and rewrite the manifest to legacy format (.zst names).
+            3. Unpack into a fresh destination.
+            4. Assert runs.v1.ipc exists (stamped) and communities.ipc exists
+               (un-stamped).
+
+        Expectations:
+            - Versioned tables get the generation stamp even in legacy exports.
+            - Non-versioned side tables keep their plain name.
+        """
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        mgr = self._build_bundle(src_dir)
+
+        communities_rows = [
+            {"community_id": 0, "name": "test", "entity_count": 1,
+             "file_count": 1, "top_entities": ["A"], "description": "d",
+             "file_paths": ["a.py"], "member_entity_ids": ["1"],
+             "is_singleton": False},
+        ]
+        comm_path = src_dir / "communities.ipc"
+        write_simple_ipc(communities_rows, COMMUNITIES_SCHEMA, comm_path)
+        mgr.register_simple_file("communities", "communities.ipc")
+
+        zip_path = tmp_path / "legacy.batho"
+        mgr.export_artifact(zip_path)
+
+        # Simulate legacy export format
+        import shutil as _shutil
+        tmp_zip = zip_path.with_suffix(".tmp.batho")
+        with zipfile.ZipFile(zip_path, "r") as src_zf, zipfile.ZipFile(tmp_zip, "w") as dst_zf:
+            manifest = json.loads(src_zf.read("manifest.json"))
+            manifest["active_files"] = {
+                name: f"{name}.ipc.zst" for name in manifest["active_files"]
+            }
+            for item in src_zf.infolist():
+                if item.filename != "manifest.json":
+                    dst_zf.writestr(item, src_zf.read(item.filename))
+            dst_zf.writestr("manifest.json", json.dumps(manifest))
+        _shutil.move(str(tmp_zip), str(zip_path))
+
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+        dst_mgr = BathoBundleManager(dst_dir)
+        manifest = dst_mgr.unpack_artifact(zip_path)
+
+        assert manifest["active_files"]["runs"] == "runs.v1.ipc"
+        assert (dst_dir / "runs.v1.ipc").exists()
+        assert manifest["active_files"]["communities"] == "communities.ipc"
+        assert (dst_dir / "communities.ipc").exists()
+        assert not any(dst_dir.glob("communities.v*.ipc"))
+
+    def test_ensure_simple_files_registered_self_heals(self, tmp_path):
+        """Verify ensure_simple_files_registered auto-registers orphaned .ipc files.
+
+        Scenario:
+            An old artifact has communities.ipc on disk but it's missing from
+            the manifest (built before register_simple_file existed).
+
+        Execution Flow:
+            1. Build a bundle with a runs table.
+            2. Write communities.ipc WITHOUT registering it.
+            3. Call ensure_simple_files_registered.
+            4. Verify communities is now in the manifest's active_files.
+
+        Expectations:
+            - The method detects communities.ipc on disk and adds it to the manifest.
+        """
+        mgr = BathoBundleManager(tmp_path)
+        tmp = _write_tmp_ipc(tmp_path, "runs", [_run_row("r1")], RUNS_SCHEMA)
+        mgr.commit_patch({"runs": tmp}, "r1")
+
+        comm_path = tmp_path / "communities.ipc"
+        write_simple_ipc([], COMMUNITIES_SCHEMA, comm_path)
+        assert comm_path.exists()
+
+        manifest = mgr.load_manifest()
+        assert "communities" not in manifest["active_files"]
+
+        mgr.ensure_simple_files_registered()
+
+        manifest = mgr.load_manifest()
+        assert manifest["active_files"]["communities"] == "communities.ipc"
+
+    def test_register_simple_file_rejects_unsafe_filename(self, tmp_path):
+        """Verify register_simple_file rejects path-traversal filenames.
+
+        Scenario:
+            register_simple_file is a public method on BathoBundleManager.
+            An attacker with manifest control could pass a filename containing
+            ".." or path separators to make active_path resolve outside
+            artifact_dir.
+
+        Execution Flow:
+            1. Initialize a manager.
+            2. Attempt to register filenames with traversal/separator patterns.
+            3. Assert each raises PathSecurityError and is not written to disk.
+
+        Expectations:
+            - Unsafe filenames are rejected before touching the manifest.
+        """
+        mgr = BathoBundleManager(tmp_path)
+        bad_names = [
+            "../evil.ipc",
+            "subdir/evil.ipc",
+            "..\\evil.ipc",
+            "evil.ipc\0",
+            "/etc/passwd",
+        ]
+        for bad in bad_names:
+            with pytest.raises(PathSecurityError):
+                mgr.register_simple_file("evil", bad)
+
+        # A safe name still works.
+        mgr.register_simple_file("communities", "communities.ipc")
+        assert mgr.load_manifest()["active_files"]["communities"] == "communities.ipc"
 
 
 class TestBundleManagerSecurityAndLimits:

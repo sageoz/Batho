@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.ipc as ipc
 
 from batho.utils.logging import get_logger
@@ -178,13 +179,12 @@ class BathoBundleWriter:
             return
 
         file_ids = np.array(buf["file_id"], dtype=np.int64)
-        sort_order = np.argsort(file_ids, kind="stable")
+        sort_indices = pa.array(np.argsort(file_ids, kind="stable"), type=pa.int64())
 
         arrays = []
         for field in schema:
-            raw = buf[field.name]
-            sorted_raw = [raw[i] for i in sort_order]
-            arrays.append(pa.array(sorted_raw, type=field.type))
+            col = pa.array(buf[field.name], type=field.type)
+            arrays.append(pc.take(col, sort_indices))
 
         batch = pa.RecordBatch.from_arrays(arrays, schema=schema)
         w = self._get_or_open_writer(path, schema, writer_attr)

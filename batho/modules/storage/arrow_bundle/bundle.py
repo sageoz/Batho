@@ -1118,6 +1118,10 @@ class BathoBundle:
     def garbage_collect(self) -> int:
         return self._manager.garbage_collect()
 
+    def register_simple_file(self, logical_name: str, filename: str) -> None:
+        """Register a non-versioned file (e.g. communities.ipc) in the manifest."""
+        self._manager.register_simple_file(logical_name, filename)
+
     def vacuum(self) -> None:
         self.garbage_collect()
 

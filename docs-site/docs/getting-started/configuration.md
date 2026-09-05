@@ -125,7 +125,7 @@ Configures the Batho Structured Graph engine.
   - `ttl_days`: Cache expiry.
 - `symbol_resolution`:
   - `enabled`: Cross-file symbol mapping.
-  - `cache_symbols`: Cache resolved targets.
+  - `prune_unresolved`: Prune common stdlib method stubs on unknown receivers.
 - `parsing`:
   - `error_recovery`: Continue past tree-sitter parse errors.
   - `skip_comments`: Skip parsing comments.

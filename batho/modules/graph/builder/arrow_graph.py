@@ -655,18 +655,22 @@ class ArrowGraph:
         ``_external_in`` keyed by the endpoint id.
         """
         assert self._rel_table is not None
-        source_ids = self._rel_table.column("source_id").to_pylist()
-        target_ids = self._rel_table.column("target_id").to_pylist()
         n_entities = len(self._row_entity_ids)
-        n_rels = len(source_ids)
-        row_map = self._entity_row_map
+        n_rels = self._rel_table.num_rows
 
-        src_rows = np.fromiter(
-            (row_map.get(s, -1) for s in source_ids), dtype=np.int64, count=n_rels
-        )
-        tgt_rows = np.fromiter(
-            (row_map.get(t, -1) for t in target_ids), dtype=np.int64, count=n_rels
-        )
+        # Vectorized endpoint→row lookup via pc.index_in (C++ hash join).
+        # pc.index_in returns null for IDs not in the entity set; fill_null(-1)
+        # restores the -1 sentinel that _csr and external-endpoint logic expect.
+        entity_id_array = pa.array(self._row_entity_ids, type=pa.large_utf8())
+        source_col = self._rel_table.column("source_id")
+        target_col = self._rel_table.column("target_id")
+
+        src_rows = pc.fill_null(
+            pc.index_in(source_col, entity_id_array), -1
+        ).to_numpy().astype(np.int64, copy=False)
+        tgt_rows = pc.fill_null(
+            pc.index_in(target_col, entity_id_array), -1
+        ).to_numpy().astype(np.int64, copy=False)
         rel_rows = np.arange(n_rels, dtype=np.int64)
 
         def _csr(entity_rows: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -682,27 +686,51 @@ class ArrowGraph:
         self._csr_offsets, self._csr_indices = _csr(src_rows)
         self._csc_offsets, self._csc_indices = _csr(tgt_rows)
 
+        # External endpoints: collect IDs where row index is -1.
+        # Use Arrow take() to extract only the external IDs, avoiding
+        # full to_pylist() of the source/target columns.
         external_out: dict[str, list[int]] = {}
         external_in: dict[str, list[int]] = {}
-        for i in rel_rows[src_rows < 0]:
-            external_out.setdefault(source_ids[i], []).append(int(i))
-        for i in rel_rows[tgt_rows < 0]:
-            external_in.setdefault(target_ids[i], []).append(int(i))
+        ext_src_mask = src_rows < 0
+        if ext_src_mask.any():
+            ext_indices = rel_rows[ext_src_mask]
+            ext_src_ids = source_col.take(pa.array(ext_indices, type=pa.int64())).to_pylist()
+            for i, eid in zip(ext_indices, ext_src_ids):
+                external_out.setdefault(eid, []).append(int(i))
+        ext_tgt_mask = tgt_rows < 0
+        if ext_tgt_mask.any():
+            ext_indices = rel_rows[ext_tgt_mask]
+            ext_tgt_ids = target_col.take(pa.array(ext_indices, type=pa.int64())).to_pylist()
+            for i, eid in zip(ext_indices, ext_tgt_ids):
+                external_in.setdefault(eid, []).append(int(i))
         self._external_out = external_out
         self._external_in = external_in
 
     def _build_secondary_row_indexes(self) -> None:
         assert self._entity_table is not None
-        files = self._entity_table.column("file").to_pylist()
-        types = self._entity_table.column("entity_type").to_pylist()
+        # Dictionary-encoded columns: iterate integer codes and decode only
+        # the unique dictionary values once, avoiding 45k+ Python string
+        # allocations from to_pylist().
+        file_col = self._entity_table.column("file").combine_chunks()
+        type_col = self._entity_table.column("entity_type").combine_chunks()
+
+        file_dict = file_col.dictionary.to_pylist()
+        type_dict = type_col.dictionary.to_pylist()
+        file_codes = file_col.indices.to_numpy()
+        type_codes = type_col.indices.to_numpy()
+
         by_file: dict[str, list[int]] = {}
         # Keyed by EntityType.name (string), unlike Phase-2 _by_type which is
         # keyed by EntityType enum. Lookups via entities_by_type() pass
         # entity_type.name to match.
         by_type: dict[str, list[int]] = {}
-        for row, (file, etype) in enumerate(zip(files, types)):
-            by_file.setdefault(file, []).append(row)
-            by_type.setdefault(etype, []).append(row)
+        for row, fc in enumerate(file_codes):
+            # nullable=False in schema, but guard defensively
+            if fc is not None:
+                by_file.setdefault(file_dict[int(fc)], []).append(row)
+        for row, tc in enumerate(type_codes):
+            if tc is not None:
+                by_type.setdefault(type_dict[int(tc)], []).append(row)
         self._by_file_rows = by_file
         self._by_type_rows = by_type
 
@@ -927,10 +955,9 @@ class ArrowGraph:
         if self._compacted:
             assert self._entity_table is not None
             parent_col = self._entity_table.column("parent_id")
-            null_mask = pc.is_null(parent_col).to_pylist()
-            return [
-                self._entity_at(row) for row, is_null in enumerate(null_mask) if is_null
-            ]
+            null_mask = pc.is_null(parent_col).to_numpy()
+            root_rows = np.flatnonzero(null_mask)
+            return [self._entity_at(int(row)) for row in root_rows]
         return [
             row_to_entity(row)
             for row in self._entity_dicts.values()

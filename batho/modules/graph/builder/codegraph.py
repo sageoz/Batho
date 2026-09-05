@@ -1070,7 +1070,11 @@ class CodeGraphIndexer:
     }
 
     def _resolve_method_call(
-        self, stub: Entity, graph: "GraphBackend", scope_manager: ScopeManager
+        self,
+        stub: Entity,
+        graph: "GraphBackend",
+        scope_manager: ScopeManager,
+        _file_declared_type_cache: "dict[str, dict[str, str]] | None" = None,
     ) -> Optional[Any]:
         """Resolve a method call by inferring the receiver type.
 
@@ -1086,7 +1090,9 @@ class CodeGraphIndexer:
         method_name = target_name.split(".", 1)[1]
 
         # 1. Infer the receiver variable's declared type
-        var_type = self._infer_variable_type(receiver_var, stub, graph, scope_manager)
+        var_type = self._infer_variable_type(
+            receiver_var, stub, graph, scope_manager, _file_declared_type_cache
+        )
         if not var_type:
             return None
 
@@ -1100,7 +1106,12 @@ class CodeGraphIndexer:
         return self._check_stdlib_method(var_type, method_name, scope_manager)
 
     def _infer_variable_type(
-        self, var_name: str, stub: Entity, graph: "GraphBackend", scope_manager: ScopeManager
+        self,
+        var_name: str,
+        stub: Entity,
+        graph: "GraphBackend",
+        scope_manager: ScopeManager,
+        _file_declared_type_cache: "dict[str, dict[str, str]] | None" = None,
     ) -> Optional[str]:
         """Infer the type of a variable from multiple sources.
 
@@ -1137,14 +1148,30 @@ class CodeGraphIndexer:
         if receiver_type:
             return receiver_type
 
-        # Source 3: Look for a variable declaration in the same file with a type
+        # Source 3: Look for a variable declaration in the same file with a type.
+        # FIX 3: Use a per-file {var_name -> declared_type} cache built once
+        # per unique file instead of re-walking entities_by_file() for every
+        # stub. Cache is passed in from resolve_contextual_stubs and is local
+        # to that call to avoid staleness across build/patch operations.
         stub_file = getattr(stub, "file", "")
         if stub_file:
-            for entity in graph.entities.values():
-                if getattr(entity, "file", "") != stub_file:
-                    continue
-                if entity.name == var_name and entity.metadata.get("declared_type"):
-                    return entity.metadata["declared_type"]
+            if _file_declared_type_cache is not None:
+                if stub_file not in _file_declared_type_cache:
+                    # Build the cache entry for this file on first access
+                    file_map: dict[str, str] = {}
+                    for entity in graph.entities_by_file(stub_file):
+                        dt = entity.metadata.get("declared_type")
+                        if dt:
+                            file_map[entity.name] = dt
+                    _file_declared_type_cache[stub_file] = file_map
+                declared_type = _file_declared_type_cache[stub_file].get(var_name)
+                if declared_type:
+                    return declared_type
+            else:
+                # Fallback when no cache is provided (on-demand resolution path)
+                for entity in graph.entities_by_file(stub_file):
+                    if entity.name == var_name and entity.metadata.get("declared_type"):
+                        return entity.metadata["declared_type"]
 
         return None
 
@@ -1196,7 +1223,7 @@ class CodeGraphIndexer:
           the cost of resolving stubs that no query will ever reference.
         """
         self.logger.info("resolving_contextual_stubs", lazy=lazy)
-        stubs = [ent for ent in graph.entities.values() if ent.is_contextual_stub]
+        stubs = [ent for ent in graph.entities_by_type(EntityType.UNRESOLVED) if ent.is_contextual_stub]
         self.logger.info("stubs_found_in_graph", count=len(stubs))
 
         # Phase 5: Lazy mode — skip upfront resolution entirely.
@@ -1222,6 +1249,11 @@ class CodeGraphIndexer:
         # Phase 4: track resolution strategy per stub for confidence scoring
         stub_to_strategy: dict[str, str] = {}
 
+        # FIX 3: per-file declared_type cache — built once per unique file,
+        # avoids re-walking entities_by_file() O(k) for every stub in the
+        # same file. Local to this call to avoid staleness across builds.
+        _file_declared_type_cache: dict[str, dict[str, str]] = {}
+
         for stub in stubs:
             caller_scope = stub.metadata.get("caller_scope")
             target_name = stub.metadata.get("target_name")
@@ -1230,7 +1262,7 @@ class CodeGraphIndexer:
                 continue
 
             resolved_info, strategy = self._resolve_single_stub(
-                stub, graph, scope_manager
+                stub, graph, scope_manager, _file_declared_type_cache
             )
 
             if resolved_info:
@@ -1303,6 +1335,7 @@ class CodeGraphIndexer:
         stub: Entity,
         graph: "GraphBackend",
         scope_manager: ScopeManager,
+        _file_declared_type_cache: "dict[str, dict[str, str]] | None" = None,
     ) -> tuple[Any, str]:
         """Resolve a single stub using the full resolution pipeline.
 
@@ -1342,16 +1375,19 @@ class CodeGraphIndexer:
         # and look up the method on that type. This resolves calls on
         # project-internal types and stdlib types (rust-analyzer pattern).
         if not resolved_info:
-            resolved_info = self._resolve_method_call(stub, graph, scope_manager)
+            resolved_info = self._resolve_method_call(
+                stub, graph, scope_manager, _file_declared_type_cache
+            )
             if resolved_info:
                 strategy = "receiver_type"
                 return resolved_info, strategy
 
         # 2. Try building qualified path from parent stubs if any
+        # FIX 7: use graph.neighbors("in") to get source IDs directly from
+        # the adjacency index instead of materializing Relationship objects.
         if not resolved_info:
-            incoming = [r for r in graph.get_rels_by_endpoint(stub.id) if r.target_id == stub.id]
-            for rel in incoming:
-                source_ent = graph.get_entity(rel.source_id)
+            for parent_id in graph.neighbors(stub.id, "in"):
+                source_ent = graph.get_entity(parent_id)
                 if source_ent and source_ent.is_contextual_stub:
                     parent_name = source_ent.metadata.get("target_name")
                     if parent_name:
@@ -1625,8 +1661,6 @@ class CodeGraphIndexer:
 
             bsg_symbol_cfg = bsg_cfg.get("symbol_resolution", {})
             symbol_resolution_enabled = bsg_symbol_cfg.get("enabled", True)
-            max_unresolved_attempts = int(bsg_symbol_cfg.get("max_unresolved_attempts", 10))
-            prune_unresolved = bool(bsg_symbol_cfg.get("prune_unresolved", True))
 
             ignore_spec = load_ignore_spec(
                 root_path,
@@ -2181,11 +2215,15 @@ class CodeGraphIndexer:
                 "inherit_cycle_count": int(inherit_cycle_count),
                 "orphan_pruned_count": int(orphan_pruned_count),
                 "graph_consistency_issue_count": len(consistency_issues),
-                "unresolved_entities_count": sum(
-                    1 for e in graph.entities.values() if e.type in (EntityType.UNRESOLVED, EntityType.EXTERNAL_SYMBOL)
+                # FIX 8: Use entity_ids_by_type() to avoid full O(E) entity
+                # scans. An entity has exactly one type, so the two buckets
+                # are disjoint — no double-counting.
+                "unresolved_entities_count": (
+                    len(graph.entity_ids_by_type(EntityType.UNRESOLVED))
+                    + len(graph.entity_ids_by_type(EntityType.EXTERNAL_SYMBOL))
                 ),
                 "unresolved_pruned_count": sum(
-                    1 for e in graph.entities.values()
+                    1 for e in graph.entities_by_type(EntityType.UNRESOLVED)
                     if e.is_contextual_stub
                     and e.metadata.get("stub_resolution_state") == "pruned"
                 ),
@@ -2731,12 +2769,23 @@ class CodeGraphIndexer:
             return 0
 
         name_to_id: dict[str, str] = {}
+        class_like = {
+            EntityType.CLASS,
+            EntityType.INTERFACE,
+            EntityType.TRAIT,
+            EntityType.STRUCT,
+        }
+        # FIX 5: collect class-like entities during the name_to_id pass so we
+        # only iterate graph.entities.values() once instead of twice.
+        class_entities: list[Entity] = []
         for ent in graph.entities.values():
             name_to_id[ent.name] = ent.id
             if "." in ent.name:
                 name_to_id[ent.name.split(".")[-1]] = ent.id
             if ent.type == EntityType.MODULE:
                 name_to_id[Path(ent.file).stem] = ent.id
+            if ent.type in class_like:
+                class_entities.append(ent)
 
         existing = {
             (
@@ -2755,15 +2804,8 @@ class CodeGraphIndexer:
             return None
 
         added = 0
-        class_like = {
-            EntityType.CLASS,
-            EntityType.INTERFACE,
-            EntityType.TRAIT,
-            EntityType.STRUCT,
-        }
-        for entity in graph.entities.values():
-            if entity.type not in class_like:
-                continue
+        # Process collected class-like entities (name_to_id is now complete)
+        for entity in class_entities:
 
             metadata = dict(entity.metadata or {})
             relation_specs = [
@@ -2803,16 +2845,14 @@ class CodeGraphIndexer:
             lambda: defaultdict(list)
         )
         parent_map: dict[str, set[str]] = defaultdict(set)
-        existing = {
-            (
-                rel.source_id,
-                rel.target_id,
-                rel.type,
-            )
-            for rel in graph.relationships
-        }
+        # FIX 6: accumulate existing, class_methods and parent_map in a single
+        # pass over relationships instead of two (one for existing, one for the
+        # CONTAINS/INHERITS scan). New OVERRIDES edges are added in a separate
+        # subsequent loop so existing is fully populated before deduplication.
+        existing: set[tuple[str, str, RelationshipType]] = set()
 
         for rel in graph.relationships:
+            existing.add((rel.source_id, rel.target_id, rel.type))
             if rel.type == RelationshipType.CONTAINS:
                 parent = graph.get_entity(rel.source_id)
                 child = graph.get_entity(rel.target_id)

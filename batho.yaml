@@ -91,11 +91,7 @@ bsg:
     ttl_days: 30
   symbol_resolution:
     enabled: true
-    fuzzy_matching: false
-    cache_symbols: true
     prune_unresolved: true
-    max_unresolved_attempts: 10
-    unresolved_tracking: true
   parsing:
     error_recovery: true
     skip_comments: false

@@ -35,6 +35,12 @@ if TYPE_CHECKING:
 
 _LOGGER = get_logger(__name__, component="bsg_rules")
 
+# FIX 17: Module-level compiled regex for _tokenize_identifier.
+# Compiling once at module load is cheaper than relying on re's bounded LRU
+# cache, especially when _tokenize_identifier is called millions of times.
+_RE_CAMEL_BOUNDARY = re.compile(r"([a-z0-9])([A-Z])")
+_RE_NON_ALNUM = re.compile(r"[^a-zA-Z0-9]+")
+
 _SCHEMA_VERSION = "bsg-plugin.v2"
 _CACHE_SCHEMA_VERSION = "bsg-rules-cache.v2"
 _CACHE_FILENAME = "rules_cache.bin"
@@ -249,6 +255,18 @@ class MetadataCondition:
     key: str
     operator: str
     value: Any = None
+    # FIX 16: pre-compiled regex for operator=="regex_match". None means either
+    # not a regex_match condition or the pattern failed to compile (safe→False).
+    _compiled_regex: "re.Pattern[str] | None" = field(
+        init=False, repr=False, compare=False, default=None
+    )
+
+    def __post_init__(self) -> None:
+        if self.operator == "regex_match" and isinstance(self.value, str):
+            try:
+                object.__setattr__(self, "_compiled_regex", re.compile(self.value))
+            except re.error:
+                object.__setattr__(self, "_compiled_regex", None)
 
 
 @dataclass(frozen=True)
@@ -296,6 +314,9 @@ class RuleMatch:
     _usn_tags_any_set: set[str] = field(init=False, repr=False, compare=False, default_factory=set)
     _name_patterns_lower: tuple[str, ...] = field(init=False, repr=False, compare=False, default_factory=tuple)
     _file_patterns_lower: tuple[str, ...] = field(init=False, repr=False, compare=False, default_factory=tuple)
+    # FIX 15: pre-lower content_patterns once at construction time instead of
+    # calling pattern.lower() per entity match in _matches_content_patterns.
+    _content_patterns_lower: tuple[str, ...] = field(init=False, repr=False, compare=False, default_factory=tuple)
     _gap_entity_types_lower: tuple[str, ...] = field(init=False, repr=False, compare=False, default_factory=tuple)
     _compiled_hash_pattern: "re.Pattern[str] | None" = field(init=False, repr=False, compare=False, default=None)
 
@@ -304,6 +325,8 @@ class RuleMatch:
         object.__setattr__(self, "_usn_tags_any_set", set(self.usn_tags_any))
         object.__setattr__(self, "_name_patterns_lower", tuple(p.lower() for p in self.name_patterns))
         object.__setattr__(self, "_file_patterns_lower", tuple(p.lower() for p in self.file_patterns))
+        # FIX 15: pre-lower content_patterns at construction time
+        object.__setattr__(self, "_content_patterns_lower", tuple(p.lower() for p in self.content_patterns))
         object.__setattr__(self, "_gap_entity_types_lower", tuple(t.lower() for t in self.gap_entity_types))
         if self.content_hash_pattern is not None:
             if not _is_safe_regex(self.content_hash_pattern):
@@ -2303,8 +2326,10 @@ def _matches_content_patterns(
     if not content_lower:
         return False
 
+    # FIX 15: patterns are pre-lowered by the caller (RuleMatch._content_patterns_lower),
+    # so no per-entity .lower() call needed here.
     for pattern in patterns:
-        if pattern.lower() in content_lower:
+        if pattern in content_lower:
             return True
 
     return False
@@ -2321,8 +2346,9 @@ def _entity_usn_tags(entity: Entity) -> set[str]:
 def _tokenize_identifier(value: str) -> set[str]:
     if not value:
         return set()
-    with_spaces = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value)
-    return {token for token in re.split(r"[^a-zA-Z0-9]+", with_spaces.lower()) if token}
+    # FIX 17: use module-level compiled patterns instead of string literals
+    with_spaces = _RE_CAMEL_BOUNDARY.sub(r"\1 \2", value)
+    return {token for token in _RE_NON_ALNUM.split(with_spaces.lower()) if token}
 
 
 def _path_token_set(rel_file_path: str) -> set[str]:
@@ -2889,12 +2915,14 @@ def _evaluate_metadata_condition(
     if cond.operator == "neq":
         return value != cond.value
     if cond.operator == "regex_match":
-        if not isinstance(value, str) or not isinstance(cond.value, str):
+        if not isinstance(value, str):
             return False
-        try:
-            return re.search(cond.value, value) is not None
-        except re.error:
+        # FIX 16: use the pre-compiled regex (compiled once in __post_init__).
+        # _compiled_regex is None when the pattern was invalid — fail-safe False.
+        compiled = cond._compiled_regex
+        if compiled is None:
             return False
+        return compiled.search(value) is not None
     return False
 
 
@@ -3017,7 +3045,7 @@ def _matches_rule(
     if rule.match.content_patterns:
         if not _matches_content_patterns(
             rel_file_path,
-            rule.match.content_patterns,
+            rule.match._content_patterns_lower,
             graph,
             file_content_cache,
             root_path if root_path is not None else Path("."),
@@ -3867,7 +3895,7 @@ def apply_bsg_rules_to_entities(
             if rule.match.content_patterns:
                 if not _matches_content_patterns(
                     rel_file_path,
-                    rule.match.content_patterns,
+                    rule.match._content_patterns_lower,
                     None,  # graph not needed for per-file
                     file_content_cache,
                     root,

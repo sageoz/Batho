@@ -152,7 +152,7 @@ _BUILTINS_BY_LANG: dict[str, set[str]] = {
 }
 
 
-def _should_prune_unresolved(ref_text: str, rel_type: RelationshipType, file_imports: list, language: str, filepath: str, prune_enabled: bool = True) -> bool:
+def _should_prune_unresolved(ref_text: str, rel_type: RelationshipType, file_imports: list, language: str, filepath: str, prune_enabled: bool = True, imported_names: "set[str] | None" = None) -> bool:
     """Check if an unresolved reference should be pruned.
 
     Args:
@@ -162,6 +162,9 @@ def _should_prune_unresolved(ref_text: str, rel_type: RelationshipType, file_imp
         language: The programming language
         filepath: The file path
         prune_enabled: Whether pruning is enabled (cached from config to avoid repeated lookups)
+        imported_names: Optional pre-built set of all module paths and from-import
+            symbols for O(1) rule-4 membership check (FIX 10). Falls back to
+            the O(I) file_imports scan when None.
     """
     if "/" not in filepath and "\\" not in filepath:
         return False
@@ -187,9 +190,14 @@ def _should_prune_unresolved(ref_text: str, rel_type: RelationshipType, file_imp
         return False
 
     # 4. If it is imported in this file -> keep
-    for module_path, symbols, _ in file_imports:
-        if name == module_path or name in symbols:
+    # FIX 10: use O(1) set lookup when pre-built imported_names is available.
+    if imported_names is not None:
+        if name in imported_names:
             return False
+    else:
+        for module_path, symbols, _ in file_imports:
+            if name == module_path or name in symbols:
+                return False
 
     # 5. If it's a CALLS or IMPORTS or INHERITS or IMPLEMENTS, keep (could be cross-file function/class)
     if rel_type in (RelationshipType.CALLS, RelationshipType.IMPORTS, RelationshipType.INHERITS, RelationshipType.IMPLEMENTS):
@@ -1048,12 +1056,21 @@ class ASTExtractor(abc.ABC):
                         continue
                     impl_start = impl_node.start_byte
                     impl_end = impl_node.end_byte
-                    for method_ent in entities:
+                    # FIX 9: use bisect_left on the pre-sorted sorted_starts list
+                    # to find the first method whose start_byte >= impl_start,
+                    # then forward-scan while start_byte <= impl_end.
+                    # This reduces the per-impl scan from O(M) to O(log M + k)
+                    # where k is the number of methods in the impl block.
+                    lo = bisect.bisect_left(sorted_starts, impl_start)
+                    for idx in range(lo, len(sorted_ents)):
+                        method_ent = sorted_ents[idx]
+                        if method_ent.start_byte > impl_end:
+                            break
                         if method_ent.type != EntityType.METHOD:
                             continue
                         if method_ent.id == type_ent.id:
                             continue
-                        if impl_start <= method_ent.start_byte and method_ent.end_byte <= impl_end:
+                        if method_ent.end_byte <= impl_end:
                             _add(
                                 type_ent.id,
                                 method_ent.id,
@@ -1080,6 +1097,28 @@ class ASTExtractor(abc.ABC):
                         definition_start_byte=method_ent.start_byte,
                         definition_end_byte=method_ent.end_byte,
                     )
+
+        # FIX 10: Precompute per-file import lookup structures once instead of
+        # scanning file_imports O(I) times per reference node.
+        #
+        # from_symbol_to_module: symbol -> module_path for from-imports.
+        #   setdefault preserves first-match semantics (mirrors original for..break).
+        # non_from_modules: list of plain module_paths for prefix matching.
+        #   MUST remain a list + startswith check — a set membership test would
+        #   miss "os.path" matched against "import os".
+        # imported_names: set of all module_paths and from-import symbols for
+        #   O(1) membership in _should_prune_unresolved (rule 4).
+        from_symbol_to_module: dict[str, str] = {}
+        non_from_modules: list[str] = []
+        imported_names: set[str] = set()
+        for _mp, _syms, _is_from in file_imports:
+            imported_names.add(_mp)
+            if _is_from:
+                for _sym in _syms:
+                    from_symbol_to_module.setdefault(_sym, _mp)
+                    imported_names.add(_sym)
+            else:
+                non_from_modules.append(_mp)
 
         for cap_name, nodes in captures.items():
             rel_type, capture_variant = _relationship_capture_info(cap_name)
@@ -1122,12 +1161,15 @@ class ASTExtractor(abc.ABC):
 
                     ref_to_use = ref_text
                     if target_id is None:
-                        for module_path, symbols_list, is_from in file_imports:
-                            if is_from and ref_text in symbols_list:
-                                ref_to_use = f"{module_path}.{ref_text}"
-                                break
-                            elif not is_from:
-                                if ref_text == module_path or ref_text.startswith(module_path + ".") or ref_text.startswith(module_path + "/"):
+                        # FIX 10: use precomputed from_symbol_to_module (O(1))
+                        # and non_from_modules list (O(I) but only for prefix
+                        # matching — cannot replace with set membership).
+                        mp = from_symbol_to_module.get(ref_text)
+                        if mp is not None:
+                            ref_to_use = f"{mp}.{ref_text}"
+                        else:
+                            for mp in non_from_modules:
+                                if ref_text == mp or ref_text.startswith(mp + ".") or ref_text.startswith(mp + "/"):
                                     ref_to_use = ref_text
                                     break
 
@@ -1148,7 +1190,7 @@ class ASTExtractor(abc.ABC):
                             confidence=1.0,
                         )
                     elif target_id is None:
-                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath, prune_enabled):
+                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath, prune_enabled, imported_names):
                             unres = _make_contextual_stub(ref_to_use, line_no, rel_type, caller_scope=source_id)
                             if unres.id not in unresolved_emitted:
                                 unresolved_emitted.add(unres.id)
@@ -1196,7 +1238,7 @@ class ASTExtractor(abc.ABC):
                                 confidence=1.0,
                             )
                         elif target_id is None:
-                            if not _should_prune_unresolved(target_ref, rel_type, file_imports, self._language_name, filepath, prune_enabled):
+                            if not _should_prune_unresolved(target_ref, rel_type, file_imports, self._language_name, filepath, prune_enabled, imported_names):
                                 unres = _make_contextual_stub(target_ref, line_no, rel_type, caller_scope=source_id)
                                 if unres.id not in unresolved_emitted:
                                     unresolved_emitted.add(unres.id)
@@ -1235,12 +1277,14 @@ class ASTExtractor(abc.ABC):
 
                     ref_to_use = normalized_ref if normalized_ref else ref_text
                     if target_id is None:
-                        for module_path, symbols_list, is_from in file_imports:
-                            if is_from and ref_to_use in symbols_list:
-                                ref_to_use = f"{module_path}.{ref_to_use}"
-                                break
-                            elif not is_from:
-                                if ref_to_use == module_path or ref_to_use.startswith(module_path + ".") or ref_to_use.startswith(module_path + "/"):
+                        # FIX 10: use precomputed from_symbol_to_module (O(1))
+                        # and non_from_modules list (prefix matching preserved).
+                        mp = from_symbol_to_module.get(ref_to_use)
+                        if mp is not None:
+                            ref_to_use = f"{mp}.{ref_to_use}"
+                        else:
+                            for mp in non_from_modules:
+                                if ref_to_use == mp or ref_to_use.startswith(mp + ".") or ref_to_use.startswith(mp + "/"):
                                     break
 
                     target_ent = by_id.get(target_id) if target_id else None
@@ -1260,7 +1304,7 @@ class ASTExtractor(abc.ABC):
                             confidence=1.0,
                         )
                     else:
-                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath, prune_enabled):
+                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath, prune_enabled, imported_names):
                             unres = _make_contextual_stub(ref_to_use, line_no, rel_type, caller_scope=source_ent.id)
                             if unres.id not in unresolved_emitted:
                                 unresolved_emitted.add(unres.id)

@@ -424,6 +424,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                             write_simple_ipc(comm_rows, COMMUNITIES_SCHEMA, comm_path)
                             final_comm_path = bundle_dir / "communities.ipc"
                             comm_path.replace(final_comm_path)
+                            db.register_simple_file("communities", final_comm_path.name)
                             comm_duration_ms = (time.monotonic() - t_comm_0) * 1000
                             LOGGER.info(
                                 "community_detection_complete",

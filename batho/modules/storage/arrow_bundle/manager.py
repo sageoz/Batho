@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import threading
 import zipfile
@@ -28,11 +29,25 @@ import pyarrow.ipc as ipc
 import zstandard as zstd
 
 from batho.utils.logging import get_logger
+from batho.utils.path_sanitizer import PathSecurityError, is_safe_filename, safe_join
 from .schemas import BUNDLE_SCHEMA_VERSION, ALL_SCHEMAS
 
 LOGGER = get_logger(__name__, component="arrow_bundle_manager")
 MAX_DECOMPRESS_SIZE = 200 * 1024 * 1024  # 200 MB
 MAX_DECOMPRESS_RATIO = 100
+
+# Matches a generation-stamped Arrow IPC file, e.g. "runs.v1.ipc". Compiled once
+# at module scope so garbage_collect / ensure_simple_files_registered don't
+# recompile on every call. The trailing $.ipc$ anchor avoids false positives on
+# legitimate non-versioned names such as "overview.ipc" or "version.ipc".
+_VERSIONED_IPC_RE = re.compile(r"\.v(\d+)\.ipc$")
+
+# Logical table names that are intentionally non-versioned — registered via
+# register_simple_file rather than commit_patch, so they keep their plain
+# "<name>.ipc" filename across generations and are never stamped with .vN.
+# Used by unpack_artifact to distinguish genuine non-versioned side tables
+# from legacy versioned tables whose stamp was lost in old export formats.
+_NON_VERSIONED_TABLES = frozenset({"communities"})
 
 
 class BathoBundleManager:
@@ -146,6 +161,55 @@ class BathoBundleManager:
         """Commit a small side-table (runs, file_tracking, etc.) as a new generation."""
         self.commit_patch({logical_name: path}, run_uuid)
 
+    def register_simple_file(self, logical_name: str, filename: str) -> None:
+        """Register a non-versioned file (e.g. communities.ipc) in the manifest.
+
+        This adds the file to ``active_files`` so that ``garbage_collect``
+        preserves it across generations.  Unlike ``commit_patch``, the file is
+        not renamed or stamped with a generation suffix — it is expected to
+        already exist on disk under the given ``filename``.
+
+        Raises:
+            PathSecurityError: If ``filename`` contains path separators,
+                traversal components, null bytes, or other unsafe characters.
+        """
+        if not is_safe_filename(filename):
+            raise PathSecurityError(
+                f"Unsafe filename rejected for simple file: {filename!r}"
+            )
+        manifest = self.load_manifest()
+        active_files = dict(manifest.get("active_files", {}))
+        active_files[logical_name] = filename
+        manifest["active_files"] = active_files
+        self._write_manifest_atomic(manifest)
+        LOGGER.info("simple_file_registered", logical_name=logical_name, filename=filename)
+
+    def ensure_simple_files_registered(self) -> None:
+        """Self-heal: register non-versioned .ipc files that exist on disk but
+        are missing from the manifest.
+
+        This handles backward compatibility with artifacts built before
+        ``register_simple_file`` was called (e.g. old ``communities.ipc``).
+        """
+        manifest = self.load_manifest()
+        active_files = dict(manifest.get("active_files", {}))
+        changed = False
+        for ipc_file in self.artifact_dir.glob("*.ipc"):
+            if _VERSIONED_IPC_RE.search(ipc_file.name):
+                continue  # versioned file — managed by commit_patch
+            logical = ipc_file.stem  # e.g. 'communities'
+            if logical not in active_files:
+                active_files[logical] = ipc_file.name
+                changed = True
+                LOGGER.info(
+                    "simple_file_auto_registered",
+                    logical_name=logical,
+                    filename=ipc_file.name,
+                )
+        if changed:
+            manifest["active_files"] = active_files
+            self._write_manifest_atomic(manifest)
+
     # ------------------------------------------------------------------
     # Active file path lookup
     # ------------------------------------------------------------------
@@ -177,9 +241,6 @@ class BathoBundleManager:
 
         Returns number of files deleted.
         """
-        import re
-        version_pattern = re.compile(r"\.v(\d+)\.ipc$")
-
         manifest = self.load_manifest()
         current_gen = manifest.get("generation", 0)
         active = set(manifest.get("active_files", {}).values())
@@ -189,14 +250,17 @@ class BathoBundleManager:
         for p in self.artifact_dir.glob("*.ipc"):
             if p.name not in active:
                 # Check version to prevent deleting files from a committing generation
-                match = version_pattern.search(p.name)
-                if match:
-                    try:
-                        file_gen = int(match.group(1))
-                        if file_gen == current_gen + 1:
-                            continue  # Skip files from the currently committing generation
-                    except ValueError:
-                        pass
+                match = _VERSIONED_IPC_RE.search(p.name)
+                if not match:
+                    # Skip non-versioned files (e.g. communities.ipc) — they are
+                    # not generational artifacts and are managed by their own writers.
+                    continue
+                try:
+                    file_gen = int(match.group(1))
+                    if file_gen == current_gen + 1:
+                        continue  # Skip files from the currently committing generation
+                except ValueError:
+                    pass
                 try:
                     p.unlink()
                     cleaned += 1
@@ -214,7 +278,9 @@ class BathoBundleManager:
         """Pack active-generation files into a transport ZIP with zstd-compressed IPC members.
 
         Called exclusively by batho export. The ZIP contains:
-          manifest.json       — bundle manifest
+          manifest.json       — bundle manifest (active_files retains on-disk
+                                filenames, e.g. "runs.v1.ipc", NOT zip member
+                                names, so unpack can restore MVCC naming)
           <name>.ipc.zst      — zstd-compressed artifact IPC for each active table
           bsg/<name>.ipc.zst  — zstd-compressed bsg/current/ IPC files (if present)
         """
@@ -243,10 +309,12 @@ class BathoBundleManager:
             compression=zipfile.ZIP_DEFLATED,
             compresslevel=1,
         ) as zf:
+            # Preserve the original on-disk active_files mapping (e.g.
+            # "runs": "runs.v1.ipc", "communities": "communities.ipc") so that
+            # unpack_artifact can restore the correct MVCC-stamped filenames.
+            # ZIP member names are derived from the logical name and are
+            # self-describing; they must NOT overwrite active_files.
             export_manifest = dict(manifest)
-            export_manifest["active_files"] = {
-                name: f"{name}.ipc.zst" for name in active
-            }
             if bsg_files:
                 export_manifest["bsg_files"] = bsg_files
             zf.writestr("manifest.json", json.dumps(export_manifest, indent=2))
@@ -314,8 +382,6 @@ class BathoBundleManager:
                 if not member.endswith(".ipc.zst"):
                     continue
 
-                from batho.utils.path_sanitizer import is_safe_filename, safe_join, PathSecurityError
-
                 if member.startswith("bsg/"):
                     logical = member[len("bsg/"):].replace(".ipc.zst", "")
                     if not is_safe_filename(logical):
@@ -359,14 +425,45 @@ class BathoBundleManager:
                         dest.write_bytes(raw_ipc)
                         bsg_extracted.append(logical)
                 else:
-                    stamped_name = f"{logical_name}.v{generation}.ipc"
-                    dest = safe_join(self.artifact_dir, stamped_name)
+                    # Recover the original on-disk filename from the export
+                    # manifest's active_files. New exports preserve the real
+                    # on-disk name (e.g. "runs.v1.ipc", "communities.ipc") so
+                    # MVCC generation stamps survive the round-trip. Legacy
+                    # exports stored ZIP member names ("runs.ipc.zst"); strip
+                    # the .zst transport suffix to recover the basename.
+                    original_name = manifest.get("active_files", {}).get(logical_name, "")
+                    if original_name.endswith(".zst"):
+                        original_name = original_name[:-4]
+                    if original_name and is_safe_filename(original_name) and _VERSIONED_IPC_RE.search(original_name):
+                        # New export: on-disk name already carries the
+                        # generation stamp (e.g. "runs.v1.ipc"). Trust it.
+                        dest_name = original_name
+                    elif (
+                        logical_name in _NON_VERSIONED_TABLES
+                        and original_name
+                        and is_safe_filename(original_name)
+                    ):
+                        # Non-versioned side table (e.g. communities.ipc) —
+                        # never stamped, regardless of export format.
+                        dest_name = original_name
+                    else:
+                        # Legacy export stored ZIP member names in active_files,
+                        # so the recovered name lacks a generation stamp (e.g.
+                        # "runs.ipc" from "runs.ipc.zst"). Force the MVCC stamp
+                        # to honor the manifest's generation contract. Also
+                        # covers missing or unsafe active_files entries.
+                        dest_name = f"{logical_name}.v{generation}.ipc"
+                    dest = safe_join(self.artifact_dir, dest_name)
                     dest.write_bytes(raw_ipc)
-                    active_files[logical_name] = stamped_name
+                    active_files[logical_name] = dest_name
 
         new_manifest = dict(manifest)
         new_manifest["active_files"] = active_files
         self._write_manifest_atomic(new_manifest)
+
+        # Self-heal: register any non-versioned .ipc files that exist on disk
+        # but are missing from the manifest (backward compat with old artifacts).
+        self.ensure_simple_files_registered()
 
         LOGGER.info(
             "artifact_unpacked",

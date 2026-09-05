@@ -460,16 +460,6 @@ def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str,
     )
     _safe_set_nested(
         base_cfg,
-        ["bsg", "symbol_resolution", "fuzzy_matching"],
-        _env_bool("BATHO_BSG_SYMBOL_RESOLUTION_FUZZY", _safe_get_nested(base_cfg, ["bsg", "symbol_resolution", "fuzzy_matching"], False)),
-    )
-    _safe_set_nested(
-        base_cfg,
-        ["bsg", "symbol_resolution", "cache_symbols"],
-        _env_bool("BATHO_BSG_SYMBOL_RESOLUTION_CACHE_SYMBOLS", _safe_get_nested(base_cfg, ["bsg", "symbol_resolution", "cache_symbols"], True)),
-    )
-    _safe_set_nested(
-        base_cfg,
         ["bsg", "parsing", "error_recovery"],
         _env_bool("BATHO_BSG_PARSING_ERROR_RECOVERY", _safe_get_nested(base_cfg, ["bsg", "parsing", "error_recovery"], True)),
     )

@@ -232,11 +232,7 @@ class BsgCacheConfig(BaseModel):
 
 class BsgSymbolResolutionConfig(BaseModel):
     enabled: bool = Field(default=True)
-    fuzzy_matching: bool = Field(default=False)
-    cache_symbols: bool = Field(default=True)
     prune_unresolved: bool = Field(default=True)
-    max_unresolved_attempts: int = Field(default=10)
-    unresolved_tracking: bool = Field(default=True)
 
 
 class BsgParsingConfig(BaseModel):
