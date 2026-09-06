@@ -155,6 +155,14 @@ Configures memory usage limits and warnings.
 - `rss_flush_threshold_mb`: Memory threshold to force cache flush (`1000`).
 - `max_per_worker_mb`: Maximum memory allowed per worker process (`150`).
 
+### 15. `mcp`
+Configures the MCP server tool registration and gating.
+- `tools`:
+  - `disabled`: Blocklist of tool names NOT to register. When unset, defaults to the secure-by-default set: `["batho_build", "batho_export", "batho_load", "batho_gc"]`. Set to `[]` to enable all tools.
+  - `enabled`: Optional allowlist. If set, ONLY these tools register (overrides `disabled`). Example: `["graph_overview", "graph_query", "batho_build"]`.
+
+See [MCP Tool Gating](/docs/mcp#tool-gating) for details.
+
 ---
 
 ## Environment Variables

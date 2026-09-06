@@ -9,7 +9,7 @@ Start the Batho MCP (Model Context Protocol) server on stdio transport. AI agent
 
 ## Description
 
-The `mcp` subcommand starts a stdio-based MCP server that reads pre-built `.batho` Arrow IPC artifacts. It uses zero-copy memory-mapped I/O for sub-millisecond query latency. The server auto-loads `~/.batho/mcp-repos.json` at startup and exposes 10 tools: `list_repos`, `add_repo`, `remove_repo`, `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `search_entities`, and `get_delta`.
+The `mcp` subcommand starts a stdio-based MCP server that reads pre-built `.batho` Arrow IPC artifacts. It uses zero-copy memory-mapped I/O for sub-millisecond query latency. The server auto-loads `~/.batho/mcp-repos.json` at startup and exposes 19 tools (15 enabled by default, 4 admin tools opt-in): `list_repos`, `add_repo`, `remove_repo`, `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `search_entities`, `get_delta`, `batho_status`, `batho_list_runs`, `batho_diff`, `batho_patch`, `batho_fix` (default) + `batho_build`, `batho_export`, `batho_load`, `batho_gc` (opt-in). See [Tool Gating](/docs/mcp#tool-gating) for enabling admin tools.
 
 ## Usage
 
@@ -73,4 +73,4 @@ After `batho patch`, the server automatically serves the new generation on the n
 - [MCP Setup Guide](/docs/mcp/setup) — Client configuration for Claude Desktop, Cursor, Windsurf
 - [Single-Repo Guide](/docs/mcp/single-repo) — Complete walkthrough
 - [Multi-Repo Guide](/docs/mcp/multi-repo) — Multiple repositories
-- [Tools Reference](/docs/mcp/tools-reference) — All 10 tools documented
+- [Tools Reference](/docs/mcp/tools-reference) — All 19 tools documented (15 enabled by default)

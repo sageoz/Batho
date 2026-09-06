@@ -1,7 +1,7 @@
 ---
 sidebar_position: 5
 title: "Tools Reference"
-description: "Complete documentation for all 10 Batho MCP tools"
+description: "Complete documentation for all 19 Batho MCP tools (15 enabled by default)"
 ---
 
 # MCP Tools Reference
@@ -123,7 +123,7 @@ remove_repo(name="myapp")
 
 ## `graph_overview`
 
-Get a high-level overview of the codebase: entity counts, relationship breakdown, file list, and community summaries.
+Get a high-level overview of the codebase: entity counts, relationship breakdown, file list, community summaries, and ambiguous edge count.
 
 ### Parameters
 
@@ -168,6 +168,7 @@ graph_overview(repo="myapp", response_format="summary")
       "total_files": 312,
       "entity_breakdown": {"function": 892, "class": 124},
       "relationship_breakdown": {"calls": 2100, "imports": 1800},
+      "ambiguous_edge_count": 0,
       "run_id": "abc-123",
       "git_commit": "a1b2c3d"
     },
@@ -196,6 +197,9 @@ Query the code graph with optional filters. Returns paginated nodes and edges.
 | `file_path` | string | No | — | Filter entities by file path |
 | `entity_types` | list[string] | No | — | Filter by entity type (e.g., `["function", "class"]`) |
 | `relation_types` | list[string] | No | — | Filter relationships by type |
+| `symbol_roles` | list[string] | No | — | Filter relationships by symbol role (OR semantics). Valid: `Definition`, `Import`, `WriteAccess`, `ReadAccess`, `Generated`, `Declaration`, `Dynamic`, `Heuristic` (case-insensitive) |
+| `confidence_threshold` | float | No | — | Only return relationships with `confidence >= threshold` (0.0–1.0). See [Confidence Tiers](#confidence-tiers) |
+| `relation_direction` | string | No | `"both"` | Filter by edge direction: `outgoing` (entity is source), `incoming` (entity is target), `both` |
 | `name_pattern` | string | No | — | Regex pattern to match entity names |
 | `response_format` | string | No | `"concise"` | Output format: `concise`, `detailed` |
 | `limit` | int | No | `50` | Max entities to return |
@@ -206,6 +210,8 @@ Query the code graph with optional filters. Returns paginated nodes and edges.
 
 ```
 graph_query(repo="myapp", file_path="src/auth/", entity_types=["function"], limit=20)
+graph_query(repo="myapp", symbol_roles=["WriteAccess"], confidence_threshold=0.85)
+graph_query(repo="myapp", relation_types=["CALLS"], relation_direction="incoming")
 ```
 
 ### Output
@@ -252,6 +258,9 @@ Find the shortest path between two entities in the code graph using BFS traversa
 | `repo` | string | No | Registry default | Repo name from registry |
 | `max_depth` | int | No | `5` | Maximum BFS depth (hops) |
 | `relation_types` | list[string] | No | — | Only traverse these relationship types |
+| `symbol_roles` | list[string] | No | — | Only traverse edges matching the specified roles (OR semantics). Valid: `Definition`, `Import`, `WriteAccess`, `ReadAccess`, `Generated`, `Declaration`, `Dynamic`, `Heuristic` |
+| `confidence_threshold` | float | No | — | Only traverse edges with `confidence >= threshold` (0.0–1.0). See [Confidence Tiers](#confidence-tiers) |
+| `relation_direction` | string | No | `"outgoing"` | Direction of edges to traverse: `outgoing` (source→target), `incoming` (target→source, reverse BFS), `both` |
 | `response_format` | string | No | `"concise"` | Output format |
 
 ### Example
@@ -262,6 +271,16 @@ trace_path(
   target_entity_id="auth.SessionHandler.create",
   repo="myapp",
   max_depth=10
+)
+
+# Trace only high-confidence import edges (reverse direction)
+trace_path(
+  source_entity_id="auth.SessionHandler.create",
+  target_entity_id="api.routes.login.handle_login",
+  repo="myapp",
+  symbol_roles=["Import"],
+  confidence_threshold=0.85,
+  relation_direction="incoming"
 )
 ```
 
@@ -329,6 +348,7 @@ Search for entities by name using substring or regex matching.
 | `query` | string | Yes | — | Search query (substring or regex) |
 | `repo` | string | No | Registry default | Repo name from registry |
 | `entity_types` | list[string] | No | — | Filter by entity type |
+| `symbol_roles` | list[string] | No | — | Filter to entities that participate in relationships with the specified roles. Valid: `Definition`, `Import`, `WriteAccess`, `ReadAccess`, `Generated`, `Declaration`, `Dynamic`, `Heuristic` |
 | `limit` | int | No | `25` | Max results to return |
 | `response_format` | string | No | `"concise"` | Output format |
 
@@ -336,6 +356,7 @@ Search for entities by name using substring or regex matching.
 
 ```
 search_entities(query="validate", repo="myapp", entity_types=["function"], limit=10)
+search_entities(query="config", repo="myapp", symbol_roles=["WriteAccess"])
 ```
 
 ### Output
@@ -376,6 +397,313 @@ get_delta(repo="myapp", change_kind="added", limit=20)
 ### Output
 
 Returns node-level changes (entity name, change kind, file path, line range), delta stats (nodes added/removed/modified/renamed), and run metadata (git commit, branch, duration).
+
+---
+
+## `batho_status`
+
+Show artifact and watcher status for one or all repos. Read-only.
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `repo` | string | No | All repos | Repo name to check (omit for all registered repos) |
+
+### Example
+
+```
+batho_status(repo="myapp")
+```
+
+### Output
+
+Returns per-repo artifact status (ready/stale/missing), entity/relationship counts, last build run ID, and watcher state (active/inactive, pending changes).
+
+---
+
+## `batho_list_runs`
+
+List patch/build run IDs for a repo. Read-only.
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `repo` | string | No | Registry default | Repo name from registry |
+| `limit` | int | No | `20` | Max runs to return |
+
+### Example
+
+```
+batho_list_runs(repo="myapp", limit=10)
+```
+
+### Output
+
+Returns a list of runs with UUID, timestamp, status, git commit, branch, entity/relationship counts, and duration.
+
+---
+
+## `batho_diff`
+
+Query node-level changes across runs, entities, or files. Read-only.
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `repo` | string | No | Registry default | Repo name from registry |
+| `run_id` | string | No | Latest patch | Specific run UUID to diff |
+| `entity_id` | string | No | — | Filter changes to a specific entity |
+| `file_path` | string | No | — | Filter changes by file path |
+| `since` | string | No | — | Run UUID to diff from (defaults to previous run) |
+
+### Example
+
+```
+batho_diff(repo="myapp", file_path="src/auth/manager.py")
+```
+
+### Output
+
+Returns added, removed, modified, and renamed nodes with before/after metadata for each change.
+
+---
+
+## `batho_patch`
+
+Run an incremental patch on an existing artifact. **Destructive** — modifies the artifact database.
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `repo` | string | No | Registry default | Repo name from registry |
+| `max_file_size_kb` | int | No | Config default | Skip files exceeding this size |
+| `graph_backend` | string | No | Config default | `auto`, `in-memory`, or `arrow` |
+
+### Example
+
+```
+batho_patch(repo="myapp")
+```
+
+### Output
+
+Returns patch stats: files changed, entities added/removed/modified, relationships added/removed, duration, and new run UUID.
+
+---
+
+## `batho_fix`
+
+Run integrity verification and repair on an artifact database. **Destructive** — may modify or delete corrupt artifacts.
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `repo` | string | No | Registry default | Repo name from registry |
+| `deep` | bool | No | `false` | Deep verification (slower, more thorough) |
+| `dry_run` | bool | No | `false` | Report issues without repairing |
+| `target` | string | No | `"all"` | Repair target: `all`, `blobs`, `graph`, `state` |
+| `phase` | int | No | — | Run only a specific repair phase (1-N) |
+| `parallel` | bool | No | `false` | Run repair phases in parallel |
+
+### Example
+
+```
+batho_fix(repo="myapp", dry_run=true)
+```
+
+### Output
+
+Returns verification results, issues found, repairs applied (or proposed if `dry_run`), and a tamper-evident audit log entry.
+
+---
+
+## `batho_build`
+
+Run a full index build for a repository. **Destructive** — deletes and rebuilds the artifact database. **Disabled by default** — enable via [Tool Gating](/docs/mcp#tool-gating).
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `repo` | string | No | Registry default | Repo name from registry |
+| `full` | bool | No | `false` | Force full rebuild (deletes existing artifact) |
+| `max_workers` | int | No | CPU count | Max parallel workers for parsing |
+| `max_file_size_kb` | int | No | Config default | Skip files exceeding this size |
+| `graph_backend` | string | No | Config default | `auto`, `in-memory`, or `arrow` |
+
+### Example
+
+```
+batho_build(repo="myapp", full=true)
+```
+
+### Output
+
+Returns build stats: entity count, relationship count, file count, duration, community count, and new run UUID.
+
+---
+
+## `batho_export`
+
+Export a JSON view or Pack artifact from the code graph. **Destructive** — writes files to disk. **Disabled by default** — enable via [Tool Gating](/docs/mcp#tool-gating).
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `repo` | string | No | Registry default | Repo name from registry |
+| `view` | string | No | `"storage"` | Export view: `storage` or `agent` |
+| `output` | string | No | Auto-generated | Output file path |
+| `index_id` | string | No | Latest | Specific index/run ID to export |
+| `filter_pattern` | string | No | — | Glob pattern to filter files |
+| `category` | string | No | `"all"` | Export category: `all`, `entities`, `relationships`, `files` |
+| `token_budget` | int | No | — | Token budget for LLM-optimized export |
+| `json_mode` | bool | No | `true` | Export as JSON (false = Pack binary) |
+| `include_relationships` | bool | No | `false` | Include relationship data in export |
+
+### Example
+
+```
+batho_export(repo="myapp", view="agent", json_mode=true)
+```
+
+### Output
+
+Returns the export file path and summary stats (entities exported, file size).
+
+---
+
+## `batho_load`
+
+Unpack a transport artifact ZIP into `.batho/artifact/`. **Destructive** — overwrites the artifact directory. **Disabled by default** — enable via [Tool Gating](/docs/mcp#tool-gating).
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `artifact_path` | string | Yes | — | Path to the transport artifact ZIP file |
+| `repo` | string | No | Registry default | Repo name from registry |
+| `force` | bool | No | `false` | Overwrite existing artifact without confirmation |
+
+### Example
+
+```
+batho_load(artifact_path="/tmp/myapp_artifact.zip", repo="myapp")
+```
+
+### Output
+
+Returns the unpacked artifact path and verification status.
+
+---
+
+## `batho_gc`
+
+Run garbage collection and maintenance on an artifact database. **Destructive** — may delete old run artifacts. **Disabled by default** — enable via [Tool Gating](/docs/mcp#tool-gating).
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `repo` | string | No | Registry default | Repo name from registry |
+| `subcommand` | string | No | `"status"` | GC action: `status`, `prune`, `compact`, `reclaim` |
+| `run_uuid` | string | No | — | Target a specific run UUID for pruning |
+| `older_than` | int | No | — | Prune runs older than N days |
+
+### Example
+
+```
+batho_gc(repo="myapp", subcommand="prune", older_than=30)
+```
+
+### Output
+
+Returns GC stats: runs pruned, disk space reclaimed, remaining run count, and fragmentation metrics.
+
+---
+
+## Relationship Filtering
+
+`graph_query`, `trace_path`, and `search_entities` support three relationship-level filters that compose with AND semantics. All filters default to `None` (no filtering) for backward compatibility.
+
+### `symbol_roles`
+
+Filters relationships by the `SymbolRole` bitmask stored on each edge. A relationship is included if **any** of the specified roles match (OR semantics within the parameter).
+
+| Role | Bit | Description |
+|------|-----|-------------|
+| `Definition` | 1 | Relationship defines the target entity |
+| `Import` | 2 | Import statement |
+| `WriteAccess` | 4 | Write access to the target |
+| `ReadAccess` | 8 | Read access to the target |
+| `Generated` | 16 | Auto-generated code |
+| `Declaration` | 32 | Forward declaration |
+| `Dynamic` | 64 | Dynamic dispatch / runtime resolution |
+| `Heuristic` | 128 | Inferred by heuristic, not directly extracted |
+
+Role names are **case-insensitive** (`"writeaccess"`, `"WriteAccess"`, `"WRITEACCESS"` are all valid). Invalid role names return an error listing the valid options.
+
+> **Requires** an artifact built with the `roles` column (Batho v1.4.2+). Older artifacts return a clear error directing you to run `batho build --full`.
+
+### `confidence_threshold`
+
+Filters relationships by their resolution confidence score. Only edges with `confidence >= threshold` are returned or traversed.
+
+<a id="confidence-tiers"></a>
+
+#### Confidence Tiers
+
+| Strategy | Confidence | Description |
+|----------|-----------|-------------|
+| Direct extraction | 1.0 | Captured directly by tree-sitter (no resolution needed) |
+| `exact_match` | 0.95 | Direct dotpath lookup |
+| `stdlib_method` | 0.90 | Stdlib method / module prefix match |
+| `import_map` | 0.85 | Import-map cross-file resolution |
+| `parent_chain` | 0.75 | Parent stub chain building |
+| `scope_qualified` | 0.70 | Caller-scope qualified path |
+| `receiver_type` | 0.65 | Receiver-type inference |
+| `ambiguous` | 0.50 | Multiple equally-plausible candidates (kept for manual review) |
+| `unresolved` | 0.0 | No match found |
+
+The threshold must be between `0.0` and `1.0` inclusive. Use `0.85` for high-confidence edges only, or `0.0` to include everything.
+
+> **Note**: Confidence values are stored as `float32` in Arrow IPC. Values like `0.85` may be stored as `0.84999996` due to binary representation. Use a slightly lower threshold (e.g., `0.84`) if you need to include edges at exact tier boundaries.
+
+### `relation_direction`
+
+Filters relationships by edge direction relative to the entity:
+
+| Value | Behavior |
+|-------|----------|
+| `"outgoing"` | Entity is the **source** (`source_id` matches) |
+| `"incoming"` | Entity is the **target** (`target_id` matches) — enables "who calls X?" queries without inverse relationship types |
+| `"both"` (default for `graph_query`) | No direction filtering |
+| `"outgoing"` (default for `trace_path`) | BFS follows source→target edges |
+| `"incoming"` (trace_path) | Reverse BFS: follows target→source edges |
+| `"both"` (trace_path) | BFS follows edges in either direction |
+
+> **Replaces inverse relationship types**: `relation_direction="incoming"` with `relation_types=["CALLS"]` returns all callers of an entity — equivalent to the legacy `CALLED_BY` type, but without requiring separate edge storage.
+
+### `applied_filters` in Output
+
+All active filters are echoed in `structuredContent.applied_filters`:
+
+```json
+{
+  "applied_filters": {
+    "symbol_roles": ["WriteAccess"],
+    "confidence_threshold": 0.85,
+    "relation_direction": "incoming",
+    "entity_types": ["FUNCTION"],
+    "relation_types": ["CALLS"]
+  }
+}
+```
 
 ---
 

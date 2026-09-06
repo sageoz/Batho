@@ -770,10 +770,11 @@ class TestExistingPatternsIntact:
         assert hasattr(InMemoryGraph, "update_relationships")
 
     def test_resolution_confidence_constant_unchanged(self):
-        """_RESOLUTION_CONFIDENCE still has all 7 tiers."""
+        """_RESOLUTION_CONFIDENCE still has all 8 tiers (including T08 ambiguous)."""
         expected = {
             "exact_match", "stdlib_method", "import_map",
-            "parent_chain", "scope_qualified", "receiver_type", "unresolved",
+            "parent_chain", "scope_qualified", "receiver_type",
+            "ambiguous", "unresolved",
         }
         assert set(_RESOLUTION_CONFIDENCE.keys()) == expected
 

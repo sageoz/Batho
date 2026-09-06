@@ -68,17 +68,53 @@ Agent: [calls remove_repo(name="frontend")]
 
 ### Registry File Format
 
-`~/.batho/mcp-repos.json`:
+`~/.batho/mcp-repos.json` (v3 schema):
 ```json
 {
   "repos": [
-    {"name": "frontend", "path": "/projects/frontend"},
-    {"name": "backend", "path": "/projects/backend"}
+    {
+      "id": "a1b2c3d4e5f6...",
+      "name": "frontend",
+      "path": "/projects/frontend",
+      "mode": "local",
+      "branch": "main",
+      "status": "ready",
+      "last_built_at": "2026-09-06T07:51:19Z",
+      "created_at": "2026-08-04T10:00:00Z",
+      "watch": true,
+      "debounce_ms": 2000,
+      "max_file_size_kb": null
+    },
+    {
+      "id": "f7e8d9c0b1a2...",
+      "name": "backend",
+      "path": "/projects/backend",
+      "mode": "local",
+      "branch": "main",
+      "status": "ready",
+      "last_built_at": "2026-09-06T08:15:00Z",
+      "created_at": "2026-08-04T10:05:00Z",
+      "watch": false,
+      "debounce_ms": 2000,
+      "max_file_size_kb": null
+    }
   ]
 }
 ```
 
-The registry persists across server restarts. Adding a new repo is as simple as `batho build` + `add_repo` from agent chat.
+The registry persists across server restarts. Adding a new repo is as simple as `batho build` + `add_repo` from agent chat. See [Registry v3 Schema](/docs/mcp#registry-v3-schema) for field details and auto-migration behavior.
+
+### File Watcher (Auto-Patch)
+
+Enable per-repo filesystem monitoring to keep artifacts fresh automatically:
+
+```
+User: Add my frontend repo with auto-update
+Agent: [calls add_repo(name="frontend", path="/projects/frontend", watch=true, debounce_ms=2000)]
+       Registered "frontend" with file watcher (debounce: 2000ms).
+```
+
+When files change, the watcher debounces for `debounce_ms` then triggers `batho patch` automatically. All connected MCP server processes auto-detect the new generation. See [File Watcher Engine](/docs/mcp#file-watcher-engine) for details.
 
 ### When to Use
 

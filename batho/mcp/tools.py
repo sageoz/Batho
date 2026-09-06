@@ -28,6 +28,7 @@ from batho.mcp.delta_reader import read_delta, format_delta_markdown, build_delt
 from batho.mcp.registry import RepoRegistry, RepoEntry
 from batho.mcp.errors import _err, CLIENT_ERROR, EXTERNAL_ERROR
 from batho.utils.path_sanitizer import sanitize_path, _canonicalize_untrusted_path, PathSecurityError
+from batho.core.schemas import SymbolRole
 
 if TYPE_CHECKING:
     from batho.mcp.watcher import BathoWatcherEngine
@@ -43,6 +44,108 @@ def _json_default(o: Any) -> Any:
     if isinstance(o, Iterator) and not isinstance(o, (str, bytes)):
         return None
     raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+
+_VALID_SYMBOL_ROLES = list(SymbolRole.__members__.keys())
+
+
+def _parse_symbol_roles(role_names: list[str]) -> int | None:
+    """Parse a list of role name strings into a combined bitmask.
+
+    Returns the OR-combined bitmask of all valid roles, or None if the
+    list is empty or any role name is invalid (caller should handle the error).
+    """
+    if not role_names:
+        return None
+    mask = 0
+    for name in role_names:
+        key = name.strip()
+        # Try case-insensitive match against SymbolRole members
+        matched = None
+        for member_name in SymbolRole.__members__:
+            if member_name.lower() == key.lower():
+                matched = SymbolRole[member_name]
+                break
+        if matched is None:
+            return None
+        mask |= int(matched)
+    return mask
+
+
+def _check_column_available(reader: BathoBundleReader, column_name: str) -> bool:
+    """Return True if the rels_views table has the given column."""
+    rels_table = reader._get_table("rels_views")
+    return column_name in rels_table.schema.names
+
+
+def _validate_rel_filters(
+    symbol_roles: list[str] | None,
+    confidence_threshold: float | None,
+    relation_direction: str = "both",
+) -> tuple[int | None, ToolResult | None]:
+    """Validate symbol_roles, confidence_threshold, and relation_direction parameters.
+
+    Returns (role_mask, None) on success, or (None, ToolResult) on validation error.
+    """
+    _VALID_DIRECTIONS = ("outgoing", "incoming", "both")
+
+    if relation_direction not in _VALID_DIRECTIONS:
+        return None, _err(
+            f"Invalid relation_direction: '{relation_direction}'. Valid values: {list(_VALID_DIRECTIONS)}",
+            error_type=CLIENT_ERROR,
+            hint="Use 'outgoing' (entity is source), 'incoming' (entity is target), or 'both'.",
+        )
+
+    role_mask = None
+    if symbol_roles:
+        role_mask = _parse_symbol_roles(symbol_roles)
+        if role_mask is None:
+            return None, _err(
+                f"Invalid symbol_roles value. Valid roles: {_VALID_SYMBOL_ROLES}",
+                error_type=CLIENT_ERROR,
+                hint="Use role names like 'WriteAccess', 'ReadAccess', 'Import', etc.",
+            )
+
+    if confidence_threshold is not None:
+        if not (0.0 <= confidence_threshold <= 1.0):
+            return None, _err(
+                f"confidence_threshold must be between 0.0 and 1.0 (got {confidence_threshold}).",
+                error_type=CLIENT_ERROR,
+                hint="Use a value like 0.85 for high-confidence edges, or 0.0 for all edges.",
+            )
+        # Note: confidence values are stored as float32 in Arrow, so values like
+        # 0.85 may be stored as 0.84999996 due to binary representation. The
+        # filter uses >= comparison which may exclude such rows. Users should
+        # use slightly lower thresholds (e.g. 0.84 instead of 0.85) if they
+        # need to include edges at exact tier boundaries.
+
+    return role_mask, None
+
+
+def _check_rel_filter_columns(
+    reader: BathoBundleReader,
+    role_mask: int | None,
+    confidence_threshold: float | None,
+) -> ToolResult | None:
+    """Check that the artifact has required columns for active filters.
+
+    Returns None on success, or a ToolResult error if a column is missing.
+    """
+    if role_mask is not None and not _check_column_available(reader, "roles"):
+        return _err(
+            "symbol_roles filter requires a rebuilt artifact with 'roles' column.",
+            error_type=CLIENT_ERROR,
+            hint="Run 'batho build --force-full' to rebuild the artifact with symbol role metadata.",
+        )
+
+    if confidence_threshold is not None and not _check_column_available(reader, "confidence"):
+        return _err(
+            "confidence_threshold filter requires a rebuilt artifact with 'confidence' column.",
+            error_type=CLIENT_ERROR,
+            hint="Run 'batho build --force-full' to rebuild the artifact with confidence metadata.",
+        )
+
+    return None
 
 
 def _as_dict(obj: Any) -> dict:
@@ -527,10 +630,35 @@ def register_tools(
                 entity_type_counts[et] = entity_type_counts.get(et, 0) + 1
 
         rel_type_counts: dict[str, int] = {}
+        ambiguous_edge_count = 0
         if rels_table.num_rows > 0:
             rtypes = rels_table.column("relation_type").to_pylist()
             for rt in rtypes:
                 rel_type_counts[rt] = rel_type_counts.get(rt, 0) + 1
+            # T08: Count ambiguous edges. Use Arrow compute to pre-filter
+            # metadata_json for rows containing '"ambiguous"' before JSON-parsing
+            # only the matched subset (avoids full to_pylist on large repos).
+            if "metadata_json" in rels_table.schema.names:
+                import json as _json
+                meta_col = rels_table.column("metadata_json")
+                # Fast null-filter: only non-null rows
+                non_null_mask = pc.is_valid(meta_col)
+                non_null_table = rels_table.filter(non_null_mask)
+                if non_null_table.num_rows > 0:
+                    # Substring filter for '"ambiguous"' to narrow candidates
+                    amb_mask = pc.match_substring(
+                        non_null_table.column("metadata_json"), '"ambiguous"'
+                    )
+                    amb_table = non_null_table.filter(amb_mask)
+                    # Only JSON-parse the small matched subset
+                    for meta_str in amb_table.column("metadata_json").to_pylist():
+                        if meta_str:
+                            try:
+                                meta = _json.loads(meta_str)
+                                if meta.get("ambiguous"):
+                                    ambiguous_edge_count += 1
+                            except (ValueError, TypeError):
+                                pass
 
         files_list = []
         entity_counts_by_file: dict[str, int] = {}
@@ -551,6 +679,7 @@ def register_tools(
             "total_files": len(tracking),
             "entity_breakdown": entity_type_counts,
             "relationship_breakdown": rel_type_counts,
+            "ambiguous_edge_count": ambiguous_edge_count,
             "files": files_list,
             "run_id": latest.get("run_uuid"),
             "git_commit": latest.get("git_commit"),
@@ -587,6 +716,9 @@ def register_tools(
         file_path: str | None = None,
         entity_types: list[str] | None = None,
         relation_types: list[str] | None = None,
+        symbol_roles: list[str] | None = None,
+        confidence_threshold: float | None = None,
+        relation_direction: str = "both",
         name_pattern: str | None = None,
         response_format: str = "concise",
         limit: int = 50,
@@ -606,16 +738,35 @@ def register_tools(
             file_path: Filter to entities in a specific file (forward slashes).
             entity_types: Filter to specific entity types (e.g. ['FUNCTION', 'CLASS']).
             relation_types: Filter to specific relation types (e.g. ['CALLS', 'IMPORTS']).
+            symbol_roles: Filter relationships by symbol role (e.g. ['WriteAccess', 'Import']).
+                Valid roles: Definition, Import, WriteAccess, ReadAccess, Generated, Declaration, Dynamic, Heuristic.
+                A relationship is included if ANY of the specified roles match (OR semantics).
+            confidence_threshold: Filter relationships by confidence score (0.0 to 1.0).
+                Only relationships with confidence >= threshold are returned.
+                Confidence tiers: 1.0 (directly extracted), 0.95 (exact match),
+                0.90 (stdlib method), 0.85 (import map), 0.75 (parent chain),
+                0.70 (scope qualified), 0.65 (receiver type), 0.0 (unresolved).
+            relation_direction: Filter relationships by direction relative to the entity.
+                'outgoing': entity is the source (source_id matches).
+                'incoming': entity is the target (target_id matches).
+                'both' (default): no direction filtering.
             name_pattern: Regex pattern to match entity names.
             response_format: 'concise' (default, ~50 tokens/entity), 'detailed' (~150 tokens/entity).
             limit: Maximum entities to return. Default: 50.
             offset: Pagination offset. Default: 0.
             max_tokens: Maximum tokens for content field. Default: 25000.
         """
+        role_mask, validation_err = _validate_rel_filters(symbol_roles, confidence_threshold, relation_direction)
+        if validation_err is not None:
+            return validation_err
         try:
             repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
             return _err(str(e), error_type=CLIENT_ERROR, hint="Call list_repos to see available repos.")
+
+        column_err = _check_rel_filter_columns(reader, role_mask, confidence_threshold)
+        if column_err is not None:
+            return column_err
 
         agent_table = reader._get_table("agent_views")
         if agent_table.num_rows == 0:
@@ -653,6 +804,13 @@ def register_tools(
 
         rels_table = reader._get_table("rels_views")
         rels_rows: list[dict] = []
+        # Note: unlike trace_path which filters the full rels_table via Arrow compute,
+        # graph_query loads rels per-file via get_file_artifacts_by_id (already scoped
+        # to the current page's file IDs), so Python-side filtering is safe here.
+        # However, for 'incoming' and 'both' directions, edges from other files
+        # (where the source entity is in a different file) won't be in the per-file
+        # slice. We supplement with an Arrow compute filter on the full rels_table
+        # to catch cross-file incoming edges.
         if rels_table.num_rows > 0 and rows:
             entity_ids = {r.get("entity_id", "") for r in rows}
             file_ids = {r.get("file_id", -1) for r in rows}
@@ -662,10 +820,43 @@ def register_tools(
                 if fid_rels:
                     rels_rows.extend(fid_rels)
 
+            # For incoming/both, supplement with cross-file edges where the
+            # target_id is in entity_ids but the edge's source file is not
+            # in the current page's file_ids set.
+            if relation_direction in ("incoming", "both") and entity_ids:
+                eid_array = pa.array(list(entity_ids), type=pa.large_utf8())
+                target_mask = pc.is_in(rels_table.column("target_id"), eid_array)
+                cross_file_rels = rels_table.filter(target_mask).to_pylist()
+                # Deduplicate by (source_id, target_id, relation_type) against
+                # per-file rels already loaded
+                existing_keys = {
+                    (r.get("source_id", ""), r.get("target_id", ""), r.get("relation_type", ""))
+                    for r in rels_rows
+                }
+                for r in cross_file_rels:
+                    key = (r.get("source_id", ""), r.get("target_id", ""), r.get("relation_type", ""))
+                    if key not in existing_keys:
+                        rels_rows.append(r)
+                        existing_keys.add(key)
+
             if relation_types:
                 rels_rows = [r for r in rels_rows if r.get("relation_type") in relation_types]
 
-            rels_rows = [r for r in rels_rows if r.get("source_id") in entity_ids or r.get("target_id") in entity_ids]
+            if role_mask is not None:
+                rels_rows = [r for r in rels_rows if (r.get("roles") or 0) & role_mask != 0]
+
+            if confidence_threshold is not None:
+                rels_rows = [
+                    r for r in rels_rows
+                    if (r.get("confidence") if r.get("confidence") is not None else 1.0) >= confidence_threshold
+                ]
+
+            if relation_direction == "outgoing":
+                rels_rows = [r for r in rels_rows if r.get("source_id") in entity_ids]
+            elif relation_direction == "incoming":
+                rels_rows = [r for r in rels_rows if r.get("target_id") in entity_ids]
+            else:
+                rels_rows = [r for r in rels_rows if r.get("source_id") in entity_ids or r.get("target_id") in entity_ids]
 
             seen_rels: set[tuple[str, str, str]] = set()
             deduped: list[dict] = []
@@ -679,12 +870,29 @@ def register_tools(
         file_paths = _file_paths_map(reader)
         gen = _manifest_gen(reader)
 
+        applied_filters: dict = {}
+        if symbol_roles:
+            applied_filters["symbol_roles"] = symbol_roles
+        if confidence_threshold is not None:
+            applied_filters["confidence_threshold"] = confidence_threshold
+        if relation_types:
+            applied_filters["relation_types"] = relation_types
+        if entity_types:
+            applied_filters["entity_types"] = entity_types
+        if relation_direction != "both":
+            applied_filters["relation_direction"] = relation_direction
+        if file_path:
+            applied_filters["file_path"] = file_path
+        if name_pattern:
+            applied_filters["name_pattern"] = name_pattern
+
         markdown, structured = build_dual_output(
             rows, rels_rows, file_paths,
             response_format=response_format, max_tokens=max_tokens,
             offset=offset, limit=limit,
             total_nodes=total_nodes, total_edges=rels_table.num_rows,
             artifact_generation=gen,
+            applied_filters=applied_filters or None,
         )
         res = ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
         return _inject_banner(res, repo_name, file_path=file_path)
@@ -783,6 +991,9 @@ def register_tools(
         repo: str | None = None,
         max_depth: int = 5,
         relation_types: list[str] | None = None,
+        symbol_roles: list[str] | None = None,
+        confidence_threshold: float | None = None,
+        relation_direction: str = "outgoing",
         response_format: str = "concise",
         ctx: Context | None = None,
     ) -> ToolResult:
@@ -799,12 +1010,30 @@ def register_tools(
             repo: Name of the registered repo. If None, uses the default repo.
             max_depth: Maximum BFS depth. Default: 5. Maximum: 20.
             relation_types: Filter to specific relation types (e.g. ['CALLS']).
+            symbol_roles: Filter relationships by symbol role (e.g. ['Import']).
+                Valid roles: Definition, Import, WriteAccess, ReadAccess, Generated, Declaration, Dynamic, Heuristic.
+                Only edges matching ANY specified role are traversed (OR semantics).
+            confidence_threshold: Only traverse edges with confidence >= threshold (0.0 to 1.0).
+                Confidence tiers: 1.0 (directly extracted), 0.95 (exact match),
+                0.90 (stdlib method), 0.85 (import map), 0.75 (parent chain),
+                0.70 (scope qualified), 0.65 (receiver type), 0.0 (unresolved).
+            relation_direction: Direction of edges to traverse during BFS.
+                'outgoing' (default): follow edges where entity is the source (source→target).
+                'incoming': follow edges where entity is the target (reverse BFS, target→source).
+                'both': follow edges in either direction.
             response_format: 'concise' (default), 'detailed'.
         """
+        role_mask, validation_err = _validate_rel_filters(symbol_roles, confidence_threshold, relation_direction)
+        if validation_err is not None:
+            return validation_err
         try:
             repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
             return _err(str(e), error_type=CLIENT_ERROR, hint="Call list_repos to see available repos.")
+
+        column_err = _check_rel_filter_columns(reader, role_mask, confidence_threshold)
+        if column_err is not None:
+            return column_err
 
         max_depth = min(max(max_depth, 1), 20)
 
@@ -839,27 +1068,63 @@ def register_tools(
             return _err("No relationships found in artifact.",
                          error_type=EXTERNAL_ERROR, hint="Run 'batho build' to populate the artifact with relationships.")
 
-        all_rels = rels_table.to_pylist()
-        if relation_types:
-            all_rels = [r for r in all_rels if r.get("relation_type") in relation_types]
+        # Apply filters via Arrow compute before materializing to Python,
+        # avoiding full-table to_pylist() on large repos (ADR: prefer Arrow compute).
+        filtered_table = rels_table
 
-        adjacency: dict[str, list[tuple[str, str]]] = {}
+        if relation_types:
+            masks = [pc.equal(filtered_table.column("relation_type"), rt) for rt in relation_types]
+            combined = masks[0]
+            for m in masks[1:]:
+                combined = pc.or_(combined, m)
+            filtered_table = filtered_table.filter(combined)
+
+        if role_mask is not None:
+            roles_col = filtered_table.column("roles")
+            filled = pc.fill_null(roles_col, 0)
+            bit_mask = pc.bit_wise_and(filled, pa.scalar(role_mask, type=pa.int32()))
+            filtered_table = filtered_table.filter(pc.not_equal(bit_mask, 0))
+
+        if confidence_threshold is not None:
+            conf_col = filtered_table.column("confidence")
+            filled = pc.fill_null(conf_col, 1.0)
+            filtered_table = filtered_table.filter(pc.greater_equal(filled, pa.scalar(confidence_threshold, type=pa.float32())))
+
+        all_rels = filtered_table.to_pylist()
+
+        adjacency: dict[str, list[tuple[str, str, str]]] = {}
+        # For 'both' direction, we need to track whether each hop is forward
+        # (source→target) or reverse (target→source) for accurate rendering.
+        # Each adjacency entry is (next_id, relation_type, direction) where
+        # direction is "forward" or "reverse".
         for rel in all_rels:
             sid = rel.get("source_id", "")
             tid = rel.get("target_id", "")
             rt = rel.get("relation_type", "")
-            adjacency.setdefault(sid, []).append((tid, rt))
+            if relation_direction == "outgoing":
+                adjacency.setdefault(sid, []).append((tid, rt, "forward"))
+            elif relation_direction == "incoming":
+                adjacency.setdefault(tid, []).append((sid, rt, "reverse"))
+            else:
+                adjacency.setdefault(sid, []).append((tid, rt, "forward"))
+                adjacency.setdefault(tid, []).append((sid, rt, "reverse"))
 
         if source_entity_id not in adjacency and source_entity_id != target_entity_id:
-            return _err(f"Source entity not found or has no outgoing edges: {source_entity_id}",
-                         error_type=CLIENT_ERROR, hint="Use search_entities to find the correct entity_id, or check if the entity exists via get_entity.")
+            _dir_label = {"outgoing": "outgoing", "incoming": "incoming", "both": "connected"}
+            return _err(
+                f"Source entity not found or has no {_dir_label.get(relation_direction, 'outgoing')} edges: {source_entity_id}",
+                error_type=CLIENT_ERROR,
+                hint="Use search_entities to find the correct entity_id, or check if the entity exists via get_entity.",
+            )
 
         from collections import deque
-        queue: deque[list[tuple[str, str]]] = deque()
+        # Each path entry is (entity_id, relation_type, direction) where
+        # direction is "forward", "reverse", or "" for the starting node.
+        queue: deque[list[tuple[str, str, str]]] = deque()
         visited: set[str] = {source_entity_id}
-        queue.append([(source_entity_id, "")])
+        queue.append([(source_entity_id, "", "")])
 
-        path: list[tuple[str, str]] | None = None
+        path: list[tuple[str, str, str]] | None = None
         current_depth = 0
         while queue:
             current = queue.popleft()
@@ -872,10 +1137,10 @@ def register_tools(
                 break
             if len(current) - 1 >= max_depth:
                 continue
-            for next_id, rt in adjacency.get(current_id, []):
+            for next_id, rt, direction in adjacency.get(current_id, []):
                 if next_id not in visited:
                     visited.add(next_id)
-                    queue.append(current + [(next_id, rt)])
+                    queue.append(current + [(next_id, rt, direction)])
 
         if path is None:
             return _err(f"No path found from {source_entity_id} to {target_entity_id} within depth {max_depth}.",
@@ -886,19 +1151,44 @@ def register_tools(
             for row in agent_table.to_pylist():
                 name_by_id[row.get("entity_id", "")] = row.get("name", "")
 
+        # Render path with per-hop direction indicators.
+        # 'forward' (→) = source→target edge, 'reverse' (←) = target→source edge.
         lines: list[str] = ["## Path Trace"]
-        for i, (eid, rt) in enumerate(path):
+        for i, (eid, rt, direction) in enumerate(path):
             name = name_by_id.get(eid, eid)
             if i == 0:
                 lines.append(f"  {name}")
+            elif direction == "reverse":
+                lines.append(f"  ← [{rt}] {name}")
             else:
                 lines.append(f"  → [{rt}] {name}")
         lines.append(f"\nDepth: {len(path) - 1} hops")
 
+        trace_applied_filters: dict = {}
+        if relation_types:
+            trace_applied_filters["relation_types"] = relation_types
+        if symbol_roles:
+            trace_applied_filters["symbol_roles"] = symbol_roles
+        if confidence_threshold is not None:
+            trace_applied_filters["confidence_threshold"] = confidence_threshold
+        if relation_direction != "outgoing":
+            trace_applied_filters["relation_direction"] = relation_direction
+
         structured = {
-            "path": [{"entity_id": eid, "relation_type": rt, "name": name_by_id.get(eid, eid)} for eid, rt in path],
+            "path": [
+                {
+                    "entity_id": eid,
+                    "relation_type": rt,
+                    "name": name_by_id.get(eid, eid),
+                    **({"direction": direction} if i > 0 and direction else {}),
+                }
+                for i, (eid, rt, direction) in enumerate(path)
+            ],
             "depth": len(path) - 1,
-            "meta": {"artifact_generation": _manifest_gen(reader)},
+            "meta": {
+                "artifact_generation": _manifest_gen(reader),
+                **({"applied_filters": trace_applied_filters} if trace_applied_filters else {}),
+            },
         }
         res = ToolResult(content=[TextContent(type="text", text="\n".join(lines))], structured_content=structured)
         return _inject_banner(res, repo_name)
@@ -978,6 +1268,7 @@ def register_tools(
         query: str,
         repo: str | None = None,
         entity_types: list[str] | None = None,
+        symbol_roles: list[str] | None = None,
         limit: int = 25,
         response_format: str = "concise",
     ) -> ToolResult:
@@ -993,13 +1284,23 @@ def register_tools(
             query: Substring or regex pattern to match entity names.
             repo: Name of the registered repo. If None, uses the default repo.
             entity_types: Filter to specific types (e.g. ['FUNCTION', 'CLASS']).
+            symbol_roles: Filter to entities that participate in relationships with
+                the specified symbol roles (e.g. ['WriteAccess']).
+                Valid roles: Definition, Import, WriteAccess, ReadAccess, Generated, Declaration, Dynamic, Heuristic.
             limit: Maximum results. Default: 25.
             response_format: 'concise' (default), 'detailed'.
         """
+        role_mask, validation_err = _validate_rel_filters(symbol_roles, None, "both")
+        if validation_err is not None:
+            return validation_err
         try:
             repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
             return _err(str(e), error_type=CLIENT_ERROR, hint="Call list_repos to see available repos.")
+
+        column_err = _check_rel_filter_columns(reader, role_mask, None)
+        if column_err is not None:
+            return column_err
 
         agent_table = reader._get_table("agent_views")
         if agent_table.num_rows == 0:
@@ -1021,6 +1322,26 @@ def register_tools(
             for m in masks[1:]:
                 combined = pc.or_(combined, m)
             table = table.filter(combined)
+
+        if role_mask is not None:
+            rels_table = reader._get_table("rels_views")
+            if rels_table.num_rows > 0:
+                roles_col = rels_table.column("roles")
+                filled = pc.fill_null(roles_col, 0)
+                bit_mask = pc.bit_wise_and(filled, pa.scalar(role_mask, type=pa.int32()))
+                filtered = rels_table.filter(pc.not_equal(bit_mask, 0))
+                if filtered.num_rows > 0:
+                    all_ids = pa.concat_arrays([
+                        filtered.column("source_id").combine_chunks(),
+                        filtered.column("target_id").combine_chunks(),
+                    ])
+                    ids = pc.unique(all_ids)
+                    if ids.length > 0:
+                        table = table.filter(pc.is_in(table.column("entity_id"), value_set=ids))
+                    else:
+                        table = table.slice(0, 0)
+                else:
+                    table = table.slice(0, 0)
 
         total = table.num_rows
         rows = table.to_pylist()[:limit]

@@ -162,7 +162,7 @@ The registry is stored at `~/.batho/mcp-repos.json` and persists across server r
 
 After configuring your client, verify the MCP server is working:
 
-1. **Check tool list** — Your AI agent should show 10 Batho tools: `list_repos`, `add_repo`, `remove_repo`, `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `search_entities`, `get_delta`
+1. **Check tool list** — Your AI agent should show 15 Batho tools by default: `list_repos`, `add_repo`, `remove_repo`, `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `search_entities`, `get_delta`, `batho_status`, `batho_list_runs`, `batho_diff`, `batho_patch`, `batho_fix`. Four admin tools (`batho_build`, `batho_export`, `batho_load`, `batho_gc`) are disabled by default — see [Tool Gating](/docs/mcp#tool-gating).
 
 2. **Register a repo** — Ask your agent: "Add repo myapp at /path/to/repo." It should call `add_repo` and confirm registration.
 
@@ -173,6 +173,8 @@ After configuring your client, verify the MCP server is working:
 5. **Search for a function** — Ask: "Find functions named `main` in myapp." The agent should use `search_entities` with `query="main"` and `repo="myapp"`.
 
 6. **Check incremental updates** — After running `batho patch`, call `get_delta` to see what changed. The server serves the latest generation automatically — no restart needed.
+
+7. **Test relationship filters** — Ask: "Show me all write-access references in myapp" or "Find all callers of `AuthManager.validate_token`." The agent should use `graph_query` with `symbol_roles=["WriteAccess"]` or `relation_direction="incoming"` respectively. See [Relationship Filtering](/docs/mcp/tools-reference#relationship-filtering) for the full set of filter options.
 
 ## Troubleshooting
 

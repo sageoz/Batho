@@ -845,6 +845,7 @@ _RESOLUTION_CONFIDENCE: dict[str, float] = {
     "parent_chain": 0.75,       # Tier 4: Parent stub chain building
     "scope_qualified": 0.70,    # Tier 5: Caller-scope qualified path
     "receiver_type": 0.65,      # Tier 6: Receiver-type inference
+    "ambiguous": 0.50,          # Tier 6.5: Multiple equally-plausible candidates
     "unresolved": 0.0,          # Tier 7: No match
 }
 
@@ -1245,9 +1246,12 @@ class CodeGraphIndexer:
 
         resolved_count = 0
         unresolved_count = 0
+        ambiguous_count = 0
         stub_to_target: dict[str, str] = {}
         # Phase 4: track resolution strategy per stub for confidence scoring
         stub_to_strategy: dict[str, str] = {}
+        # T08: track ambiguous resolution metadata per stub
+        stub_to_ambiguous: dict[str, dict[str, Any]] = {}
 
         # FIX 3: per-file declared_type cache — built once per unique file,
         # avoids re-walking entities_by_file() O(k) for every stub in the
@@ -1261,7 +1265,7 @@ class CodeGraphIndexer:
             if not target_name:
                 continue
 
-            resolved_info, strategy = self._resolve_single_stub(
+            resolved_info, strategy, all_candidates = self._resolve_stub_with_candidates(
                 stub, graph, scope_manager, _file_declared_type_cache
             )
 
@@ -1269,6 +1273,21 @@ class CodeGraphIndexer:
                 self.logger.debug("stub_resolved", stub_id=stub.id, target_id=resolved_info.symbol_id)
                 stub_to_target[stub.id] = resolved_info.symbol_id
                 stub_to_strategy[stub.id] = strategy
+                # T08: Check for ambiguous resolution (cheap set-difference on
+                # pre-computed candidates — no re-resolution needed)
+                _confidence, amb_meta = self._check_ambiguity(
+                    resolved_info, strategy, all_candidates
+                )
+                if amb_meta:
+                    stub_to_strategy[stub.id] = "ambiguous"
+                    stub_to_ambiguous[stub.id] = amb_meta
+                    ambiguous_count += 1
+                    self.logger.debug(
+                        "stub_ambiguous",
+                        stub_id=stub.id,
+                        target_id=resolved_info.symbol_id,
+                        candidates=amb_meta.get("ambiguous_candidates"),
+                    )
                 resolved_count += 1
             else:
                 unresolved_count += 1
@@ -1279,12 +1298,17 @@ class CodeGraphIndexer:
             if rel.target_id in stub_to_target:
                 strategy = stub_to_strategy.get(rel.target_id, "exact_match")
                 confidence = _RESOLUTION_CONFIDENCE.get(strategy, 0.5)
-                new_relationships.append(
-                    rel._evolve(
-                        target_id=stub_to_target[rel.target_id],
-                        confidence=confidence,
-                    )
+                # T08: Add ambiguous metadata to the relationship
+                amb_meta = stub_to_ambiguous.get(rel.target_id, {})
+                new_rel = rel._evolve(
+                    target_id=stub_to_target[rel.target_id],
+                    confidence=confidence,
                 )
+                if amb_meta:
+                    updated_rel_meta = dict(new_rel.metadata or {})
+                    updated_rel_meta.update(amb_meta)
+                    new_rel = new_rel._evolve(metadata=updated_rel_meta)
+                new_relationships.append(new_rel)
             else:
                 new_relationships.append(rel)
 
@@ -1300,6 +1324,10 @@ class CodeGraphIndexer:
                 updated_meta["resolved_target_id"] = target_id
                 updated_meta["resolution_strategy"] = strategy
                 updated_meta["resolution_confidence"] = _RESOLUTION_CONFIDENCE.get(strategy, 0.5)
+                # T08: Add ambiguous metadata to the stub
+                amb_meta = stub_to_ambiguous.get(stub_id)
+                if amb_meta:
+                    updated_meta.update(amb_meta)
                 graph.update_entity(stub_id, stub._evolve(metadata=updated_meta))
 
         # Phase 4: Conservative pruning — mark common stdlib method names on
@@ -1326,79 +1354,73 @@ class CodeGraphIndexer:
             resolved=resolved_count,
             unresolved=unresolved_count,
             pruned=pruned_count,
+            ambiguous=ambiguous_count,
         )
 
         return resolved_count, unresolved_count
 
-    def _resolve_single_stub(
+    def _resolve_stub_with_candidates(
         self,
         stub: Entity,
         graph: "GraphBackend",
         scope_manager: ScopeManager,
         _file_declared_type_cache: "dict[str, dict[str, str]] | None" = None,
-    ) -> tuple[Any, str]:
-        """Resolve a single stub using the full resolution pipeline.
+    ) -> tuple[Any, str, list[tuple[Any, str]]]:
+        """Run the full resolution pipeline once, collecting all candidates.
 
-        Extracted from :meth:`resolve_contextual_stubs` for on-demand use
-        (Phase 5 lazy resolution pattern).
+        This merges the primary resolution and ambiguity detection into a single
+        pass: the first successful strategy becomes the primary (matching
+        _resolve_single_stub's priority order), and all other distinct targets
+        are collected as candidates for ambiguity analysis (T08).
 
         Returns:
-            (resolved_info, strategy) — resolved_info is the ResolvedInfo
-            object from the scope manager, or None if unresolved. strategy
-            is the resolution strategy string used for confidence scoring.
+            (primary_info, primary_strategy, all_candidates) where
+            all_candidates is a list of (info, strategy) pairs including
+            the primary. primary_info is None if unresolved.
         """
         target_name = stub.metadata.get("target_name")
         if not target_name:
-            return None, "unresolved"
+            return None, "unresolved", []
 
         caller_scope = stub.metadata.get("caller_scope")
-        resolved_info = None
-        strategy = "exact_match"
+        all_candidates: list[tuple[Any, str]] = []
+        seen_ids: set[str] = set()
+        primary_info = None
+        primary_strategy = "unresolved"
+
+        def _try(info, strat):
+            """Record a candidate. Sets primary on first success."""
+            nonlocal primary_info, primary_strategy
+            if info and info.symbol_id not in seen_ids:
+                seen_ids.add(info.symbol_id)
+                all_candidates.append((info, strat))
+                if primary_info is None:
+                    primary_info = info
+                    primary_strategy = strat
 
         # 1. Try resolving target_name directly
-        resolved_info = scope_manager.resolve_symbol_dotpath(target_name)
+        _try(scope_manager.resolve_symbol_dotpath(target_name), "exact_match")
 
-        # 1b. Stdlib-prefix fast-path: if target_name starts with a known
-        # stdlib module prefix (e.g., "std::", "os.", "re.", "fmt."),
-        # try resolving the first segment as a module to catch stdlib refs
-        # that weren't resolved by the dotpath lookup.
-        if not resolved_info and "." in target_name:
+        # 1b. Stdlib-prefix fast-path
+        if "." in target_name:
             first_segment = target_name.split(".")[0]
             if first_segment in _STDLIB_MODULE_PREFIXES or first_segment.startswith("std::"):
-                resolved_info = scope_manager.resolve_symbol_dotpath(first_segment)
-                if resolved_info:
-                    strategy = "stdlib_method"
-                    return resolved_info, strategy
+                _try(scope_manager.resolve_symbol_dotpath(first_segment), "stdlib_method")
 
-        # 1c. Receiver-type-aware method resolution: if the stub is a
-        # method call (e.g., "cursor.execute"), infer the receiver type
-        # and look up the method on that type. This resolves calls on
-        # project-internal types and stdlib types (rust-analyzer pattern).
-        if not resolved_info:
-            resolved_info = self._resolve_method_call(
-                stub, graph, scope_manager, _file_declared_type_cache
-            )
-            if resolved_info:
-                strategy = "receiver_type"
-                return resolved_info, strategy
+        # 1c. Receiver-type-aware method resolution
+        _try(
+            self._resolve_method_call(stub, graph, scope_manager, _file_declared_type_cache),
+            "receiver_type",
+        )
 
-        # 2. Try building qualified path from parent stubs if any
-        # FIX 7: use graph.neighbors("in") to get source IDs directly from
-        # the adjacency index instead of materializing Relationship objects.
-        if not resolved_info:
-            for parent_id in graph.neighbors(stub.id, "in"):
-                source_ent = graph.get_entity(parent_id)
-                if source_ent and source_ent.is_contextual_stub:
-                    parent_name = source_ent.metadata.get("target_name")
-                    if parent_name:
-                        full_path = f"{parent_name}.{target_name}"
-                        resolved_info = scope_manager.resolve_symbol_dotpath(full_path)
-                        if resolved_info:
-                            strategy = "parent_chain"
-                            break
-
-        if resolved_info:
-            return resolved_info, strategy
+        # 2. Try building qualified path from parent stubs
+        for parent_id in graph.neighbors(stub.id, "in"):
+            source_ent = graph.get_entity(parent_id)
+            if source_ent and source_ent.is_contextual_stub:
+                parent_name = source_ent.metadata.get("target_name")
+                if parent_name:
+                    full_path = f"{parent_name}.{target_name}"
+                    _try(scope_manager.resolve_symbol_dotpath(full_path), "parent_chain")
 
         # 3. Caller-scope qualified path
         if caller_scope:
@@ -1412,16 +1434,89 @@ class CodeGraphIndexer:
             if '/' in base_path:
                 parent_dir = base_path.rsplit('/', 1)[0]
                 qualified_try = f"{parent_dir}/{target_name}"
-                resolved_info = scope_manager.resolve_symbol_strict(qualified_try)
-                if not resolved_info:
+                info = scope_manager.resolve_symbol_strict(qualified_try)
+                if not info:
                     qualified_try_dot = qualified_try.replace('/', '.')
-                    resolved_info = scope_manager.resolve_symbol_strict(qualified_try_dot)
+                    info = scope_manager.resolve_symbol_strict(qualified_try_dot)
+                _try(info, "scope_qualified")
 
-                if resolved_info:
-                    strategy = "scope_qualified"
-                    return resolved_info, strategy
+        if primary_info is None:
+            return None, "unresolved", all_candidates
+        return primary_info, primary_strategy, all_candidates
 
-        return None, "unresolved"
+    def _resolve_single_stub(
+        self,
+        stub: Entity,
+        graph: "GraphBackend",
+        scope_manager: ScopeManager,
+        _file_declared_type_cache: "dict[str, dict[str, str]] | None" = None,
+    ) -> tuple[Any, str]:
+        """Resolve a single stub using the full resolution pipeline.
+
+        Thin wrapper around _resolve_stub_with_candidates that returns only
+        the primary result. Kept for backward compatibility with tests and
+        callers that don't need ambiguity candidates.
+
+        Returns:
+            (resolved_info, strategy) — resolved_info is the ResolvedInfo
+            object from the scope manager, or None if unresolved. strategy
+            is the resolution strategy string used for confidence scoring.
+        """
+        primary_info, primary_strategy, _ = self._resolve_stub_with_candidates(
+            stub, graph, scope_manager, _file_declared_type_cache
+        )
+        return primary_info, primary_strategy
+
+    def _check_ambiguity(
+        self,
+        resolved_info: Any,
+        strategy: str,
+        all_candidates: list[tuple[Any, str]],
+    ) -> tuple[float, dict[str, Any]]:
+        """Check if a resolution is ambiguous (multiple equally-plausible candidates).
+
+        Takes pre-computed candidates from _resolve_stub_with_candidates,
+        making this a cheap set-difference — no re-resolution needed.
+
+        Returns (confidence, metadata_updates) — if ambiguous, confidence is 0.5
+        and metadata includes ambiguous=True and ambiguous_candidates list.
+        If not ambiguous, returns the original strategy confidence and empty metadata.
+
+        Tie-break convention: the "primary" resolution is always the first
+        strategy that succeeds in the pipeline's priority order
+        (exact_match > stdlib_method > receiver_type > parent_chain >
+        scope_qualified). If a later strategy also resolves to a different
+        target, the edge is marked ambiguous but the primary target is kept
+        as the resolved target. This is deterministic — the same input always
+        produces the same primary and the same ambiguous_candidates list.
+        """
+        # Filter to distinct target IDs different from the primary resolution.
+        # Exclude external symbols — they are synthesized from module prefix
+        # matches and don't represent real ambiguity.
+        other_candidates = [
+            (info, strat) for info, strat in all_candidates
+            if info.symbol_id != resolved_info.symbol_id
+            and not getattr(info, "is_external", False)
+        ]
+
+        if len(other_candidates) == 0:
+            # Single candidate — not ambiguous
+            return _RESOLUTION_CONFIDENCE.get(strategy, 0.5), {}
+
+        # Multiple candidates — this is ambiguous
+        all_candidate_ids = [resolved_info.symbol_id] + [info.symbol_id for info, _ in other_candidates]
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique_ids: list[str] = []
+        for cid in all_candidate_ids:
+            if cid not in seen:
+                seen.add(cid)
+                unique_ids.append(cid)
+
+        return _RESOLUTION_CONFIDENCE["ambiguous"], {
+            "ambiguous": True,
+            "ambiguous_candidates": unique_ids,
+        }
 
     def resolve_stub_on_demand(
         self,
@@ -1455,8 +1550,9 @@ class CodeGraphIndexer:
         if stub.metadata.get("stub_resolution_state") == "pruned":
             return None
 
-        # Run resolution pipeline for this single stub
-        resolved_info, strategy = self._resolve_single_stub(
+        # Run resolution pipeline for this single stub (collects candidates
+        # for ambiguity detection in a single pass — no re-resolution)
+        resolved_info, strategy, all_candidates = self._resolve_stub_with_candidates(
             stub, graph, scope_manager
         )
 
@@ -1464,6 +1560,13 @@ class CodeGraphIndexer:
             updated_meta = dict(stub.metadata)
             updated_meta["stub_resolution_state"] = "resolved"
             updated_meta["resolved_target_id"] = resolved_info.symbol_id
+            # T08: Check for ambiguous resolution (cheap set-difference)
+            _confidence, amb_meta = self._check_ambiguity(
+                resolved_info, strategy, all_candidates
+            )
+            if amb_meta:
+                strategy = "ambiguous"
+                updated_meta.update(amb_meta)
             updated_meta["resolution_strategy"] = strategy
             updated_meta["resolution_confidence"] = _RESOLUTION_CONFIDENCE.get(strategy, 0.5)
             graph.update_entity(stub.id, stub._evolve(metadata=updated_meta))
@@ -1496,6 +1599,10 @@ class CodeGraphIndexer:
         """
         # Don't prune already-resolved stubs
         if stub.metadata.get("stub_resolution_state") == "resolved":
+            return False
+
+        # T08: Don't prune ambiguous stubs — they are kept for manual review
+        if stub.metadata.get("ambiguous"):
             return False
 
         target_name = stub.metadata.get("target_name", "")

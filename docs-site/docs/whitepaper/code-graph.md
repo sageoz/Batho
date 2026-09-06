@@ -116,7 +116,7 @@ Contextual stubs — call sites whose target is not yet resolved — are settled
 
 ### Phase 4: Confidence Scoring & Conservative Pruning
 
-Every resolved stub is tagged with a `resolution_confidence` score and a `resolution_strategy` label in its metadata, enabling downstream consumers (queries, visualizations, exports) to filter by confidence level.
+Every resolved stub is tagged with a `resolution_confidence` score and a `resolution_strategy` label in its metadata, enabling downstream consumers (queries, visualizations, exports) to filter by confidence level. The MCP `confidence_threshold` filter exposes this directly to AI agents — see [Tools Reference: Relationship Filtering](/docs/mcp/tools-reference#relationship-filtering).
 
 | Strategy | Confidence | Tier | Description |
 |----------|-----------|------|-------------|
@@ -126,7 +126,12 @@ Every resolved stub is tagged with a `resolution_confidence` score and a `resolu
 | `parent_chain` | 0.75 | 4 | Parent stub chain building |
 | `scope_qualified` | 0.70 | 5 | Caller-scope qualified path |
 | `receiver_type` | 0.65 | 6 | Receiver-type inference (Phase 5) |
+| `ambiguous` | 0.50 | 6.5 | Multiple equally-plausible candidates (kept for manual review) |
 | `unresolved` | 0.0 | 7 | No match found |
+
+Additionally, directly extracted relationships (captured by tree-sitter with no resolution needed) have `confidence=1.0`.
+
+**Ambiguous resolution** (v1.4.2): When the resolution pipeline finds multiple equally-plausible target candidates (e.g., two imports with the same name from different modules), the edge is emitted with `confidence=0.5`, `metadata.ambiguous=True`, and `metadata.ambiguous_candidates=[list of candidate entity IDs]`. The primary target is kept as the resolved target (deterministic tie-break by strategy priority order), but the edge is honestly marked as uncertain. Ambiguous edges are **never pruned** — they are preserved for manual review and can be queried via the `confidence_threshold` MCP filter or counted in `graph_overview`'s `ambiguous_edge_count` stat.
 
 Unresolved stubs whose target is a common stdlib method name on an unknown receiver type (e.g. `unwrap`, `map`, `then`, `append`) are conservatively **pruned** — marked `stub_resolution_state: "pruned"` with `prune_reason: "common_method_unknown_receiver"` — instead of being left as pending gaps. This prevents the graph from being cluttered with false "gaps" for ubiquitous methods that appear on many types.
 

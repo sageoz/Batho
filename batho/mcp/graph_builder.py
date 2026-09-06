@@ -99,6 +99,10 @@ def build_edge_dict(rel_row: dict) -> dict:
             edge["metadata"] = json.loads(meta_json)
         except Exception:
             pass
+    if rel_row.get("roles") is not None:
+        edge["roles"] = rel_row.get("roles")
+    if rel_row.get("confidence") is not None:
+        edge["confidence"] = rel_row.get("confidence")
     return edge
 
 
@@ -107,14 +111,18 @@ def build_meta(
     returned_nodes: int, returned_edges: int,
     offset: int, limit: int, truncated: bool,
     generation: int, tokens_used: int, token_budget: int,
+    applied_filters: dict | None = None,
 ) -> dict:
-    return {
+    meta = {
         "total_nodes": total_nodes, "total_edges": total_edges,
         "returned_nodes": returned_nodes, "returned_edges": returned_edges,
         "offset": offset, "limit": limit, "truncated": truncated,
         "artifact_generation": generation,
         "tokens_used": tokens_used, "token_budget": token_budget,
     }
+    if applied_filters is not None:
+        meta["applied_filters"] = applied_filters
+    return meta
 
 
 def format_concise(
@@ -454,6 +462,7 @@ def build_dual_output(
     total_nodes: int | None = None,
     total_edges: int | None = None,
     artifact_generation: int = 0,
+    applied_filters: dict | None = None,
 ) -> tuple[str, dict]:
     if response_format == "detailed":
         markdown = format_detailed(agent_rows, rels_rows, storage_rows, file_paths)
@@ -478,6 +487,7 @@ def build_dual_output(
         offset=offset, limit=limit, truncated=was_truncated,
         generation=artifact_generation,
         tokens_used=estimate_tokens(truncated_md), token_budget=max_tokens,
+        applied_filters=applied_filters,
     )
 
     structured = {"graph": {"nodes": nodes, "edges": edges}, "meta": meta}

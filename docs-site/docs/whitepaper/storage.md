@@ -117,7 +117,7 @@ The Arrow Bundle defines seven logical tables under schema version `batho-bundle
 | `file_tracking` | File → hash/mtime/inode/size mapping | `file_id`, `file_path`, `content_hash`, `mtime_ns`, `is_indexed` |
 | `agent_views` | BSG agent view entities (compressed) | `file_id`, `entity_id`, `name`, `entity_type`, `signature`, `fqn` |
 | `storage_views` | BSG storage view entities (full fidelity) | `file_id`, `entity_id`, `raw_content`, `raw_bytes`, `start_byte`, `end_byte` |
-| `rels_views` | BSG relationship view | `file_id`, `source_id`, `target_id`, `relation_type`, `metadata_json` |
+| `rels_views` | BSG relationship view | `file_id`, `source_id`, `target_id`, `relation_type`, `metadata_json`, `roles` (int32), `confidence` (float32) |
 | `file_changelog` | Flattened NodeDiff rows for incremental patches | `run_uuid`, `file_id`, `entity_id`, `change_kind`, `changed_fields` |
 | `run_artifacts` | Telemetry/metrics/audit JSON per run | `run_uuid`, `context_overview_json`, `telemetry_json`, `security_audit_json` |
 

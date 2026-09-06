@@ -523,6 +523,24 @@ class BathoBundle:
                 pc.invert(pc.is_in(base_table["file_id"], pa.array(list(replaced_file_ids)))),
             )
             base_kept = base_table.filter(keep)
+            # Backfill missing columns on base_kept so schemas match for concat.
+            # This handles patching old artifacts that predate schema additions
+            # (e.g. roles/confidence columns added in T04/T05).
+            new_schema = new_table.schema
+            for field in new_schema:
+                if field.name not in base_kept.schema.names:
+                    base_kept = base_kept.append_column(
+                        field.name,
+                        pa.nulls(base_kept.num_rows, type=field.type),
+                    )
+            # Also handle extra columns on base_kept that new_table lacks (drop them)
+            for col_name in list(base_kept.schema.names):
+                if col_name not in new_schema.names:
+                    base_kept = base_kept.drop(col_name)
+            # Reorder base_kept columns to match new_table's schema exactly.
+            # pa.concat_tables requires identical schemas including column order.
+            ordered_cols = [base_kept.column(f.name) for f in new_schema]
+            base_kept = pa.Table.from_arrays(ordered_cols, schema=new_schema)
             merged = pa.concat_tables([base_kept, new_table])
 
         if logical_name == "rels_views" and entity_id_remap and merged.num_rows > 0:
@@ -773,6 +791,8 @@ class BathoBundle:
                     "target_id": rr.get("target_id"),
                     "type": rr.get("relation_type"),
                     "relationship_type": rr.get("relation_type"),
+                    "roles": rr.get("roles"),
+                    "confidence": rr.get("confidence"),
                 }
                 meta_json = rr.get("metadata_json")
                 if meta_json:

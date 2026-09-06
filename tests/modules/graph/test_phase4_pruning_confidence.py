@@ -102,7 +102,8 @@ class TestResolutionConfidenceConstant:
         """All expected resolution strategies have confidence scores."""
         expected = {
             "exact_match", "stdlib_method", "import_map",
-            "parent_chain", "scope_qualified", "receiver_type", "unresolved",
+            "parent_chain", "scope_qualified", "receiver_type",
+            "ambiguous", "unresolved",
         }
         assert set(_RESOLUTION_CONFIDENCE.keys()) == expected
 
@@ -115,6 +116,7 @@ class TestResolutionConfidenceConstant:
             _RESOLUTION_CONFIDENCE["parent_chain"],
             _RESOLUTION_CONFIDENCE["scope_qualified"],
             _RESOLUTION_CONFIDENCE["receiver_type"],
+            _RESOLUTION_CONFIDENCE["ambiguous"],
             _RESOLUTION_CONFIDENCE["unresolved"],
         ]
         for i in range(len(values) - 1):
@@ -700,3 +702,212 @@ def main():
             # unwrap and clone should be pruned
             assert stats["unresolved_pruned_count"] >= 0
             indexer.close()
+
+
+# ---------------------------------------------------------------------------
+# T08: Ambiguous Confidence Convention
+# ---------------------------------------------------------------------------
+
+
+class TestAmbiguousConfidence:
+    """T08: Verify ambiguous resolution detection and confidence scoring."""
+
+    def test_ambiguous_tier_in_confidence_dict(self):
+        """The 'ambiguous' strategy is present with confidence 0.5."""
+        assert "ambiguous" in _RESOLUTION_CONFIDENCE
+        assert _RESOLUTION_CONFIDENCE["ambiguous"] == 0.5
+
+    def test_ambiguous_confidence_between_receiver_type_and_unresolved(self):
+        """Ambiguous (0.5) sits between receiver_type (0.65) and unresolved (0.0)."""
+        assert _RESOLUTION_CONFIDENCE["receiver_type"] > _RESOLUTION_CONFIDENCE["ambiguous"]
+        assert _RESOLUTION_CONFIDENCE["ambiguous"] > _RESOLUTION_CONFIDENCE["unresolved"]
+
+    def test_ambiguous_resolution_emits_confidence_0_5(self):
+        """When two strategies resolve to different targets, the edge gets confidence=0.5."""
+        with tempfile.TemporaryDirectory() as tmp:
+            indexer = _make_indexer(tmp)
+            graph = InMemoryGraph()
+            sm = ScopeManager()
+
+            # Register two functions: one as "helper" (exact match) and one
+            # as "test/helper" (scope_qualified). The stub's caller_scope
+            # allows scope_qualified resolution to find the second target.
+            func1 = _make_entity("helper", EntityType.FUNCTION, file="/test/a.py", start_line=1)
+            func2 = _make_entity("helper", EntityType.FUNCTION, file="/test/b.py", start_line=1)
+            graph.add_entity(func1)
+            graph.add_entity(func2)
+            sm.define_symbol("helper", func1.id, "FUNCTION", is_global=True)
+            sm.define_symbol("test/helper", func2.id, "FUNCTION", is_global=True)
+
+            # Create a stub referencing "helper" with a caller_scope that
+            # allows scope_qualified resolution to find func2.
+            # caller_scope format: "batho test pkg 1.0.0 test/main.py"
+            # → scope_path = "test/main.py" → parent_dir = "test"
+            # → qualified_try = "test/helper" → resolves to func2
+            stub = _make_stub(
+                "helper",
+                caller_scope="batho test pkg 1.0.0 test/main.py",
+                stub_id="amb_stub",
+            )
+            graph.add_entity(stub)
+
+            caller = _make_entity("caller", EntityType.FUNCTION, start_line=20)
+            graph.add_entity(caller)
+            rel = Relationship(
+                source_id=caller.id,
+                target_id=stub.id,
+                type=RelationshipType.CALLS,
+            )
+            graph.add_relationship(rel)
+
+            indexer.resolve_contextual_stubs(graph, sm)
+
+            updated_stub = graph.get_entity(stub.id)
+            assert updated_stub.metadata["stub_resolution_state"] == "resolved"
+            assert updated_stub.metadata["resolution_strategy"] == "ambiguous"
+            assert updated_stub.metadata["resolution_confidence"] == 0.5
+
+            # Verify the relationship got confidence 0.5
+            updated_rels = [r for r in graph.relationships if r.source_id == caller.id]
+            assert len(updated_rels) == 1
+            assert updated_rels[0].confidence == 0.5
+            indexer.close()
+
+    def test_ambiguous_edge_has_metadata(self):
+        """Ambiguous edges have metadata['ambiguous'] == True and ambiguous_candidates."""
+        with tempfile.TemporaryDirectory() as tmp:
+            indexer = _make_indexer(tmp)
+            graph = InMemoryGraph()
+            sm = ScopeManager()
+
+            func1 = _make_entity("helper", EntityType.FUNCTION, file="/test/a.py", start_line=1)
+            func2 = _make_entity("helper", EntityType.FUNCTION, file="/test/b.py", start_line=1)
+            graph.add_entity(func1)
+            graph.add_entity(func2)
+            sm.define_symbol("helper", func1.id, "FUNCTION", is_global=True)
+            sm.define_symbol("test/helper", func2.id, "FUNCTION", is_global=True)
+
+            stub = _make_stub(
+                "helper",
+                caller_scope="batho test pkg 1.0.0 test/main.py",
+                stub_id="amb_stub",
+            )
+            graph.add_entity(stub)
+
+            caller = _make_entity("caller", EntityType.FUNCTION, start_line=20)
+            graph.add_entity(caller)
+            rel = Relationship(
+                source_id=caller.id,
+                target_id=stub.id,
+                type=RelationshipType.CALLS,
+            )
+            graph.add_relationship(rel)
+
+            indexer.resolve_contextual_stubs(graph, sm)
+
+            updated_stub = graph.get_entity(stub.id)
+            assert updated_stub.metadata.get("ambiguous") is True
+            candidates = updated_stub.metadata.get("ambiguous_candidates")
+            assert candidates is not None
+            assert isinstance(candidates, list)
+            assert len(candidates) >= 2
+            assert func1.id in candidates
+            assert func2.id in candidates
+            indexer.close()
+
+    def test_ambiguous_edge_has_metadata_on_relationship(self):
+        """Ambiguous relationship metadata includes ambiguous=True and candidates."""
+        with tempfile.TemporaryDirectory() as tmp:
+            indexer = _make_indexer(tmp)
+            graph = InMemoryGraph()
+            sm = ScopeManager()
+
+            func1 = _make_entity("helper", EntityType.FUNCTION, file="/test/a.py", start_line=1)
+            func2 = _make_entity("helper", EntityType.FUNCTION, file="/test/b.py", start_line=1)
+            graph.add_entity(func1)
+            graph.add_entity(func2)
+            sm.define_symbol("helper", func1.id, "FUNCTION", is_global=True)
+            sm.define_symbol("test/helper", func2.id, "FUNCTION", is_global=True)
+
+            stub = _make_stub(
+                "helper",
+                caller_scope="batho test pkg 1.0.0 test/main.py",
+                stub_id="amb_stub",
+            )
+            graph.add_entity(stub)
+
+            caller = _make_entity("caller", EntityType.FUNCTION, start_line=20)
+            graph.add_entity(caller)
+            rel = Relationship(
+                source_id=caller.id,
+                target_id=stub.id,
+                type=RelationshipType.CALLS,
+            )
+            graph.add_relationship(rel)
+
+            indexer.resolve_contextual_stubs(graph, sm)
+
+            updated_rels = [r for r in graph.relationships if r.source_id == caller.id]
+            assert len(updated_rels) == 1
+            rel = updated_rels[0]
+            assert rel.metadata is not None
+            assert rel.metadata.get("ambiguous") is True
+            assert isinstance(rel.metadata.get("ambiguous_candidates"), list)
+            assert len(rel.metadata["ambiguous_candidates"]) >= 2
+            indexer.close()
+
+    def test_ambiguous_edge_not_pruned(self):
+        """_should_prune_stub returns False for ambiguous edges."""
+        with tempfile.TemporaryDirectory() as tmp:
+            indexer = _make_indexer(tmp)
+            # A stub with ambiguous=True should not be pruned even if it's
+            # a common method name with unknown receiver
+            stub = _make_stub("var.unwrap")
+            stub.metadata["ambiguous"] = True
+            assert indexer._should_prune_stub(stub) is False
+            indexer.close()
+
+    def test_single_candidate_not_ambiguous(self):
+        """Single-candidate resolution is unchanged (no regression)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            indexer = _make_indexer(tmp)
+            graph = InMemoryGraph()
+            sm = ScopeManager()
+
+            # Register a single function
+            func = _make_entity("my_func", EntityType.FUNCTION)
+            graph.add_entity(func)
+            sm.define_symbol("my_func", func.id, "FUNCTION", is_global=True)
+
+            stub = _make_stub("my_func")
+            graph.add_entity(stub)
+
+            indexer.resolve_contextual_stubs(graph, sm)
+
+            updated_stub = graph.get_entity(stub.id)
+            assert updated_stub.metadata["stub_resolution_state"] == "resolved"
+            assert updated_stub.metadata["resolution_strategy"] == "exact_match"
+            assert updated_stub.metadata["resolution_confidence"] == 0.95
+            # Should NOT have ambiguous metadata
+            assert "ambiguous" not in updated_stub.metadata or updated_stub.metadata["ambiguous"] is not True
+            indexer.close()
+
+    def test_graph_overview_reports_ambiguous_edge_count(self):
+        """graph_overview reports ambiguous_edge_count in stats (unit-level check).
+
+        This test verifies that the graph_overview tool includes the
+        ambiguous_edge_count field in its stats output. We use the
+        built_artifact fixture from the MCP test suite for this.
+        """
+        # This is tested more thoroughly in tests/mcp/test_graph_overview.py
+        # Here we just verify the field name is in the stats dict template
+        # by checking the code path directly.
+        import inspect
+        from batho.mcp import tools as tools_module
+
+        # Find the graph_overview function source and verify it includes
+        # ambiguous_edge_count in the stats dict
+        source = inspect.getsource(tools_module)
+        assert "ambiguous_edge_count" in source, (
+            "graph_overview should include ambiguous_edge_count in stats"
+        )

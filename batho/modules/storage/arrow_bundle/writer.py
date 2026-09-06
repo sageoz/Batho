@@ -115,6 +115,9 @@ class BathoBundleWriter:
                 meta = rel.get("metadata")
                 import json as _json
                 self._rels_buf["metadata_json"].append(_json.dumps(meta) if meta else None)
+                self._rels_buf["roles"].append(int(rel.get("roles") or 0))
+                _conf = rel.get("confidence")
+                self._rels_buf["confidence"].append(float(_conf) if _conf is not None else 1.0)
 
             self._row_count += len(agent.get("entities", [])) + len(rels)
             if self._row_count >= FLUSH_THRESHOLD_ROWS:
@@ -141,6 +144,9 @@ class BathoBundleWriter:
                 meta = rel.get("metadata")
                 import json as _json
                 self._rels_buf["metadata_json"].append(_json.dumps(meta) if meta else None)
+                self._rels_buf["roles"].append(int(rel.get("roles") or 0))
+                _conf = rel.get("confidence")
+                self._rels_buf["confidence"].append(float(_conf) if _conf is not None else 1.0)
 
             self._row_count += len(rels)
             if self._row_count >= FLUSH_THRESHOLD_ROWS:

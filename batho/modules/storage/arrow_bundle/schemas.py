@@ -83,6 +83,8 @@ RELS_VIEWS_SCHEMA: pa.Schema = pa.schema([
     pa.field("target_id", pa.large_utf8(), nullable=False),
     pa.field("relation_type", pa.utf8(), nullable=False),
     pa.field("metadata_json", pa.utf8(), nullable=True),
+    pa.field("roles", pa.int32(), nullable=True),
+    pa.field("confidence", pa.float32(), nullable=True),
 ])
 
 FILE_CHANGELOG_SCHEMA: pa.Schema = pa.schema([

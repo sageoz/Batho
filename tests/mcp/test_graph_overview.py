@@ -130,3 +130,32 @@ def test_graph_overview_truncation_notice(built_artifact: Path):
     assert sc is not None
     meta = sc.get("meta", {})
     assert meta.get("truncated") is True
+
+
+def test_graph_overview_includes_ambiguous_edge_count(built_artifact: Path):
+    """T08: graph_overview reports ambiguous_edge_count in stats.
+
+    Scenario:
+        The graph_overview tool should include an ambiguous_edge_count
+        field in its stats, representing the number of edges that were
+        resolved with ambiguous confidence (0.5).
+
+    Expectations:
+        - stats includes 'ambiguous_edge_count' key
+        - value is a non-negative integer
+    """
+    import asyncio
+    from batho.mcp.server import create_app
+
+    app = create_app(root=str(built_artifact))
+
+    result = asyncio.run(app.call_tool("graph_overview", {}))
+    assert result is not None
+    sc = result.structured_content
+    assert sc is not None
+    stats = sc.get("overview", {}).get("stats", {})
+    assert "ambiguous_edge_count" in stats, (
+        "graph_overview stats should include ambiguous_edge_count (T08)"
+    )
+    assert isinstance(stats["ambiguous_edge_count"], int)
+    assert stats["ambiguous_edge_count"] >= 0
