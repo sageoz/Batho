@@ -1,10 +1,10 @@
 ---
 sidebar_position: 1
 title: "Whitepaper Overview"
-description: "Batho v1.4.1 Technical Whitepaper — Bidirectional AST Traversal & Hypergraph Orchestrator"
+description: "Batho v1.4.2 Technical Whitepaper — Bidirectional AST Traversal & Hypergraph Orchestrator"
 ---
 
-# Batho v1.4.1 Technical Whitepaper
+# Batho v1.4.2 Technical Whitepaper
 
 ## Bidirectional AST Traversal & Hypergraph Orchestrator
 
@@ -18,7 +18,7 @@ description: "Batho v1.4.1 Technical Whitepaper — Bidirectional AST Traversal 
 
 ## Executive Summary
 
-Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic, production-grade code intelligence engine that transforms raw codebases into queryable, time-aware structured hypergraphs. Version 1.4.1 delivers a unified configuration schema (`batho.yaml`), a high-performance Arrow IPC Bundle storage format, lossless bidirectional traversal support, a streamlined 8-command CLI interface, and an Arrow-backed columnar graph backend with auto-selection for memory-efficient large-codebase indexing. Batho is designed for polyglot enterprises managing millions of lines of code across hundreds of repositories.
+Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic, production-grade code intelligence engine that transforms raw codebases into queryable, time-aware structured hypergraphs. Version 1.4.2 delivers a unified configuration schema (`batho.yaml`), a high-performance Arrow IPC Bundle storage format, lossless bidirectional traversal support, a streamlined 8-command CLI interface, and an Arrow-backed columnar graph backend with auto-selection for memory-efficient large-codebase indexing. Batho is designed for polyglot enterprises managing millions of lines of code across hundreds of repositories.
 
 **Key Value Propositions**
 
@@ -70,7 +70,7 @@ flowchart TB
     style Output fill:#fff3e0,stroke:#f57c00,stroke-width:2px
 ```
 
-**Figure 1: Batho v1.4.1 System Architecture Overview** - High-level data flow from source inputs through the core engine to consumption interfaces.
+**Figure 1: Batho v1.4.2 System Architecture Overview** - High-level data flow from source inputs through the core engine to consumption interfaces.
 
 ---
 
@@ -78,7 +78,7 @@ flowchart TB
 
 | Figure | Title | Section |
 |--------|-------|---------|
-| Figure 1 | Batho v1.4.1 System Architecture Overview | Overview |
+| Figure 1 | Batho v1.4.2 System Architecture Overview | Overview |
 | Figure 2 | High-Level System Architecture | Architecture Overview |
 | Figure 3 | Data Flow Pipeline | Architecture Overview |
 | Figure 4 | Subsystem Interactions | Core Subsystems |
@@ -135,6 +135,7 @@ flowchart TB
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.4.2 | 2026-09-08 | Batho Core Team | MCP relationship filtering, entity categories, file_connectivity tool, and round-4 stub-ID hardening |
 | 1.4.1 | 2026-08-26 | Batho Core Team | Review hardening, thread safety, path sanitization, atomic writes, and documentation updates |
 | 1.4.0 | 2026-08-04 | Batho Core Team | Stdlib expansion to 27 languages, graph builder phases 4-5, BSG interceptors, and security/performance hardening |
 | 1.3.2 | 2026-07-27 | Batho Core Team | H2 path traversal hardening, H5 Unicode identifier extraction support |
