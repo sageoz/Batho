@@ -174,6 +174,9 @@ extraction:
     enabled: true           # Persist parsed AST to disk for cross-session reuse
     ttl_days: 30             # Days before cached AST entries expire
     max_entries: 5000        # Maximum cached files (oldest evicted first)
+  # Opt-in entity extraction flags (default: false to avoid entity-count inflation)
+  extract_parameters: false       # Extract function/method parameters as PARAMETER entities
+  extract_type_parameters: false  # Extract generic type parameters (T, K, V) as TYPE_PARAMETER entities
 
 # Community detection via Leiden clustering
 community_detection:

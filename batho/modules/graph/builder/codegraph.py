@@ -791,8 +791,10 @@ class IncrementalGraphUpdater:
             return False
 
         # Check for unresolved entities in the graph
+        # T13: count contextual stubs regardless of their entity type
+        # (EXTERNAL_SYMBOL for new builds, UNRESOLVED for legacy artifacts).
         unresolved_entity_count = sum(
-            1 for e in graph.entities.values() if e.type == EntityType.UNRESOLVED
+            1 for e in graph.entities.values() if e.is_contextual_stub
         )
         if unresolved_entity_count > 0:
             self.logger.debug("unresolved_entities_found", count=unresolved_entity_count)
@@ -982,6 +984,23 @@ class CodeGraphIndexer:
         """Context manager exit - ensures cache is closed."""
         self.close()
         return False
+
+    def _effective_parsing_config(self) -> dict[str, Any]:
+        """Return the effective parsing config: bsg.parsing merged with the
+        ExtractionConfig flags (extract_parameters / extract_type_parameters).
+
+        Both the parallel pipeline (via bsg_cfg["parsing"]) and index_file
+        must derive their AST cache variant from this same merged config so
+        cache entries are visible across paths and never served stale.
+        """
+        cfg = get_config_cached()
+        parsing_cfg = dict(cfg.get("bsg", {}).get("parsing", {}))
+        extraction_cfg = cfg.get("extraction", {})
+        if "extract_parameters" in extraction_cfg:
+            parsing_cfg["extract_parameters"] = extraction_cfg["extract_parameters"]
+        if "extract_type_parameters" in extraction_cfg:
+            parsing_cfg["extract_type_parameters"] = extraction_cfg["extract_type_parameters"]
+        return parsing_cfg
 
     def get_unindexed_files(self) -> list[tuple[str, str]]:
         """Return list of files that could not be indexed (no extractor available).
@@ -1224,7 +1243,16 @@ class CodeGraphIndexer:
           the cost of resolving stubs that no query will ever reference.
         """
         self.logger.info("resolving_contextual_stubs", lazy=lazy)
-        stubs = [ent for ent in graph.entities_by_type(EntityType.UNRESOLVED) if ent.is_contextual_stub]
+        # T13: stubs are EXTERNAL_SYMBOL entities; legacy in-memory graphs may
+        # still carry UNRESOLVED stubs, so collect from both buckets. The
+        # is_contextual_stub check (unresolved: ID prefix) filters out the
+        # scope-manager materialized EXTERNAL_SYMBOL entities.
+        stubs = [
+            ent
+            for etype in (EntityType.EXTERNAL_SYMBOL, EntityType.UNRESOLVED)
+            for ent in graph.entities_by_type(etype)
+            if ent.is_contextual_stub
+        ]
         self.logger.info("stubs_found_in_graph", count=len(stubs))
 
         # Phase 5: Lazy mode — skip upfront resolution entirely.
@@ -1763,8 +1791,13 @@ class CodeGraphIndexer:
             # Set parsing config for all extractors
             from batho.modules.extraction.submodules.parser_factory.registry import set_parsing_config
 
-            bsg_parsing_cfg = bsg_cfg.get("parsing", {})
+            bsg_parsing_cfg = self._effective_parsing_config()
             set_parsing_config(bsg_parsing_cfg)
+            # Also update bsg_cfg so the parsing config flows to worker processes
+            # via extract_and_emit_parallel(bsg_cfg=...).
+            if bsg_cfg.get("parsing") is not None or bsg_parsing_cfg:
+                bsg_cfg = dict(bsg_cfg)
+                bsg_cfg["parsing"] = bsg_parsing_cfg
 
             bsg_symbol_cfg = bsg_cfg.get("symbol_resolution", {})
             symbol_resolution_enabled = bsg_symbol_cfg.get("enabled", True)
@@ -2161,6 +2194,11 @@ class CodeGraphIndexer:
                             metadata["target_name"] = node["target_name"]
                         if "receiver_var" in node:
                             metadata["receiver_var"] = node["receiver_var"]
+                        # Restore hierarchy metadata for INHERITS/IMPLEMENTS
+                        # derivation (e5b7c9d1).
+                        for _hier_key in ("bases", "extends", "implements"):
+                            if _hier_key in node:
+                                metadata[_hier_key] = node[_hier_key]
 
                         ent = Entity.model_construct(
                             id_override=node["id"],
@@ -2330,7 +2368,9 @@ class CodeGraphIndexer:
                     + len(graph.entity_ids_by_type(EntityType.EXTERNAL_SYMBOL))
                 ),
                 "unresolved_pruned_count": sum(
-                    1 for e in graph.entities_by_type(EntityType.UNRESOLVED)
+                    1
+                    for etype in (EntityType.EXTERNAL_SYMBOL, EntityType.UNRESOLVED)
+                    for e in graph.entities_by_type(etype)
                     if e.is_contextual_stub
                     and e.metadata.get("stub_resolution_state") == "pruned"
                 ),
@@ -2480,7 +2520,7 @@ class CodeGraphIndexer:
                     ttl_days,
                     variant=build_ast_cache_variant(
                         include_gaps=include_gaps,
-                        parsing_config=get_config_cached().get("bsg", {}).get("parsing", {}),
+                        parsing_config=self._effective_parsing_config(),
                     ),
                 )
             except OSError:
@@ -2760,7 +2800,9 @@ class CodeGraphIndexer:
             # EXTERNAL_SYMBOL entities are reference targets (stdlib/third-party)
             # that may not have incoming edges yet; keep them so dependency
             # resolution benchmarks can find them in the artifact.
-            if entity.type == EntityType.EXTERNAL_SYMBOL:
+            # T13: contextual stubs are EXTERNAL_SYMBOL too — resolved stubs
+            # lose their edge (retargeted) and must still be pruned as orphans.
+            if entity.type == EntityType.EXTERNAL_SYMBOL and not entity.is_contextual_stub:
                 continue
             if keep_exports_flag and self._is_exported_entity(entity):
                 continue
@@ -2915,8 +2957,11 @@ class CodeGraphIndexer:
         for entity in class_entities:
 
             metadata = dict(entity.metadata or {})
+            # e5b7c9d1 fix: `bases` refs (C# base_list) mix base classes and
+            # interfaces — classify by the resolved target's entity type.
+            # `extends`/`implements` keep their explicit relation types.
             relation_specs = [
-                (RelationshipType.INHERITS, metadata.get("bases")),
+                ("bases", metadata.get("bases")),
                 (RelationshipType.INHERITS, metadata.get("extends")),
                 (RelationshipType.IMPLEMENTS, metadata.get("implements")),
             ]
@@ -2926,7 +2971,16 @@ class CodeGraphIndexer:
                     if not target_id or target_id == entity.id:
                         continue
 
-                    key = (entity.id, target_id, relation_type)
+                    if relation_type == "bases":
+                        target_ent = graph.get_entity(target_id)
+                        if target_ent is not None and target_ent.type == EntityType.INTERFACE:
+                            resolved_type = RelationshipType.IMPLEMENTS
+                        else:
+                            resolved_type = RelationshipType.INHERITS
+                    else:
+                        resolved_type = relation_type
+
+                    key = (entity.id, target_id, resolved_type)
                     if key in existing:
                         continue
 
@@ -2935,7 +2989,7 @@ class CodeGraphIndexer:
                         Relationship(
                             source_id=entity.id,
                             target_id=target_id,
-                            type=relation_type,
+                            type=resolved_type,
                             metadata={"derived": True, "reason": "metadata_hierarchy"},
                         )
                     )

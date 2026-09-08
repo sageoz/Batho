@@ -6,12 +6,95 @@ description: "Batho release history"
 
 # Changelog
 
-## v1.4.1 — 2026-08-26
+## v1.4.2 — 2026-09-08
 
-**Review hardening, thread safety, path sanitization, atomic writes, and documentation updates.**
+**MCP relationship filtering (symbol roles, confidence, direction), entity categories and PROPERTY extraction, the `file_connectivity` tool, stub-based cross-file traversal, and unambiguous stub IDs.**
+
+### New Features
+
+- **`symbol_roles` filter in MCP tools**: `graph_query`, `trace_path`, and `search_entities` now accept a `symbol_roles` parameter to filter relationships by `SymbolRole` bitmask (Definition, Import, WriteAccess, ReadAccess, Generated, Declaration, Dynamic, Heuristic). Role names are case-insensitive; OR semantics within the parameter, AND semantics across filters.
+- **`confidence_threshold` filter in MCP tools**: `graph_query` and `trace_path` now accept a `confidence_threshold` parameter (0.0–1.0) to filter edges by resolution confidence. Exposes the existing 8-tier confidence scoring system directly to AI agents.
+- **`relation_direction` parameter in MCP tools**: `graph_query` and `trace_path` now accept `relation_direction` (`outgoing`, `incoming`, `both`) to filter by edge direction. `incoming` enables "who calls X?" queries without requiring inverse relationship types (`CALLED_BY`, `IMPORTED_BY`, etc.), paving the way for their deprecation in Phase 3.
+- **Ambiguous resolution detection**: When the graph builder finds multiple equally-plausible target candidates, the edge is emitted with `confidence=0.5`, `metadata.ambiguous=True`, and `metadata.ambiguous_candidates=[...]` instead of being silently dropped. Ambiguous edges are preserved for manual review and are never pruned. A new `ambiguous: 0.50` tier was added to `_RESOLUTION_CONFIDENCE` (now 8 tiers).
+- **`ambiguous_edge_count` in `graph_overview`**: The `graph_overview` tool now reports the count of ambiguous edges in its stats, computed via Arrow substring pre-filtering for performance.
+- **`EntityCategory` enum** (T01): New 5-value enum (`CODE`, `EXTERNAL`, `INFRASTRUCTURE`, `MARKUP`, `STRUCTURAL`) that groups `EntityType` values into coarse categories. Every `EntityType` now has a `.category` property. Enables category-level filtering without listing 20+ individual types.
+- **4 new `EntityType` values** (T02): `CONSTRUCTOR` (OO constructors — Python `__init__`, Java/C# `constructor_declaration`, TypeScript `constructor`), `ENUM_MEMBER` (Rust `enum_variant`, C# `enum_member_declaration`), `PARAMETER` (function/method parameters — opt-in), `TYPE_PARAMETER` (generic type parameters T, K, V — opt-in). All 4 are in the `CODE` category.
+- **`PROPERTY` extraction** (T03): Python `@property` and `@x.setter` decorated methods are now extracted as `PROPERTY` (not `METHOD`). Setters get `metadata.access_type="write"`, getters get `"read"`. TypeScript `get`/`set` accessors and C# auto-properties are also extracted as `PROPERTY`. Fixed pre-existing C# query compilation bugs (`base_clause`, `accessibility_modifier` invalid node types).
+- **`entity_categories` filter in MCP tools** (T07): `graph_query` and `search_entities` now accept `entity_categories: list[str]` to filter by category name (case-insensitive). Expands to member `EntityType` values and combines with `entity_types` using OR semantics. Example: `graph_query(entity_categories=["code"])` filters to all 18+ code symbol types in one parameter.
+- **`entity_categories` in `batho://schema` resource**: The schema resource now includes `entity_categories` with their member entity types for MCP client discoverability.
+- **`file_connectivity` MCP tool** (T21): File-level dependency connectivity in both directions. Cross-file references (stored as unresolved stubs) are resolved to their defining files and aggregated per file with relation-type counts and confidence. Supports `direction` (`outgoing`/`incoming`/`both`), `include_external`, and `min_confidence` parameters. Default-enabled.
+- **READS/WRITES relationship types** (T09): `ref.read` and `ref.write` captures now emit `READS`/`WRITES` relationship types instead of the legacy `REFERENCES` type. Legacy `REFERENCES` edges are reclassified to `READS`/`WRITES` by their `SymbolRole` on every construction path (model validator), so old artifacts load with correct types.
+- **Deprecated inverse relationship types** (T15): `CALLED_BY`, `IMPORTED_BY`, `REFERENCED_IN`, and `CONTAINED_WITHIN` are deprecated — use the forward type (`CALLS`, `IMPORTS`, `READS`, `CONTAINS`) with `relation_direction="incoming"` instead. Legacy edges are reclassified (forward type + swapped endpoints, `metadata.reversed=true`) on model construction **and** on the MCP raw-row read path (`graph_query`, `get_entity`, `get_file_graph`, `trace_path`, `file_connectivity`), so fresh and legacy artifacts behave identically. `relation_types=["CALLS"]` now matches legacy `CALLED_BY` rows.
+- **Stub-based cross-file traversal** (T20): `graph_query` and `trace_path` resolve `unresolved:` stub targets to their defining files/entities, so cross-file references participate in direction filtering and BFS path tracing without a rebuild.
+- **Indirect call detection** (T10): Bare-identifier indirect calls (`map(func, xs)`) emit `CALLS` edges with `confidence=0.7` and `metadata.indirect=True`, with soundness guards: parameter/local shadowing suppresses false edges, and same-named callables are disambiguated by caller scope (ambiguous names emit no edge).
+- **`entity_types` filter case-insensitivity**: `graph_query` and `search_entities` normalize `entity_types` values to uppercase, matching the existing `relation_types` and `entity_categories` behavior (`entity_types=["function"]` now works).
+- **`batho://schema` deprecated types**: The schema resource now lists `deprecated_entity_types` and `deprecated_relation_types` for the T14/T15 deprecation contract.
+- **Dot-normalized stub ref keys**: Contextual stub IDs (`unresolved:<caller_scope>::<ref_key>`) now dot-normalize the ref key (`::` → `.`), so the `::` scope separator is unambiguous for languages whose reference text contains `::` (Rust paths like `std::io::Write`, Ruby constant paths like `Foo::Bar`). Display names and metadata keep the caller-written spelling.
+- **Rust std roots in the stdlib bucket**: `core`, `alloc`, and `proc_macro` join `std` in the resolver's stdlib prefixes. The module-index longest-prefix match runs first, so an indexed local module with one of these names always wins.
+
+### Extraction
+
+- **Kotlin query rewrite**: The Kotlin query was rewritten with positional captures (the grammar has no `name` fields — field-name references silently disabled the whole query). Adds `object_declaration` coverage for methods and properties, enum-entry (`ENUM_MEMBER`) capture, and interface reclassification (`interface X` now yields an `INTERFACE` entity instead of `CLASS`).
+- **Contextual stubs are `EXTERNAL_SYMBOL`** (T13): Unresolved cross-file reference stubs are emitted as `EXTERNAL_SYMBOL` entities with a stable `unresolved:` entity-ID prefix (the `UNRESOLVED` entity type is deprecated). Legacy `UNRESOLVED` entities are remapped to `EXTERNAL_SYMBOL` on deserialization (T14, along with `ATTRIBUTE`, `GLOBAL_STATEMENT`, `IMPORT_BLOCK`).
+
+### Storage
+
+- **New Arrow IPC columns**: `rels_views` table now includes `roles` (int32) and `confidence` (float32) columns, both nullable for backward compatibility with older artifacts. The writer populates them with `int(rel.roles)` and `float(rel.confidence)` respectively (defaulting to 0 and 1.0 when absent).
+
+### Configuration
+
+- **`extraction.extract_parameters`** (default: `false`): Opt-in flag to extract function/method parameters as `PARAMETER` entities. Disabled by default to avoid entity-count inflation.
+- **`extraction.extract_type_parameters`** (default: `false`): Opt-in flag to extract generic type parameters as `TYPE_PARAMETER` entities. Disabled by default.
+- Both flags are documented in `batho.yaml.example` and `docs-site/docs/getting-started/configuration.md`.
+
+### Performance
+
+- **Arrow compute filters in `trace_path`**: `symbol_roles` and `confidence_threshold` filters are applied via `pc.bit_wise_and` and `pc.greater_equal` before materializing to Python, avoiding full-table `to_pylist()` on large repos.
+- **Substring pre-filter for ambiguous count**: `graph_overview` uses `pc.match_substring(metadata_json, '"ambiguous"')` to narrow candidates before JSON-parsing only the matched subset.
+- **Lazy ambiguity detection**: Ambiguity is detected via a cheap set-difference on pre-computed candidates — no re-resolution needed. Zero overhead in lazy mode (stubs resolved on-demand).
+- **EndpointResolver column projection**: Index building projects only the needed Arrow columns (`entity_id`/`file_id`/`name`; `file_id`/`target_id`/`relation_type`/`confidence` for cross-file edges) and pre-filters CONTAINS rows via Arrow compute instead of full-table `to_pylist()` per generation.
+- **graph_overview stub count**: The "External dependencies significant" pattern counts contextual stubs via an Arrow `starts_with` filter on the `unresolved:` entity-ID prefix (the legacy `UNRESOLVED` type key is always 0 in new artifacts).
 
 ### Bug Fixes
 
+- **Parsing config propagation** (`c46e8dc5`): `ASTExtractor` now has a `set_parsing_config()` method, and `registry.set_parsing_config()` updates already-cached extractor instances. The pipeline (`codegraph.py`) now wires `ExtractionConfig.extract_parameters` and `extract_type_parameters` into the parsing config dict. Previously, these flags were never applied in production builds (only in direct `create_extractor()` unit tests).
+- **C# query compilation**: Fixed invalid `base_clause` and `accessibility_modifier` node types in `CSHARP_QUERY` that caused silent query compilation failures.
+- **AST cache variant consistency** (`dc2f0e61`): `index_file` now derives its AST cache variant from the same merged parsing config (bsg.parsing + extraction flags) as the parallel pipeline, so flags-ON entries can never be served to a flags-OFF build.
+- **Arrow store stub exclusion** (`83e6c290`): Dangling-reference resolution no longer resolves names to `unresolved:`-prefixed stub entities.
+- **Rust/Ruby scoped refs resolve correctly**: Scoped ref text no longer collides with the stub-ID separator — stdlib refs such as `std::io::Write` now classify as `external_stdlib` (root `std`) instead of landing in `unresolved_stubs`, and scope-aware name fallbacks retain module context. Legacy artifacts keep their previous (last-segment) behavior until a rebuild.
+- **Single stub-ID parse helper**: All stub-ID `::` parsing now flows through `stub_fqn()` in `entity_resolution.py`; `file_connectivity`'s stdlib extraction and the arrow-store blob patcher share the same semantics (the legacy `split(":")[1]` probe compared the caller *scope* and could never match a scoped stub).
+- **`file_connectivity` `via` is direction-aware**: `depends_on` cells name the referenced (remote) symbol; `depended_on_by` cells name the referencing (caller-side) symbol. The markdown renderer now actually renders `(via ...)` — it previously read a non-existent top-level `via` key and never showed one.
+
+### Documentation
+
+- Updated `mcp/tools-reference.md` with new parameters for `graph_query`, `trace_path`, `search_entities`, and a new "Relationship Filtering" section documenting symbol roles, confidence tiers, and direction filtering.
+- Updated `mcp/index.md` Tool Matrix with new filter parameters.
+- Updated `whitepaper/code-graph.md` confidence scoring table with the `ambiguous: 0.50` tier and ambiguous resolution behavior.
+- Added `file_connectivity` to the MCP tool matrix and tools reference; tool counts updated to 20 total (16 default-enabled).
+- `mcp/tools-reference.md` `file_connectivity` entry documents the direction-aware `via` semantics and the `external.stdlib` root extraction.
+- `whitepaper/code-graph.md` documents the stub-ID format (`unresolved:[<pkg> ]<caller_scope>::<dotted_target_fqn>`) with the dot-normalization and legacy-artifact notes.
+
+### Tests
+
+- **1314 tests** (up from 1052). Added `test_symbol_roles_e2e.py` (16 tests), `test_confidence_threshold_e2e.py` (16 tests), `test_relation_direction_e2e.py` (13 tests), `test_t02_entity_types.py` (12 tests), `test_t03_property_extraction.py` (15 tests), `test_t07_entity_categories.py` (19 tests), `test_file_connectivity.py` (18 tests), `test_entity_resolution.py` (27 tests), `test_review_fixes.py` (13 tests), `test_review_round2_fixes.py` (22 tests), `test_review_round3_fixes.py` (16 tests), `test_review_round4_fixes.py` (12 tests), `test_stub_ref_key.py` (10 tests), `test_phase2_schema_upgrade.py` (28 tests), and `test_language_capture_parity.py` (20 tests); added `TestStubFqn` / `TestRustStdlibStubs` in `test_entity_resolution.py` and `TestStubTargetMatches` in `test_bsg_scratch_store.py`; extended `test_graph_query.py`, `test_graph_overview.py`, `test_phase4_pruning_confidence.py`, `test_phase5_performance.py`, and `test_rust_go_contains.py`.
+
+---
+
+## v1.4.1 — 2026-08-26
+
+**File watcher engine, registry v2/v3 schema, MCP tool gating, 9 new lifecycle tools, networkx migration, review hardening, thread safety, path sanitization, atomic writes, and performance optimizations.**
+
+### New Features
+
+- **File watcher engine** (`batho/mcp/watcher.py`): `BathoWatcherEngine` monitors watched repositories for filesystem events using `watchdog`, debounces rapid changes, and triggers automatic `batho patch` runs. Configure per-repo via `add_repo(watch=true, debounce_ms=2000)`.
+- **Registry v2/v3 schema**: `RepoEntry` now includes `id` (uuid4 hex), `mode` (`local` | `github`), `branch`, `status` (`not_indexed` | `indexing` | `ready` | `stale` | `error`), `last_built_at`, and `created_at` fields. v2 entries are auto-migrated on load: stable IDs generated, status derived from on-disk artifact, migration persisted. Added `get_by_id()` and `update_status()` registry methods for dashboard keying and build lifecycle tracking.
+- **MCP tool gating** (allowlist/blocklist): Secure-by-default tool registration — 4 admin tools (`batho_build`, `batho_export`, `batho_load`, `batho_gc`) are disabled by default. Enable via `batho.yaml` (`mcp.tools.disabled: []`), `mcp.tools.enabled` allowlist, or `--enable-tool` CLI flag. See [Tool Gating](/docs/mcp#tool-gating).
+- **9 new lifecycle MCP tools**: `batho_status`, `batho_list_runs`, `batho_diff`, `batho_patch`, `batho_fix` (default-enabled) + `batho_build`, `batho_export`, `batho_load`, `batho_gc` (opt-in). Total tool count: 19 (15 default + 4 admin).
+- **networkx replaces leidenalg/igraph**: Community detection migrated from `leidenalg`/`igraph` (GPL/non-Apache licenses) to `networkx` greedy modularity clustering for Apache-2.0 license compatibility.
+
+### Bug Fixes
+
+- **Watcher engine deadlock** (`d484150`): `BathoWatcherEngine.stop()` could deadlock when the observer thread was actively processing an event. The observer's dispatch lock and `self._lock` could form a classic deadlock. Fix: pop the watch entry and cancel the debounce timer under the lock, but stop/join the observer outside the lock.
 - **Thread safety in graph mutations**: `InMemoryGraph._lock` upgraded from `Lock` to `RLock`; `remove_entities_for_file` and `add_entities_for_file` now wrap mutations in `with graph._lock:` for atomic multi-entity updates without deadlocking.
 - **Path sanitization in MCP tools**: Replaced naive `str.replace("\\", "/")` with `_canonicalize_untrusted_path()` in `graph_overview`, `graph_query`, `get_file_graph`, and `batho_diff` for proper canonicalization per the path sanitization ADR.
 - **Config validation fail-fast**: `get_config_with_root` now raises `RuntimeError` on invalid config instead of silently backing up and overwriting the user's `batho.yaml`.
@@ -22,6 +105,7 @@ description: "Batho release history"
 - **Unified cache field types**: `is_indexed` changed from `int` to `bool`; `last_run_id` renamed to `last_run_uuid` to match the actual schema.
 - **Bundle reader zero-copy preservation**: Removed redundant sort in `BathoBundleReader` (writer already sorts by `file_id`); index now handles non-contiguous `file_id` ranges with multi-slice support.
 - **Blob repairer memory**: `blob_repairer.py` now uses `pa.ipc.new_file` with a table directly instead of `to_pylist()`, avoiding unnecessary row materialization.
+- **Tool removal fix**: `remove_repo` now uses `app.local_provider.remove_tool()` instead of `app.remove_tool()` for correct FastMCP cleanup.
 
 ### Security Hardening
 
@@ -31,15 +115,21 @@ description: "Batho release history"
 ### Performance
 
 - **Early stream cleanup**: `store.cleanup_streams()` moved before community detection in `build.py` to free memory earlier in the pipeline.
+- **Hot path optimizations** (`19ac506`):
+  - FIX 3: Cache per-file variable→type mappings in `resolve_contextual_stubs` to avoid O(E) re-scans per stub.
+  - FIX 9: Replace O(M) method scan per Rust impl block with `bisect_left` + forward scan (O(log M + k)).
+  - FIX 10: Precompute per-file import lookup structures (`from_symbol_to_module` dict, `non_from_modules` list, `imported_names` set) once instead of O(I) scan per reference node.
+  - FIX 15: Pre-lower content patterns at `RuleMatch` construction to avoid repeated regex compilation.
 
 ### Other Changes
 
 - `schema_version` in `Config` now uses `Literal["batho-config.v1"]` for stricter validation.
+- Python version capped to `<3.14`; `watchdog` minimum relaxed to `6.0.0`.
 - Added error `hint` parameters to `_err()` calls in `batho_export`, `batho_diff`, `batho_gc`, and `batho_fix` MCP tools.
 - Documentation: added `graph`, `community_detection`, and `memory` config sections; documented `watch`, `debounce_ms`, `max_file_size_kb` params for `add_repo`.
 - Added `CITATION.cff` to the bump-version script's file list for future releases.
 - Fixed `CHANGELOG_PATH` `NameError` in `generate_changelog_entry.py`.
-- **966 tests** (up from 864).
+- **1052 tests** (up from 864).
 
 ---
 
@@ -171,7 +261,7 @@ description: "Batho release history"
 
 ### New Features & Enhancements
 
-- **MCP Server** (`batho mcp`): FastMCP-based stdio server exposing 10 tools for AI agents to query the code graph:
+- **MCP Server** (`batho mcp`): FastMCP-based stdio server exposing 10 core tools for AI agents to query the code graph (expanded to 19 tools in v1.4.1 — see [Tools Reference](/docs/mcp/tools-reference)):
   - `graph_overview` — high-level codebase summary with entity counts, relationships, and communities
   - `graph_query` — filtered graph query by file, entity type, relation type, or name pattern
   - `get_entity` — detailed info for a single entity with relationships and optional source code

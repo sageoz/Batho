@@ -13,11 +13,13 @@ Batho manages index runs and history inside a unified Arrow IPC database (`.bath
 ### Run Schema Structure
 A run record is written with the following schema:
 - `run_uuid`: Unique identifier for the run.
-- `base_run_uuid`: Parent run ID (null for baseline builds).
-- `created_at`: Creation timestamp.
-- `completed_at`: Completion timestamp.
-- `commit_hash`: Git commit hash at the time of indexing.
-- `metadata`: JSON blob containing context overviews, metrics, and file category stats.
+- `started_at` / `completed_at`: Run timestamps.
+- `status`: Run status (`completed`, `failed`, ...).
+- `git_commit` / `git_branch`: Git state at the time of indexing.
+- `entity_count` / `rel_count` / `file_count` / `duration_ms`: Build size and timing metrics.
+- `error_message`: Failure detail for failed runs.
+
+Per-run telemetry (context overviews, metrics, delta stats) is stored separately in the `run_artifacts` table. Run lineage is recorded on the change rows: each `file_changelog` entry carries `base_run_uuid` (the parent run; null for baseline builds), so a run's history is reconstructed from its changelog entries.
 
 ## 7.2 Incremental Patch Lifecycle
 

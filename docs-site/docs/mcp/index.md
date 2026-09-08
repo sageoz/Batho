@@ -14,7 +14,7 @@ The Batho MCP (Model Context Protocol) server exposes your codebase's structural
 |-----------|-------------|
 | **Zero-copy reads** | Memory-mapped Arrow IPC — no database, no parsing at query time |
 | **Dual-output** | Compact markdown for the model (34–38% fewer tokens) + structured JSON for programmatic use |
-| **19 tools total (15 default)** | 12 read-only + 3 destructive (default) + 4 admin (opt-in). See [Tool Matrix](#tool-matrix) below. |
+| **20 tools total (16 default)** | 13 read-only + 3 destructive (default) + 4 admin (opt-in). See [Tool Matrix](#tool-matrix) below. |
 | **Tool gating** | Secure-by-default: 4 admin tools disabled. Enable via `batho.yaml`, `--enable-tool` flag, or allowlist. See [Tool Gating](#tool-gating). |
 | **File watcher engine** | Optional per-repo filesystem monitoring with debounced auto-patching. Enable via `add_repo(watch=true)`. See [File Watcher](#file-watcher-engine). |
 | **Relationship filtering** | `symbol_roles`, `confidence_threshold`, and `relation_direction` filters on `graph_query`, `trace_path`, `search_entities`. See [Tools Reference](/docs/mcp/tools-reference#relationship-filtering). |
@@ -47,7 +47,7 @@ flowchart LR
 
 ## Tool Matrix
 
-### Default-Enabled Tools (15)
+### Default-Enabled Tools (16)
 
 | Tool | Purpose | Key Parameters |
 |------|---------|---------------|
@@ -59,6 +59,7 @@ flowchart LR
 | [`get_entity`](/docs/mcp/tools-reference#get_entity) | Detailed info for a single entity including relationships | `entity_id`, `repo`, `include_source` |
 | [`trace_path`](/docs/mcp/tools-reference#trace_path) | Shortest path between two entities via BFS with role/confidence/direction filters | `source_entity_id`, `target_entity_id`, `repo`, `max_depth`, `relation_types`, `symbol_roles`, `confidence_threshold`, `relation_direction` |
 | [`get_file_graph`](/docs/mcp/tools-reference#get_file_graph) | All entities and relationships within a file | `file_path`, `repo`, `include_cross_file_refs` |
+| [`file_connectivity`](/docs/mcp/tools-reference#file_connectivity) | File-level dependency connectivity in both directions with external-reference summary | `file_path`, `repo`, `direction`, `include_external`, `min_confidence` |
 | [`search_entities`](/docs/mcp/tools-reference#search_entities) | Substring/regex search across entity names with optional role filter | `query`, `repo`, `entity_types`, `symbol_roles`, `limit` |
 | [`get_delta`](/docs/mcp/tools-reference#get_delta) | Incremental changes from the latest patch run | `repo`, `run_id`, `change_kind`, `file_path` |
 | [`batho_status`](/docs/mcp/tools-reference#batho_status) | Artifact and watcher status for one or all repos (read-only) | `repo` |
@@ -88,7 +89,7 @@ The server reads artifacts using zero-copy memory-mapped I/O. No database proces
 
 ## Tool Gating
 
-Batho uses a **secure-by-default** tool registration model. Of the 19 total tools, 4 administrative tools are disabled by default to keep the agent's tool surface focused on retrieval and diagnostics:
+Batho uses a **secure-by-default** tool registration model. Of the 20 total tools, 4 administrative tools are disabled by default to keep the agent's tool surface focused on retrieval and diagnostics:
 
 **Disabled by default** (Tier-3 admin tools):
 - `batho_build` — full rebuild (deletes artifact)

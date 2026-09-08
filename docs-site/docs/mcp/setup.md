@@ -192,4 +192,4 @@ After configuring your client, verify the MCP server is working:
 
 - [Single-Repo Guide](/docs/mcp/single-repo) — Complete walkthrough with examples
 - [Multi-Repo Guide](/docs/mcp/multi-repo) — Configure multiple repositories
-- [Tools Reference](/docs/mcp/tools-reference) — All 19 tools documented (15 enabled by default)
+- [Tools Reference](/docs/mcp/tools-reference) — All 20 tools documented (16 enabled by default)

@@ -128,6 +128,13 @@ def _serialize_extraction_result(
                 node["caller_scope"] = e.metadata.get("caller_scope")
                 node["target_name"] = e.metadata.get("target_name")
                 node["receiver_var"] = e.metadata.get("receiver_var")
+            # Preserve hierarchy metadata so _derive_hierarchy_relations can
+            # create INHERITS/IMPLEMENTS edges after graph materialization
+            # (e5b7c9d1: C# base_list and general extends/implements support).
+            for _hier_key in ("bases", "extends", "implements"):
+                _hier_val = e.metadata.get(_hier_key)
+                if _hier_val:
+                    node[_hier_key] = _hier_val
             hollow_topology.append(node)
     hollow_bytes = msgpack.packb(hollow_topology)
 
@@ -353,12 +360,19 @@ def _initialize_worker(
     root_path: str | None = None,
     rules_config: dict[str, Any] | None = None,
     ast_cache_dir: str | None = None,
+    parsing_config: dict[str, Any] | None = None,
 ) -> None:
     """Apply configured logging, initialize cache, and pre-load BSG rules once per worker process."""
     global _WORKER_LOGGING_INITIALIZED, _WORKER_CACHE, _WORKER_RULES_CACHE, _WORKER_ROOT_PATH, _WORKER_ZSTD_COMPRESSOR
 
     import gc
     gc.set_threshold(50000, 50, 50)
+
+    # T02: Propagate parsing config (extract_parameters, extract_type_parameters, etc.)
+    # to worker processes so the registry's extractor instances honor config flags.
+    if parsing_config is not None:
+        from batho.modules.extraction.submodules.parser_factory.registry import set_parsing_config
+        set_parsing_config(parsing_config)
 
     if not _WORKER_LOGGING_INITIALIZED:
         try:
@@ -672,7 +686,8 @@ def extract_and_emit_parallel(
         # Initialize the global worker variables for the current (main) process
         from batho.core.config import get_config_cached
         worker_log_config = dict(get_config_cached().get("logging", {}))
-        _initialize_worker(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir)
+        worker_parsing_config = bsg_cfg.get("parsing", {})
+        _initialize_worker(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir, worker_parsing_config)
 
         for file_path, filepath in candidates:
             try:
@@ -786,11 +801,12 @@ def extract_and_emit_parallel(
             import multiprocessing as _mp
             from batho.core.config import get_config_cached
             worker_log_config = dict(get_config_cached().get("logging", {}))
+            worker_parsing_config = bsg_cfg.get("parsing", {})
             ctx = _mp.get_context("spawn")
             with ctx.Pool(
                 processes=actual_workers,
                 initializer=_initialize_worker,
-                initargs=(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir),
+                initargs=(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir, worker_parsing_config),
             ) as pool:
                 for res in pool.imap_unordered(
                     _process_file_worker_wrapper, work_items, chunksize=chunk_size
@@ -807,7 +823,8 @@ def extract_and_emit_parallel(
             # Initialize the global worker variables for the current (main) process
             from batho.core.config import get_config_cached
             worker_log_config = dict(get_config_cached().get("logging", {}))
-            _initialize_worker(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir)
+            worker_parsing_config = bsg_cfg.get("parsing", {})
+            _initialize_worker(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir, worker_parsing_config)
 
             for item in work_items:
                 res = process_file_single_pass_worker(*item)

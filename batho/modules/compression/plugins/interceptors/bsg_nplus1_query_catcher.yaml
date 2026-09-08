@@ -16,8 +16,10 @@ rules:
         - databaseexecution
       ast_edges:
         all:
-          - edge: CONTAINED_WITHIN
-            direction: outbound
+          # T15: forward CONTAINS (loop -> db) replaces the deprecated
+          # CONTAINED_WITHIN inverse edge; match it inbound from the db node.
+          - edge: CONTAINS
+            direction: inbound
             target_usn_tags_any:
               - loopstatement
             min_count: 1

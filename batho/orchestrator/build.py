@@ -546,7 +546,12 @@ def run_build(options: BuildOptions) -> BuildResult:
                         for file_rel, file_rels in rels_by_source_file.items():
                             for rel in file_rels:
                                 meta = rel.get("metadata") or {}
-                                if meta.get("synthesized"):
+                                # Include both "synthesized" (CONTAINS from impl
+                                # blocks) and "derived" (INHERITS/IMPLEMENTS from
+                                # metadata hierarchy) — both are added to the
+                                # graph after precompilation and are missing from
+                                # the precompiled rels_blob. Matches patch.py.
+                                if meta.get("synthesized") or meta.get("derived"):
                                     synthesized_rels_by_file[file_rel].append(rel)
 
                         if synthesized_rels_by_file:

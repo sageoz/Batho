@@ -1,14 +1,14 @@
 """Tests for config-based MCP tool gating (allow/block lists).
 
 Verifies the tiered tool exposure model:
-- Tier 1 (13 read-only/diagnostic tools): always exposed by default
+- Tier 1 (14 read-only/diagnostic tools): always exposed by default
 - Tier 2 (batho_patch, batho_fix): exposed with destructiveHint=True
 - Tier 3 (batho_build, batho_export, batho_load, batho_gc): disabled by default,
   opt-in via config/env/CLI
 
 Scenarios:
-    1. Default config disables 4 Tier-3 tools → 15 tools registered.
-    2. disabled_tools=set() → all 19 tools registered.
+    1. Default config disables 4 Tier-3 tools → 16 tools registered.
+    2. disabled_tools=set() → all 20 tools registered.
     3. Allowlist mode → only listed tools registered.
     4. Env var override (BATHO_MCP_TOOLS_DISABLED) disables tools.
     5. Calling an unregistered tool raises an error.
@@ -26,14 +26,14 @@ from batho.mcp.server import create_app
 
 
 # -----------------------------------------------------------------------
-# Default config: 4 Tier-3 tools disabled → 15 tools
+# Default config: 4 Tier-3 tools disabled → 16 tools
 # -----------------------------------------------------------------------
 
 DEFAULT_EXPECTED_TOOLS = {
-    # Tier 1 — read-only (13)
+    # Tier 1 — read-only (14)
     "list_repos", "add_repo", "remove_repo",
     "graph_overview", "graph_query", "get_entity", "trace_path",
-    "get_file_graph", "search_entities", "get_delta",
+    "get_file_graph", "file_connectivity", "search_entities", "get_delta",
     "batho_status", "batho_list_runs", "batho_diff",
     # Tier 2 — destructive but enabled (2)
     "batho_patch", "batho_fix",
@@ -41,16 +41,16 @@ DEFAULT_EXPECTED_TOOLS = {
 
 DEFAULT_DISABLED_TOOLS = {"batho_build", "batho_export", "batho_load", "batho_gc"}
 
-ALL_19_TOOLS = DEFAULT_EXPECTED_TOOLS | DEFAULT_DISABLED_TOOLS
+ALL_20_TOOLS = DEFAULT_EXPECTED_TOOLS | DEFAULT_DISABLED_TOOLS
 
 
 @pytest.mark.asyncio
 async def test_default_disables_tier3():
-    """Default config disables 4 Tier-3 tools → 15 tools registered."""
+    """Default config disables 4 Tier-3 tools → 16 tools registered."""
     app = create_app(disabled_tools={"batho_build", "batho_export", "batho_load", "batho_gc"})
     tools = await app.list_tools()
     names = {t.name for t in tools}
-    assert len(names) == 15
+    assert len(names) == 16
     assert names == DEFAULT_EXPECTED_TOOLS
     for disabled in DEFAULT_DISABLED_TOOLS:
         assert disabled not in names
@@ -58,12 +58,12 @@ async def test_default_disables_tier3():
 
 @pytest.mark.asyncio
 async def test_all_tools_when_disabled_empty():
-    """When disabled_tools=set(), all 19 tools registered."""
+    """When disabled_tools=set(), all 20 tools registered."""
     app = create_app(disabled_tools=set())
     tools = await app.list_tools()
     names = {t.name for t in tools}
-    assert len(names) == 19
-    assert names == ALL_19_TOOLS
+    assert len(names) == 20
+    assert names == ALL_20_TOOLS
 
 
 # -----------------------------------------------------------------------
@@ -102,7 +102,7 @@ async def test_blocklist_removes_specified_tools():
     assert "graph_overview" not in names
     assert "list_repos" in names
     assert "batho_fix" in names
-    assert len(names) == 17
+    assert len(names) == 18
 
 
 # -----------------------------------------------------------------------
@@ -124,12 +124,12 @@ async def test_env_override_disables_tool(monkeypatch, tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_env_override_empty_string_enables_all(monkeypatch, tmp_path: Path):
-    """BATHO_MCP_TOOLS_DISABLED='' → empty disabled list → all 19 tools."""
+    """BATHO_MCP_TOOLS_DISABLED='' → empty disabled list → all 20 tools."""
     monkeypatch.setenv("BATHO_MCP_TOOLS_DISABLED", "")
     app = create_app(root=str(tmp_path.resolve()))
     tools = await app.list_tools()
     names = {t.name for t in tools}
-    assert len(names) == 19
+    assert len(names) == 20
     assert "batho_build" in names
 
 
@@ -178,4 +178,4 @@ async def test_secure_by_default_no_args(tmp_path: Path):
     # Tier 1 + Tier 2 should be present
     assert "batho_patch" in names
     assert "graph_overview" in names
-    assert len(names) == 15
+    assert len(names) == 16

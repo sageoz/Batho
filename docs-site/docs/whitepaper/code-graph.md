@@ -110,6 +110,14 @@ flowchart TB
 2. **Global pass**: Match unresolved imports against exported symbols across the repository.
 3. **Tracking**: Unresolved targets are tagged with `unresolved:` prefix and tracked for later resolution.
 
+**Stub ID format**: Contextual stub IDs have the form
+
+```
+unresolved:[<pkg> ]<caller_scope>::<dotted_target_fqn>
+```
+
+The ref key is **dot-normalized** at extraction time (`::` → `.`), so `::` occurs exactly once — at the scope/ref boundary. This keeps the separator unambiguous for languages whose reference text contains `::` (Rust paths like `std::io::Write`, Ruby constant paths like `Foo::Bar`); display names and metadata keep the caller-written spelling. Legacy artifacts may embed `::` inside the ref key (e.g. `unresolved:scope::std::io::Write`) — those keep their previous last-segment behavior until a rebuild.
+
 ## 4.4 Stub Resolution Phases (v1.4.1)
 
 Contextual stubs — call sites whose target is not yet resolved — are settled in a multi-phase pipeline. Phases 1–3 (exact match, stdlib method, import-map) run during the initial cross-file resolution pass. Phases 4 and 5 were introduced in v1.4.1 to improve graph quality and reduce unnecessary work.

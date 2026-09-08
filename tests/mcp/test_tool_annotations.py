@@ -40,6 +40,7 @@ READ_ONLY_TOOLS = [
     "get_entity",
     "trace_path",
     "get_file_graph",
+    "file_connectivity",
     "search_entities",
     "get_delta",
     "batho_status",
@@ -62,7 +63,7 @@ MUTATING_TOOLS = [
 def test_all_tools_have_annotations(app):
     """Verify every registered tool has annotations set."""
     tools = asyncio.run(app.list_tools())
-    assert len(tools) == 19, f"Expected 19 tools, got {len(tools)}"
+    assert len(tools) == 20, f"Expected 20 tools, got {len(tools)}"
 
     for tool in tools:
         assert tool.annotations is not None, f"Tool {tool.name} has no annotations"

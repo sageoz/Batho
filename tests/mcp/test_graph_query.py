@@ -401,3 +401,36 @@ def test_graph_query_relation_direction_with_relation_types(built_artifact: Path
     for r in incoming_calls:
         assert r.get("relation_type") in ("CALLS", "calls")
         assert r.get("target_id") in entity_ids
+
+
+def test_graph_query_relation_types_case_insensitive(built_artifact: Path, tmp_path: Path):
+    """T09/T15: lowercase relation_types (e.g. ['calls']) match stored uppercase types.
+
+    The T15 spec's own example — graph_query(relation_types=['calls'],
+    relation_direction='incoming') — relies on case-insensitive matching.
+    """
+    import asyncio
+    from batho.mcp.server import create_app
+
+    app = create_app(root=str(built_artifact), registry_path=tmp_path / "mcp-repos.json")
+
+    upper = asyncio.run(app.call_tool("graph_query", {
+        "relation_types": ["CALLS"],
+        "limit": 100,
+    }))
+    lower = asyncio.run(app.call_tool("graph_query", {
+        "relation_types": ["calls"],
+        "limit": 100,
+    }))
+    upper_structured = upper.structured_content or {}
+    lower_structured = lower.structured_content or {}
+
+    upper_edges = upper_structured.get("graph", {}).get("edges", [])
+    lower_edges = lower_structured.get("graph", {}).get("edges", [])
+    assert len(upper_edges) > 0, "Expected CALLS edges in artifact"
+    assert len(lower_edges) == len(upper_edges), (
+        "lowercase relation_types should return the same results as uppercase"
+    )
+    # applied_filters reports the normalized (uppercase) values
+    af = upper_structured.get("meta", {}).get("applied_filters", {})
+    assert af.get("relation_types") == ["CALLS"]

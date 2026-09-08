@@ -498,3 +498,35 @@ def test_graph_query_applied_filters_empty_when_no_filters_e2e(built_artifact: P
     meta = structured.get("meta", {})
     af = meta.get("applied_filters")
     assert af is None or af == {}
+
+
+def test_search_entities_applied_filters_symbol_roles_e2e(built_artifact: Path, tmp_path: Path):
+    """T04: search_entities structured output includes symbol_roles in applied_filters."""
+    from batho.mcp.server import create_app
+    app = create_app(root=str(built_artifact), registry_path=tmp_path / "mcp-repos.json")
+
+    result = asyncio.run(app.call_tool("search_entities", {
+        "query": ".*",
+        "symbol_roles": ["Import"],
+        "limit": 10,
+    }))
+    structured = _extract_structured(result)
+    meta = structured.get("meta", {})
+    assert "applied_filters" in meta, (
+        "search_entities structured output should include applied_filters"
+    )
+    assert meta["applied_filters"]["symbol_roles"] == ["Import"]
+
+
+def test_search_entities_no_applied_filters_when_none_e2e(built_artifact: Path, tmp_path: Path):
+    """search_entities omits applied_filters when no filters are active."""
+    from batho.mcp.server import create_app
+    app = create_app(root=str(built_artifact), registry_path=tmp_path / "mcp-repos.json")
+
+    result = asyncio.run(app.call_tool("search_entities", {
+        "query": ".*",
+        "limit": 10,
+    }))
+    structured = _extract_structured(result)
+    meta = structured.get("meta", {})
+    assert "applied_filters" not in meta

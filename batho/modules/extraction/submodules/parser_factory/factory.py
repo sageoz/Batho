@@ -69,7 +69,11 @@ class ConfigurableExtractor(ASTExtractor):
         return self._query
 
 
-def create_extractor(language: str, query_source: str) -> ASTExtractor:
+def create_extractor(
+    language: str,
+    query_source: str,
+    parsing_config: dict[str, Any] | None = None,
+) -> ASTExtractor:
     """
     Factory function to create an ASTExtractor instance.
 
@@ -79,6 +83,7 @@ def create_extractor(language: str, query_source: str) -> ASTExtractor:
     Args:
         language: Language identifier (e.g., "python", "javascript", "rust")
         query_source: Tree-sitter SCM query string for the language
+        parsing_config: Optional parsing configuration dict
 
     Returns:
         Configured ASTExtractor instance ready to parse files
@@ -87,7 +92,7 @@ def create_extractor(language: str, query_source: str) -> ASTExtractor:
         >>> extractor = create_extractor("python", PYTHON_QUERY)
         >>> entities, relationships = extractor.parse_file("test.py", content)
     """
-    return ConfigurableExtractor(language, query_source)
+    return ConfigurableExtractor(language, query_source, parsing_config)
 
 
 # =============================================================================
@@ -157,7 +162,10 @@ def get_extractor(language: str) -> ASTExtractor | None:
     # Create new instance if query is registered
     query = TREE_SITTER_QUERIES.get(language)
     if query:
-        extractor = create_extractor(language, query)
+        # a7b9c1d3 fix: apply the registry's global parsing config so
+        # factory-cached extractors honor extract_parameters/extract_type_parameters.
+        from batho.modules.extraction.submodules.parser_factory.registry import get_parsing_config
+        extractor = create_extractor(language, query, parsing_config=get_parsing_config())
         _extractor_cache[language] = extractor
         return extractor
 

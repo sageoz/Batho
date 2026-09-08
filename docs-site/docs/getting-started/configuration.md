@@ -136,11 +136,13 @@ Configures the Batho Structured Graph engine.
   - `storage_view`: Keep raw content in the storage view.
 
 ### 12. `extraction`
-Configures the AST parser cache.
+Configures the AST parser cache and opt-in entity extraction.
 - `cache`:
   - `enabled`: Cache parsed AST structures.
   - `ttl_days`: Expiry for AST entries.
   - `max_entries`: Max files in the cache.
+- `extract_parameters`: Extract function/method parameters as `PARAMETER` entities (default: `false`). Enabling this can significantly increase entity counts.
+- `extract_type_parameters`: Extract generic type parameters (T, K, V) as `TYPE_PARAMETER` entities (default: `false`). Enabling this can significantly increase entity counts.
 
 ### 13. `community_detection`
 Configures graph clustering and community detection algorithms.

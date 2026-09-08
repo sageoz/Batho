@@ -337,6 +337,51 @@ Returns all entities defined in the file, all relationships within the file, and
 
 ---
 
+## `file_connectivity`
+
+File-level dependency connectivity in both directions. Cross-file references (stored as unresolved stubs) are resolved to their defining files, then aggregated per file with relation-type counts and confidence. Ideal for dependency-graph UIs and impact analysis ("who breaks if I change this file?").
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `file_path` | string | Yes | — | File path relative to repo root (forward slashes) |
+| `repo` | string | No | Registry default | Repo name from registry |
+| `direction` | string | No | `"both"` | `outgoing` (files this file depends on), `incoming` (files that depend on it), `both` |
+| `include_external` | bool | No | `false` | Include stdlib/external references in the output |
+| `min_confidence` | float | No | — | Only include edges with `confidence >= threshold` (0.0–1.0) |
+| `response_format` | string | No | `"concise"` | Output format |
+| `max_tokens` | int | No | `25000` | Token budget |
+
+### Example
+
+```
+file_connectivity(file_path="src/auth/manager.py", repo="myapp", direction="both")
+file_connectivity(file_path="src/auth/manager.py", repo="myapp", direction="incoming", include_external=true)
+```
+
+### Output
+
+**Markdown:**
+```markdown
+## File Connectivity: src/auth/manager.py
+
+### Depends on (3 files)
+- `src/api/routes.py` — calls×4, imports×2 (via handle_login, ApiClient)
+- `src/models/user.py` — reads×2 (via User)
+
+### Depended on by (2 files)
+- `src/main.py` — calls×1 (via main)
+
+2 outgoing · 1 incoming · 0 unresolved · generation 3
+```
+
+`structuredContent` includes `file_dependencies` (`outgoing` / `incoming` lists with per-relation-type counts, max confidence, and a `via` symbol list) plus optional `external` stdlib/unresolved counts.
+
+The `via` list is direction-aware: `depends_on` cells name the referenced (remote) symbol; `depended_on_by` cells name the referencing (caller-side) symbol — "`src/main.py` — calls×1 (via main)" means main.py's `main` calls into this file. Endpoints with no resolvable name contribute no `via` entry (e.g. alias-named stubs, which are excluded from the name index). `external.stdlib` lists the stdlib root modules referenced (e.g. `os`, `std`); refs that resolve to no known module or stdlib root are counted in `unresolved_stubs`.
+
+---
+
 ## `search_entities`
 
 Search for entities by name using substring or regex matching.

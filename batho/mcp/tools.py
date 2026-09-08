@@ -1,4 +1,4 @@
-"""Batho MCP tools — 19 tools for code-graph intelligence and repository lifecycle management."""
+"""Batho MCP tools — 20 tools for code-graph intelligence and repository lifecycle management."""
 
 from __future__ import annotations
 
@@ -20,15 +20,22 @@ from mcp.types import TextContent, ToolAnnotations
 
 from batho.modules.storage.arrow_bundle.reader import BathoBundleReader
 from batho.modules.storage.arrow_bundle.bundle import BathoBundle
+from batho.mcp.entity_resolution import (
+    KIND_EXTERNAL_STDLIB,
+    KIND_EXTERNAL_UNRESOLVED,
+    get_resolver,
+    stub_fqn,
+)
 from batho.mcp.graph_builder import (
-    build_dual_output, format_summary, estimate_tokens, truncate_to_budget,
+    build_dual_output, build_meta, format_file_connectivity, format_summary,
+    estimate_tokens, truncate_to_budget, normalize_legacy_rel_rows,
 )
 from batho.mcp.community_summaries import load_communities, format_communities_for_overview
 from batho.mcp.delta_reader import read_delta, format_delta_markdown, build_delta_structured
 from batho.mcp.registry import RepoRegistry, RepoEntry
 from batho.mcp.errors import _err, CLIENT_ERROR, EXTERNAL_ERROR
 from batho.utils.path_sanitizer import sanitize_path, _canonicalize_untrusted_path, PathSecurityError
-from batho.core.schemas import SymbolRole
+from batho.core.schemas import SymbolRole, ENTITY_CATEGORIES, EntityCategory, INVERSE_TO_FORWARD
 
 if TYPE_CHECKING:
     from batho.mcp.watcher import BathoWatcherEngine
@@ -120,6 +127,47 @@ def _validate_rel_filters(
         # need to include edges at exact tier boundaries.
 
     return role_mask, None
+
+
+def _expand_entity_categories(
+    entity_categories: list[str] | None,
+    entity_types: list[str] | None,
+) -> tuple[list[str] | None, ToolResult | None]:
+    """Expand entity_categories to their member EntityType names and merge with entity_types.
+
+    entity_types values are normalized to uppercase — stored entity_type values
+    are uppercase enum names, so lowercase queries (e.g. ["function"]) must
+    match, mirroring the relation_types normalization (9b1e47c2).
+
+    Returns (merged_types, None) on success, or (None, ToolResult) on validation error.
+    When entity_categories is None, returns the normalized entity_types.
+    """
+    if entity_types:
+        entity_types = sorted({et.upper() for et in entity_types})
+    if entity_categories is None:
+        return entity_types, None
+
+    # Build a case-insensitive name → EntityCategory lookup
+    valid_names = {c.name.lower(): c for c in EntityCategory}
+    expanded_types: set[str] = set()
+
+    for cat_name in entity_categories:
+        cat_lower = cat_name.lower()
+        cat = valid_names.get(cat_lower)
+        if cat is None:
+            return None, _err(
+                f"Invalid entity_category: '{cat_name}'. Valid categories: {sorted(valid_names.keys())}",
+                error_type=CLIENT_ERROR,
+                hint="Use category names like 'code', 'external', 'infrastructure', 'markup', 'structural'.",
+            )
+        for et in ENTITY_CATEGORIES[cat]:
+            expanded_types.add(et.name)
+
+    if entity_types:
+        for et in entity_types:
+            expanded_types.add(et)
+
+    return sorted(expanded_types), None
 
 
 def _check_rel_filter_columns(
@@ -394,7 +442,7 @@ def register_tools(
 ) -> None:
     """Register all Batho MCP tools on the FastMCP app.
 
-    All 19 tools are registered via decorators, then disabled tools are removed
+    All 20 tools are registered via decorators, then disabled tools are removed
     from the app's tool registry so they disappear from ``tools/list``. This
     matches Sourcegraph's ``mcp.tools.disabled`` semantics and keeps the agent's
     tool surface focused on retrieval + diagnostics by default.
@@ -420,12 +468,12 @@ def register_tools(
         disabled_tools = {"batho_build", "batho_export", "batho_load", "batho_gc"}
     disabled_tools = disabled_tools or set()
 
-    # All 19 tool names — used to compute the removal set when an allowlist
+    # All 20 tool names — used to compute the removal set when an allowlist
     # is specified (remove everything NOT in the allowlist).
     _ALL_TOOL_NAMES = {
         "list_repos", "add_repo", "remove_repo",
         "graph_overview", "graph_query", "get_entity", "trace_path",
-        "get_file_graph", "search_entities", "get_delta",
+        "get_file_graph", "file_connectivity", "search_entities", "get_delta",
         "batho_status", "batho_list_runs", "batho_diff",
         "batho_build", "batho_patch", "batho_export",
         "batho_gc", "batho_fix", "batho_load",
@@ -624,10 +672,17 @@ def register_tools(
         tracking = reader.get_all_file_tracking()
 
         entity_type_counts: dict[str, int] = {}
+        stub_entity_count = 0
         if agent_table.num_rows > 0:
             etypes = agent_table.column("entity_type").to_pylist()
             for et in etypes:
                 entity_type_counts[et] = entity_type_counts.get(et, 0) + 1
+            # T13: contextual stubs are identifiable by the `unresolved:` ID
+            # prefix (their type is EXTERNAL_SYMBOL in new artifacts, so the
+            # type breakdown alone cannot distinguish them from materialized
+            # externals). Arrow pre-filter avoids a full Python scan.
+            stub_mask = pc.starts_with(agent_table.column("entity_id"), "unresolved:")
+            stub_entity_count = agent_table.filter(stub_mask).num_rows
 
         rel_type_counts: dict[str, int] = {}
         ambiguous_edge_count = 0
@@ -678,6 +733,7 @@ def register_tools(
             "total_relationships": rels_table.num_rows,
             "total_files": len(tracking),
             "entity_breakdown": entity_type_counts,
+            "stub_entity_count": stub_entity_count,
             "relationship_breakdown": rel_type_counts,
             "ambiguous_edge_count": ambiguous_edge_count,
             "files": files_list,
@@ -720,6 +776,7 @@ def register_tools(
         confidence_threshold: float | None = None,
         relation_direction: str = "both",
         name_pattern: str | None = None,
+        entity_categories: list[str] | None = None,
         response_format: str = "concise",
         limit: int = 50,
         offset: int = 0,
@@ -737,6 +794,10 @@ def register_tools(
             repo: Name of the registered repo. If None, uses the default repo.
             file_path: Filter to entities in a specific file (forward slashes).
             entity_types: Filter to specific entity types (e.g. ['FUNCTION', 'CLASS']).
+            entity_categories: Filter by entity category (expands to member types).
+                Valid categories: 'code', 'external', 'infrastructure', 'markup', 'structural'.
+                Case-insensitive. Combines with entity_types using OR semantics.
+                Example: entity_categories=['code'] filters to all 18+ code symbol types.
             relation_types: Filter to specific relation types (e.g. ['CALLS', 'IMPORTS']).
             symbol_roles: Filter relationships by symbol role (e.g. ['WriteAccess', 'Import']).
                 Valid roles: Definition, Import, WriteAccess, ReadAccess, Generated, Declaration, Dynamic, Heuristic.
@@ -759,6 +820,14 @@ def register_tools(
         role_mask, validation_err = _validate_rel_filters(symbol_roles, confidence_threshold, relation_direction)
         if validation_err is not None:
             return validation_err
+        merged_types, cat_err = _expand_entity_categories(entity_categories, entity_types)
+        if cat_err is not None:
+            return cat_err
+        # T09/T15: normalize to uppercase — stored relation_type values are
+        # uppercase enum names, so lowercase queries (e.g. ["calls"]) must
+        # match. The normalized list is also what applied_filters reports.
+        if relation_types:
+            relation_types = [rt.upper() for rt in relation_types]
         try:
             repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
@@ -783,8 +852,8 @@ def register_tools(
                              error_type=CLIENT_ERROR, hint="Use graph_overview to see all indexed files, or graph_query without file_path to search across all files.")
             table = table.filter(pc.equal(table.column("file_id"), fid))
 
-        if entity_types:
-            masks = [pc.equal(table.column("entity_type"), et) for et in entity_types]
+        if merged_types:
+            masks = [pc.equal(table.column("entity_type"), et) for et in merged_types]
             combined = masks[0]
             for m in masks[1:]:
                 combined = pc.or_(combined, m)
@@ -839,6 +908,27 @@ def register_tools(
                         rels_rows.append(r)
                         existing_keys.add(key)
 
+                # T20: stub-based cross-file incoming edges. Cross-file refs are
+                # stored as `unresolved:...::fqn` stubs under the *referencing*
+                # file, so they never match a real target_id above. Resolve each
+                # stub target to its defining file and match against the filter.
+                if file_path:
+                    resolver = get_resolver(reader)
+                    stub_mask = pc.starts_with(rels_table.column("target_id"), "unresolved:")
+                    for r in rels_table.filter(stub_mask).to_pylist():
+                        if resolver.file_id_for(r.get("target_id", "")) != fid:
+                            continue
+                        key = (r.get("source_id", ""), r.get("target_id", ""), r.get("relation_type", ""))
+                        if key not in existing_keys:
+                            rels_rows.append(r)
+                            existing_keys.add(key)
+
+            # T15: legacy artifacts store deprecated inverse types (CALLED_BY,
+            # IMPORTED_BY, ...). Re-classify to forward types with swapped
+            # endpoints BEFORE type/direction filtering so legacy and fresh
+            # artifacts behave identically.
+            rels_rows = normalize_legacy_rel_rows(rels_rows)
+
             if relation_types:
                 rels_rows = [r for r in rels_rows if r.get("relation_type") in relation_types]
 
@@ -854,7 +944,17 @@ def register_tools(
             if relation_direction == "outgoing":
                 rels_rows = [r for r in rels_rows if r.get("source_id") in entity_ids]
             elif relation_direction == "incoming":
-                rels_rows = [r for r in rels_rows if r.get("target_id") in entity_ids]
+                # T20: stub targets resolve to files, not entity_ids — keep
+                # edges whose resolved target file matches the filter file.
+                if file_path:
+                    stub_resolver = get_resolver(reader)
+                    rels_rows = [
+                        r for r in rels_rows
+                        if r.get("target_id") in entity_ids
+                        or stub_resolver.file_id_for(r.get("target_id", "")) == fid
+                    ]
+                else:
+                    rels_rows = [r for r in rels_rows if r.get("target_id") in entity_ids]
             else:
                 rels_rows = [r for r in rels_rows if r.get("source_id") in entity_ids or r.get("target_id") in entity_ids]
 
@@ -877,8 +977,12 @@ def register_tools(
             applied_filters["confidence_threshold"] = confidence_threshold
         if relation_types:
             applied_filters["relation_types"] = relation_types
-        if entity_types:
-            applied_filters["entity_types"] = entity_types
+        if merged_types:
+            # b8c0d2e4 fix: report the merged (category-expanded) type set —
+            # this is what was actually applied to the query.
+            applied_filters["entity_types"] = merged_types
+        if entity_categories:
+            applied_filters["entity_categories"] = entity_categories
         if relation_direction != "both":
             applied_filters["relation_direction"] = relation_direction
         if file_path:
@@ -893,6 +997,7 @@ def register_tools(
             total_nodes=total_nodes, total_edges=rels_table.num_rows,
             artifact_generation=gen,
             applied_filters=applied_filters or None,
+            resolver=get_resolver(reader),
         )
         res = ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
         return _inject_banner(res, repo_name, file_path=file_path)
@@ -962,7 +1067,9 @@ def register_tools(
             src_mask = pc.equal(rels_table.column("source_id"), entity_id)
             tgt_mask = pc.equal(rels_table.column("target_id"), entity_id)
             combined = pc.or_(src_mask, tgt_mask)
-            rels_rows = rels_table.filter(combined).to_pylist()
+            # T15: re-classify legacy inverse types (swaps endpoints, so match
+            # on both source and target before normalization).
+            rels_rows = normalize_legacy_rel_rows(rels_table.filter(combined).to_pylist())
 
         storage_rows = None
         if include_source:
@@ -979,6 +1086,7 @@ def register_tools(
             offset=0, limit=1,
             total_nodes=1, total_edges=len(rels_rows),
             artifact_generation=gen,
+            resolver=get_resolver(reader),
         )
         res = ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
         entity_fp = file_paths.get(entity_row.get("file_id", -1))
@@ -1035,6 +1143,10 @@ def register_tools(
         if column_err is not None:
             return column_err
 
+        # T09/T15: normalize to uppercase to match stored relation_type values.
+        if relation_types:
+            relation_types = [rt.upper() for rt in relation_types]
+
         max_depth = min(max(max_depth, 1), 20)
 
         agent_table = reader._get_table("agent_views")
@@ -1073,7 +1185,16 @@ def register_tools(
         filtered_table = rels_table
 
         if relation_types:
-            masks = [pc.equal(filtered_table.column("relation_type"), rt) for rt in relation_types]
+            # T15: also match legacy inverse type names so pre-T15 artifacts
+            # respond to forward-type filters (e.g. CALLS matches CALLED_BY).
+            forward_to_inverse = {f.name: legacy for legacy, f in INVERSE_TO_FORWARD.items()}
+            match_names: list[str] = []
+            for rt in relation_types:
+                match_names.append(rt)
+                legacy_name = forward_to_inverse.get(rt)
+                if legacy_name:
+                    match_names.append(legacy_name)
+            masks = [pc.equal(filtered_table.column("relation_type"), rt) for rt in match_names]
             combined = masks[0]
             for m in masks[1:]:
                 combined = pc.or_(combined, m)
@@ -1092,15 +1213,37 @@ def register_tools(
 
         all_rels = filtered_table.to_pylist()
 
+        # T15: re-classify legacy inverse types (forward type + swapped
+        # endpoints) so BFS direction semantics match fresh artifacts.
+        all_rels = normalize_legacy_rel_rows(all_rels)
+
+        # T20: rewire stub endpoints to their resolved definitions so BFS can
+        # hop across files. A stub target like `unresolved:...::pkg.mod.symbol`
+        # becomes the defining entity in pkg/module, turning cross-file refs
+        # into traversable edges.
+        resolver = get_resolver(reader)
+        redirect_cache: dict[str, str] = {}
+
+        def _redirect(eid: str) -> str:
+            if not eid.startswith("unresolved:"):
+                return eid
+            hit = redirect_cache.get(eid)
+            if hit is None:
+                hit = resolver.resolve_symbol(eid) or eid
+                redirect_cache[eid] = hit
+            return hit
+
         adjacency: dict[str, list[tuple[str, str, str]]] = {}
         # For 'both' direction, we need to track whether each hop is forward
         # (source→target) or reverse (target→source) for accurate rendering.
         # Each adjacency entry is (next_id, relation_type, direction) where
         # direction is "forward" or "reverse".
         for rel in all_rels:
-            sid = rel.get("source_id", "")
-            tid = rel.get("target_id", "")
+            sid = _redirect(rel.get("source_id", ""))
+            tid = _redirect(rel.get("target_id", ""))
             rt = rel.get("relation_type", "")
+            if sid == tid:
+                continue
             if relation_direction == "outgoing":
                 adjacency.setdefault(sid, []).append((tid, rt, "forward"))
             elif relation_direction == "incoming":
@@ -1230,6 +1373,8 @@ def register_tools(
         agent_rows = file_artifacts.get("agent_view", []) if file_artifacts else []
         rels_rows = file_artifacts.get("rels_view", []) if file_artifacts else []
         storage_rows = file_artifacts.get("storage_view", []) if file_artifacts else []
+        # T15: re-classify legacy inverse types so output matches fresh artifacts.
+        rels_rows = normalize_legacy_rel_rows(rels_rows)
 
         if include_cross_file_refs and rels_rows:
             agent_table = reader._get_table("agent_views")
@@ -1252,6 +1397,27 @@ def register_tools(
         file_paths = _file_paths_map(reader)
         gen = _manifest_gen(reader)
 
+        # T21: file-level connectivity (both directions) via endpoint resolution.
+        resolver = get_resolver(reader)
+        outgoing_agg: dict[str, dict[str, int]] = {}
+        incoming_agg: dict[str, dict[str, int]] = {}
+        for rel, sf, tf in resolver.cross_file_edges():
+            rt = rel.get("relation_type", "")
+            if sf == fid:
+                outgoing_agg.setdefault(resolver.path_for_file(tf) or f"file:{tf}", {}).setdefault(rt, 0)
+                outgoing_agg[resolver.path_for_file(tf) or f"file:{tf}"][rt] += 1
+            elif tf == fid:
+                incoming_agg.setdefault(resolver.path_for_file(sf) or f"file:{sf}", {}).setdefault(rt, 0)
+                incoming_agg[resolver.path_for_file(sf) or f"file:{sf}"][rt] += 1
+        file_dependencies = {
+            "outgoing": [
+                {"file": fp, "relations": rels} for fp, rels in sorted(outgoing_agg.items())
+            ],
+            "incoming": [
+                {"file": fp, "relations": rels} for fp, rels in sorted(incoming_agg.items())
+            ],
+        }
+
         markdown, structured = build_dual_output(
             agent_rows, rels_rows, file_paths,
             storage_rows=storage_rows if response_format == "detailed" else None,
@@ -1259,8 +1425,159 @@ def register_tools(
             offset=0, limit=len(agent_rows),
             total_nodes=len(agent_rows), total_edges=len(rels_rows),
             artifact_generation=gen,
+            resolver=resolver,
         )
+        structured["file_dependencies"] = file_dependencies
         res = ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
+        return _inject_banner(res, repo_name, file_path=norm_fp)
+
+    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    def file_connectivity(
+        file_path: str,
+        repo: str | None = None,
+        direction: str = "both",
+        include_external: bool = False,
+        min_confidence: float | None = None,
+        response_format: str = "concise",
+        max_tokens: int = 25000,
+    ) -> ToolResult:
+        """Get file-level connectivity: which files this file depends on and which files depend on it.
+
+        Cross-file references (stored as unresolved stubs in the artifact) are
+        resolved to their defining files, then aggregated per file with
+        relation-type counts and confidence. Ideal for dependency-graph UIs and
+        impact analysis ("who breaks if I change this file?").
+
+        The per-cell `via` list is direction-aware: `depends_on` cells name the
+        referenced (remote) symbol; `depended_on_by` cells name the referencing
+        (caller-side) symbol. Endpoints with no resolvable name contribute no
+        `via` entry (e.g. alias-named stubs, which are excluded from the name
+        index).
+
+        Args:
+            file_path: Path to the file (relative to repo root, forward slashes).
+            repo: Name of the registered repo. If None, uses the default repo.
+            direction: 'outgoing' (files this file depends on), 'incoming'
+                (files that depend on it), or 'both' (default).
+            include_external: If True, includes stdlib/external references. Default: False.
+            min_confidence: Only include edges with confidence >= this value (0.0-1.0).
+            response_format: 'concise' (default), 'detailed'.
+            max_tokens: Maximum tokens for content field. Default: 25000.
+        """
+        _role_mask, validation_err = _validate_rel_filters(None, min_confidence, direction)
+        if validation_err is not None:
+            return validation_err
+        try:
+            repo_name, reader = _resolve_repo(repo, default_root)
+        except ValueError as e:
+            return _err(str(e), error_type=CLIENT_ERROR, hint="Call list_repos to see available repos.")
+
+        norm_fp = _canonicalize_untrusted_path(str(file_path))
+        fid = reader.file_id_for_path(norm_fp)
+        if fid is None:
+            return _err(f"File not indexed: {norm_fp}",
+                         error_type=CLIENT_ERROR, hint="Use graph_overview to see all indexed files.")
+
+        resolver = get_resolver(reader)
+        gen = _manifest_gen(reader)
+
+        outgoing_rows = [(rel, sf, tf) for rel, sf, tf in resolver.cross_file_edges() if sf == fid]
+        incoming_rows = [(rel, sf, tf) for rel, sf, tf in resolver.cross_file_edges() if tf == fid]
+        if direction == "outgoing":
+            incoming_rows = []
+        elif direction == "incoming":
+            outgoing_rows = []
+
+        def _aggregate(rows: list[tuple[dict, int, int]]) -> list[dict]:
+            buckets: dict[str, dict[str, dict]] = {}
+            for rel, sf, tf in rows:
+                conf = rel.get("confidence")
+                if min_confidence is not None and (conf if conf is not None else 1.0) < min_confidence:
+                    continue
+                other_fid = tf if sf == fid else sf
+                other_fp = resolver.path_for_file(other_fid) or f"file:{other_fid}"
+                rt = rel.get("relation_type", "")
+                cell = buckets.setdefault(other_fp, {}).setdefault(
+                    rt, {"count": 0, "max_confidence": 0.0, "via": []},
+                )
+                cell["count"] += 1
+                cell["max_confidence"] = max(cell["max_confidence"], conf if conf is not None else 1.0)
+                # Direction-aware via naming: outgoing rows name the referenced
+                # (remote) symbol; incoming rows name the referencing (caller)
+                # symbol — "other.py depends on us via their_caller".
+                via_eid = rel.get("target_id", "") if sf == fid else rel.get("source_id", "")
+                via_name = resolver.name_for(via_eid)
+                if via_name and via_name not in cell["via"]:
+                    cell["via"].append(via_name)
+            return [
+                {
+                    "file": fp,
+                    "relations": {
+                        rt: {
+                            "count": cell["count"],
+                            "max_confidence": round(cell["max_confidence"], 3),
+                            "via": cell["via"],
+                        }
+                        for rt, cell in sorted(rels.items())
+                    },
+                }
+                for fp, rels in sorted(buckets.items())
+            ]
+
+        depends_on = _aggregate(outgoing_rows)
+        depended_on_by = _aggregate(incoming_rows)
+
+        external: dict = {"stdlib": [], "unresolved_count": 0}
+        file_rels = reader.get_file_artifacts_by_id(fid).get("rels_view", [])
+        for rel in file_rels:
+            if rel.get("relation_type") == "CONTAINS":
+                continue
+            tgt = resolver.resolve(rel.get("target_id", ""))
+            if tgt.kind == KIND_EXTERNAL_STDLIB:
+                # Parse the stdlib root via the resolver's stub_fqn (single
+                # choke point for stub-ID parsing) so dot-normalized Rust
+                # scoped refs (unresolved:scope::std.io.Write) report "std"
+                # instead of the bare last segment.
+                root = stub_fqn(rel["target_id"]).split(".")[0]
+                if root:
+                    external["stdlib"].append(root)
+            elif tgt.kind == KIND_EXTERNAL_UNRESOLVED:
+                external["unresolved_count"] += 1
+        external["stdlib"] = sorted(set(external["stdlib"]))
+
+        stats = {
+            "outgoing_files": len(depends_on),
+            "incoming_files": len(depended_on_by),
+            "unresolved_stubs": external["unresolved_count"],
+            "artifact_generation": gen,
+        }
+
+        markdown = format_file_connectivity(
+            norm_fp, depends_on, depended_on_by,
+            external=external if include_external else None,
+            stats=stats,
+        )
+        truncated_md, was_truncated = truncate_to_budget(markdown, max_tokens)
+        if was_truncated:
+            truncated_md += f"\n\n---\nTruncated to fit {max_tokens} token budget."
+
+        structured = {
+            "file": norm_fp,
+            "depends_on": depends_on,
+            "depended_on_by": depended_on_by,
+            "external": external,
+            "stats": stats,
+            "meta": build_meta(
+                total_nodes=stats["outgoing_files"] + stats["incoming_files"],
+                total_edges=stats["outgoing_files"] + stats["incoming_files"],
+                returned_nodes=len(depends_on) + len(depended_on_by),
+                returned_edges=len(depends_on) + len(depended_on_by),
+                offset=0, limit=len(depends_on) + len(depended_on_by),
+                truncated=was_truncated, generation=gen,
+                tokens_used=estimate_tokens(truncated_md), token_budget=max_tokens,
+            ),
+        }
+        res = ToolResult(content=[TextContent(type="text", text=truncated_md)], structured_content=structured)
         return _inject_banner(res, repo_name, file_path=norm_fp)
 
     @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
@@ -1268,6 +1585,7 @@ def register_tools(
         query: str,
         repo: str | None = None,
         entity_types: list[str] | None = None,
+        entity_categories: list[str] | None = None,
         symbol_roles: list[str] | None = None,
         limit: int = 25,
         response_format: str = "concise",
@@ -1284,6 +1602,10 @@ def register_tools(
             query: Substring or regex pattern to match entity names.
             repo: Name of the registered repo. If None, uses the default repo.
             entity_types: Filter to specific types (e.g. ['FUNCTION', 'CLASS']).
+            entity_categories: Filter by entity category (expands to member types).
+                Valid categories: 'code', 'external', 'infrastructure', 'markup', 'structural'.
+                Case-insensitive. Combines with entity_types using OR semantics.
+                Example: entity_categories=['code'] filters to all code symbol types.
             symbol_roles: Filter to entities that participate in relationships with
                 the specified symbol roles (e.g. ['WriteAccess']).
                 Valid roles: Definition, Import, WriteAccess, ReadAccess, Generated, Declaration, Dynamic, Heuristic.
@@ -1293,6 +1615,9 @@ def register_tools(
         role_mask, validation_err = _validate_rel_filters(symbol_roles, None, "both")
         if validation_err is not None:
             return validation_err
+        merged_types, cat_err = _expand_entity_categories(entity_categories, entity_types)
+        if cat_err is not None:
+            return cat_err
         try:
             repo_name, reader = _resolve_repo(repo, default_root)
         except ValueError as e:
@@ -1316,8 +1641,8 @@ def register_tools(
             mask = pc.match_substring(agent_table.column("name"), query)
         table = agent_table.filter(mask)
 
-        if entity_types:
-            masks = [pc.equal(table.column("entity_type"), et) for et in entity_types]
+        if merged_types:
+            masks = [pc.equal(table.column("entity_type"), et) for et in merged_types]
             combined = masks[0]
             for m in masks[1:]:
                 combined = pc.or_(combined, m)
@@ -1362,10 +1687,22 @@ def register_tools(
                 lr = f"L{sl}" if not el or el == sl else f"L{sl}-{el}"
             lines.append(f"- {name} [{etype}] {fp}:{lr} — `{eid}`")
 
+        # T04/T07: report the filters actually applied, mirroring graph_query
+        # (which nests applied_filters under meta via build_dual_output).
+        applied_filters: dict = {}
+        if symbol_roles:
+            applied_filters["symbol_roles"] = symbol_roles
+        if merged_types:
+            applied_filters["entity_types"] = merged_types
+        if entity_categories:
+            applied_filters["entity_categories"] = entity_categories
+
         structured = {
             "results": [build_node_dict_simple(r, file_paths) for r in rows],
             "meta": {"total_matches": total, "returned": len(rows), "artifact_generation": gen},
         }
+        if applied_filters:
+            structured["meta"]["applied_filters"] = applied_filters
         res = ToolResult(content=[TextContent(type="text", text="\n".join(lines))], structured_content=structured)
         return _inject_banner(res, repo_name)
 

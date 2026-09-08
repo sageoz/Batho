@@ -323,7 +323,7 @@ class HCLExtractor(MarkupConfigExtractor):
                         self._create_relationship(
                             source_id=doc.id,
                             target_id=f"resource:{ref_type}.{ref_name}",
-                            rel_type=RelationshipType.REFERENCES,
+                            rel_type=RelationshipType.READS,
                             line=line_no,
                             reference_start_byte=ref_start,
                             reference_end_byte=ref_end,
@@ -363,7 +363,7 @@ class HCLExtractor(MarkupConfigExtractor):
                         self._create_relationship(
                             source_id=doc.id,
                             target_id=module_ref,
-                            rel_type=RelationshipType.REFERENCES,
+                            rel_type=RelationshipType.READS,
                             line=line_no,
                             reference_start_byte=ref_start,
                             reference_end_byte=ref_end,

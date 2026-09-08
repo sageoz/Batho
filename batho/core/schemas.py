@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from batho.utils.hash import compute_bytes_hash
 
@@ -378,7 +378,11 @@ class EntityType(Enum):
     VARIABLE = auto()
     PROPERTY = auto()
     ENTRY_POINT = auto()
-    UNRESOLVED = auto()  # Deprecated in favor of EXTERNAL_SYMBOL
+    CONSTRUCTOR = auto()  # OO constructors (__init__, new, constructor)
+    ENUM_MEMBER = auto()  # Enum variants/enumerators
+    PARAMETER = auto()  # Function/method parameters (opt-in)
+    TYPE_PARAMETER = auto()  # Generic type parameters (T, K, V — opt-in)
+    UNRESOLVED = auto()  # Deprecated (T13/T14) in favor of EXTERNAL_SYMBOL
     EXTERNAL_SYMBOL = auto()  # Strict SCIP external reference node
     INFRASTRUCTURE_CONFIG = auto()
     ENVIRONMENT_VARIABLE = auto()
@@ -386,15 +390,107 @@ class EntityType(Enum):
     SETTING = auto()  # Key-value pairs (JSON, YAML, TOML)
     SECTION = auto()  # Named sections/objects
     ELEMENT = auto()  # HTML/CSS/Markdown structural elements
-    ATTRIBUTE = auto()  # Element attributes
+    ATTRIBUTE = auto()  # Deprecated (T14): reserved-as-unused; HTML attrs live in element metadata
     DOCUMENT = auto()  # Document-level entity
     SYNTAX_GLUE = auto()  # whitespace, comments, non-semantic segments
-    GLOBAL_STATEMENT = auto()  # top-level executable statements
-    IMPORT_BLOCK = auto()  # import-only regions
+    GLOBAL_STATEMENT = auto()  # Deprecated (T14): reserved-as-unused, never emitted
+    IMPORT_BLOCK = auto()  # Deprecated (T14): reserved-as-unused, never emitted
     COMMENT_BLOCK = auto()  # comment-only regions
 
     def __str__(self) -> str:
         return self.name.lower()
+
+    @property
+    def category(self) -> "EntityCategory | None":
+        """Return the coarse EntityCategory for this entity type.
+
+        Uses a pre-built cache for O(1) lookup. Every EntityType except
+        deprecated/dead types (UNRESOLVED, ATTRIBUTE, GLOBAL_STATEMENT,
+        IMPORT_BLOCK) maps to exactly one category; those return ``None``
+        (b8c0d2e4: avoids an unhelpful bare KeyError for callers).
+        """
+        return _ENTITY_TYPE_TO_CATEGORY.get(self)
+
+
+class EntityCategory(Enum):
+    """Coarse grouping of EntityType values for filtering and reporting.
+
+    Enables ``graph_query(entity_categories=["code"])`` instead of listing
+    15+ individual types. See ENTITY_CATEGORIES for the full mapping.
+    """
+
+    CODE = auto()
+    EXTERNAL = auto()
+    INFRASTRUCTURE = auto()
+    MARKUP = auto()
+    STRUCTURAL = auto()
+
+    def __str__(self) -> str:
+        return self.name.lower()
+
+
+# Mapping from EntityCategory to its member EntityType values.
+ENTITY_CATEGORIES: dict[EntityCategory, frozenset[EntityType]] = {
+    EntityCategory.CODE: frozenset({
+        EntityType.FUNCTION,
+        EntityType.METHOD,
+        EntityType.CLASS,
+        EntityType.STRUCT,
+        EntityType.INTERFACE,
+        EntityType.TRAIT,
+        EntityType.ENUM,
+        EntityType.TYPE_ALIAS,
+        EntityType.FIELD,
+        EntityType.CONSTANT,
+        EntityType.VARIABLE,
+        EntityType.MODULE,
+        EntityType.NAMESPACE,
+        EntityType.ENTRY_POINT,
+        EntityType.PROPERTY,
+        EntityType.CONSTRUCTOR,
+        EntityType.ENUM_MEMBER,
+        EntityType.PARAMETER,
+        EntityType.TYPE_PARAMETER,
+    }),
+    EntityCategory.EXTERNAL: frozenset({
+        EntityType.EXTERNAL_SYMBOL,
+    }),
+    EntityCategory.INFRASTRUCTURE: frozenset({
+        EntityType.INFRASTRUCTURE_CONFIG,
+        EntityType.ENVIRONMENT_VARIABLE,
+    }),
+    EntityCategory.MARKUP: frozenset({
+        EntityType.SETTING,
+        EntityType.SECTION,
+        EntityType.ELEMENT,
+        EntityType.DOCUMENT,
+    }),
+    EntityCategory.STRUCTURAL: frozenset({
+        EntityType.SYNTAX_GLUE,
+        EntityType.COMMENT_BLOCK,
+    }),
+}
+
+DEPRECATED_ENTITY_TYPES: frozenset[EntityType] = frozenset({
+    EntityType.UNRESOLVED,
+    EntityType.ATTRIBUTE,
+    EntityType.GLOBAL_STATEMENT,
+    EntityType.IMPORT_BLOCK,
+})
+
+# T13/T14: Legacy serialized type names remapped on deserialization.
+# ``unresolved`` entities are treated as EXTERNAL_SYMBOL (T13); the other
+# deprecated types were never emitted, so they load via the enum as-is.
+_LEGACY_ENTITY_TYPE_MAP: dict[str, EntityType] = {
+    "UNRESOLVED": EntityType.EXTERNAL_SYMBOL,
+}
+
+# Pre-built reverse lookup cache: EntityType → EntityCategory
+_ENTITY_TYPE_TO_CATEGORY: dict[EntityType, EntityCategory] = {
+    et: cat
+    for cat, types in ENTITY_CATEGORIES.items()
+    for et in types
+}
 
 
 class RelationshipType(Enum):
@@ -406,17 +502,19 @@ class RelationshipType(Enum):
     IMPLEMENTS = auto()
     USES = auto()
     CONTAINS = auto()
-    REFERENCES = auto()
+    REFERENCES = auto()  # Legacy — kept for backward compat; new edges use READS/WRITES
+    READS = auto()       # T09: Read access (replaces ref.read → REFERENCES)
+    WRITES = auto()      # T09: Write access (replaces ref.write → REFERENCES)
     DEFINES = auto()
-    CALLED_BY = auto()
-    IMPORTED_BY = auto()
+    CALLED_BY = auto()  # Deprecated (T15): use CALLS + relation_direction="incoming"
+    IMPORTED_BY = auto()  # Deprecated (T15): use IMPORTS + relation_direction="incoming"
     OVERRIDES = auto()
     STACK_BOUNDARY = auto()
     WRAPPED_BY = auto()
     DEPENDS_ON_API = auto()
-    REFERENCED_IN = auto()
+    REFERENCED_IN = auto()  # Deprecated (T15): use READS + relation_direction="incoming"
     CLEANED_BY = auto()
-    CONTAINED_WITHIN = auto()
+    CONTAINED_WITHIN = auto()  # Deprecated (T15): use CONTAINS + relation_direction="incoming"
     # Markup / Config
     HAS_ATTRIBUTE = auto()
     LINKS_TO = auto()
@@ -424,6 +522,24 @@ class RelationshipType(Enum):
 
     def __str__(self) -> str:
         return self.name.lower()
+
+
+# T15: Deprecated inverse relationship types → their forward equivalents.
+# Legacy edges are re-classified on construction (see
+# ``Relationship._reclassify_legacy_references``): the type becomes the forward
+# type and the endpoints are swapped so direction-aware queries
+# (``relation_direction="incoming"``) return the same pairs the inverse type
+# used to. ``metadata["reversed"] = True`` marks re-classified edges.
+INVERSE_TO_FORWARD: dict[str, RelationshipType] = {
+    "CALLED_BY": RelationshipType.CALLS,
+    "IMPORTED_BY": RelationshipType.IMPORTS,
+    "REFERENCED_IN": RelationshipType.READS,
+    "CONTAINED_WITHIN": RelationshipType.CONTAINS,
+}
+
+# T15: Inverse types kept in the enum for backward-compatible artifact loading,
+# but no longer emitted by the graph builder or compression rules.
+DEPRECATED_RELATIONSHIP_TYPES: frozenset[str] = frozenset(INVERSE_TO_FORWARD)
 
 
 class BSGViewType(Enum):
@@ -513,8 +629,13 @@ class Entity(BaseModel):
 
     @property
     def is_contextual_stub(self) -> bool:
-        """Check if this entity is a contextual stub for unresolved cross-file references."""
-        return self.type == EntityType.UNRESOLVED and self.id.startswith("unresolved:")
+        """Check if this entity is a contextual stub for unresolved cross-file references.
+
+        T13: New stubs are EXTERNAL_SYMBOL entities; legacy artifacts may still
+        carry UNRESOLVED stubs (the enum value is deprecated but kept). Both are
+        recognized via the stable ``unresolved:`` ID prefix.
+        """
+        return self.type in (EntityType.UNRESOLVED, EntityType.EXTERNAL_SYMBOL) and self.id.startswith("unresolved:")
 
     def compute_content_hash(self) -> str:
         """Return a SHA256 hash of the raw content bytes."""
@@ -627,13 +748,19 @@ class Entity(BaseModel):
         if "type" in d and isinstance(d["type"], str):
             # Convert lowercase string to uppercase enum key
             type_str = d["type"].upper()
-            try:
-                d["type"] = EntityType[type_str]
-            except KeyError:
-                raise ValueError(
-                    f"Unknown EntityType: {d['type']!r}. "
-                    f"Valid values: {[e.name for e in EntityType]}"
-                )
+            # T13/T14: map deprecated entity types to their replacements so
+            # legacy artifacts load as their current equivalents.
+            legacy = _LEGACY_ENTITY_TYPE_MAP.get(type_str)
+            if legacy is not None:
+                d["type"] = legacy
+            else:
+                try:
+                    d["type"] = EntityType[type_str]
+                except KeyError:
+                    raise ValueError(
+                        f"Unknown EntityType: {d['type']!r}. "
+                        f"Valid values: {[e.name for e in EntityType]}"
+                    )
         # Deserialize raw_bytes from hex string (backward compatible with missing field)
         if "raw_bytes" in d and isinstance(d["raw_bytes"], str):
             try:
@@ -688,6 +815,58 @@ class Relationship(BaseModel):
     definition_end_byte: int | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     confidence: float = 1.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reclassify_legacy_references(cls, data: Any) -> Any:
+        """T09 (f6c8d0e2) / T15: Re-classify legacy edge types.
+
+        T09: legacy REFERENCES → READS/WRITES based on SymbolRole.
+        T15: deprecated inverse types (CALLED_BY, IMPORTED_BY, REFERENCED_IN,
+        CONTAINED_WITHIN) → their forward type with swapped endpoints and
+        ``metadata["reversed"] = True``.
+
+        Runs on every construction path (direct init, from_dict, model_validate)
+        so behavior is identical regardless of how the Relationship is created.
+        Note: this changes the computed ``id`` for re-classified edges (the id
+        includes ``type.name``). Legacy artifacts loaded via from_dict will
+        therefore recompute different ids than at write time — documented in
+        the T09/T15 migration notes.
+        """
+        if not isinstance(data, dict):
+            return data
+        rel_type = data.get("type")
+        # T15: legacy inverse types → forward type with swapped endpoints.
+        if isinstance(rel_type, RelationshipType):
+            type_name = rel_type.name
+        elif isinstance(rel_type, str):
+            type_name = rel_type.upper()
+        else:
+            return data
+        forward = INVERSE_TO_FORWARD.get(type_name)
+        if forward is not None:
+            source_id = data.get("source_id")
+            target_id = data.get("target_id")
+            if source_id is not None and target_id is not None:
+                data["source_id"], data["target_id"] = target_id, source_id
+            data["type"] = forward
+            meta = data.get("metadata")
+            meta = dict(meta) if isinstance(meta, dict) else {}
+            meta["reversed"] = True
+            data["metadata"] = meta
+            return data
+        if data.get("type") != RelationshipType.REFERENCES:
+            return data
+        roles = data.get("roles", SymbolRole(0))
+        try:
+            roles = SymbolRole(roles)
+        except (ValueError, TypeError):
+            return data
+        if roles & SymbolRole.WriteAccess:
+            data["type"] = RelationshipType.WRITES
+        elif roles & SymbolRole.ReadAccess:
+            data["type"] = RelationshipType.READS
+        return data
 
     # Note on confidence:
     # Mutating confidence inside a model validator for a frozen Pydantic model is not
@@ -751,6 +930,9 @@ class Relationship(BaseModel):
                     d["roles"] = role_bits
             else:
                 d["roles"] = SymbolRole(role_val)
+        # T09: Legacy REFERENCES → READS/WRITES reclassification is handled by
+        # the _reclassify_legacy_references model_validator, so all construction
+        # paths behave identically.
         return cls(**d)
 
     def _evolve(self, **fields: Any) -> "Relationship":

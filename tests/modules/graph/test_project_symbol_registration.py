@@ -56,7 +56,7 @@ def _make_stub(name: str, target_name: str, caller_scope: str = "batho test pkg 
     """Create a contextual stub entity."""
     stub_id = f"unresolved:{caller_scope}::{target_name}"
     return Entity(
-        type=EntityType.UNRESOLVED,
+        type=EntityType.EXTERNAL_SYMBOL,
         name=name,
         file="/test/main.py",
         start_line=10,

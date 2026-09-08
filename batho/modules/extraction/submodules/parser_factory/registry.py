@@ -332,15 +332,23 @@ def set_parsing_config(config: dict[str, Any]) -> None:
     Set the global parsing configuration for all extractors.
 
     This should be called before any extractors are instantiated.
+    If extractors are already cached, their parsing config is updated
+    in-place via ``set_parsing_config()``.
 
     Args:
         config: Parsing configuration dict with keys:
             - error_recovery: bool (default True)
             - partial_parsing: bool (default False)
             - skip_comments: bool (default False)
+            - extract_parameters: bool (default False)
+            - extract_type_parameters: bool (default False)
     """
     global _parsing_config
     _parsing_config = config
+    # Update already-cached extractor instances with the new config
+    for extractor in _instances.values():
+        if hasattr(extractor, 'set_parsing_config'):
+            extractor.set_parsing_config(config)
 
 
 def get_parsing_config() -> dict[str, Any]:

@@ -66,7 +66,7 @@ def _make_stub(
     if receiver_type:
         meta["receiver_type"] = receiver_type
     return Entity(
-        type=EntityType.UNRESOLVED,
+        type=EntityType.EXTERNAL_SYMBOL,
         name=target_name,
         file=file,
         start_line=line,

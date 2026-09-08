@@ -276,10 +276,12 @@ def run():
             assert len(resolved_connect_calls) >= 1
             ext_target_id = resolved_connect_calls[0].target_id
 
-            # Verify that the target entity was generated as an UNRESOLVED contextual stub
+            # Verify that the target entity was generated as an EXTERNAL_SYMBOL
+            # contextual stub (T13: UNRESOLVED is deprecated)
             assert ext_target_id in graph.entities
             ext_entity = graph.entities[ext_target_id]
-            assert ext_entity.type == EntityType.UNRESOLVED
+            assert ext_entity.type == EntityType.EXTERNAL_SYMBOL
+            assert ext_entity.is_contextual_stub
             # Stub ID format: "unresolved:<caller_scope>::<target_name>"
             assert ext_entity.id.startswith("unresolved:")
             assert "connect" in ext_entity.id

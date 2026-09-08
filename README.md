@@ -5,8 +5,8 @@
 <h1 align="center">B.A.T.H.O</h1>
 
 <p align="center">
-  Give your AI coding agent a map of your codebase — not the whole territory.<br>
-  Reduce token spend 10x, eliminate hallucinations, and ship faster with graph-powered code intelligence.
+  Knowledge Graph for your codebase<br>
+  Give your AI coding agent a map of your codebase<br>
 </p>
 
 <p align="center">
@@ -18,6 +18,7 @@
 </p>
 
 <p align="center">
+  Reduce token spend 10x, eliminate hallucinations, and ship faster with graph-powered code intelligence.<br>
   <strong>Works with:</strong>
   Claude Code &middot; Cursor &middot; Windsurf &middot; Antigravity &middot; Gemini CLI &middot; Cline &middot; OpenCode &middot; Aider
 </p>

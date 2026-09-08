@@ -150,14 +150,23 @@ class TestRustContainsSynthesis:
         assert len(enum_ents) == 1, f"Expected 1 Color enum, got {len(enum_ents)}"
         assert len(method_ents) == 1, f"Expected 1 method, got {len(method_ents)}"
 
+        # T02: enum members (Red, Blue) are now extracted as ENUM_MEMBER entities
+        # and CONTAINS relationships are created from the enum to its members.
+        # So we expect CONTAINS from Color to: from_str (method) + Red + Blue.
+        enum_member_ents = [e for e in entities if e.type == EntityType.ENUM_MEMBER]
+        assert len(enum_member_ents) == 2, f"Expected 2 enum members, got {len(enum_member_ents)}"
+
         contains_rels = [
             r for r in relationships
             if r.type == RelationshipType.CONTAINS and r.source_id == enum_ents[0].id
         ]
-        assert len(contains_rels) == 1, (
-            f"Expected 1 CONTAINS from Color to from_str, got {len(contains_rels)}"
+        # 1 method + 2 enum members = 3 CONTAINS relationships
+        assert len(contains_rels) == 1 + len(enum_member_ents), (
+            f"Expected {1 + len(enum_member_ents)} CONTAINS from Color, got {len(contains_rels)}"
         )
-        assert contains_rels[0].target_id == method_ents[0].id
+        # Verify the method is among the contains targets
+        contains_target_ids = {r.target_id for r in contains_rels}
+        assert method_ents[0].id in contains_target_ids
 
     def test_trait_impl_links_to_struct_not_trait(
         self, tmp_path: Path, extractor

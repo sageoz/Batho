@@ -86,6 +86,11 @@ PYTHON_QUERY = r"""
       attribute: (identifier) @ref.call)
   ])
 
+; T10: Indirect call — function name passed as argument (bare identifier only)
+(call
+  arguments: (argument_list
+    (identifier) @ref.indirect_call))
+
 ; ── Variable read / write access ──────────────────────────────────────────────
 (assignment
   left: (identifier) @ref.write)
@@ -110,6 +115,100 @@ PYTHON_QUERY = r"""
     (string) @def.entry_point.value)
   (#eq? @def.entry_point.name "__name__")
   (#match? @def.entry_point.value "['\"]__main__['\"]")) @def.entry_point.invocation
+
+; ── Constructor: __init__ methods (captured as def.constructor) ──────────────
+; Python __init__ is captured as a method but reclassified to CONSTRUCTOR
+; by the extractor based on the method name.
+(class_definition
+  body: (block
+    (function_definition
+      name: (identifier) @def.constructor.name
+      parameters: (parameters) @def.constructor.params
+      body: (block
+        (string)? @def.constructor.docstring))
+    (#eq? @def.constructor.name "__init__")))
+
+; ── Parameters (opt-in via extraction.extract_parameters) ───────────────────
+; Captured as def.parameter — extractor filters based on config flag.
+; d4a6b8c0 fix: capture all parameter forms (bare, typed, default, splat)
+; and exclude self/cls receiver params.
+(function_definition
+  parameters: (parameters
+    (identifier) @def.parameter.name
+    (#not-eq? @def.parameter.name "self")
+    (#not-eq? @def.parameter.name "cls")))
+
+(function_definition
+  parameters: (parameters
+    (default_parameter
+      name: (identifier) @def.parameter.name
+      (#not-eq? @def.parameter.name "self")
+      (#not-eq? @def.parameter.name "cls"))))
+
+(function_definition
+  parameters: (parameters
+    (typed_parameter
+      (identifier) @def.parameter.name
+      (#not-eq? @def.parameter.name "self")
+      (#not-eq? @def.parameter.name "cls"))))
+
+(function_definition
+  parameters: (parameters
+    (typed_default_parameter
+      name: (identifier) @def.parameter.name
+      (#not-eq? @def.parameter.name "self")
+      (#not-eq? @def.parameter.name "cls"))))
+
+(function_definition
+  parameters: (parameters
+    (list_splat_pattern
+      (identifier) @def.parameter.name
+      (#not-eq? @def.parameter.name "self")
+      (#not-eq? @def.parameter.name "cls"))))
+
+(function_definition
+  parameters: (parameters
+    (dictionary_splat_pattern
+      (identifier) @def.parameter.name
+      (#not-eq? @def.parameter.name "self")
+      (#not-eq? @def.parameter.name "cls"))))
+
+; ── Type parameters (Python 3.12+, opt-in) ──────────────────────────────────
+; Captured as def.type_parameter — extractor filters based on config flag.
+(type_parameter
+  (type
+    (identifier) @def.type_parameter.name))
+
+; ── Properties: @property decorated methods ─────────────────────────────────
+; Captured as def.property — the extractor reclassifies from METHOD to PROPERTY.
+; The #eq? predicate ensures only @property decorators trigger this capture.
+(class_definition
+  body: (block
+    (decorated_definition
+      (decorator
+        (identifier) @_prop_decorator
+        (#eq? @_prop_decorator "property"))
+      definition: (function_definition
+        name: (identifier) @def.property.name
+        parameters: (parameters) @def.property.params
+        body: (block
+          (string)? @def.property.docstring)))))
+
+; ── Property setters: @x.setter decorated methods ───────────────────────────
+; The decorator is an attribute node (e.g., @x.setter). Captured as def.property
+; with metadata.access_type="write" set by the extractor.
+(class_definition
+  body: (block
+    (decorated_definition
+      (decorator
+        (attribute
+          attribute: (identifier) @_setter_attr
+          (#eq? @_setter_attr "setter")))
+      definition: (function_definition
+        name: (identifier) @def.property.name
+        parameters: (parameters) @def.property.params
+        body: (block
+          (string)? @def.property.docstring)))))
 """
 
 
@@ -147,6 +246,16 @@ JAVASCRIPT_QUERY = (
 (import_statement
   source: (string) @ref.import.module)
 
+; T12: Re-exports — export { X } from './module'; export * from './module'
+(export_statement
+  (string) @ref.re_export.module)
+
+; T11: Dynamic imports — import('module') is a call_expression with import as function
+(call_expression
+  function: (import)
+  arguments: (arguments
+    (string) @ref.dynamic_import))
+
 (call_expression
   function: (identifier) @_require_fn
   arguments: (arguments
@@ -160,6 +269,11 @@ JAVASCRIPT_QUERY = (
 (call_expression
   function: (member_expression
     property: (property_identifier) @ref.call))
+
+; T10: Indirect call — function name passed as argument (identifier only, not call/string/lambda)
+(call_expression
+  arguments: (arguments
+    (identifier) @ref.indirect_call))
 
 ; ── Variable read / write access ──────────────────────────────────────────────
 (assignment_expression
@@ -207,6 +321,51 @@ TYPESCRIPT_QUERY = (
   parameters: (formal_parameters) @def.method.params
   return_type: (type_annotation)? @def.method.return_type)
 
+; ── Constructor (method named "constructor") ────────────────────────────────
+(method_definition
+  name: (property_identifier) @def.constructor.name
+  parameters: (formal_parameters) @def.constructor.params
+  (#eq? @def.constructor.name "constructor"))
+
+; ── Parameters (opt-in via extraction.extract_parameters) ───────────────────
+; Captured as def.parameter — extractor filters based on config flag.
+; Covers plain, optional, and rest parameters; destructuring patterns are
+; skipped (no single binding name).
+(formal_parameters
+  (required_parameter
+    pattern: (identifier) @def.parameter.name))
+
+(formal_parameters
+  (optional_parameter
+    pattern: (identifier) @def.parameter.name))
+
+(formal_parameters
+  (required_parameter
+    (rest_pattern
+      (identifier) @def.parameter.name)))
+
+; ── Type parameters (opt-in via extraction.extract_type_parameters) ─────────
+; Captured as def.type_parameter — extractor filters based on config flag.
+(type_parameters
+  (type_parameter
+    name: (type_identifier) @def.type_parameter.name))
+
+; ── Property accessors: get/set ─────────────────────────────────────────────
+; TypeScript get/set accessors are method_definition nodes with a get/set keyword.
+(class_declaration
+  body: (class_body
+    (method_definition
+      "get" @def.property.accessor
+      name: (property_identifier) @def.property.name
+      parameters: (formal_parameters) @def.property.params)))
+
+(class_declaration
+  body: (class_body
+    (method_definition
+      "set" @def.property.accessor
+      name: (property_identifier) @def.property.name
+      parameters: (formal_parameters) @def.property.params)))
+
 ; ── Function declarations ────────────────────────────────────────────────────
 (function_declaration
   name: (identifier) @def.function.name
@@ -224,6 +383,16 @@ TYPESCRIPT_QUERY = (
 (import_statement
   source: (string) @ref.import.module)
 
+; T12: Re-exports — export { X } from './module'; export * from './module'
+(export_statement
+  (string) @ref.re_export.module)
+
+; T11: Dynamic imports — import('module') is a call_expression with import as function
+(call_expression
+  function: (import)
+  arguments: (arguments
+    (string) @ref.dynamic_import))
+
 (call_expression
   function: (identifier) @_require_fn
   arguments: (arguments
@@ -237,6 +406,11 @@ TYPESCRIPT_QUERY = (
 (call_expression
   function: (member_expression
     property: (property_identifier) @ref.call))
+
+; T10: Indirect call — function name passed as argument (identifier only, not call/string/lambda)
+(call_expression
+  arguments: (arguments
+    (identifier) @ref.indirect_call))
 
 ; ── Variable read / write access ──────────────────────────────────────────────
 (assignment_expression
@@ -268,6 +442,12 @@ RUST_QUERY = r"""
 (enum_item
   name: (type_identifier) @def.enum.name)
 
+; ── Enum member definitions (variants) ───────────────────────────────────────
+(enum_item
+  body: (enum_variant_list
+    (enum_variant
+      name: (identifier) @def.enum_member.name)))
+
 ; ── Trait definitions ─────────────────────────────────────────────────────────
 (trait_item
   name: (type_identifier) @def.trait.name)
@@ -289,6 +469,50 @@ RUST_QUERY = r"""
       name: (identifier) @def.method.name
       parameters: (parameters) @def.method.params
       return_type: (_)? @def.method.return_type)))
+
+; ── Constructor: `new` associated functions in impl blocks ──────────────────
+; Rust has no constructor syntax; `new` associated functions are the idiom.
+; Captured as def.constructor — the extractor prefers this over the
+; overlapping def.method capture via name-byte dedup.
+(impl_item
+  body: (declaration_list
+    (function_item
+      (visibility_modifier)? @def.constructor.visibility
+      name: (identifier) @def.constructor.name
+      parameters: (parameters) @def.constructor.params
+      return_type: (_)? @def.constructor.return_type)
+    (#eq? @def.constructor.name "new")))
+
+; ── Parameters (opt-in via extraction.extract_parameters) ───────────────────
+; Captured as def.parameter — extractor filters based on config flag.
+; Anchored on the function parameter list (closures excluded, mirroring
+; Python which skips lambda params). self_parameter is a distinct node type
+; and is never matched. Covers plain, mut, ref, and tuple-destructuring forms.
+(parameters
+  (parameter
+    pattern: (identifier) @def.parameter.name))
+
+(parameters
+  (parameter
+    pattern: (ref_pattern
+      (identifier) @def.parameter.name)))
+
+(parameters
+  (parameter
+    pattern: (reference_pattern
+      (identifier) @def.parameter.name)))
+
+(parameters
+  (parameter
+    pattern: (tuple_pattern
+      (identifier) @def.parameter.name)))
+
+; ── Type parameters (opt-in via extraction.extract_type_parameters) ─────────
+; Captured as def.type_parameter — extractor filters based on config flag.
+; The name: field excludes default types (K = String) and trait bounds.
+(type_parameters
+  (type_parameter
+    name: (type_identifier) @def.type_parameter.name))
 
 ; ── Impl block target type (for CONTAINS linkage) ───────────────────────────
 (impl_item
@@ -384,11 +608,21 @@ JAVA_QUERY = r"""
   name: (identifier) @def.method.name
   parameters: (formal_parameters) @def.method.params)
 
-; ── Constructor declarations (treated as methods) ─────────────────────────────
+; ── Constructor declarations ─────────────────────────────────────────────────
 (constructor_declaration
-  (modifiers)? @def.method.visibility
-  name: (identifier) @def.method.name
-  parameters: (formal_parameters) @def.method.params)
+  (modifiers)? @def.constructor.visibility
+  name: (identifier) @def.constructor.name
+  parameters: (formal_parameters) @def.constructor.params)
+
+; ── Enum declarations ────────────────────────────────────────────────────────
+(enum_declaration
+  name: (identifier) @def.enum.name)
+
+; T02: Enum members — enum_constant nodes inside enum_body
+(enum_declaration
+  body: (enum_body
+    (enum_constant
+      (identifier) @def.enum_member.name)))
 
 ; ── Field declarations ────────────────────────────────────────────────────────
 (field_declaration
@@ -396,6 +630,26 @@ JAVA_QUERY = r"""
   type: (_) @def.field.type
   declarator: (variable_declarator
     name: (identifier) @def.field.name))
+
+; ── Parameters (opt-in via extraction.extract_parameters) ───────────────────
+; Captured as def.parameter — extractor filters based on config flag.
+; Covers plain and varargs (spread) parameters.
+(formal_parameters
+  (formal_parameter
+    name: (identifier) @def.parameter.name))
+
+(formal_parameters
+  (spread_parameter
+    (variable_declarator
+      name: (identifier) @def.parameter.name)))
+
+; ── Type parameters (opt-in via extraction.extract_type_parameters) ─────────
+; Captured as def.type_parameter — extractor filters based on config flag.
+; The "." anchor restricts the capture to the parameter's own name, not the
+; type_bound identifiers nested inside it.
+(type_parameters
+  (type_parameter
+    . (type_identifier) @def.type_parameter.name))
 
 ; ── Imports ─────────────────────────────────────────────────────────────────
 (import_declaration
@@ -484,6 +738,16 @@ C_QUERY = r"""
     body: (field_declaration_list))
   declarator: (type_identifier) @def.struct.name)
 
+; ── Enum definitions ─────────────────────────────────────────────────────────
+(enum_specifier
+  name: (type_identifier) @def.enum.name)
+
+; T02: Enum members — enumerator nodes inside enumerator_list
+(enum_specifier
+  body: (enumerator_list
+    (enumerator
+      (identifier) @def.enum_member.name)))
+
 ; ── Preprocessor includes ────────────────────────────────────────────────────
 (preproc_include
   path: (_) @ref.import.module)
@@ -538,6 +802,16 @@ CPP_QUERY = r"""
       name: (identifier) @def.method.name)
     parameters: (parameter_list) @def.method.params))
 
+; ── Enum declarations ────────────────────────────────────────────────────────
+(enum_specifier
+  name: (type_identifier) @def.enum.name)
+
+; T02: Enum members — enumerator nodes inside enumerator_list
+(enum_specifier
+  body: (enumerator_list
+    (enumerator
+      (identifier) @def.enum_member.name)))
+
 ; ── Preprocessor includes ────────────────────────────────────────────────────
 (preproc_include
   path: (_) @ref.import.module)
@@ -562,12 +836,13 @@ CPP_QUERY = r"""
 
 CSHARP_QUERY = r"""
 ; ── Class declarations ────────────────────────────────────────────────────────
+; e5b7c9d1 fix: C# base_list mixes the base class and interfaces. Capture
+; under the neutral "bases" key; the graph builder classifies INHERITS vs
+; IMPLEMENTS via symbol lookup (INTERFACE → IMPLEMENTS, else INHERITS).
 (class_declaration
   name: (identifier) @def.class.name
-  base: (base_clause
-    (identifier) @def.class.extends)?
   (base_list
-    (identifier) @def.class.implements)?)
+    (identifier) @def.class.bases)?)
 
 ; ── Struct declarations ────────────────────────────────────────────────────────
 (struct_declaration
@@ -581,23 +856,47 @@ CSHARP_QUERY = r"""
 (enum_declaration
   name: (identifier) @def.enum.name)
 
+; ── Enum member declarations ─────────────────────────────────────────────────
+(enum_declaration
+  body: (enum_member_declaration_list
+    (enum_member_declaration
+      name: (identifier) @def.enum_member.name)))
+
 ; ── Method declarations ───────────────────────────────────────────────────────
 (method_declaration
-  (accessibility_modifier)? @def.method.visibility
-  (modifier)? @def.method.static
+  (modifier)? @def.method.visibility
   type: (_)? @def.method.return_type
   name: (identifier) @def.method.name
   parameters: (parameter_list) @def.method.params)
 
 ; ── Constructor declarations ────────────────────────────────────────────────────
 (constructor_declaration
-  (accessibility_modifier)? @def.method.visibility
-  name: (identifier) @def.method.name
-  parameters: (parameter_list) @def.method.params)
+  (modifier)? @def.constructor.visibility
+  name: (identifier) @def.constructor.name
+  parameters: (parameter_list) @def.constructor.params)
+
+; ── Parameters (opt-in via extraction.extract_parameters) ───────────────────
+; Captured as def.parameter — extractor filters based on config flag.
+; The name: field excludes the type identifier; ref/out/params modifiers are
+; separate children so plain/ref/out/params parameters all match.
+(parameter_list
+  (parameter
+    name: (identifier) @def.parameter.name))
+
+; `params` array parameters are inlined into parameter_list by this grammar
+; (params keyword + array_type + identifier), not wrapped in a parameter node.
+(parameter_list
+  name: (identifier) @def.parameter.name)
+
+; ── Type parameters (opt-in via extraction.extract_type_parameters) ─────────
+; Captured as def.type_parameter — extractor filters based on config flag.
+(type_parameter_list
+  (type_parameter
+    name: (identifier) @def.type_parameter.name))
 
 ; ── Property declarations ──────────────────────────────────────────────────────
 (property_declaration
-  (accessibility_modifier)? @def.property.visibility
+  (modifier)? @def.property.visibility
   type: (_)? @def.property.type
   name: (identifier) @def.property.name
   (accessor_list)? @def.property.accessors)
@@ -677,25 +976,21 @@ PHP_QUERY = r"""
 # =============================================================================
 
 KOTLIN_QUERY = r"""
-; ── Class declarations ────────────────────────────────────────────────────────
-(class_declaration
-  name: (type_identifier) @def.class.name
-  (primary_constructor
-    (constructor_parameters) @def.class.constructor)?
-  (superclass
-    (user_type
-      (type_identifier) @def.class.extends))?
-  (delegation_specifiers
-    (user_type
-      (type_identifier) @def.class.implements))?)
+; NOTE: the tree-sitter-language-pack Kotlin grammar has no `name` fields on
+; declarations and uses function_value_parameters / enum_class_body /
+; navigation_expression node types. All captures here are positional — a
+; field-name reference (e.g. `name:`) fails query compilation, which silently
+; disabled the whole Kotlin query until this rewrite (T02/T03).
 
-; ── Interface declarations ────────────────────────────────────────────────────
-(interface_declaration
-  name: (type_identifier) @def.interface.name)
+; ── Class declarations ────────────────────────────────────────────────────────
+; Classes, interfaces, and enums all parse as class_declaration; the leading
+; anonymous token (`class` / `interface` / `enum`) distinguishes them.
+(class_declaration
+  (type_identifier) @def.class.name)
 
 ; ── Object declarations (singletons) ───────────────────────────────────────────
 (object_declaration
-  name: (type_identifier) @def.object.name)
+  (type_identifier) @def.object.name)
 
 ; ── Method declarations (functions inside classes) ────────────────────────────
 (class_declaration
@@ -703,27 +998,61 @@ KOTLIN_QUERY = r"""
     (function_declaration
       (modifiers)? @def.method.visibility
       (simple_identifier) @def.method.name
-      (parameters) @def.method.params
-      (type) @def.method.return_type)))
+      (function_value_parameters) @def.method.params)))
+
+; T-fix (3f8a1d62): object declarations parse as object_declaration with their
+; own class_body — member functions of singletons need their own pattern or
+; they are silently dropped (the property pattern below already covers both).
+(object_declaration
+  (class_body
+    (function_declaration
+      (modifiers)? @def.method.visibility
+      (simple_identifier) @def.method.name
+      (function_value_parameters) @def.method.params)))
+
+; ── Properties: class-scoped val/var declarations ────────────────────────────
+; T03: property_declaration nodes (no fun keyword). The binding_pattern_kind
+; child distinguishes val (read) from var (write); the extractor maps this to
+; metadata.access_type.
+(class_declaration
+  (class_body
+    (property_declaration
+      (variable_declaration
+        (simple_identifier) @def.property.name))))
+
+(object_declaration
+  (class_body
+    (property_declaration
+      (variable_declaration
+        (simple_identifier) @def.property.name))))
 
 ; ── Function declarations (top-level) ─────────────────────────────────────────
-(function_declaration
-  (modifiers)? @def.function.visibility
-  (simple_identifier) @def.function.name
-  (parameters) @def.function.params
-  (type) @def.function.return_type)
+; Anchored to source_file so class-scoped functions match def.method only.
+(source_file
+  (function_declaration
+    (simple_identifier) @def.function.name
+    (function_value_parameters) @def.function.params))
+
+; ── Enum members: enum_entry nodes inside enum_class_body ─────────────────────
+; T02: Kotlin enum class entries (e.g. `enum class Color { RED, GREEN }`).
+(class_declaration
+  (enum_class_body
+    (enum_entry
+      (simple_identifier) @def.enum_member.name)))
 
 ; ── Import statements ──────────────────────────────────────────────────────────
 (import_header
-  (imported_namespace) @ref.import.module)
+  (identifier) @ref.import.module)
 
 ; ── Calls ─────────────────────────────────────────────────────────────────────
 (call_expression
   (simple_identifier) @ref.call)
 
+; Member calls: Singleton.run() — navigation_suffix holds the member name.
 (call_expression
-  (member_access_expression
-    (simple_identifier) @ref.call))
+  (navigation_expression
+    (navigation_suffix
+      (simple_identifier) @ref.call)))
 """
 
 

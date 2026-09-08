@@ -299,6 +299,11 @@ class ExtractionCacheConfig(BaseModel):
 
 class ExtractionConfig(BaseModel):
     cache: ExtractionCacheConfig = Field(default_factory=ExtractionCacheConfig)
+    # T02: Opt-in entity extraction flags. CONSTRUCTOR and ENUM_MEMBER are
+    # extracted by default (low entity-count impact). PARAMETER and
+    # TYPE_PARAMETER are opt-in to avoid entity count inflation.
+    extract_parameters: bool = Field(default=False)
+    extract_type_parameters: bool = Field(default=False)
 
 
 class Config(BaseModel):

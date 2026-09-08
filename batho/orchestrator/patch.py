@@ -913,9 +913,11 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     for row in agent_table.to_pylist():
                         eid = row.get("entity_id", "")
                         try:
-                            etype = EntityType[row.get("entity_type", "UNRESOLVED")]
+                            etype = EntityType[row.get("entity_type", "EXTERNAL_SYMBOL")]
                         except KeyError:
-                            etype = EntityType.UNRESOLVED
+                            # T13: unknown types fall back to EXTERNAL_SYMBOL
+                            # (UNRESOLVED is deprecated).
+                            etype = EntityType.EXTERNAL_SYMBOL
                         entities[eid] = SimpleNamespace(
                             id=eid,
                             name=row.get("name", ""),

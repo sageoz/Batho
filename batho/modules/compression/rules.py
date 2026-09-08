@@ -2628,10 +2628,12 @@ def _derive_semantic_relations(graph: "GraphBackend") -> list[Relationship]:
                 )
 
             if "loopstatement" in source_tags and "databaseexecution" in target_tags:
+                # T15: forward CONTAINS (loop contains db) replaces the
+                # deprecated CONTAINED_WITHIN inverse edge.
                 _add(
-                    target_id,
                     source_id,
-                    RelationshipType.CONTAINED_WITHIN,
+                    target_id,
+                    RelationshipType.CONTAINS,
                     "db_inside_loop_call",
                 )
 
@@ -2651,10 +2653,12 @@ def _derive_semantic_relations(graph: "GraphBackend") -> list[Relationship]:
                 "environmentvariable" in source_tags
                 and "infrastructureconfig" in target_tags
             ):
+                # T15: forward READS (infra reads env) replaces the deprecated
+                # REFERENCED_IN inverse edge.
                 _add(
-                    source_id,
                     target_id,
-                    RelationshipType.REFERENCED_IN,
+                    source_id,
+                    RelationshipType.READS,
                     "env_to_infra_reference",
                 )
 
@@ -2663,18 +2667,21 @@ def _derive_semantic_relations(graph: "GraphBackend") -> list[Relationship]:
                 and "infrastructureconfig" in source_tags
             ):
                 _add(
-                    target_id,
                     source_id,
-                    RelationshipType.REFERENCED_IN,
+                    target_id,
+                    RelationshipType.READS,
                     "env_to_infra_reference",
                 )
 
         if rel_type_name == "CONTAINS":
             if "loopstatement" in source_tags and "databaseexecution" in target_tags:
+                # T15: the triggering CONTAINS edge already encodes this
+                # relationship; keep the semantic marker via a forward-type
+                # edge (deduped against the existing triple by _add).
                 _add(
-                    target_id,
                     source_id,
-                    RelationshipType.CONTAINED_WITHIN,
+                    target_id,
+                    RelationshipType.CONTAINS,
                     "db_inside_loop_scope",
                 )
 
@@ -2731,7 +2738,9 @@ def _derive_semantic_relations(graph: "GraphBackend") -> list[Relationship]:
             scored_env_cache[env_key] = best_infra
 
         for infra_id in best_infra:
-            _add(env_id, infra_id, RelationshipType.REFERENCED_IN, "env_name_overlap")
+            # T15: forward READS (infra reads env) replaces the deprecated
+            # REFERENCED_IN inverse edge.
+            _add(infra_id, env_id, RelationshipType.READS, "env_name_overlap")
 
     return semantic_relations
 

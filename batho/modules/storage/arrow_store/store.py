@@ -140,6 +140,23 @@ PSEUDO_TARGET_PREFIXES = (
 )
 
 
+def _stub_target_matches(r_tgt: str, unresolved_target: str) -> bool:
+    """Match a scoped stub rel target against a dangling ref name.
+
+    The ref key sits after the last ``::`` (scoped stubs carry a
+    dot-normalized ref key since the stub ref-key fix) or directly after the
+    ``unresolved:`` prefix (legacy unscoped IDs). Both sides are normalized to
+    dotted form; the full ref key or its last segment must match, mirroring
+    ``lookup_candidates``' normalization. The legacy ``split(":")[1]`` probe
+    grabbed the caller *scope* segment and could never match a scoped stub.
+    """
+    ref_key = r_tgt[len("unresolved:"):].rsplit("::", 1)[-1].strip()
+    want = str(unresolved_target).replace("::", ".").strip()
+    if not ref_key or not want:
+        return False
+    return ref_key == want or ref_key.rsplit(".", 1)[-1] == want.rsplit(".", 1)[-1]
+
+
 class BsgScratchStore:
     """Arrow IPC + zstd scratch store for BSG build/patch runs.
 
@@ -465,6 +482,10 @@ class BsgScratchStore:
             eid = self._entity_val.get(ekey)
             if eid is None or not ename:
                 continue
+            # T13: contextual stubs (unresolved: ID prefix, EXTERNAL_SYMBOL
+            # type in new artifacts) must not become resolution targets.
+            if eid.startswith("unresolved:"):
+                continue
             id_to_key[eid] = ekey
             files_by_id[eid] = efile or ""
             names_by_id[eid] = ename
@@ -664,15 +685,22 @@ class BsgScratchStore:
                     r_src = rel.get("s")
                     r_type = rel.get("rt")
                     r_tgt = rel.get("t")
+                updated = False
+                for rel in rels_minified:
+                    r_src = rel.get("s")
+                    r_type = rel.get("rt")
+                    r_tgt = rel.get("t")
                     for res in resolutions:
                         is_match = False
                         if r_src == res["source_id"] and r_type == res["relation_type"]:
                             if r_tgt == res["unresolved_target"]:
                                 is_match = True
                             elif isinstance(r_tgt, str) and r_tgt.startswith("unresolved:"):
-                                parts = r_tgt.split(":")
-                                if len(parts) >= 2 and parts[1] == res["unresolved_target"]:
-                                    is_match = True
+                                is_match = _stub_target_matches(r_tgt, res["unresolved_target"])
+                        if is_match:
+                            rel["t"] = res["resolved_target"]
+                            updated = True
+                            break
                         if is_match:
                             rel["t"] = res["resolved_target"]
                             updated = True

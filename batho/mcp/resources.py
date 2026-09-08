@@ -10,7 +10,14 @@ import json
 
 from fastmcp import FastMCP
 
-from batho.core.schemas import EntityType, RelationshipType
+from batho.core.schemas import (
+    DEPRECATED_ENTITY_TYPES,
+    DEPRECATED_RELATIONSHIP_TYPES,
+    EntityType,
+    RelationshipType,
+    EntityCategory,
+    ENTITY_CATEGORIES,
+)
 from batho.mcp.registry import RepoRegistry
 
 
@@ -22,16 +29,25 @@ def register_resources(
 
     @app.resource("batho://schema")
     def schema() -> str:
-        """Batho entity types, relation types, and response_format values.
+        """Batho entity types, relation types, entity categories, and response_format values.
 
         Returns a JSON document describing the schema of Batho's code graph:
         - Entity types: FUNCTION, CLASS, METHOD, MODULE, VARIABLE, etc.
+        - Entity categories: code, external, infrastructure, markup, structural
         - Relation types: CALLS, IMPORTS, USES, REFERENCES, DEFINES, INHERITS, etc.
+        - Deprecated types: legacy enum values kept for artifact loading but no
+          longer emitted (T14/T15 deprecation contract)
         - Response formats: summary, concise, detailed
         """
         schema_data = {
             "entity_types": [e.name for e in EntityType],
+            "entity_categories": {
+                c.name.lower(): [et.name for et in ENTITY_CATEGORIES[c]]
+                for c in EntityCategory
+            },
             "relation_types": [r.name for r in RelationshipType],
+            "deprecated_entity_types": sorted(t.name for t in DEPRECATED_ENTITY_TYPES),
+            "deprecated_relation_types": sorted(DEPRECATED_RELATIONSHIP_TYPES),
             "response_formats": {
                 "summary": "~200-500 tokens, high-level overview only",
                 "concise": "~50 tokens per entity, minimal detail",

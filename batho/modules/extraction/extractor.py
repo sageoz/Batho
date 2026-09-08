@@ -101,6 +101,7 @@ _META_SUFFIXES: frozenset[str] = frozenset(
         "trait",
         "receiver",
         "type",
+        "accessor",  # T03 fix (c3f5a7b9): TS get/set keyword for PROPERTY access_type
     }
 )
 
@@ -120,6 +121,12 @@ _CAPTURE_ENTITY_MAP: dict[str, EntityType] = {
     "def.constant": EntityType.CONSTANT,
     "def.namespace": EntityType.NAMESPACE,
     "def.entry_point": EntityType.ENTRY_POINT,
+    "def.object": EntityType.CLASS,  # Kotlin singleton objects are classes
+    "def.property": EntityType.PROPERTY,
+    "def.constructor": EntityType.CONSTRUCTOR,
+    "def.enum_member": EntityType.ENUM_MEMBER,
+    "def.parameter": EntityType.PARAMETER,
+    "def.type_parameter": EntityType.TYPE_PARAMETER,
 }
 
 # Map from reference capture key → RelationshipType
@@ -129,8 +136,12 @@ _CAPTURE_REL_MAP: dict[str, RelationshipType] = {
     "ref.inherit": RelationshipType.INHERITS,
     "ref.implement": RelationshipType.IMPLEMENTS,
     "ref.use": RelationshipType.USES,
-    "ref.read": RelationshipType.REFERENCES,
-    "ref.write": RelationshipType.REFERENCES,
+    "ref.read": RelationshipType.READS,   # T09: was REFERENCES
+    "ref.write": RelationshipType.WRITES,  # T09: was REFERENCES
+    # T10/T11/T12: New capture types reuse existing relationship types
+    "ref.indirect_call": RelationshipType.CALLS,    # T10: indirect call detection
+    "ref.dynamic_import": RelationshipType.IMPORTS,  # T11: dynamic import() detection
+    "ref.re_export": RelationshipType.IMPORTS,       # T12: re-export detection
 }
 
 # Captures that provide type linkage for CONTAINS relationship synthesis.
@@ -203,7 +214,7 @@ def _should_prune_unresolved(ref_text: str, rel_type: RelationshipType, file_imp
     if rel_type in (RelationshipType.CALLS, RelationshipType.IMPORTS, RelationshipType.INHERITS, RelationshipType.IMPLEMENTS):
         return False
 
-    # 6. Otherwise, if it's USES or REFERENCES, and not imported, and has no dots -> prune!
+    # 6. Otherwise, if it's USES or REFERENCES or READS/WRITES, and not imported, and has no dots -> prune!
     return True
 
 
@@ -274,6 +285,19 @@ def _normalize_import_target(raw: str) -> str:
 
     text = text.replace("::", ".")
     return text.strip()
+
+
+def _stub_ref_key(ref_text: str) -> str:
+    """Dot-normalized ref key for a contextual stub ID.
+
+    The stub ID format is ``unresolved:{caller_scope}::{ref_key}`` and the
+    ``::`` separator must be unambiguous. Ref text can itself contain ``::``
+    (Rust paths like ``std::io::Write``, Ruby constant paths like ``Foo::Bar``),
+    so the ref key is rewritten to the resolver's dotted-FQN convention — the
+    same convention ``_normalize_import_target`` uses for import targets.
+    Display name and metadata keep the caller-written spelling.
+    """
+    return ref_text.replace("::", ".")
 
 
 def _expand_import_targets(raw: str) -> list[str]:
@@ -393,6 +417,16 @@ class ASTExtractor(abc.ABC):
         self.logger = get_logger(__name__, operation="ast_extract").bind(
             language=language
         )
+
+    def set_parsing_config(self, config: dict[str, Any]) -> None:
+        """Update the parsing configuration for this extractor instance.
+
+        Called by the registry when ``set_parsing_config()`` is invoked globally.
+        This ensures the extractor picks up config changes (e.g.
+        ``extract_parameters``, ``extract_type_parameters``) even if the
+        instance was cached before the config was set.
+        """
+        self._parsing_config = config or {}
 
     def _get_compiled_query(self) -> Query | None:
         """Compile and cache the tree-sitter query once per extractor instance.
@@ -647,22 +681,65 @@ class ASTExtractor(abc.ABC):
         _def_name_bytes: set[int] = set()
 
         # 1. Collect flat list of all captured definitions with their node bounds
+        # T02: Filter opt-in entity types based on config flags
+        extract_parameters = self._parsing_config.get("extract_parameters", False)
+        extract_type_parameters = self._parsing_config.get("extract_type_parameters", False)
+
+        # T02/T03: Track name-node byte offsets for higher-priority captures to
+        # deduplicate with method captures. Python __init__ is captured as both
+        # def.method and def.constructor; @property methods as both def.method
+        # and def.property. We prefer the more specific capture.
+        higher_priority_name_bytes: set[int] = set()
+        for dedup_key in ("def.constructor", "def.property"):
+            if dedup_key in definition_nodes:
+                for node in definition_nodes[dedup_key]:
+                    higher_priority_name_bytes.add(node.start_byte)
+
         flat_definitions = []
         for base_key, name_nodes in definition_nodes.items():
             entity_type = _CAPTURE_ENTITY_MAP.get(base_key)
             if entity_type is None:
                 continue
+            # T02: Skip opt-in types when disabled
+            if entity_type == EntityType.PARAMETER and not extract_parameters:
+                continue
+            if entity_type == EntityType.TYPE_PARAMETER and not extract_type_parameters:
+                continue
             for name_node in name_nodes:
                 name = _node_text(name_node, source)
                 if not name:
                     continue
+                # T02/T03: Skip method captures that are also captured as
+                # constructor or property (prefer the more specific type)
+                if (
+                    base_key == "def.method"
+                    and name_node.start_byte in higher_priority_name_bytes
+                ):
+                    continue
                 _def_name_bytes.add(name_node.start_byte)
                 decl_node = name_node.parent if name_node.parent is not None else name_node
+                # T-fix (5c2e9b74): Kotlin classes, interfaces, and enum classes
+                # all parse as class_declaration; the leading anonymous token
+                # distinguishes them. Reclassify `interface X` to INTERFACE so
+                # entity types are correct (the extractor's INTERFACE support —
+                # scope-stack push, ENTITY_CATEGORIES — already exists).
+                captured_type = entity_type
+                if (
+                    base_key == "def.class"
+                    and entity_type == EntityType.CLASS
+                    and self._language_name == "kotlin"
+                ):
+                    for child in decl_node.children:
+                        if child.type == "modifiers":
+                            continue
+                        if child.type == "interface":
+                            captured_type = EntityType.INTERFACE
+                        break
                 flat_definitions.append((
                     decl_node.start_byte,
                     -decl_node.end_byte,
                     base_key,
-                    entity_type,
+                    captured_type,
                     name,
                     name_node,
                     decl_node
@@ -695,13 +772,14 @@ class ASTExtractor(abc.ABC):
             # Map entity_type to DescriptorSuffix
             if entity_type in (EntityType.CLASS, EntityType.STRUCT, EntityType.INTERFACE):
                 current_suffix = DescriptorSuffix.TYPE
-            elif entity_type in (EntityType.FUNCTION, EntityType.METHOD):
+            elif entity_type in (EntityType.FUNCTION, EntityType.METHOD, EntityType.CONSTRUCTOR):
                 current_suffix = DescriptorSuffix.METHOD
             elif entity_type in (EntityType.MODULE, EntityType.NAMESPACE):
                 current_suffix = DescriptorSuffix.NAMESPACE
             elif entity_type in (EntityType.VARIABLE, EntityType.CONSTANT):
                 current_suffix = DescriptorSuffix.TERM
             else:
+                # T02: ENUM_MEMBER, PARAMETER, TYPE_PARAMETER, etc.
                 current_suffix = DescriptorSuffix.TERM
 
             # For overloading or same-name scopes, optionally append short hash of params signature
@@ -716,8 +794,15 @@ class ASTExtractor(abc.ABC):
 
             descriptors = parent_descriptors + [(current_name, current_suffix)]
 
-            # Push current definition to scope stack if it can contain children (e.g. Class, Module, Namespace)
-            if entity_type in (EntityType.CLASS, EntityType.MODULE, EntityType.NAMESPACE, EntityType.STRUCT):
+            # Push current definition to scope stack if it can contain children
+            # (e.g. Class, Module, Namespace, Struct, Enum, Interface, Trait).
+            # T02 fix (b2e4d8f1): ENUM/INTERFACE/TRAIT must be pushed so members
+            # get qualified FQNs (e.g. Color.Red) and unique entity IDs.
+            if entity_type in (
+                EntityType.CLASS, EntityType.MODULE, EntityType.NAMESPACE,
+                EntityType.STRUCT, EntityType.ENUM, EntityType.INTERFACE,
+                EntityType.TRAIT,
+            ):
                 scope_stack.append((end_byte, fqn_name, descriptors))
 
             metadata = self._collect_metadata_with_source(
@@ -726,6 +811,50 @@ class ASTExtractor(abc.ABC):
             signature = self._build_signature(
                 raw_name, base_key, decl_node, auxiliary_nodes, source
             )
+
+            # T03: Detect property setter (decorator with .setter attribute)
+            # and mark with access_type="write". Default for @property is "read".
+            if entity_type == EntityType.PROPERTY:
+                parent = decl_node.parent
+                if parent is not None and parent.type == "decorated_definition":
+                    for child in parent.children:
+                        if child.type == "decorator":
+                            decorator_text = _node_text(child, source)
+                            if ".setter" in decorator_text:
+                                metadata["access_type"] = "write"
+                                break
+                if "access_type" not in metadata:
+                    # T03 fix (c3f5a7b9): TS get/set accessors — the captured
+                    # "get"/"set" keyword is in auxiliary_nodes as "accessor".
+                    accessor_nodes = auxiliary_nodes.get((base_key, "accessor"), [])
+                    accessor_node = self._nearest_ancestor(accessor_nodes, decl_node)
+                    if accessor_node is not None:
+                        accessor_text = _node_text(accessor_node, source).strip()
+                        if accessor_text == "set":
+                            metadata["access_type"] = "write"
+                if "access_type" not in metadata:
+                    # C# fix (c3f5a7b9): inspect accessor_list for a "set" accessor.
+                    if self._language_name == "csharp" and decl_node.parent is not None:
+                        for child in decl_node.parent.children:
+                            if child.type == "accessor_list":
+                                for acc in child.children:
+                                    if acc.type == "accessor_declaration":
+                                        acc_text = _node_text(acc, source)
+                                        if acc_text.startswith("set"):
+                                            metadata["access_type"] = "write"
+                                            break
+                                break
+                if "access_type" not in metadata:
+                    # T03 (Kotlin): property_declaration's binding_pattern_kind
+                    # holds the val/var keyword — var is mutable (write).
+                    if self._language_name == "kotlin" and decl_node.parent is not None:
+                        for child in decl_node.parent.children:
+                            if child.type == "binding_pattern_kind":
+                                if _node_text(child, source).strip() == "var":
+                                    metadata["access_type"] = "write"
+                                break
+                if "access_type" not in metadata:
+                    metadata["access_type"] = "read"
 
             metadata["is_exported"] = True
             if index_id:
@@ -881,7 +1010,10 @@ class ASTExtractor(abc.ABC):
         def _make_contextual_stub(
             ref_text: str, line: int, rel_type: RelationshipType, caller_scope: str
         ) -> Entity:
-            stub_id = f"unresolved:{caller_scope}::{ref_text}"
+            # The ref key is dot-normalized (_stub_ref_key) so the "::" scope
+            # separator stays unambiguous for Rust/Ruby scoped ref text;
+            # name/target_name/receiver_var keep the caller-written spelling.
+            stub_id = f"unresolved:{caller_scope}::{_stub_ref_key(ref_text)}"
             # Extract receiver variable: "cursor.execute" -> "cursor"
             # Used by receiver-type-aware method resolution (Phase 2).
             receiver_var = ref_text.split(".")[0] if "." in ref_text else None
@@ -896,7 +1028,10 @@ class ASTExtractor(abc.ABC):
                 "receiver_var": receiver_var,
             }
             return Entity(
-                type=EntityType.UNRESOLVED,
+                # T13: stubs are EXTERNAL_SYMBOL entities (UNRESOLVED is
+                # deprecated); the "unresolved:" ID prefix keeps
+                # is_contextual_stub working for resolution and pruning.
+                type=EntityType.EXTERNAL_SYMBOL,
                 name=ref_text,
                 file=filepath,
                 start_line=line,
@@ -995,6 +1130,24 @@ class ASTExtractor(abc.ABC):
 
         by_name: dict[str, Entity] = {e.name: e for e in entities}
         by_id: dict[str, Entity] = {e.id: e for e in entities}
+
+        # T10 fix (a1f3c9e2): Secondary lookup keyed on the un-suffixed raw name.
+        # `by_name` keys are hash-suffixed FQNs (e.g. "func_[ec84ac]"), so a bare
+        # identifier like `func` never matches. For indirect_call detection we
+        # need to resolve bare identifiers to their defining function/method.
+        # T10 fix (e66a376d): same-named callables are stored as a list and
+        # disambiguated by caller scope at lookup time — first-wins could
+        # resolve an indirect call to the wrong class's method.
+        _CALLABLE_TYPES = frozenset({
+            EntityType.FUNCTION, EntityType.METHOD,
+            EntityType.CONSTRUCTOR, EntityType.PROPERTY,
+        })
+        by_raw_name: dict[str, list[Entity]] = {}
+        for e in entities:
+            if e.type in _CALLABLE_TYPES:
+                raw = e.name.split("_[")[0].rsplit(".", 1)[-1]
+                if raw:
+                    by_raw_name.setdefault(raw, []).append(e)
         # Sort entities by start_byte for O(log N) enclosing lookup via bisect.
         sorted_ents = sorted(entities, key=lambda e: e.start_byte)
         sorted_starts = [e.start_byte for e in sorted_ents]
@@ -1025,6 +1178,92 @@ class ASTExtractor(abc.ABC):
                     break
                 idx -= 1
             return best
+
+        # ───────────────────────────────────────────────────────────────────
+        # T10: Shadowing soundness guard for indirect calls.
+        # `pool.submit(handler)` must NOT emit a CALLS edge when `handler`
+        # is a parameter or a local variable of the enclosing function that
+        # shadows a module-level function of the same name.
+        # ───────────────────────────────────────────────────────────────────
+        # 1) Local names: identifiers assigned (ref.write) within a callable's
+        #    byte range. Reuses existing ref.write captures + _find_enclosing.
+        locals_by_function: dict[str, set[str]] = {}
+        for w_node in captures.get("ref.write", []):
+            w_name = _node_text(w_node, source)
+            if not w_name:
+                continue
+            w_enc = _find_enclosing(w_node.start_byte)
+            if w_enc is not None and w_enc.type in _CALLABLE_TYPES:
+                locals_by_function.setdefault(w_enc.id, set()).add(w_name)
+
+        # 2) Parameter names: walk up from the reference node to the enclosing
+        #    function-like node and collect identifier descendants of its
+        #    parameter list, excluding type-annotation subtrees (so Python
+        #    `def f(x: Handler)` and TS `function f(x: FnType)` do not leak
+        #    annotation names into the shadow set).
+        _FUNCTION_NODE_TYPES = frozenset({
+            "function_definition",    # Python
+            "function_declaration",   # JS/TS/Kotlin/Go
+            "function_item",          # Rust
+            "method_definition",      # JS/TS
+            "method_declaration",     # Java/C#
+            "constructor_declaration",  # Java/C#
+            "arrow_function",         # JS/TS
+        })
+        _TYPE_SUBTREE_TYPES = frozenset({"type", "type_annotation"})
+
+        def _enclosing_function_params(node: Node) -> set[str]:
+            cur = node.parent
+            while cur is not None and cur.type not in _FUNCTION_NODE_TYPES:
+                cur = cur.parent
+            if cur is None:
+                return set()
+            params = cur.child_by_field_name("parameters")
+            if params is None:
+                return set()
+            names: set[str] = set()
+            stack: list[Node] = [params]
+            while stack:
+                n = stack.pop()
+                if n.type in _TYPE_SUBTREE_TYPES:
+                    continue
+                if n.type == "identifier":
+                    n_text = _node_text(n, source)
+                    if n_text:
+                        names.add(n_text)
+                stack.extend(n.children)
+            return names
+
+        def _resolve_raw_callable(ref_text: str, node: Node) -> Entity | None:
+            """Resolve a bare identifier to a callable via the raw-name index.
+
+            Same-named callables (e.g. two classes both defining `validate`)
+            are disambiguated by scope: a candidate only matches when its FQN
+            scope prefix is a prefix of the caller's FQN, and the most specific
+            (longest) matching prefix must be unique. Otherwise the name is
+            ambiguous and no edge is emitted — first-wins could produce a
+            plausible-but-incorrect CALLS edge (e66a376d).
+            """
+            candidates = by_raw_name.get(ref_text)
+            if not candidates:
+                return None
+            if len(candidates) == 1:
+                return candidates[0]
+            caller = _find_enclosing(node.start_byte)
+            if caller is None:
+                return None
+            caller_segs = caller.name.split("_[")[0].split(".")
+            scoped: list[tuple[int, Entity]] = []
+            for cand in candidates:
+                cand_segs = cand.name.split("_[")[0].split(".")
+                scope = cand_segs[:-1]
+                if len(scope) < len(caller_segs) and caller_segs[: len(scope)] == scope:
+                    scoped.append((len(scope), cand))
+            if not scoped:
+                return None
+            best_len = max(s for s, _ in scoped)
+            best = [e for s, e in scoped if s == best_len]
+            return best[0] if len(best) == 1 else None
 
         # ───────────────────────────────────────────────────────────────────
         # CONTAINS synthesis: link methods to their struct/enum/trait types
@@ -1140,14 +1379,59 @@ class ASTExtractor(abc.ABC):
                 if capture_variant:
                     rel_meta["capture_variant"] = capture_variant
 
+                # T10: Indirect call metadata
+                if cap_name.startswith("ref.indirect_call"):
+                    rel_meta["indirect"] = True
+                # T11: Dynamic import metadata
+                elif cap_name.startswith("ref.dynamic_import"):
+                    rel_meta["dynamic"] = True
+                # T12: Re-export metadata. The captured node is the module
+                # `string`; its parent export_statement distinguishes the
+                # variants: `export * from` (re_export_all), TS
+                # `export type {..} from` (re_export_type), and the exported
+                # symbol names from the export_clause (re_exported_symbols).
+                elif cap_name.startswith("ref.re_export"):
+                    rel_meta["re_export"] = True
+                    export_stmt = node.parent
+                    if export_stmt is not None and export_stmt.type == "export_statement":
+                        child_types = [c.type for c in export_stmt.children]
+                        if "*" in child_types:
+                            rel_meta["re_export_all"] = True
+                        if "type" in child_types:
+                            rel_meta["re_export_type"] = True
+                        clause = next(
+                            (c for c in export_stmt.children if c.type == "export_clause"),
+                            None,
+                        )
+                        if clause is not None:
+                            symbols = []
+                            for spec in clause.children:
+                                if spec.type != "export_specifier":
+                                    continue
+                                name_node = spec.child_by_field_name("name")
+                                if name_node is not None:
+                                    sym = _node_text(name_node, source)
+                                    if sym:
+                                        symbols.append(sym)
+                            if symbols:
+                                rel_meta["re_exported_symbols"] = symbols
+
                 role = self._determine_symbol_role(cap_name, node)
                 if role == SymbolRole(0):
                     continue
+
+                # T10: Indirect calls have lower confidence (0.7)
+                # T11/T12: Dynamic imports and re-exports have confidence 1.0 (explicit in source)
+                edge_confidence = 1.0
+                if cap_name.startswith("ref.indirect_call"):
+                    edge_confidence = 0.7
 
                 if rel_type in (
                     RelationshipType.CALLS,
                     RelationshipType.USES,
                     RelationshipType.REFERENCES,
+                    RelationshipType.READS,
+                    RelationshipType.WRITES,
                 ):
                     source_ent = _find_enclosing(node.start_byte)
                     if source_ent is None:
@@ -1158,6 +1442,28 @@ class ASTExtractor(abc.ABC):
                     target_ent = by_name.get(ref_text)
                     if target_ent is not None:
                         target_id = target_ent.id
+
+                    # T10: Soundness guard for indirect calls — only emit if the
+                    # target resolves to a known FUNCTION or METHOD (not a variable,
+                    # parameter, etc.). `by_name` keys are hash-suffixed FQNs, so a
+                    # bare identifier needs the raw-name lookup (a1f3c9e2).
+                    if cap_name.startswith("ref.indirect_call"):
+                        if target_ent is None:
+                            target_ent = _resolve_raw_callable(ref_text, node)
+                            if target_ent is not None:
+                                target_id = target_ent.id
+                        if target_ent is None:
+                            continue
+                        if target_ent.type not in _CALLABLE_TYPES:
+                            continue
+                        # T10 soundness: the identifier is shadowed by a
+                        # parameter or local variable of the enclosing
+                        # function — the runtime call would hit the shadow,
+                        # not the module-level function. Do NOT emit.
+                        if ref_text in locals_by_function.get(source_id, ()):
+                            continue
+                        if ref_text in _enclosing_function_params(node):
+                            continue
 
                     ref_to_use = ref_text
                     if target_id is None:
@@ -1187,7 +1493,7 @@ class ASTExtractor(abc.ABC):
                             definition_start_byte=target_ent.start_byte,
                             definition_end_byte=target_ent.end_byte,
                             roles=role,
-                            confidence=1.0,
+                            confidence=edge_confidence,
                         )
                     elif target_id is None:
                         if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath, prune_enabled, imported_names):
@@ -1209,11 +1515,26 @@ class ASTExtractor(abc.ABC):
                 elif rel_type == RelationshipType.IMPORTS:
                     source_ent = _find_enclosing(node.start_byte)
                     if source_ent is None:
-                        continue
+                        # T11/T12 (b8c0d2e4): For top-level dynamic imports and
+                        # re-exports, prefer a MODULE/NAMESPACE entity as the
+                        # source; fall back to the first entity only if none exists.
+                        if cap_name.startswith("ref.dynamic_import") or cap_name.startswith("ref.re_export"):
+                            source_ent = next(
+                                (e for e in sorted_ents if e.type in (EntityType.MODULE, EntityType.NAMESPACE)),
+                                sorted_ents[0] if sorted_ents else None,
+                            )
+                            if source_ent is None:
+                                continue
+                        else:
+                            continue
                     source_id = source_ent.id
                     targets = _expand_import_targets(ref_text)
                     if not targets:
                         continue
+
+                    # T11/T12: Add import_path to metadata for dynamic imports and re-exports
+                    if cap_name.startswith("ref.dynamic_import") or cap_name.startswith("ref.re_export"):
+                        rel_meta["import_path"] = _normalize_import_target(ref_text)
 
                     for target_ref in targets:
                         target_id = None
@@ -1337,7 +1658,16 @@ class ASTExtractor(abc.ABC):
             return SymbolRole.ReadAccess
         elif cap_name.startswith("ref.call"):
             return SymbolRole.ReadAccess
+        elif cap_name.startswith("ref.indirect_call"):
+            # T10: Indirect call — function passed as argument
+            return SymbolRole.Dynamic | SymbolRole.ReadAccess
         elif cap_name.startswith("ref.import"):
+            return SymbolRole.Import
+        elif cap_name.startswith("ref.dynamic_import"):
+            # T11: Dynamic import() — explicit but dynamic
+            return SymbolRole.Import | SymbolRole.Dynamic
+        elif cap_name.startswith("ref.re_export"):
+            # T12: Re-export — explicit re-export from another module
             return SymbolRole.Import
         elif cap_name.startswith("ref.inherit"):
             return SymbolRole.ReadAccess

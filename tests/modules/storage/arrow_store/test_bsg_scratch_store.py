@@ -7,11 +7,67 @@ from pathlib import Path
 
 import pytest
 
+from batho.modules.storage.arrow_store.store import _stub_target_matches
+
 
 @pytest.fixture
 def tmp_batho_dir():
     with tempfile.TemporaryDirectory() as d:
         yield Path(d)
+
+
+class TestStubTargetMatches:
+    """Round-4 audit: the _patch_rel_blobs stub matcher.
+
+    The legacy ``split(":")[1]`` probe compared the caller *scope* segment
+    against the dangling ref name, so scoped stub IDs
+    (``unresolved:<scope>::<ref>``) never matched and their blob rels were
+    never patched to the resolved target. The ref key must be taken after the
+    last ``::`` (dot-normalized ref keys), with a last-segment fallback
+    mirroring ``lookup_candidates``.
+    """
+
+    def _matches(self, r_tgt, want):
+        from batho.modules.storage.arrow_store.store import _stub_target_matches
+        return _stub_target_matches(r_tgt, want)
+
+    def test_scoped_stub_new_format_matches_bare_ref(self):
+        assert _stub_target_matches(
+            "unresolved:batho 1.0 main().::helper", "helper"
+        )
+
+    def test_scoped_stub_dotted_ref_key(self):
+        assert _stub_target_matches(
+            "unresolved:run().::std.io.Write", "std.io.Write"
+        )
+
+    def test_last_segment_fallback(self):
+        # Dangling ref name was normalized to the last segment during lookup.
+        assert _stub_target_matches("unresolved:scope::std.io.Write", "Write")
+
+    def test_legacy_unscoped_stub(self):
+        assert _stub_target_matches("unresolved:helper", "helper")
+
+    def test_legacy_scope_laden_ref_key(self):
+        # Legacy artifact: ref key still carries '::'. Last segment matches.
+        assert _stub_target_matches("unresolved:scope::std::io::Write", "Write")
+
+    def test_scope_segment_never_matches(self):
+        # The old split(":")[1] behavior would have compared the scope —
+        # a scope must never satisfy the match.
+        assert not _stub_target_matches("unresolved:other_scope::helper", "other")
+
+    def test_different_symbol_no_match(self):
+        assert not _stub_target_matches("unresolved:scope::helper", "unrelated")
+
+    def test_empty_ref_key_no_match(self):
+        assert not _stub_target_matches("unresolved:scope::", "helper")
+
+    def test_exact_match_short_circuit_still_holds(self):
+        # The exact-equality branch in _patch_rel_blobs handles identical
+        # strings; the matcher is only consulted for unresolved:-prefixed
+        # targets, where bare-name equality also holds via the ref key.
+        assert _stub_target_matches("unresolved:helper", "helper")
 
 
 def test_store_init_creates_current_dir(tmp_batho_dir):
@@ -213,6 +269,44 @@ def test_resolve_dangling_simple(tmp_batho_dir):
 
     dan_tbl = read_ipc(store.dangling_path)
     assert len(dan_tbl) == 0
+
+
+def test_resolve_dangling_excludes_contextual_stubs(tmp_batho_dir):
+    """83e6c290: EXTERNAL_SYMBOL stubs (unresolved: ID prefix) must not be
+    name-lookup resolution targets — the real definition wins."""
+    from batho.modules.storage.arrow_store import BsgScratchStore
+    from batho.modules.storage.arrow_store.compaction import read_ipc, read_ipc_columns
+
+    store = BsgScratchStore(run_uuid="test-run-083", batho_dir=tmp_batho_dir, run_internal_id=1)
+    stub_id = "unresolved:batho 1.0 main()::helper"
+    keys = store.bulk_get_or_create_entity_keys(["eid:src", stub_id, "eid:real-helper"])
+
+    store.append_entities([
+        (keys["eid:src"], 1, "SrcFunc", "FUNCTION", None, "src/a.py", 1, None, False),
+        # T13 stub: EXTERNAL_SYMBOL type with unresolved: ID prefix
+        (keys[stub_id], 1, "helper", "EXTERNAL_SYMBOL", None, "src/a.py", 3, None, False),
+        (keys["eid:real-helper"], 1, "helper", "FUNCTION", None, "src/b.py", 10, None, False),
+    ])
+    store.append_dangling([
+        (keys["eid:src"], "helper", "CALLS", 1),
+    ])
+    store.compact()
+
+    resolved = store.resolve_dangling(db=None)
+    assert resolved == 1
+
+    rel_tbl = read_ipc_columns(
+        store.relationships_path,
+        ["source_key", "target_key", "relation_type"],
+    )
+    targets = {
+        store.get_entity_val(rel_tbl.column("target_key")[i].as_py())
+        for i in range(len(rel_tbl))
+        if rel_tbl.column("relation_type")[i].as_py() == "CALLS"
+    }
+    assert targets == {"eid:real-helper"}, (
+        f"Stub must be excluded from resolution targets, got {targets}"
+    )
 
 
 def test_from_run_dir(tmp_batho_dir):

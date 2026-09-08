@@ -42,7 +42,7 @@ ALL_TOOLS = [
 def test_all_tools_have_descriptions(app):
     """Verify every tool has a non-empty description."""
     tools = asyncio.run(app.list_tools())
-    assert len(tools) == 19
+    assert len(tools) == 20
 
     for tool in tools:
         assert tool.description is not None

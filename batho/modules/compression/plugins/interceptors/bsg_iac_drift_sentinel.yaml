@@ -16,8 +16,10 @@ rules:
         - environmentvariable
       ast_edges:
         all:
-          - edge: REFERENCED_IN
-            direction: either
+          # T15: forward READS (infra -> env) replaces the deprecated
+          # REFERENCED_IN inverse edge; match it inbound from the env node.
+          - edge: READS
+            direction: inbound
             target_usn_tags_any:
               - infrastructureconfig
             min_count: 1

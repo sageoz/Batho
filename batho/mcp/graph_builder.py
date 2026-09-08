@@ -7,7 +7,11 @@ Converts IPC row dicts into dual output:
 
 from __future__ import annotations
 
+import json
+
 from typing import Any
+
+from batho.core.schemas import INVERSE_TO_FORWARD
 
 TOKEN_HEURISTIC_DIVISOR = 4
 
@@ -45,7 +49,7 @@ def _rel_arrow(relation_type: str) -> str:
     mapping = {
         "CALLS": "calls", "IMPORTS": "imports", "INHERITS": "inherits",
         "IMPLEMENTS": "implements", "USES": "uses", "CONTAINS": "contains",
-        "REFERENCES": "references", "DEFINES": "defines",
+        "REFERENCES": "references", "READS": "reads", "WRITES": "writes", "DEFINES": "defines",
         "CALLED_BY": "called by", "IMPORTED_BY": "imported by",
         "OVERRIDES": "overrides", "WRAPPED_BY": "wrapped by",
         "DEPENDS_ON_API": "depends on", "REFERENCED_IN": "referenced in",
@@ -84,7 +88,43 @@ def build_node_dict(agent_row: dict, storage_row: dict | None = None) -> dict:
     return node
 
 
-def build_edge_dict(rel_row: dict) -> dict:
+def normalize_legacy_rel_rows(rels_rows: list[dict]) -> list[dict]:
+    """T15: re-classify deprecated inverse relation types on the raw-row path.
+
+    MCP tools read raw Arrow rows from ``rels_views`` and never construct
+    ``Relationship`` models, so the ``_reclassify_legacy_references``
+    validator does not run. Legacy artifacts (built before T15) therefore
+    surface CALLED_BY / IMPORTED_BY / REFERENCED_IN / CONTAINED_WITHIN rows.
+    This maps them to their forward type with swapped endpoints — matching
+    ``Relationship`` construction semantics — so fresh and legacy artifacts
+    behave identically in tool output and direction/type filters.
+    """
+    out: list[dict] = []
+    for rel in rels_rows:
+        rt = rel.get("relation_type")
+        forward = INVERSE_TO_FORWARD.get(rt) if isinstance(rt, str) else None
+        if forward is None:
+            out.append(rel)
+            continue
+        norm = dict(rel)
+        norm["source_id"], norm["target_id"] = rel.get("target_id", ""), rel.get("source_id", "")
+        norm["relation_type"] = forward.name
+        meta: dict = {}
+        meta_json = norm.get("metadata_json")
+        if meta_json:
+            try:
+                parsed = json.loads(meta_json)
+                if isinstance(parsed, dict):
+                    meta = parsed
+            except (ValueError, TypeError):
+                pass
+        meta["reversed"] = True
+        norm["metadata_json"] = json.dumps(meta)
+        out.append(norm)
+    return out
+
+
+def build_edge_dict(rel_row: dict, resolver=None) -> dict:
     edge = {
         "id": "",
         "source": rel_row.get("source_id", ""),
@@ -94,7 +134,6 @@ def build_edge_dict(rel_row: dict) -> dict:
     }
     meta_json = rel_row.get("metadata_json")
     if meta_json:
-        import json
         try:
             edge["metadata"] = json.loads(meta_json)
         except Exception:
@@ -103,6 +142,12 @@ def build_edge_dict(rel_row: dict) -> dict:
         edge["roles"] = rel_row.get("roles")
     if rel_row.get("confidence") is not None:
         edge["confidence"] = rel_row.get("confidence")
+    if resolver is not None:
+        src = resolver.resolve(edge["source"])
+        tgt = resolver.resolve(edge["target"])
+        edge["source_file"] = src.path or ""
+        edge["target_file"] = tgt.path or ""
+        edge["resolution"] = tgt.kind
     return edge
 
 
@@ -376,7 +421,13 @@ def format_summary(
     # Architectural patterns (heuristic-based)
     patterns: list[str] = []
     if entity_breakdown:
-        unresolved_count = entity_breakdown.get("UNRESOLVED", 0)
+        # T13: contextual stubs carry the `unresolved:` ID prefix and are typed
+        # EXTERNAL_SYMBOL in new artifacts, so the UNRESOLVED type key is always
+        # 0 there. Prefer the stub count from stats; fall back to the legacy
+        # UNRESOLVED type count for old stats dicts.
+        unresolved_count = stats.get("stub_entity_count")
+        if unresolved_count is None:
+            unresolved_count = entity_breakdown.get("UNRESOLVED", 0)
         if total_entities > 0 and unresolved_count / total_entities > 0.20:
             pct = int(unresolved_count / total_entities * 100)
             patterns.append(f"External dependencies significant ({pct}% unresolved)")
@@ -463,6 +514,7 @@ def build_dual_output(
     total_edges: int | None = None,
     artifact_generation: int = 0,
     applied_filters: dict | None = None,
+    resolver=None,
 ) -> tuple[str, dict]:
     if response_format == "detailed":
         markdown = format_detailed(agent_rows, rels_rows, storage_rows, file_paths)
@@ -476,7 +528,7 @@ def build_dual_output(
         truncated_md += f"More: graph_query(offset={offset + limit}, limit={limit})"
 
     nodes = [build_node_dict(r) for r in agent_rows]
-    edges = [build_edge_dict(r) for r in rels_rows]
+    edges = [build_edge_dict(r, resolver=resolver) for r in rels_rows]
 
     tn = total_nodes if total_nodes is not None else len(agent_rows)
     te = total_edges if total_edges is not None else len(rels_rows)
@@ -492,3 +544,68 @@ def build_dual_output(
 
     structured = {"graph": {"nodes": nodes, "edges": edges}, "meta": meta}
     return truncated_md, structured
+
+
+def _dep_via_names(dep: dict) -> list[str]:
+    """Collect the `via` symbol names across a dependency cell's relations.
+
+    `via` lives per relation cell (`dep["relations"][rt]["via"]`); the markdown
+    rendering aggregates them in relation order, deduplicated.
+    """
+    via: list[str] = []
+    for cell in dep.get("relations", {}).values():
+        for name in cell.get("via") or []:
+            if name and name not in via:
+                via.append(name)
+    return via
+
+
+def format_file_connectivity(
+    file_path: str,
+    depends_on: list[dict],
+    depended_on_by: list[dict],
+    external: dict | None = None,
+    stats: dict | None = None,
+) -> str:
+    """Markdown rendering for the file_connectivity tool."""
+    lines: list[str] = [f"## File Connectivity: {file_path}", ""]
+
+    lines.append(f"### Depends on ({len(depends_on)} files)")
+    for dep in depends_on:
+        via = _dep_via_names(dep)
+        rels = ", ".join(
+            f"{rt.lower()}×{cell['count']}" for rt, cell in dep["relations"].items()
+        )
+        via_s = f" (via {', '.join(via[:3])})" if via else ""
+        lines.append(f"- `{dep['file']}` — {rels}{via_s}")
+    lines.append("")
+
+    lines.append(f"### Depended on by ({len(depended_on_by)} files)")
+    for dep in depended_on_by:
+        via = _dep_via_names(dep)
+        rels = ", ".join(
+            f"{rt.lower()}×{cell['count']}" for rt, cell in dep["relations"].items()
+        )
+        via_s = f" (via {', '.join(via[:3])})" if via else ""
+        lines.append(f"- `{dep['file']}` — {rels}{via_s}")
+    lines.append("")
+
+    if external:
+        stdlib = external.get("stdlib") or []
+        unresolved = external.get("unresolved_count") or 0
+        if stdlib or unresolved:
+            lines.append("### External")
+            if stdlib:
+                lines.append(f"- stdlib: {', '.join(sorted(stdlib))}")
+            if unresolved:
+                lines.append(f"- unresolved references: {unresolved}")
+            lines.append("")
+
+    stats = stats or {}
+    lines.append(
+        f"{stats.get('outgoing_files', 0)} outgoing · "
+        f"{stats.get('incoming_files', 0)} incoming · "
+        f"{stats.get('unresolved_stubs', 0)} unresolved"
+        + (f" · generation {stats['artifact_generation']}" if stats.get("artifact_generation") else "")
+    )
+    return "\n".join(lines)
