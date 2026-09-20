@@ -508,15 +508,16 @@ def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str,
     # Sanitize and validate paths configuration to prevent traversal attacks
     paths = cfg_dict.setdefault("paths", {})
     from batho.utils.path_sanitizer import PathSecurityError
+    root_resolved = root_dir.resolve()
     for path_key in ("artifact_dir", "cache_dir", "bsg_dir"):
         val = paths.get(path_key)
         if val:
             p = Path(val)
             if not p.is_absolute():
-                p = root_dir / p
+                p = root_resolved / p
             resolved = p.resolve()
             try:
-                resolved.relative_to(root_dir)
+                resolved.relative_to(root_resolved)
             except ValueError:
                 raise PathSecurityError(f"Unsafe config path {path_key} escaping repository root: {val}")
             paths[path_key] = str(resolved)

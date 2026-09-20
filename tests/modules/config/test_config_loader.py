@@ -171,6 +171,27 @@ class TestConfigSecurityAndRecovery:
             get_config_with_root(tmp_path)
         assert "Unsafe config path artifact_dir escaping repository root" in str(exc_info.value)
 
+    def test_config_symlinked_root_not_flagged_as_traversal(self, tmp_path: Path):
+        """A repo root reached through a symlink must not trip the traversal guard.
+
+        Scenario:
+            The repository root is accessed via a symlink (macOS `/tmp` ->
+            `/private/tmp`, CI workspace symlinks). Relative config paths must
+            resolve against the resolved root; comparing a resolved path
+            against the unresolved root raised a false PathSecurityError.
+        """
+        real_root = tmp_path / "real_repo"
+        real_root.mkdir()
+        link = tmp_path / "linked_repo"
+        link.symlink_to(real_root)
+
+        cfg_yaml = link / "batho.yaml"
+        cfg_yaml.write_text("paths:\n  artifact_dir: .batho/artifact\n")
+
+        cfg = get_config_with_root(link)
+
+        assert Path(cfg["paths"]["artifact_dir"]) == (real_root / ".batho" / "artifact").resolve()
+
     def test_config_invalid_fails_explicitly(self, tmp_path: Path):
         """Verify that an invalid config file fails explicitly with a clear error.
 

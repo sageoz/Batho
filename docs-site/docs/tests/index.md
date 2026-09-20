@@ -8,7 +8,7 @@ sidebar_label: Overview
 Batho features a comprehensive, multi-layered test suite to ensure the correctness, reliability, and security of its AST traversal and hypergraph orchestrator components.
 
 :::info Test Suite Summary
-- **Total Tests:** 1603 tests
+- **Total Tests:** 1609 tests
 - **Primary Tooling:** `pytest` + `uv`
 - **Minimum Target Coverage:** >60% line coverage across active v1.4.3 modules
 :::
@@ -64,7 +64,7 @@ flowchart TB
     subgraph Utils["Utils"]
         U[File I/O & Locking]
     end
-    Suite[1603 Tests] --> Orchestrator
+    Suite[1609 Tests] --> Orchestrator
     Suite --> Modules
     Suite --> Utils
 ```
