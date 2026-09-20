@@ -88,6 +88,17 @@ const sidebars: SidebarsConfig = {
         'contributing/architecture',
       ],
     },
+    {
+      type: 'category',
+      label: 'Skill Pack',
+      link: {
+        type: 'doc',
+        id: 'skills/pack',
+      },
+      items: [
+        'skills/pack',
+      ],
+    },
     'faq',
     'changelog',
   ],

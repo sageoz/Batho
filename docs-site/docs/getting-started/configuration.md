@@ -70,12 +70,14 @@ Top-level parser execution controls.
 Consolidated Dependency Extraction Utility (CDEU) settings.
 - `enabled`: Enable indexing of stdlib and third-party dependencies.
 - `introspection`:
-  - `enabled`: Introspect installed packages. Supports Python (venv), npm (`node_modules`), Cargo (registry cache), Go modules (GOPATH cache), and Maven artifacts (`~/.m2`).
+  - `enabled`: Introspect installed packages. Every manager with an install store is supported: Python (venv), npm (`node_modules`), Cargo (registry cache), Go modules (GOPATH cache), Maven (`~/.m2`) **and** Gradle (`~/.gradle/caches`), Ruby gems (`GEM_HOME`), PHP/Hack composer (`vendor/`), NuGet (`~/.nuget/packages`), Dart pub (`.dart_tool` / `PUB_CACHE`), Julia (depot), R (renv / `R_LIBS_USER`), Haskell (cabal store), Swift SPM (`.build/checkouts`), Zig (zigmod), Erlang (rebar3 `_build`), OCaml (opam), Lua (luarocks), and Perl (local::lib).
   - `mode`: `shallow` (exports only) or `deep` (recursive).
   - `venv_auto_detect`: Find `.venv` directories automatically.
   - `timeout_seconds`: Timeout for introspecting one package.
-  - `full_scan`: Scan all declared dependencies, not just popular packages.
+  - `full_scan`: **The declared-deps switch.** `true` attempts every declared dependency (subject to the env-skip policy and no-ecosystem classification); `false` attempts only packages in the bundled popular-packages DB. With `false`, deps not in the popular DB are reported as `gate_dropped` in the `dependency_index_complete` build log with a hint to enable `full_scan`. This flag is the only declared-dep bypass — there is no always-introspect bypass.
   - `popular_packages_db_path`: Custom popular packages path.
+  - `skip_missing_env` (default `true`): **Skip-when-env-missing policy** — when a dependency's environment (venv, `node_modules`, `vendor/`, user package store) cannot be found, the dependency is skipped: no introspection attempt, no fallback `{name: [name]}` stub symbols, no cache write. Skips are counted in build stats (`dependency_index_complete` → `skipped_no_env`) with a log hint. Set `false` to restore legacy best-effort behavior. Python note: Batho never falls back to its own interpreter — a project without a resolvable venv is skipped, not introspected against the wrong environment.
+  - `managers`: Per-manager enable overrides, e.g. `{gem: false}` disables gem introspection. Keys are manager names (`pip`, `npm`, `cargo`, `go`, `maven`, `gradle`, `gem`, `composer`, `nuget`, `pub`, `julia`, `cran`, `cabal`, `spm`, `zigmod`, `rebar3`, `opam`, `luarocks`, `cpan`); unknown keys log a warning.
 - `stdlib`:
   - `enabled`: Index built-in language libraries.
   - `languages`: Languages to index. Defaults to 27 languages: `python`, `javascript`, `typescript`, `go`, `rust`, `c`, `cpp`, `java`, `ruby`, `csharp`, `php`, `kotlin`, `swift`, `scala`, `dart`, `haskell`, `lua`, `r`, `perl`, `julia`, `zig`, `bash`, `objc`, `erlang`, `ocaml`, `hack`, `verilog`. See `batho.yaml.example` for the full list.
@@ -162,8 +164,45 @@ Configures the MCP server tool registration and gating.
 - `tools`:
   - `disabled`: Blocklist of tool names NOT to register. When unset, defaults to the secure-by-default set: `["batho_build", "batho_export", "batho_load", "batho_gc"]`. Set to `[]` to enable all tools.
   - `enabled`: Optional allowlist. If set, ONLY these tools register (overrides `disabled`). Example: `["graph_overview", "graph_query", "batho_build"]`.
+- `toolsets`: Named tool groups resolved to a disabled set, consulted only when `tools.disabled`/`tools.enabled` are both unset (`null` = secure defaults). `true` enables a group, `false` disables it. Groups: `retrieval` (`graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `file_connectivity`, `search_entities`, `get_delta`), `diagnostics` (`batho_status`, `batho_list_runs`, `batho_diff`), `registry` (`list_repos`, `add_repo`, `remove_repo`), `admin` (`batho_build`, `batho_patch`, `batho_export`, `batho_gc`, `batho_fix`, `batho_load`). Examples: `{admin: true}` exposes everything including Tier-3 admin tools; `{retrieval: true, diagnostics: false, registry: false, admin: false}` is a minimal retrieval-only surface.
 
 See [MCP Tool Gating](/docs/mcp#tool-gating) for details.
+
+### 16. `progress`
+Configures the pytest-style progress display for `batho build` and `batho patch`.
+- `enabled`: Master switch for progress rendering (`true`).
+- `style`: `progress` renders `[ NN%]` percentages, `classic` renders counts only (`progress`).
+- `mininterval_s`: Minimum seconds between bar redraws (`0.2`).
+- `show_after_s`: Phases finishing faster than this never render a bar (`2.0`).
+- `keepalive_s`: Non-TTY long-phase keep-alive line interval; `0` disables (`60`).
+
+Bars render on stderr only and are suppressed automatically for quiet/JSON modes and piped
+output. `NO_COLOR` disables color but keeps the bar.
+
+### 17. `workspace`
+Multi-repo / monorepo manifest scoping (optional — omit entirely for single-package repos).
+Each discovered manifest dir maps to a package identity; these keys restrict which manifests
+are read.
+- `manifest_dirs`: Which manifest dirs govern dependencies (`null` = every discovered
+  manifest). List form is an allowlist of repo-relative dir prefixes; dict form supports
+  `allow` + `deny` (deny wins). Example — keep a vendored docs site out of dependency
+  introspection: `manifest_dirs: {deny: [docs-site, examples]}`.
+
+### 18. `project`
+Optional explicit project identity — overrides the manifest-derived package identity
+(`manager`/`name`/`version` used in every entity id prefix).
+- `package`:
+  - `manager`: Package manager (`pip` — also `npm`, `cargo`, `go`, `maven`, …).
+  - `name`: Project name (**required** when `project.package` is set).
+  - `version`: Project version (`0.0.0`).
+
+```yaml
+project:
+  package:
+    manager: pip
+    name: my-project
+    version: 1.0.0
+```
 
 ---
 
@@ -183,6 +222,11 @@ Override settings on demand without changing your `batho.yaml` file:
 | `BATHO_PLUGINS_ENABLED` | `true` | Enable or disable rule plugins |
 | `BATHO_PLUGINS_CUSTOM_PLUGINS_PATH` | unset | Custom rules file path override |
 | `BATHO_PLUGINS_BUILTIN_PLUGINS` | config list | Comma-separated built-in plugin list |
+| `BATHO_NO_PROGRESS` | unset | `1`/`true`/`yes` disables progress bars (strict — `0` does NOT disable) |
+
+Native tqdm overrides (`TQDM_DISABLE`, `TQDM_MININTERVAL`, `TQDM_MINITERS`, ...) are also
+honored. Caution: **any non-empty `TQDM_DISABLE` value disables, including `"0"`** — prefer
+`BATHO_NO_PROGRESS`.
 
 ---
 

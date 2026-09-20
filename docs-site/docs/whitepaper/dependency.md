@@ -6,7 +6,7 @@ description: "Multi-ecosystem dependency indexing, manifest parsing, stdlib tabl
 
 # 6. Dependency Intelligence
 
-Batho's dependency subsystem resolves and indexes third-party and standard-library dependencies across 40+ languages. It populates the scope manager with resolved symbols, enabling cross-file reference resolution and external symbol entity creation. As of v1.4.0, stdlib symbol tables cover 27 languages and live introspection supports five package ecosystems (Python, npm, Cargo, Go modules, and Maven).
+Batho's dependency subsystem resolves and indexes third-party and standard-library dependencies across 40+ languages. It populates the scope manager with resolved symbols, enabling cross-file reference resolution and external symbol entity creation. Stdlib symbol tables cover 27 languages and live introspection covers every package ecosystem with an offline install store — Python, npm, Cargo, Go, Maven, Gradle, Ruby gems, Composer, NuGet, Dart pub, Julia, CRAN, cabal, Swift SPM, zigmod, rebar3, opam, luarocks, and CPAN.
 
 ## 6.1 Indexing Pipeline
 
@@ -36,6 +36,32 @@ flowchart TB
 
 **Figure 29: Dependency Indexing Pipeline** — Five-stage flow from manifest discovery through scope manager population.
 
+### Per-Dependency Gate Chain
+
+Every unique declared dependency `(manager, name, version_spec)` passes through a pinned gate order and reaches **exactly one** terminal bucket:
+
+```text
+① cache     hit                                   → deps_cached
+② popular   full_scan=false and not in popular DB → deps_gate_dropped
+③ managers  disabled by introspection.managers    → deps_manager_disabled
+④ route     no offline store (bash, verilog, c,
+            cpp, objc, agda)                       → deps_no_ecosystem
+⑤ env       skip_missing_env (default true) and
+            env not found                         → deps_skipped_no_env
+⑥ introspect symbols found                        → deps_introspected
+            none found                            → deps_no_symbols
+```
+
+**`full_scan` contract**: `true` attempts every declared dep (subject to gates ③④⑤); `false` attempts only popular-DB members. `full_scan` is the only declared-dep bypass. Gate ② runs before ④, so a non-popular no-ecosystem dep counts as `gate_dropped` when `full_scan=false` and as `no_ecosystem` when `full_scan=true`.
+
+**Completeness invariant** (asserted after every indexing run, log-only warning `introspection_accounting_mismatch` on violation):
+
+```
+deps_unique = deps_cached + deps_gate_dropped + deps_manager_disabled
+            + deps_no_ecosystem + deps_skipped_no_env
+            + deps_introspected + deps_no_symbols
+```
+
 ### Pipeline Statistics
 
 Pipeline statistics track metrics throughout the process:
@@ -43,9 +69,15 @@ Pipeline statistics track metrics throughout the process:
 | Metric | Description |
 |--------|-------------|
 | `manifests_found` | Number of manifest files detected |
-| `deps_declared` | Total dependencies parsed from manifests |
+| `deps_declared` | Total dependencies parsed from manifests (raw rows) |
+| `deps_unique` | Unique (manager, name, version_spec) dependency identities |
 | `deps_cached` | Dependencies resolved from cache (no introspection needed) |
 | `deps_introspected` | Dependencies resolved via live introspection |
+| `deps_gate_dropped` | Dependencies dropped by the popular-DB gate (only when `full_scan=false`) |
+| `deps_manager_disabled` | Dependencies rejected by per-manager config overrides |
+| `deps_skipped_no_env` | Dependencies skipped because their env/store was not found (skip policy) |
+| `deps_no_symbols` | Dependencies attempted but yielding no symbols |
+| `deps_no_ecosystem` | Dependencies on languages with no offline package store |
 | `symbols_indexed` | Total symbols added to ScopeManager |
 | `stdlib_modules_indexed` | Standard library modules indexed |
 | `duration_ms` | Total pipeline execution time |
@@ -133,17 +165,44 @@ When a declared dependency is found in the popular packages database, its symbol
 
 ## 6.5 Third-Party Introspector
 
-The third-party introspector performs live introspection of installed third-party packages across five package ecosystems. It is subprocess-isolated to maintain Batho's zero-code-execution guarantee on untrusted code — the introspected packages are the developer's own installed dependencies, not the analyzed source code.
+The third-party introspector performs live introspection of installed third-party packages across every ecosystem with an offline install store. It is subprocess-isolated to maintain Batho's zero-code-execution guarantee on untrusted code — the introspected packages are the developer's own installed dependencies, not the analyzed source code.
 
 ### Supported Ecosystems
 
-| Ecosystem | Introspector | Source | Method |
-|-----------|-------------|--------|--------|
-| Python | `introspect_python` | Active virtual environment | `dir()` + `inspect` in subprocess |
-| npm | `introspect_npm` | `node_modules/` directory | Parse `package.json` exports + `require()` probe |
-| Cargo | `introspect_crate` | Cargo registry cache (`~/.cargo/registry/`) | Parse crate metadata and public API |
-| Go | `introspect_go_module` | Go module cache (`~/go/pkg/mod/`) | Parse exported declarations from module source |
-| Maven | `introspect_jar` | Maven local repo (`~/.m2/repository/`) | Parse JAR class entries via `jar`/`unzip` listing |
+| Ecosystem | Introspector | Environment | Method |
+|-----------|-------------|-------------|--------|
+| Python | `introspect_python` | Project venv (`.venv`/`venv`/`env`) | `dir()` + `inspect` in subprocess |
+| npm | `introspect_npm` | `node_modules/` (walk-up) | Parse `package.json` exports + `.d.ts` |
+| Cargo | `introspect_crate` | `CARGO_HOME` → `~/.cargo/registry/` | Parse `pub` items from crate source |
+| Go | `introspect_go_module` | `GOPATH` → `~/go/pkg/mod/` | Parse exported declarations |
+| Maven | `introspect_jar` | `~/.m2/repository/` | Parse `-sources.jar` / binary jar entries |
+| Gradle | `introspect_jar` | `GRADLE_USER_HOME` → `~/.gradle/caches/modules-2` | Same jar parsing (covers Kotlin/Scala) |
+| Ruby gems | `introspect_gem` | `GEM_HOME`/`BUNDLE_PATH` → `~/.gem` → `gem env gemdir` | Parse `module`/`class`/`def` from `lib/**/*.rb` |
+| Composer (PHP/Hack) | `introspect_composer` | `vendor/` (walk-up) | PSR-4 + `namespace`-qualified class extraction |
+| NuGet (C#) | `introspect_nuget` | `NUGET_PACKAGES` → `~/.nuget/packages` | XML doc `T:` members; `.nuspec` fallback |
+| Dart pub | `introspect_pub` | `.dart_tool/package_config.json` → `PUB_CACHE` | Parse `lib/**/*.dart` declarations |
+| Julia | `introspect_julia` | `JULIA_DEPOT_PATH` → `~/.julia` | `export` lists (explicit API) + defs |
+| R (CRAN) | `introspect_cran` | renv library → `R_LIBS_USER` → platform default | `NAMESPACE` `export()` directives |
+| Haskell (cabal) | `introspect_cabal` | `~/.cabal` | `exposed-modules:`; `ghc-pkg` fallback |
+| Swift SPM | `introspect_spm` | `.build/checkouts` (walk-up) | `public`/`open` declarations |
+| Zig (zigmod) | `introspect_zigmod` | `.zigmod/deps` → zig global cache | `pub` declarations; zon `.name` matching |
+| Erlang (rebar3) | `introspect_rebar3` | `_build/default/lib` (walk-up) | `-export([...]).` lists + `-module` |
+| OCaml (opam) | `introspect_opam` | `OPAMROOT` → `~/.opam` | `.mli` interfaces (`val`/`type`/`module`) |
+| Lua (luarocks) | `introspect_luarocks` | `LUAROCKS` → `~/.luarocks` | `function M.f`-style module tables |
+| Perl (cpan) | `introspect_cpan` | `PERL5LIB` → `~/perl5/lib/perl5` | `package` + `sub` from `.pm` files |
+
+Languages without an offline package store (`bash`, `verilog`, `c`, `cpp`, `objc`, `agda`) have no introspector by design — the bundled stdlib tables are their coverage story, and their deps are classified as `no_ecosystem` rather than stubbed.
+
+### Skip-When-Env-Missing Policy
+
+When a dependency's environment cannot be resolved (no venv, no `node_modules`, no user package store), the dependency is **skipped**:
+
+- No introspection attempt is made (the env check happens before thread-pool submission).
+- No fallback `{name: [name]}` stub symbols are registered — stubs inflate resolution metrics with unresolvable package-name symbols.
+- The resolution cache is never written for skipped deps.
+- The build stats expose `skipped_no_env`, and one warning per manager is logged with a hint.
+
+This policy is controlled by `dependency.introspection.skip_missing_env` (default `true`). Python specifically never falls back to Batho's own interpreter (`sys.executable`) — introspecting the wrong environment produces symbols that cannot resolve and is worse than no symbols.
 
 ### Python Introspection Modes
 

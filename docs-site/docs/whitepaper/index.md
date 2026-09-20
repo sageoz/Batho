@@ -8,7 +8,7 @@ description: "Batho v1.4.2 Technical Whitepaper — Bidirectional AST Traversal 
 
 ## Bidirectional AST Traversal & Hypergraph Orchestrator
 
-**Document Version:** 1.4.1  
+**Document Version:** 1.4.2  
 **Date:** July 2026  
 **Classification:** Public — Enterprise Technical Reference  
 **Author:** Batho Core Team  
@@ -27,7 +27,7 @@ Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic
 | Supported Languages | 40+ via tree-sitter |
 | Context Compression | Up to 10x for LLM injection |
 | Incremental Patch Speed | 10–100x faster than full re-index |
-| Test Coverage | 864 automated tests |
+| Test Coverage | 1603 automated tests |
 | Cache Hit Rate | >95% on typical PR-sized changes |
 | Snapshot Retention | 90 days default, configurable |
 | Max Indexed Files | 200,000 per repository |

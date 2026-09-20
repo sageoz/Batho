@@ -1,7 +1,7 @@
 ---
 sidebar_position: 5
 title: "Tools Reference"
-description: "Complete documentation for all 19 Batho MCP tools (15 enabled by default)"
+description: "Complete documentation for all 20 Batho MCP tools (16 enabled by default)"
 ---
 
 # MCP Tools Reference
@@ -11,6 +11,64 @@ All Batho MCP tools return dual output:
 - **`structuredContent`** — Full JSON for programmatic consumers
 
 All graph tools accept `repo` as an optional parameter. If omitted, the first registered repo is used. Use `list_repos` to see available repos.
+
+## Tool Surface (20 tools)
+
+| Tier | Tools | Default |
+|------|-------|---------|
+| Registry | `list_repos`, `add_repo`, `remove_repo` | enabled |
+| Retrieval | `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `file_connectivity`, `search_entities`, `get_delta` | enabled |
+| Diagnostics | `batho_status`, `batho_list_runs`, `batho_diff` | enabled |
+| Admin (Tier-3) | `batho_patch`, `batho_fix` | enabled |
+| Admin (Tier-3) | `batho_build`, `batho_export`, `batho_load`, `batho_gc` | **disabled** (CLI-first) |
+
+## Annotations (MCP tool hints)
+
+Every tool declares `ToolAnnotations` so hosts can auto-approve read-only
+calls and gate destructive ones:
+
+| Tool | readOnlyHint | destructiveHint | idempotentHint | openWorldHint |
+|------|--------------|-----------------|----------------|---------------|
+| `list_repos` | true | false | true | false |
+| `add_repo` | false | true | — | false |
+| `remove_repo` | false | true | — | false |
+| `graph_overview` | true | false | true | false |
+| `graph_query` | true | false | true | false |
+| `get_entity` | true | false | true | false |
+| `trace_path` | true | false | true | false |
+| `get_file_graph` | true | false | true | false |
+| `file_connectivity` | true | false | true | false |
+| `search_entities` | true | false | true | false |
+| `get_delta` | true | false | true | false |
+| `batho_status` | true | false | true | false |
+| `batho_list_runs` | true | false | true | false |
+| `batho_diff` | true | false | true | false |
+| `batho_build` | false | true | — | true |
+| `batho_patch` | false | true | true | true |
+| `batho_export` | false | true | — | true |
+| `batho_gc` | false | true | — | false |
+| `batho_fix` | false | true | — | false |
+| `batho_load` | false | true | — | false |
+
+## outputSchema (structured outputs)
+
+The 8 dual-output tools declare an `outputSchema` (MCP 2025-06-18) matching
+their `structuredContent` shape, so hosts can validate and render typed UIs:
+
+| Tool | Top-level keys |
+|------|----------------|
+| `graph_overview` | `overview`, `meta` |
+| `graph_query`, `get_entity`, `get_file_graph` | `graph` (`nodes`, `edges`), `meta` |
+| `trace_path` | `path`, `depth`, `meta` |
+| `file_connectivity` | `file`, `depends_on`, `depended_on_by`, `external`, `stats`, `meta` |
+| `search_entities` | `results`, `meta` |
+| `get_delta` | `changes`, `delta_stats`, `run_info` |
+
+Tool descriptions follow a **USE when / DO NOT USE when** template (biggest
+measured lever on tool-selection accuracy), and the server ships a top-level
+`instructions` string with Batho-first routing guidance. Tool groups can be
+gated via `mcp.toolsets` in `batho.yaml` (`retrieval`, `diagnostics`,
+`registry`, `admin`) — defaults are unchanged when the section is absent.
 
 ---
 

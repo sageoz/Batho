@@ -214,7 +214,7 @@ Batho's CI/CD strategy is **incremental**: download the previous artifact → `b
 **GitHub Actions composite action:**
 
 ```yaml
-- uses: sageoz/batho@v1.4.2
+- uses: sageoz/batho@v1.4.3
   with:
     root: "."
     artifact-name: "batho-index"

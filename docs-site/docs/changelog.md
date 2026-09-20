@@ -6,6 +6,40 @@ description: "Batho release history"
 
 # Changelog
 
+## v1.4.3 — 2026-09-20
+
+**Universal dependency introspection (19 managers) and the skip-when-env-missing policy; pytest-style progress bars for `batho build` and `batho patch`; fully pinned dependency set and fastmcp 3.4.7 for deterministic installs.**
+
+### New Features
+
+- **Real introspection for every manager with an offline install store**: 12 new introspectors — Ruby gems (`GEM_HOME` → `gem env gemdir`), PHP/Hack composer (`vendor/` + PSR-4 namespace-qualified classes), NuGet (XML doc `T:` members, `.nuspec` fallback), Dart pub (`.dart_tool/package_config.json` — dart's own resolution — with `PUB_CACHE` fallback), Julia (depot `export` lists), R/CRAN (renv library / `R_LIBS_USER`, `NAMESPACE` `export()` directives), Haskell cabal (`exposed-modules:`, `ghc-pkg` fallback), Swift SPM (`.build/checkouts`, `public`/`open` only), Zig (vendored `.zigmod/deps` + global cache matched by `build.zig.zon` `.name`), Erlang rebar3 (`-export([...]).` lists), OCaml opam (`.mli` interfaces), Lua luarocks (rock trees), Perl cpan (local::lib `.pm`).
+- **Gradle store support in jar introspection**: `introspect_jar` now searches `~/.gradle/caches/modules-2/files-2.1` in addition to `~/.m2`, with binary-jar entry-name parsing when no `-sources` jar exists — Kotlin/Scala/Java deps declared via Gradle are introspectable.
+- **Skip-when-env-missing policy** (default on, `dependency.introspection.skip_missing_env`): when a dep's environment (venv, `node_modules`, `vendor/`, user package store) cannot be found, the dep is skipped — no introspection attempt, no fallback `{name: [name]}` stub symbols, no cache write. `deps_skipped_no_env` / `deps_no_symbols` / `deps_no_ecosystem` counters in build stats (`dependency_index_complete`), one warning per manager with a fix hint. `skip_missing_env: false` restores legacy best-effort behavior.
+- **`full_scan` contract formalized** — the single explicit switch for declared-dep introspection: `true` attempts every declared dependency (subject to the env-skip policy and no-ecosystem classification); `false` attempts only popular-DB members. The per-dependency gate chain is pinned (① cache → ② popular → ③ managers → ④ route → ⑤ env → ⑥ introspect) with a **completeness invariant**: every unique declared dep reaches exactly one terminal bucket (`deps_unique == cached + gate_dropped + manager_disabled + no_ecosystem + skipped_no_env + introspected + no_symbols`), asserted after every run (log-only `introspection_accounting_mismatch` warning). New stats: `deps_unique`, `deps_gate_dropped`, `deps_manager_disabled`; `dependency_gate_drops` log line with a "set full_scan: true" hint when the popular gate drops deps.
+- **Python never introspects the wrong interpreter**: `introspect_python` lost the `sys.executable` fallback — only the project venv's python binaries are used; a venv-less project is skipped (configurable via the policy above).
+- **Per-manager introspection toggles** (`dependency.introspection.managers`, e.g. `{gem: false}`); unknown manager keys warn and are ignored.
+- **Env-resolution matrix**: declarative per-manager environment resolution (project-scoped walk-up markers vs user-level store env-var → home default → glob fallbacks), memoized per (manager, manifest dir), shared by the skip policy and the introspectors.
+- **No-ecosystem classification**: `bash`, `verilog`, `c`, `cpp`, `objc`, `agda` deps are explicitly classified (`deps_no_ecosystem`, debug log) instead of falling through stub branches; `hack` deps route through the composer introspector. A routing table maps every language → introspector (or `None`).
+
+### Changed
+
+- **`{name: [name]}` fallback stubs removed** from `_introspect_dep` and `introspect_jar` — stubs inflated I2 metrics with unresolvable package-name symbols.
+- **Resolution cache version bumped** (`v3:` hash prefix, now including the declaring manifest-dir scope) so previously-cached fallback stubs are invalidated on first run.
+- **Phase progress display**: `batho build` and `batho patch` now render phase-level progress on stderr in pytest's `[ NN%]` style — `  extract   [ 45%] 645/1432` — with one completion line per phase and a one-line final summary (`✓ built in 42.3s — 312 files · 1542 entities · 4823 relationships`). The live bar appears only for phases longer than 2 seconds and is transient (erased on completion), keeping terminal logs clean.
+- **Graceful non-TTY degradation**: when stderr is not a terminal (pipes, CI), no animation is rendered — one completion line per phase instead, with a keep-alive line every 60 s for long phases so CI log viewers never look frozen. `NO_COLOR` disables color but keeps the bar (per the NO_COLOR standard).
+- **`--no-progress` flag** on `build` and `patch`, plus the `BATHO_NO_PROGRESS=1` environment variable (strict parsing: only `1`/`true`/`yes` disable — unlike `TQDM_DISABLE`, `"0"` does not). Native `TQDM_DISABLE` / `TQDM_MININTERVAL` / `TQDM_MINITERS` overrides pass through for power users.
+- **`progress:` config section** in `batho.yaml`: `enabled`, `style` (`progress` | `classic`), `mininterval_s`, `show_after_s`, `keepalive_s`.
+- **Parent-process-only progress hooks**: the extraction pipeline exposes a `progress_callback` invoked once per completed file result in the parent process; worker processes (spawn-context `multiprocessing.Pool`) never touch the bar. A failing progress callback can never break a build or patch.
+- **Log interleaving safety**: while a bar is active, structlog output (routed through stdlib logging) is emitted via tqdm's write mode, which clears and redraws the bar instead of corrupting it.
+- **Build/patch success summaries** restyled to one line: `✓ built in 42.3s — 312 files · 1542 entities · 4823 relationships` (was `Built /path: N entities, N relationships, N files in Nms`).
+- **New dependency**: `tqdm>=4.66` (zero runtime dependencies off Windows, ~80 KB wheel, ~60 ns/iteration documented overhead, CI-enforced performance regression guards). A benchmark guard asserts progress overhead stays under 10% of build wall-clock (design budget: 1%).
+
+### Dependencies & Packaging
+
+- **All dependencies pinned to exact versions (`==`)**: 18 runtime, 6 test, and 8 dev dependencies, plus the `hatchling` build requirement. Fresh `uv tool install` / `pip install` resolutions are now fully deterministic — upstream releases can no longer change Batho's behavior until a new Batho release deliberately bumps the pins. (Lockfiles do not ship inside wheels, so pins in `pyproject.toml` are the only author-controlled constraint on what `uv tool install` resolves.)
+- **`fastmcp==3.4.7`** (was `>=3.4.0`, which resolved to the breaking fastmcp 4.0.x on fresh installs): fastmcp 4.0 removed the `fastmcp.tools.tool` module, crashing `batho mcp` at import time. 3.4.7 is the maintained 3.x head and carries security backports — SSRF via NAT64/6to4/Teredo transition addresses, a DNS-rebinding Host/Origin guard, and JWT/OAuth fixes — that 3.4.2 predates.
+- **fastmcp 4.x-ready imports**: `batho.mcp.tools` and `batho.mcp.errors` now import `ToolResult` from the canonical `fastmcp.tools` package instead of the removed `fastmcp.tools.tool` deep path. The canonical path works on both fastmcp 3.4.x and 4.x, so the import layer of any future 4.x migration is already in place.
+
 ## v1.4.2 — 2026-09-08
 
 **MCP relationship filtering (symbol roles, confidence, direction), entity categories and PROPERTY extraction, the `file_connectivity` tool, stub-based cross-file traversal, and unambiguous stub IDs.**
