@@ -38,6 +38,64 @@ _WORKER_RULES_CACHE: list[Any] | None = None
 _WORKER_ROOT_PATH: str | None = None
 _WORKER_ZSTD_COMPRESSOR: Any | None = None
 
+# Language → package-manager name for the same-dir multi-manifest tiebreak
+# (T3). Only managers that manifests actually produce are mapped.
+_LANG_TO_MANAGER: dict[str, str] = {
+    "python": "pip",
+    "javascript": "npm",
+    "typescript": "npm",
+    "rust": "cargo",
+    "go": "go",
+    "java": "maven",
+}
+
+
+def _package_for_file(
+    filepath: str,
+    pkg_map: dict[str, list[dict]] | None,
+    dir_cache: dict[str, dict | None],
+) -> dict | None:
+    """Resolve the governing package identity for one file (T3).
+
+    Nearest ancestor manifest dir wins; a dir hosting several manifests is
+    disambiguated by the file's language → manager. Files outside every
+    manifest dir get ``None`` → the extractor's ``batho local project
+    0.0.0`` prefix. Memoized per directory — O(dirs), not O(files).
+    """
+    if not pkg_map:
+        return None
+    p = Path(filepath)
+    dir_key = p.parent.as_posix() or "."
+    if dir_key in dir_cache:
+        return dir_cache[dir_key]
+
+    from batho.modules.extraction.submodules.parser_factory.registry import (
+        get_language_for_extension,
+    )
+    lang = get_language_for_extension(p.suffix.lower()) or ""
+    manager = _LANG_TO_MANAGER.get(lang)
+
+    cur = p.parent
+    result: dict | None = None
+    while True:
+        rel = cur.as_posix() or "."
+        metas = pkg_map.get(rel)
+        if metas:
+            if manager:
+                result = next(
+                    (m for m in metas if m.get("manager") == manager),
+                    metas[0],
+                )
+            else:
+                result = metas[0]
+            break
+        if cur == cur.parent:  # reached "."
+            break
+        cur = cur.parent
+
+    dir_cache[dir_key] = result
+    return result
+
 
 def _create_file_snapshot(
     filepath: str,
@@ -350,8 +408,12 @@ def _enrich_cached_entities(
 
 
 def _process_file_worker_wrapper(args: tuple) -> Any:
-    """Wrapper function to unpack arguments for pool map worker."""
-    return process_file_single_pass_worker(*args)
+    """Wrapper function to unpack arguments for pool map worker.
+
+    Returns ``(filepath, result)`` so the parent can attribute progress to a
+    specific candidate even when the worker result is ``None``.
+    """
+    return (args[1], process_file_single_pass_worker(*args))
 
 
 def _initialize_worker(
@@ -367,6 +429,18 @@ def _initialize_worker(
 
     import gc
     gc.set_threshold(50000, 50, 50)
+
+    # Spawned workers do not inherit the parent's active-root ContextVar —
+    # without this, get_active_root() inside extraction code falls back to
+    # the *process cwd* and entity ids get minted with mangled absolute
+    # paths whenever the build root differs from the launching cwd (e.g.
+    # MCP batho_build on a repo other than the server's cwd).
+    if root_path:
+        try:
+            from batho.core.config import set_active_root
+            set_active_root(Path(root_path))
+        except Exception:
+            pass
 
     # T02: Propagate parsing config (extract_parameters, extract_type_parameters, etc.)
     # to worker processes so the registry's extractor instances honor config flags.
@@ -646,6 +720,28 @@ def _calculate_optimal_chunk_size(
     return min(chunk_size, 200)
 
 
+def _wrap_progress_callback(
+    progress_callback: Callable[[int], None] | None,
+) -> Callable[[int], None] | None:
+    """Guard the progress sink: a failing callback must never break extraction."""
+
+    if progress_callback is None:
+        return None
+
+    state = {"failed": False}
+
+    def _safe(n: int = 1) -> None:
+        if state["failed"]:
+            return
+        try:
+            progress_callback(n)
+        except Exception as exc:
+            state["failed"] = True
+            logger.warning("progress_callback_failed", error=str(exc))
+
+    return _safe
+
+
 def extract_and_emit_parallel(
     candidates: list[tuple[Path, str]],
     configured_max_file_size_kb: int,
@@ -655,11 +751,37 @@ def extract_and_emit_parallel(
     include_gaps: bool = False,
     result_callback: Callable[[tuple], None] | None = None,
     ast_cache_dir: str | None = None,
+    progress_callback: Callable[[int], None] | None = None,
+    package_map: dict[str, list[dict]] | None = None,
 ) -> tuple[list[tuple[str, bytes, bytes, list[dict]]], int, dict[str, Any]]:
     """
-    Process files in parallel to parse and emit compressed binary representations 
+    Process files in parallel to parse and emit compressed binary representations
     along with lightweight global manifests of exported definitions.
+
+    ``package_map`` (T3): ``{manifest_dir_rel: [PackageMetadata-dict, …]}`` —
+    when present, each file's ``package`` is resolved per file via
+    ``_package_for_file`` (nearest ancestor manifest dir, language→manager
+    tiebreak). ``package_dict`` remains the legacy single-identity fallback.
+
+    ``progress_callback`` fires exactly once per discovered candidate — success,
+    failure, or skip — in the parent process only (workers never touch it). The
+    bar total equals ``len(candidates)``, so a parallel→sequential fallback
+    re-ticks only files the pool did not already report.
     """
+    progress_callback = _wrap_progress_callback(progress_callback)
+
+    # Per-file progress dedupe: a mid-iteration pool failure reprocesses every
+    # work item, so completion is keyed on filepath and each candidate ticks at
+    # most once across the parallel and fallback loops.
+    _reported: set[str] = set()
+    # Same dedupe for result_callback: pool-reported files must not be
+    # re-streamed to the writer when the fallback reprocesses them.
+    _callback_done: set[str] = set()
+
+    def _tick(filepath: str) -> None:
+        if progress_callback is not None and filepath not in _reported:
+            _reported.add(filepath)
+            progress_callback(1)
     bsg_parallel_cfg = bsg_cfg.get("parallel", {})
     parallel_enabled = bsg_parallel_cfg.get("enabled", True)
     max_workers = bsg_parallel_cfg.get("max_workers", 16)
@@ -668,11 +790,18 @@ def extract_and_emit_parallel(
     cache_enabled = bsg_cache_cfg.get("enabled", True)
     cache_path = bsg_cache_cfg.get("path") or None
     ttl_days = bsg_cache_cfg.get("ttl_days", 30)
-    
+
     from batho.modules.storage.cache.unified_cache import build_ast_cache_variant as _build_ast_cache_variant
+    identity_fp = ""
+    if package_map:
+        import hashlib
+        identity_fp = hashlib.sha256(
+            orjson.dumps(package_map, option=orjson.OPT_SORT_KEYS)
+        ).hexdigest()[:12]
     cache_variant = _build_ast_cache_variant(
         include_gaps=include_gaps,
         parsing_config=bsg_cfg.get("parsing", {}),
+        identity_fingerprint=identity_fp,
     )
 
     rules_config = bsg_cfg.get("rules", {})
@@ -680,6 +809,18 @@ def extract_and_emit_parallel(
 
     raw_results = []
     error_count = 0
+    pkg_dir_cache: dict[str, dict | None] = {}
+
+    def _pkg_for(filepath: str) -> dict | None:
+        if package_map is not None:
+            rel = filepath
+            if root_path:
+                try:
+                    rel = Path(filepath).relative_to(root_path).as_posix()
+                except ValueError:
+                    rel = filepath
+            return _package_for_file(rel, package_map, pkg_dir_cache)
+        return package_dict
 
     if not parallel_enabled or len(candidates) == 0:
         logger.info("parallel_disabled_or_empty_candidates")
@@ -696,6 +837,7 @@ def extract_and_emit_parallel(
                 current_mtime = stat_info.st_mtime
             except OSError:
                 error_count += 1
+                _tick(filepath)
                 continue
 
             if size > configured_max_file_size_kb * 1024:
@@ -705,6 +847,7 @@ def extract_and_emit_parallel(
                     size_bytes=size,
                     limit_kb=configured_max_file_size_kb,
                 )
+                _tick(filepath)
                 continue
 
             res = process_file_single_pass_worker(
@@ -720,7 +863,7 @@ def extract_and_emit_parallel(
                 cache_variant=cache_variant,
                 index_id=index_id,
                 include_gaps=include_gaps,
-                package=package_dict,
+                package=_pkg_for(filepath),
                 rules_config=rules_config,
                 root_path=root_path,
                 ast_cache_dir=ast_cache_dir,
@@ -733,6 +876,7 @@ def extract_and_emit_parallel(
                     result_callback(res)
                     # Heavy blobs are now streamed via callback; trim to save memory
                     raw_results[-1] = res[:4] + (None, None) + res[6:]
+            _tick(filepath)
     else:
         cpu_count = os.cpu_count() or 4
         actual_workers = min(cpu_count, max_workers, len(candidates))
@@ -759,6 +903,8 @@ def extract_and_emit_parallel(
                 size = stat_info.st_size
                 current_mtime = stat_info.st_mtime
             except OSError:
+                error_count += 1
+                _tick(filepath)
                 continue
             if size > configured_max_file_size_kb * 1024:
                 logger.warning(
@@ -767,6 +913,7 @@ def extract_and_emit_parallel(
                     size_bytes=size,
                     limit_kb=configured_max_file_size_kb,
                 )
+                _tick(filepath)
                 continue
             candidate_sizes.append(size)
             work_items.append((
@@ -782,7 +929,7 @@ def extract_and_emit_parallel(
                 cache_variant,
                 index_id,
                 include_gaps,
-                package_dict,
+                _pkg_for(filepath),
                 rules_config,
                 root_path,
                 ast_cache_dir,
@@ -797,6 +944,7 @@ def extract_and_emit_parallel(
             chunk_size=chunk_size,
         )
 
+        pre_pool_errors = error_count
         try:
             import multiprocessing as _mp
             from batho.core.config import get_config_cached
@@ -808,18 +956,22 @@ def extract_and_emit_parallel(
                 initializer=_initialize_worker,
                 initargs=(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir, worker_parsing_config),
             ) as pool:
-                for res in pool.imap_unordered(
+                for filepath, res in pool.imap_unordered(
                     _process_file_worker_wrapper, work_items, chunksize=chunk_size
                 ):
                     raw_results.append(res)
                     if result_callback is not None and res is not None:
+                        _callback_done.add(filepath)
                         result_callback(res)
                         # Heavy blobs are now streamed via callback; trim to save memory
                         raw_results[-1] = res[:4] + (None, None) + res[6:]
+                    _tick(filepath)
         except Exception as exc:
             logger.warning("parallel_extract_and_emit_failed_fallback_sequential", error=str(exc))
             raw_results = []
-            error_count = 0
+            # Candidates skipped during work-item construction already counted;
+            # only pool-phase errors are reprocessed by the fallback loop.
+            error_count = pre_pool_errors
             # Initialize the global worker variables for the current (main) process
             from batho.core.config import get_config_cached
             worker_log_config = dict(get_config_cached().get("logging", {}))
@@ -833,9 +985,12 @@ def extract_and_emit_parallel(
                 else:
                     raw_results.append(res)
                     if result_callback is not None:
-                        result_callback(res)
+                        if item[1] not in _callback_done:
+                            _callback_done.add(item[1])
+                            result_callback(res)
                         # Heavy blobs are now streamed via callback; trim to save memory
                         raw_results[-1] = res[:4] + (None, None) + res[6:]
+                _tick(item[1])
 
     valid_results = []
     from collections import defaultdict

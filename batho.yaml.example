@@ -10,6 +10,20 @@ logging:
   file: null                # Optional log file path
   format: "%(message)s"     # Log format string
 
+progress:
+  enabled: true             # Master switch for build/patch progress bars
+  style: progress           # progress = "[ 45%]" percentage | classic = count-only
+  mininterval_s: 0.2        # Bar redraw throttle (seconds)
+  show_after_s: 2.0         # Phases finishing faster than this never render a bar
+  keepalive_s: 60           # Non-TTY long-phase keep-alive line interval (0 = off)
+# Environment overrides (precedence: --no-progress flag > env > this section):
+#   BATHO_NO_PROGRESS=1      Disable progress (strict: only 1/true/yes count)
+#   TQDM_DISABLE=1           Native tqdm override — WARNING: any non-empty value
+#                            disables, including "0". Prefer BATHO_NO_PROGRESS.
+#   TQDM_MININTERVAL=5       Slow bar redraws (useful for CI log cleanliness)
+# CI pipelines: pipes are auto-detected, but some CI runners allocate pseudo-TTYs
+# where isatty() lies — prefer an explicit --no-progress or BATHO_NO_PROGRESS=1.
+
 paths:
   db_path: .batho           # Base SQLite artifact name prefix
   cache_dir: .batho/cache   # Shared cache directory for rules, deps, and AST
@@ -48,12 +62,29 @@ mcp:
     # Default: expensive administrative tools are CLI-only — the agent
     # detects missing/stale artifacts and instructs the user to run them
     # in the terminal, matching the Sourcegraph/Cursor/CodeGraph pattern.
-    # Set to [] to expose all 19 tools to the agent.
+    # Set to [] to expose all 20 tools to the agent.
     disabled: [batho_build, batho_export, batho_load, batho_gc]
     # Optional allowlist — if set, ONLY these tools are registered
     # (disabled is ignored). null = no allowlist filtering.
     # Example: [list_repos, graph_overview, graph_query, get_entity, search_entities]
     enabled: null
+  # Toolsets — named tool groups for hosts with tool-count degradation
+  # thresholds. Only consulted when tools.disabled / tools.enabled above
+  # are both unset (explicit lists win). true = enable the group,
+  # false = disable it. Unlisted groups keep their secure-by-default
+  # behavior (admin build/export/load/gc disabled; everything else on).
+  # Groups:
+  #   retrieval:    graph_overview, graph_query, get_entity, trace_path,
+  #                 get_file_graph, file_connectivity, search_entities, get_delta
+  #   diagnostics:  batho_status, batho_list_runs, batho_diff
+  #   registry:     list_repos, add_repo, remove_repo
+  #   admin:        batho_build, batho_patch, batho_export, batho_gc,
+  #                 batho_fix, batho_load
+  # Example — expose everything including Tier-3 admin tools:
+  # toolsets: {admin: true}
+  # Example — minimal retrieval-only surface:
+  # toolsets: {retrieval: true, diagnostics: false, registry: false, admin: false}
+  toolsets: null
 
 # Consolidated Dependency Extraction Utility (CDEU)
 dependency:
@@ -63,22 +94,52 @@ dependency:
     mode: shallow           # shallow (exports only) | deep (recursive)
     venv_auto_detect: true  # Look for .venv in root automatically
     timeout_seconds: 5      # Subprocess timeout for introspecting one package
-    full_scan: false        # false = only popular packages; true = all declared deps
+    # true = attempt every declared dependency (subject to the env-skip
+    # policy and no-ecosystem classification); false = only packages in
+    # the bundled popular-packages DB. Gate drops are reported as
+    # gate_dropped in the dependency_index_complete build log.
+    full_scan: false
     popular_packages_db_path: null # null = use bundled DB
+    # Skip-when-env-missing policy: when a dep's environment (venv,
+    # node_modules, vendor/, user package store) cannot be found, skip it —
+    # no fallback {name: [name]} stubs, no cache pollution. false restores
+    # legacy best-effort behavior.
+    skip_missing_env: true
+    # Per-manager overrides, e.g. {gem: false} disables gem introspection.
+    # Keys are manager names ("pip", "npm", "cargo", "go", "maven", "gradle",
+    # "gem", "composer", "nuget", "pub", "julia", "cran", "cabal", "spm",
+    # "zigmod", "rebar3", "opam", "luarocks", "cpan"); unknown keys warn.
+    managers: null
   stdlib:
     enabled: true           # Index built-in language standard libraries
-    languages:
-      ["python", "javascript", "typescript", "go", "rust",
-       "c", "cpp", "java", "ruby", "csharp", "php",
-       "kotlin", "swift", "scala", "dart", "haskell",
-       "lua", "r", "perl", "julia", "zig", "bash",
-       "objc", "erlang", "ocaml", "hack", "verilog"]
+    languages: null         # null = auto-detect from project manifests (avoids
+                            # cross-language collisions like yaml->ruby).
+                            # Or set an explicit list, e.g.:
+                            # ["python", "javascript", "go", "rust"]
     # Introspection now supports npm, Cargo, Go modules, and Maven artifacts
     # in addition to Python packages.
   cache:
     enabled: true           # Persist indexed symbols across runs
     ttl_days: 90
   max_deps_per_manifest: 500
+
+# Multi-repo / monorepo workspace scoping (optional — omit entirely for
+# single-package repos). Each discovered manifest dir maps to a package
+# identity; these keys restrict which manifests are read.
+workspace:
+  # Which manifest dirs govern dependencies. null = every discovered manifest.
+  # List form is an allowlist of repo-relative dir prefixes; dict form supports
+  # allow + deny (deny wins). E.g. keep a vendored/docs site out of dep
+  # introspection:  manifest_dirs: {deny: [docs-site, examples]}
+  manifest_dirs: null
+
+# Optional explicit project identity — overrides manifest-derived package
+# identity (manager/name/version used in every entity id prefix).
+# project:
+#   package:
+#     manager: pip          # pip | npm | cargo | go | maven | …
+#     name: my-project      # required when project.package is set
+#     version: 1.0.0
 
 # Memory-aware tuning. Thresholds are RSS values for the current process.
 memory:

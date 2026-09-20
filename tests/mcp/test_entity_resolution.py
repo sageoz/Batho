@@ -25,6 +25,7 @@ import pytest
 from batho.mcp.entity_resolution import (
     KIND_DIRECT,
     KIND_EMBEDDED,
+    KIND_EXTERNAL_PACKAGE,
     KIND_EXTERNAL_STDLIB,
     KIND_EXTERNAL_UNRESOLVED,
     KIND_MODULE,
@@ -55,12 +56,14 @@ RELS_SCHEMA = pa.schema([
 class FakeReader:
     """Duck-typed BathoBundleReader backed by in-memory Arrow tables."""
 
-    def __init__(self, agent_rows, rels_rows, files, generation=1, root="/repo"):
+    def __init__(self, agent_rows, rels_rows, files, generation=1, root="/repo",
+                 workspace_rows=None):
         self._agent = pa.Table.from_pylist(agent_rows, schema=AGENT_SCHEMA)
         self._rels = pa.Table.from_pylist(rels_rows, schema=RELS_SCHEMA)
         self._files = files
         self.generation = generation
         self.root = root
+        self.workspace_rows = workspace_rows or []
 
     def _get_table(self, logical_name):
         if logical_name == "agent_views":
@@ -83,6 +86,9 @@ class FakeReader:
 
     def get_run(self, run_uuid):
         return {"root_path": self.root}
+
+    def get_workspace_manifests(self):
+        return self.workspace_rows
 
 
 def _stub(caller_scope: str, fqn: str) -> str:
@@ -182,6 +188,122 @@ class TestDirectAndEmbedded:
         target = resolver.resolve(eid)
         assert target.kind == KIND_EMBEDDED
         assert target.file_id == 1
+
+
+class TestOwnPackageClassification:
+    """T2: own-workspace package triples classify KIND_DIRECT, not external."""
+
+    WS_ROWS = [
+        {"scope": "workspace", "manager": "pip", "name": "batho",
+         "version": "1.4.2", "kind": "primary", "source_file": "pyproject.toml",
+         "manifest_dir": ".", "language": None, "content_hash": "h1"},
+        {"scope": "workspace", "manager": "npm", "name": "docs-site",
+         "version": "0.0.0", "kind": "subproject",
+         "source_file": "docs-site/package.json", "manifest_dir": "docs-site",
+         "language": None, "content_hash": "h2"},
+    ]
+
+    @staticmethod
+    def _resolver(agent_rows, workspace_rows=None):
+        return EndpointResolver(FakeReader(
+            agent_rows, [], {}, workspace_rows=workspace_rows))
+
+    def test_own_package_triple_classifies_direct(self):
+        eid = "batho npm docs-site 0.0.0 docs_site/src/app/App()."
+        agent_rows = [{"file_id": 1, "entity_id": eid, "name": "App",
+                       "entity_type": "CLASS"}]
+        r = self._resolver(agent_rows, workspace_rows=self.WS_ROWS)
+        target = r.resolve("batho npm docs-site 0.0.0 docs_site/src/app/App().")
+        assert target.kind == KIND_DIRECT
+        assert target.file_id == 1
+
+    def test_third_party_package_stays_external(self):
+        r = self._resolver([])
+        target = r.resolve("batho pip numpy >=2.0 numpy/random/rand().")
+        assert target.kind == KIND_EXTERNAL_PACKAGE
+
+    def test_prefix_only_fallback_without_table(self):
+        # pre-T8 artifact: no workspace rows → prefix-only classification
+        r = self._resolver([])
+        target = r.resolve("batho pip batho 1.4.2 batho/mcp/server/x().")
+        assert target.kind == KIND_EXTERNAL_PACKAGE
+
+    def test_own_entity_with_file_row_direct_without_table(self):
+        """Pre-T8 artifact, no workspace rows: an entity with a real file row
+        is intra-repo even though its id carries the package prefix — the
+        file map, not the workspace table, supplies the fallback signal
+        (issue 1f6d3a08b7c2)."""
+        eid = "batho pip batho 1.4.2 batho/mcp/server/x()."
+        agent_rows = [{"file_id": 1, "entity_id": eid, "name": "x",
+                       "entity_type": "FUNCTION"}]
+        r = EndpointResolver(FakeReader(
+            agent_rows, [], {"batho/mcp/server/x.py": 1}, workspace_rows=None))
+        target = r.resolve(eid)
+        assert target.kind == KIND_DIRECT
+        assert target.file_id == 1
+        assert target.path == "batho/mcp/server/x.py"
+
+    def test_non_member_entity_with_file_row_direct_with_table(self):
+        """Own-set populated but NOT containing this triple: a real file row
+        still reclassifies the entity intra-repo — membership is not the only
+        path to KIND_DIRECT (issue 0918802ecd10)."""
+        eid = "batho npm somelib 2.0 src/x/f()."
+        agent_rows = [{"file_id": 1, "entity_id": eid, "name": "f",
+                       "entity_type": "FUNCTION"}]
+        r = EndpointResolver(FakeReader(
+            agent_rows, [], {"src/x.py": 1}, workspace_rows=self.WS_ROWS))
+        target = r.resolve(eid)
+        assert target.kind == KIND_DIRECT
+        assert target.file_id == 1
+        assert target.path == "src/x.py"
+
+    def test_non_member_entity_on_pseudo_file_stays_external_with_table(self):
+        """Same non-member triple on a pseudo-file stays external — the
+        file-row rescue must not flip dep entities."""
+        eid = "batho npm somelib 2.0 somelib/f()."
+        agent_rows = [{"file_id": 2, "entity_id": eid, "name": "f",
+                       "entity_type": "EXTERNAL_SYMBOL"}]
+        r = EndpointResolver(FakeReader(
+            agent_rows, [], {"__external_symbols__": 2},
+            workspace_rows=self.WS_ROWS))
+        assert r.resolve(eid).kind == KIND_EXTERNAL_PACKAGE
+
+    def test_external_entity_on_pseudo_file_stays_external_without_table(self):
+        """Dep/stdlib entities ride on pseudo-files — '.' and
+        '__external_symbols__' rows must not flip them to intra-repo."""
+        eid = "batho pip structlog 24 structlog/get_logger()."
+        agent_rows = [{"file_id": 2, "entity_id": eid, "name": "get_logger",
+                       "entity_type": "EXTERNAL_SYMBOL"}]
+        r = EndpointResolver(FakeReader(
+            agent_rows, [], {"__external_symbols__": 2}, workspace_rows=None))
+        assert r.resolve(eid).kind == KIND_EXTERNAL_PACKAGE
+
+        r2 = EndpointResolver(FakeReader(
+            agent_rows, [], {".": 2}, workspace_rows=None))
+        assert r2.resolve(eid).kind == KIND_EXTERNAL_PACKAGE
+
+    def test_stdlib_still_external_with_own_set(self):
+        r = self._resolver([], workspace_rows=self.WS_ROWS)
+        target = r.resolve("batho stdlib python python os/")
+        assert target.kind == KIND_EXTERNAL_STDLIB
+
+    def test_non_original_managers_classify_external(self):
+        """All PackageManager prefixes classify external — not just
+        pip/npm/cargo/go/maven (issue b82e4a16f9c3)."""
+        eid = "batho gem rails 7.1 rails/Application()."
+        agent_rows = [{"file_id": 2, "entity_id": eid, "name": "Application",
+                       "entity_type": "EXTERNAL_SYMBOL"}]
+        r = EndpointResolver(FakeReader(
+            agent_rows, [], {"__external_symbols__": 2}, workspace_rows=None))
+        target = r.resolve(eid)
+        assert target.kind == KIND_EXTERNAL_PACKAGE
+
+        eid2 = "batho composer symfony 6 symfony/console/Application()."
+        agent_rows2 = [{"file_id": 2, "entity_id": eid2, "name": "Application",
+                        "entity_type": "EXTERNAL_SYMBOL"}]
+        r2 = EndpointResolver(FakeReader(
+            agent_rows2, [], {"__external_symbols__": 2}, workspace_rows=None))
+        assert r2.resolve(eid2).kind == KIND_EXTERNAL_PACKAGE
 
 
 class TestCrossFileEdges:

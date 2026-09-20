@@ -56,12 +56,17 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     root = args.root or os.getcwd()
     root_resolved = str(Path(root).resolve())
 
-    # Compute the effective disabled set: start from config, then remove
-    # any tools the user explicitly enabled via --enable-tool.
+    # Compute the effective disabled set: resolve config (tools.disabled or
+    # toolsets), then remove any tools the user explicitly enabled via
+    # --enable-tool. None → the server resolves its secure default itself.
     cfg = get_config_with_root(Path(root_resolved))
     mcp_cfg = cfg.get("mcp", {})
-    disabled = set(mcp_cfg.get("tools", {}).get("disabled", []))
-    disabled -= set(args.enable_tool)
+    from batho.mcp.tools import DEFAULT_DISABLED_TOOLS, resolve_disabled_tools
+    disabled = resolve_disabled_tools(mcp_cfg)
+    if disabled is None and args.enable_tool:
+        disabled = set(DEFAULT_DISABLED_TOOLS)
+    if disabled is not None:
+        disabled -= set(args.enable_tool)
 
     run_server(root=root_resolved, watch=not args.no_watch, disabled_tools=disabled)
     return 0

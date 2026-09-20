@@ -34,6 +34,7 @@ lookup or every cross-file edge collapses to intra-file):
 
 from __future__ import annotations
 
+import re
 import threading
 import weakref
 from dataclasses import dataclass
@@ -42,6 +43,7 @@ from typing import Any
 
 import pyarrow.compute as pc
 
+from batho.core.schemas import PackageManager
 from batho.mcp.graph_builder import normalize_legacy_rel_rows
 from batho.utils.logging import get_logger
 
@@ -53,6 +55,46 @@ KIND_MODULE = "module"
 KIND_NAME = "name"
 KIND_EXTERNAL_STDLIB = "external_stdlib"
 KIND_EXTERNAL_UNRESOLVED = "external_unresolved"
+KIND_EXTERNAL_PACKAGE = "external_package"
+
+# Resolved external symbol namespaces minted by DependencyIndexer:
+#   batho stdlib <lang> <ns> <mod>[/<sym>]  e.g. "batho stdlib python python os/"
+#   batho <manager> <dep> <spec> <mod>[/<sym>] — one prefix per PackageManager
+#   (pip, npm, cargo, go, maven, gradle, gem, composer, nuget, pub, julia,
+#   cran, cabal, spm, zigmod, rebar3, opam, luarocks, cpan, agda). Derived
+#   from the enum so newly-added managers classify external automatically.
+_EXTERNAL_PACKAGE_PREFIXES = tuple(
+    f"batho {m.value} " for m in PackageManager
+)
+_EXTERNAL_STDLIB_PREFIX = "batho stdlib "
+
+
+# Entity display names carry a parameter-hash suffix: ``helper_[ef2e96]``.
+# Stub FQNs reference the base name, so the name index needs the stripped
+# form as an alias (same pattern as scope_manager._PARAM_HASH_PATTERN).
+_ENTITY_NAME_HASH = re.compile(r"_\[[a-fA-F0-9]+\]")
+
+
+def external_ref_root(entity_id: str) -> str:
+    """Root name of an external reference for reporting.
+
+    Handles both shapes: ``unresolved:`` stubs (dotted FQN, root = first
+    segment) and resolved external ids (``batho stdlib <lang> <ns> <mod>``
+    or ``batho <ns> <dep> <spec> <mod>``, root = module/dep name).
+    """
+    if entity_id.startswith("unresolved:"):
+        return stub_fqn(entity_id).split(".")[0]
+    if entity_id.startswith(_EXTERNAL_STDLIB_PREFIX):
+        toks = entity_id.split()
+        if len(toks) > 4:
+            return toks[4].split("/")[0].rstrip("/")
+    else:
+        for prefix in _EXTERNAL_PACKAGE_PREFIXES:
+            if entity_id.startswith(prefix):
+                toks = entity_id.split()
+                if len(toks) > 2:
+                    return toks[2]
+    return ""
 
 _STDLIB_PREFIXES = frozenset({
     "abc", "argparse", "array", "ast", "asyncio", "atexit", "base64", "binascii",
@@ -146,6 +188,7 @@ class EndpointResolver:
         self._file_paths: dict[int, str] = {}
         self._path_to_fid: dict[str, int] = {}
         self._repo_root = ""
+        self._own_packages: set[tuple[str, str]] = set()
         self._cross_file_edges: list[tuple[dict, int, int]] | None = None
 
     # ------------------------------------------------------------------
@@ -184,6 +227,9 @@ class EndpointResolver:
                         # they must never serve as resolution targets.
                         if nm and not eid.startswith("unresolved:"):
                             name_index.setdefault(nm, []).append((eid, fid))
+                            base_nm = _ENTITY_NAME_HASH.sub("", nm)
+                            if base_nm != nm:
+                                name_index.setdefault(base_nm, []).append((eid, fid))
 
             file_paths: dict[int, str] = {}
             path_to_fid: dict[str, int] = {}
@@ -218,8 +264,26 @@ class EndpointResolver:
             for fid, fp in file_paths.items():
                 if self._repo_root:
                     path_to_fid.setdefault(f"{self._repo_root}/{fp}", fid)
+            self._own_packages = self._load_own_packages()
             self._generation = gen
             self._cross_file_edges = None
+
+    def _load_own_packages(self) -> set[tuple[str, str]]:
+        """Workspace own-package identities from the workspace_manifests table.
+
+        Returns ``{(manager, name)}`` for ``scope='workspace'`` rows. Empty
+        when the table is absent (pre-T8 artifacts) — callers then fall back
+        to prefix-only classification.
+        """
+        try:
+            rows = self._reader.get_workspace_manifests()
+        except Exception:
+            return set()
+        own: set[tuple[str, str]] = set()
+        for row in rows or []:
+            if row.get("scope") == "workspace" and row.get("name"):
+                own.add((row.get("manager", ""), row["name"]))
+        return own
 
     def _detect_repo_root(self) -> str:
         try:
@@ -241,6 +305,35 @@ class EndpointResolver:
         self._ensure_indexes()
         if entity_id.startswith("unresolved:"):
             return self._resolve_stub(entity_id)
+        # Resolved external symbols materialize under the synthetic
+        # "__external_symbols__" file — classify them as external so
+        # file-level tools don't report a bogus intra-repo dependency.
+        if entity_id.startswith(_EXTERNAL_STDLIB_PREFIX):
+            return ResolvedTarget(entity_id, None, None, KIND_EXTERNAL_STDLIB)
+        if entity_id.startswith(_EXTERNAL_PACKAGE_PREFIXES):
+            # T2: own-workspace packages classify DIRECT by own-set
+            # membership — an entity id whose package triple belongs to a
+            # workspace manifest (e.g. `batho npm docs-site …` for the
+            # docs-site subproject) is intra-repo, not third-party.
+            if self._own_packages and self._is_own_package_id(entity_id):
+                fid = self._entity_file.get(entity_id)
+                return ResolvedTarget(
+                    entity_id, fid,
+                    self._file_paths.get(fid) if fid is not None else None,
+                    KIND_DIRECT,
+                )
+            # A materialized file row wins over own-set membership — the table
+            # may be empty (pre-T8 artifacts, dep-disabled builds) or filtered
+            # by workspace.manifest_dirs so this triple is absent. Either way
+            # an entity with a real file row is intra-repo; pseudo-file rows
+            # (__external_symbols__, '.') and absent rows classify external
+            # (issue 1f6d3a08b7c2).
+            fid = self._entity_file.get(entity_id)
+            if fid is not None:
+                fpath = self._file_paths.get(fid)
+                if fpath and fpath != "__external_symbols__" and fpath != ".":
+                    return ResolvedTarget(entity_id, fid, fpath, KIND_DIRECT)
+            return ResolvedTarget(entity_id, None, None, KIND_EXTERNAL_PACKAGE)
         if entity_id.startswith("ent|"):
             parts = entity_id.split("|")
             if len(parts) > 2:
@@ -250,6 +343,17 @@ class EndpointResolver:
         if fid is not None:
             return ResolvedTarget(entity_id, fid, self._file_paths.get(fid), KIND_DIRECT)
         return ResolvedTarget(entity_id, None, None, KIND_EXTERNAL_UNRESOLVED)
+
+    def _is_own_package_id(self, entity_id: str) -> bool:
+        """True when the entity id's package triple is a workspace package.
+
+        Matches on ``(manager, name)`` — robust to version-format drift
+        between id strings and manifest rows.
+        """
+        toks = entity_id.split()
+        if len(toks) < 4 or toks[0] != "batho":
+            return False
+        return (toks[1], toks[2]) in self._own_packages
 
     def _resolve_stub(self, eid: str) -> ResolvedTarget:
         fqn = stub_fqn(eid)

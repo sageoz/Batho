@@ -272,9 +272,9 @@ def test_trace_path_confidence_threshold_e2e(built_artifact: Path, tmp_path: Pat
     main_eid = None
     helper_eid = None
     for r in rows:
-        if r["name"] == "main":
+        if r["name"] == "main" and r["entity_type"] == "FUNCTION":
             main_eid = r["entity_id"]
-        if "helper" in r["name"]:
+        if "helper" in r["name"] and r["entity_type"] in ("FUNCTION", "METHOD"):
             helper_eid = r["entity_id"]
 
     if not main_eid or not helper_eid:

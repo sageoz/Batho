@@ -6,7 +6,7 @@ retryability hints, and actionable guidance for agents.
 
 from __future__ import annotations
 
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult
 from mcp.types import TextContent
 
 # Error type constants

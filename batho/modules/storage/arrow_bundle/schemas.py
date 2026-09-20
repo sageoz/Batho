@@ -62,6 +62,10 @@ AGENT_VIEWS_SCHEMA: pa.Schema = pa.schema([
     pa.field("content_hash", pa.utf8(), nullable=True),
     pa.field("is_exported", pa.bool_(), nullable=False),
     pa.field("fqn", pa.large_utf8(), nullable=True),
+    # Populated only for contextual-stub entities (unresolved:* ids): carries
+    # stub_resolution_state / resolved_target_id / resolution_strategy /
+    # resolution_confidence after the writer's stub-rewrite pass (T5).
+    pa.field("metadata_json", pa.utf8(), nullable=True),
 ])
 
 STORAGE_VIEWS_SCHEMA: pa.Schema = pa.schema([
@@ -133,6 +137,18 @@ SCOPE_MANAGER_CACHE_SCHEMA: pa.Schema = pa.schema([
     pa.field("is_heuristic", pa.bool_(), nullable=False),
 ])
 
+WORKSPACE_MANIFESTS_SCHEMA: pa.Schema = pa.schema([
+    pa.field("scope", pa.utf8(), nullable=False),          # workspace | dependency
+    pa.field("manager", pa.utf8(), nullable=False),        # pip | npm | cargo | …
+    pa.field("name", pa.utf8(), nullable=False),
+    pa.field("version", pa.utf8(), nullable=True),         # detected version or spec
+    pa.field("kind", pa.utf8(), nullable=False),           # primary|subproject / runtime|dev|test|optional
+    pa.field("source_file", pa.utf8(), nullable=True),     # repo-relative manifest path
+    pa.field("manifest_dir", pa.utf8(), nullable=True),    # governed / declaring dir
+    pa.field("language", pa.utf8(), nullable=True),        # dep.language
+    pa.field("content_hash", pa.utf8(), nullable=True),    # sha256(manifest bytes)
+])
+
 ALL_SCHEMAS: dict[str, pa.Schema] = {
     "runs": RUNS_SCHEMA,
     "file_tracking": FILE_TRACKING_SCHEMA,
@@ -142,4 +158,5 @@ ALL_SCHEMAS: dict[str, pa.Schema] = {
     "file_changelog": FILE_CHANGELOG_SCHEMA,
     "run_artifacts": RUN_ARTIFACTS_SCHEMA,
     "communities": COMMUNITIES_SCHEMA,
+    "workspace_manifests": WORKSPACE_MANIFESTS_SCHEMA,
 }

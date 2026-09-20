@@ -68,6 +68,15 @@ class LoggingConfig(BaseModel):
         return self.std_level
 
 
+class ProgressConfig(BaseModel):
+    """Progress display for long-running commands (`batho build` / `batho patch`)."""
+    enabled: bool = Field(default=True)
+    style: Literal["progress", "classic"] = Field(default="progress")
+    mininterval_s: float = Field(default=0.2, ge=0)
+    show_after_s: float = Field(default=2.0, ge=0)
+    keepalive_s: float = Field(default=60.0, ge=0)
+
+
 class PathsConfig(BaseModel):
     artifact_dir: str = Field(default=".batho/artifact")
     cache_dir: str = Field(default=".batho/cache")
@@ -151,15 +160,13 @@ class McpToolsConfig(BaseModel):
     """Tool exposure controls for the MCP server.
 
     disabled: blocklist of tool names not registered on the MCP app.
-              Default disables expensive administrative tools (build/export/load/gc)
-              so the agent surface stays focused on retrieval + diagnostics.
-              Set to [] to expose all 19 tools to the agent.
+              None = unset — the server resolves mcp.toolsets or its
+              secure-by-default set (batho_build, batho_export, batho_load,
+              batho_gc). Set to [] to expose all 20 tools to the agent.
     enabled:  optional allowlist. If set, ONLY these tools are registered
               (disabled is ignored). None = no allowlist filtering.
     """
-    disabled: list[str] = Field(
-        default_factory=lambda: ["batho_build", "batho_export", "batho_load", "batho_gc"]
-    )
+    disabled: list[str] | None = Field(default=None)
     enabled: list[str] | None = Field(default=None)
 
     @field_validator("disabled", "enabled")
@@ -174,6 +181,11 @@ class McpConfig(BaseModel):
     """MCP server configuration."""
     enabled: bool = Field(default=True)
     tools: McpToolsConfig = Field(default_factory=McpToolsConfig)
+    # Named tool groups resolved to a disabled set by the MCP server
+    # (batho/mcp/server.py). Only consulted when tools.disabled /
+    # tools.enabled are both unset. true = enable the group,
+    # false = disable it. None = section absent (secure defaults).
+    toolsets: dict[str, bool] | None = Field(default=None)
 
 
 class RulesConfig(BaseModel):
@@ -271,10 +283,22 @@ class DependencyIntrospectionConfig(BaseModel):
     timeout_seconds: int = Field(default=5)
     full_scan: bool = Field(default=False)  # True = introspect all declared deps; False = popular-packages DB filter
     popular_packages_db_path: str | None = Field(default=None)  # Override bundled YAML; null = use default
+    # Skip introspection for deps whose environment (venv, node_modules,
+    # vendor/, user package store, ...) cannot be found — no fallback
+    # {name: [name]} stubs, no cache pollution. When false, missing envs fall
+    # back to best-effort introspection with toolchain defaults.
+    skip_missing_env: bool = Field(default=True)
+    # Per-manager overrides, e.g. {gem: false} disables gem introspection.
+    # Keys are PackageManager values ("pip", "npm", "cargo", ...); unknown
+    # keys log a warning and are ignored. null = all managers enabled.
+    managers: dict[str, bool] | None = Field(default=None)
 
 class DependencyStdlibConfig(BaseModel):
     enabled: bool = Field(default=True)
-    languages: list[str] = Field(default_factory=lambda: ["python", "javascript", "go", "rust"])
+    # None = auto-detect from project manifests at index time. An explicit
+    # list (config file) overrides detection — needed for polyglot repos
+    # whose manifests don't cover every language they use.
+    languages: list[str] | None = Field(default=None)
 
 class DependencyCacheConfig(BaseModel):
     enabled: bool = Field(default=True)
@@ -297,6 +321,27 @@ class ExtractionCacheConfig(BaseModel):
     max_entries: int = Field(default=5000, ge=1)
 
 
+class WorkspaceConfig(BaseModel):
+    """Workspace manifest scoping (multi-repo-identity T6).
+
+    ``manifest_dirs``: allowlist ``[dir, ...]`` or ``{allow: [...], deny: [...]}``
+    of repo-relative dir prefixes; deny wins. null = every discovered manifest.
+    """
+    manifest_dirs: list[str] | dict[str, list[str]] | None = Field(default=None)
+
+
+class PackageOverrideConfig(BaseModel):
+    """Explicit ``project.package`` identity override (multi-repo-identity T6)."""
+    manager: str = Field(default="pip")
+    name: str
+    version: str = Field(default="0.0.0")
+
+
+class ProjectConfig(BaseModel):
+    """Project-level overrides; consumed by ManifestParser._workspace_config."""
+    package: PackageOverrideConfig | None = Field(default=None)
+
+
 class ExtractionConfig(BaseModel):
     cache: ExtractionCacheConfig = Field(default_factory=ExtractionCacheConfig)
     # T02: Opt-in entity extraction flags. CONSTRUCTOR and ENUM_MEMBER are
@@ -309,6 +354,7 @@ class ExtractionConfig(BaseModel):
 class Config(BaseModel):
     schema_version: Literal["batho-config.v1"] = Field(default=SCHEMA_VERSIONS["config"])
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    progress: ProgressConfig = Field(default_factory=ProgressConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     indexer: IndexerConfig = Field(default_factory=IndexerConfig)
     graph: GraphConfig = Field(default_factory=GraphConfig)
@@ -322,6 +368,8 @@ class Config(BaseModel):
     bsg: BsgConfig = Field(default_factory=BsgConfig)
     dependency: DependencyConfig = Field(default_factory=DependencyConfig)
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
+    workspace: WorkspaceConfig | None = Field(default=None)
+    project: ProjectConfig | None = Field(default=None)
     community_detection: CommunityDetectionConfig = Field(
         default_factory=CommunityDetectionConfig
     )

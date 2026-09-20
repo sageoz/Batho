@@ -724,6 +724,32 @@ class BathoBundle:
             file_id = self._get_or_create_file_id(file_path)
             writer.write_rels_only(file_id, rels)
 
+    def set_stub_resolutions(
+        self,
+        run_internal_id: int,
+        mapping: dict[str, tuple[str, float, dict[str, Any]]],
+        entity_meta: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        """Attach stub-resolution rewrites to the run's open writer.
+
+        The graph builder resolves contextual stubs in memory after the
+        per-file rels blobs were already streamed here. The mapping
+        (stub_id -> (resolved_target_id, confidence, metadata_merge)) is
+        applied to the run's rels table when the writer finalizes, so the
+        persisted view matches the resolved in-memory graph (and the BSG
+        payloads, which already snapshot the post-resolution graph).
+
+        ``entity_meta`` (stub_id -> metadata merge dict) additionally persists
+        stub_resolution_state / resolved_target_id / resolution_strategy /
+        resolution_confidence onto the stub entity rows in agent_views.
+        """
+        if not mapping and not entity_meta:
+            return
+        with self._lock:
+            writer = self._writers.get(run_internal_id)
+            if writer is not None:
+                writer.set_stub_rewrites(mapping, entity_meta)
+
     def get_file_artifacts(
         self,
         run_internal_id: int,
@@ -767,6 +793,13 @@ class BathoBundle:
                     "is_exported": row.get("is_exported", False),
                     "fqn": row.get("fqn"),
                 }
+                ent_meta_json = row.get("metadata_json")
+                if ent_meta_json:
+                    try:
+                        import json as _json
+                        ent["metadata"] = _json.loads(ent_meta_json)
+                    except (TypeError, ValueError):
+                        pass
                 if include_storage:
                     sr = storage_by_id.get(ent["id"])
                     if sr:

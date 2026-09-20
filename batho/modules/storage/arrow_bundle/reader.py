@@ -300,6 +300,17 @@ class BathoBundleReader:
         rows = table.filter(mask).to_pylist()
         return rows[0] if rows else None
 
+    def get_workspace_manifests(self) -> list[dict[str, Any]]:
+        """Workspace identity + declared-dependency rows (scope='workspace'/'dependency').
+
+        Returns [] when the table is absent (pre-workspace_manifests artifacts)
+        so callers can degrade to prefix-only classification.
+        """
+        table = self._get_table("workspace_manifests")
+        if table.num_rows == 0:
+            return []
+        return table.to_pylist()
+
     # ------------------------------------------------------------------
     # Invalidation (after a new generation is committed)
     # ------------------------------------------------------------------

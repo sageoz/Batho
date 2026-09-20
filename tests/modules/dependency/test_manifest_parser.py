@@ -456,3 +456,21 @@ class TestManifestParserParseManifests:
         parser = ManifestParser()
         deps = parser.parse_manifests(temp_dir)
         assert deps == []
+
+
+class TestRequirementsFileKind:
+    """_requirements_file_kind token matching (issue e24b9f56a8d1)."""
+
+    def test_substring_names_do_not_misclassify(self):
+        from batho.modules.dependency.manifest_parser import _requirements_file_kind
+        assert _requirements_file_kind(Path("latest_requirements.txt")) == "runtime"
+        assert _requirements_file_kind(Path("nodev_requirements.txt")) == "runtime"
+        assert _requirements_file_kind(Path("testutils.txt")) == "runtime"
+
+    def test_canonical_names_still_classify(self):
+        from batho.modules.dependency.manifest_parser import _requirements_file_kind
+        assert _requirements_file_kind(Path("requirements-dev.txt")) == "dev"
+        assert _requirements_file_kind(Path("dev_requirements.txt")) == "dev"
+        assert _requirements_file_kind(Path("requirements-test.txt")) == "test"
+        assert _requirements_file_kind(Path("requirements.dev.txt")) == "dev"
+        assert _requirements_file_kind(Path("requirements.txt")) == "runtime"

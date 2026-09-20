@@ -52,6 +52,7 @@ class PatchOptions:
     # Accepted for API symmetry with build. Patch always uses the in-memory
     # graph backend internally; a warning is logged when set to anything else.
     graph_backend: str | None = None
+    no_progress: bool | None = None  # None = resolve from env/config; True/False = explicit
 
 
 @dataclass
@@ -308,6 +309,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
     run_uuid = ""
     base_run_uuid = ""
     lock = None
+    progress_engine = None
     try:
         from batho.utils.file_io import InterProcessLock
         batho_dir = root / ".batho"
@@ -327,6 +329,16 @@ def run_patch(options: PatchOptions) -> PatchResult:
         memory_cfg = cfg.get("memory", {})
         community_cfg = cfg.get("community_detection", {})
         rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 1000.0))
+
+        from batho.utils.progress import ProgressEngine, ProgressGate
+
+        progress_engine = ProgressEngine(
+            gate=ProgressGate(
+                quiet=bool((cfg.get("logging") or {}).get("quiet", False)),
+                no_progress=options.no_progress or False,
+            ),
+            config=cfg.get("progress"),
+        )
 
         LOGGER.info(
             "effective_memory_config",
@@ -348,11 +360,13 @@ def run_patch(options: PatchOptions) -> PatchResult:
         strict_hashing = bool(cfg.get("indexer", {}).get("strict_hashing", True))
 
         incremental_engine = IncrementalEngine(db, base_run_uuid)
+        ph_detect = progress_engine.open_phase("detect", unit="changes")
         changes = incremental_engine.scan_changes(
             root=root,
             max_file_size_kb=max_file_size_kb,
             strict_hashing=strict_hashing,
         )
+        ph_detect.close()
 
         if not changes:
             LOGGER.info("patch_no_changes", root=str(root))
@@ -415,6 +429,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
         nodes_modified = 0
         nodes_renamed = 0
         indexer = None
+        ph_persist = None
 
         if added_or_modified:
             bsg_cfg = dict(cfg.get("bsg", {}))
@@ -438,7 +453,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
 
             # --- Dependency Indexing (CDEU) for Patch ---
             # Cache ScopeManager across patches when manifests haven't changed.
-            from batho.modules.dependency import build_dependency_index
+            from batho.modules.dependency import DependencyIndexer
             from batho.modules.extraction.scope_manager import ScopeManager
 
             dep_scope_manager = ScopeManager()
@@ -469,12 +484,26 @@ def run_patch(options: PatchOptions) -> PatchResult:
                         LOGGER.warning("scope_manager_cache_load_failed", error=str(exc))
 
                 if not cache_hit:
-                    build_dependency_index(
+                    dep_indexer = DependencyIndexer(
                         root=root,
                         scope_manager=dep_scope_manager,
                         cfg=dep_cfg,
                         cache_dir=cfg.get("paths", {}).get("cache_dir"),
                     )
+                    dep_stats = dep_indexer.run()
+                    if getattr(dep_stats, "deps_gate_dropped", 0):
+                        LOGGER.info(
+                            "dependency_gate_drops",
+                            dropped=dep_stats.deps_gate_dropped,
+                            hint="declared deps not in the popular DB were not attempted; set dependency.introspection.full_scan: true to attempt all declared deps",
+                        )
+                    if getattr(dep_stats, "deps_skipped_no_env", 0) or getattr(dep_stats, "deps_no_symbols", 0):
+                        LOGGER.info(
+                            "dependency_introspection_skips",
+                            hint="create the missing environment (e.g. python -m venv .venv, npm install) and re-run to introspect these deps",
+                            skipped_no_env=dep_stats.deps_skipped_no_env,
+                            no_symbols=dep_stats.deps_no_symbols,
+                        )
                     try:
                         # Atomic tmp + rename so readers never see a partial IPC file.
                         cache_ipc_tmp = batho_dir / "scope_manager_cache.tmp.ipc"
@@ -491,6 +520,28 @@ def run_patch(options: PatchOptions) -> PatchResult:
                         )
                     except Exception as exc:
                         LOGGER.warning("scope_manager_cache_write_failed", error=str(exc))
+
+                    # Manifest set changed → re-emit workspace_manifests table (T8)
+                    try:
+                        from batho.modules.dependency import build_workspace_manifest_rows
+                        from batho.modules.storage.arrow_bundle.schemas import WORKSPACE_MANIFESTS_SCHEMA
+                        from batho.modules.storage.arrow_bundle.writer import write_simple_ipc
+                        # Reuse the manifests DependencyIndexer just parsed —
+                        # a second parse_manifests would redo the whole walk
+                        # (same dedupe as build.py; getattr guard keeps the
+                        # emit working if the indexer is ever bypassed).
+                        ws_rows = build_workspace_manifest_rows(
+                            root,
+                            deps=getattr(dep_indexer, "manifest_deps", None),
+                        )
+                        if ws_rows:
+                            ws_tmp = bundle_dir / "workspace_manifests.tmp.ipc"
+                            write_simple_ipc(ws_rows, WORKSPACE_MANIFESTS_SCHEMA, ws_tmp)
+                            ws_final = bundle_dir / "workspace_manifests.ipc"
+                            ws_tmp.replace(ws_final)
+                            db.register_simple_file("workspace_manifests", ws_final.name)
+                    except Exception as exc:
+                        LOGGER.warning("workspace_manifests_emit_failed", error=str(exc))
 
             # Load project symbols from the base run so that
             # resolve_contextual_stubs() can resolve cross-file references to
@@ -559,6 +610,12 @@ def run_patch(options: PatchOptions) -> PatchResult:
                         }
                         precompiled_write_batch.append(item)
 
+                    # Small patches finish under the show-after delay — no bar.
+                    ph_extract = (
+                        progress_engine.open_phase("extract", total=len(valid_changes))
+                        if len(valid_changes) >= 25
+                        else None
+                    )
                     try:
                         batch_graph = indexer.build_graph(
                             root=str(root),
@@ -571,6 +628,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                             graph_backend="in-memory",
                             skip_orphan_pruning=True,
                             write_callback=write_precompiled_callback,
+                            progress_callback=ph_extract.update if ph_extract else None,
                         )
                         for _, rel in indexer.get_unindexed_files():
                             unindexed_paths.add(rel)
@@ -578,6 +636,8 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     except Exception as exc:
                         LOGGER.warning("patch_batch_parse_failed", error=str(exc))
                         batch_graph = None
+                    if ph_extract is not None:
+                        ph_extract.close()
 
                     if batch_graph is not None:
                         # Decode precompiled blobs (preserves all entities including
@@ -672,6 +732,29 @@ def run_patch(options: PatchOptions) -> PatchResult:
                                 relationships_data = all_rels_by_file.get(file_rel, [])
                                 content_hash = change.new_hash or compute_file_hash(root / file_rel) or ""
 
+                            # Append synthesized module entities (minted by
+                            # _register_module_entities post-extraction) — the
+                            # precompiled blob predates them. agent_entities is
+                            # the same list object held by agent_view_data.
+                            for _ent in batch_graph.entities.values():
+                                if not (getattr(_ent, "metadata", None) or {}).get("synthesized"):
+                                    continue
+                                _fp = _ent.file
+                                _erel = _fp[len(root_str) + 1:] if _fp.startswith(root_str) else _fp
+                                if _erel != file_rel:
+                                    continue
+                                if not any(e.get("id") == _ent.id for e in agent_entities):
+                                    agent_entities.append({
+                                        "id": _ent.id,
+                                        "name": _ent.name,
+                                        "type": _ent.type.name,
+                                        "start_line": _ent.start_line,
+                                        "end_line": _ent.end_line,
+                                        "signature": _ent.signature,
+                                        "fqn": _ent.fqn,
+                                        "is_exported": False,
+                                    })
+
                             rels_list = relationships_data
 
                             write_batch.append({
@@ -742,6 +825,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                                             nodes_renamed += 1
 
                 # Flush any remaining files in batch
+                ph_persist = progress_engine.open_phase("persist", unit="files")
                 if write_batch:
                     t_write_0 = time.monotonic()
                     db.insert_file_artifacts_batch(run_internal_id, write_batch, store=store, delta_store=delta_store)
@@ -758,6 +842,15 @@ def run_patch(options: PatchOptions) -> PatchResult:
                                 file_rel,
                                 syn_rels,
                             )
+
+                # Persist stub-resolution rewrites: the stored worker rels carry
+                # pre-resolution "unresolved:" targets; apply the resolved map at
+                # writer finalize so the merged view matches the resolved graph.
+                db.set_stub_resolutions(
+                    run_internal_id,
+                    getattr(indexer, "stub_resolutions", None) or {},
+                    entity_meta=getattr(indexer, "stub_entity_meta", None),
+                )
 
         # --- Update file tracking ---
         deleted_paths = {change.path for change in deleted}
@@ -833,6 +926,8 @@ def run_patch(options: PatchOptions) -> PatchResult:
             duration_ms=elapsed_ms,
             is_patch=True,
         )
+        if ph_persist is not None:
+            ph_persist.close()
 
         # --- Finalize Run Artifacts ---
         from batho.orchestrator.build import _compute_run_metrics
@@ -995,6 +1090,8 @@ def run_patch(options: PatchOptions) -> PatchResult:
     except Exception as e:
         # Mark run as failed on any unhandled exception
         LOGGER.error("patch_unhandled_exception", error=str(e))
+        if progress_engine is not None:
+            progress_engine.abort()
         # Ensure scratch stores are cleaned up on exception (leak prevention)
         try:
             if 'store' in locals() and store is not None:

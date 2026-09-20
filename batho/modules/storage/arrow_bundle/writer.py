@@ -50,6 +50,12 @@ class BathoBundleWriter:
         self._agent_buf: dict[str, list[Any]] = {n: [] for n in AGENT_VIEWS_SCHEMA.names}
         self._storage_buf: dict[str, list[Any]] = {n: [] for n in STORAGE_VIEWS_SCHEMA.names}
         self._rels_buf: dict[str, list[Any]] = {n: [] for n in RELS_VIEWS_SCHEMA.names}
+        # Stub-resolution rewrites applied to the run's rels tmp file at
+        # finalize(): stub_id -> (resolved_target_id, confidence, metadata_merge).
+        self._stub_rewrites: dict[str, tuple[str, float, dict[str, Any]]] = {}
+        # Stub-entity metadata merges applied to the run's agent_views tmp
+        # file at finalize(): stub_id -> {stub_resolution_state, ...} (T5).
+        self._stub_entity_meta: dict[str, dict[str, Any]] = {}
 
         self._agent_path = bundle_dir / "agent_views.tmp.ipc"
         self._storage_path = bundle_dir / "storage_views.tmp.ipc"
@@ -80,9 +86,11 @@ class BathoBundleWriter:
         content_hash: str,
     ) -> None:
         with self._lock:
+            import json as _json
             for ent in agent.get("entities", []):
+                ent_id = str(ent.get("id", ""))
                 self._agent_buf["file_id"].append(file_id)
-                self._agent_buf["entity_id"].append(str(ent.get("id", "")))
+                self._agent_buf["entity_id"].append(ent_id)
                 self._agent_buf["name"].append(str(ent.get("name", "")))
                 self._agent_buf["entity_type"].append(str(ent.get("type") or ent.get("entity_type", "")))
                 self._agent_buf["start_line"].append(int(ent.get("start_line") or ent.get("line") or 0))
@@ -91,6 +99,16 @@ class BathoBundleWriter:
                 self._agent_buf["content_hash"].append(content_hash)
                 self._agent_buf["is_exported"].append(bool(ent.get("is_exported", False)))
                 self._agent_buf["fqn"].append(ent.get("fqn"))
+                # Stub rows keep their extraction-time metadata (pending
+                # state, caller_scope, target_name) for later merge; all
+                # other entities stay null to bound artifact size.
+                ent_meta = ent.get("metadata") if ent_id.startswith("unresolved:") else None
+                try:
+                    self._agent_buf["metadata_json"].append(
+                        _json.dumps(ent_meta, default=str) if ent_meta else None
+                    )
+                except (TypeError, ValueError):
+                    self._agent_buf["metadata_json"].append(None)
 
             for ent in storage.get("entities", []):
                 glue = ent.get("syntax_glue") or {}
@@ -196,6 +214,146 @@ class BathoBundleWriter:
         w = self._get_or_open_writer(path, schema, writer_attr)
         w.write_batch(batch)
 
+    def set_stub_rewrites(
+        self,
+        mapping: dict[str, tuple[str, float, dict[str, Any]]],
+        entity_meta: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        """Attach stub-resolution rewrites applied at finalize().
+
+        The stored worker rels carry pre-resolution "unresolved:" targets.
+        Each entry maps a stub entity id to (resolved_target_id, confidence,
+        metadata_merge); rows whose target_id matches a stub id are rewritten
+        in place. Rows are never added or dropped (coverage invariant).
+
+        ``entity_meta`` (stub_id -> metadata merge dict) additionally updates
+        the stub *entity* rows in agent_views — persisting
+        stub_resolution_state / resolved_target_id / resolution_strategy /
+        resolution_confidence (T5 acceptance).
+        """
+        self._stub_rewrites = dict(mapping or {})
+        self._stub_entity_meta = dict(entity_meta or {})
+
+    def _apply_stub_rewrites(self) -> None:
+        """Rewrite resolved stub targets in the run's rels tmp file."""
+        if not self._stub_rewrites or not self._rels_path.exists():
+            return
+        import json as _json
+
+        stub_ids = pa.array(list(self._stub_rewrites.keys()))
+        with pa.memory_map(str(self._rels_path), "r") as src:
+            reader = ipc.open_file(src)
+            # Pass 1 — mask-scan only: a zero-hit run (common) creates no tmp
+            # file and copies nothing.
+            hit_batches = set()
+            for i in range(reader.num_record_batches):
+                mask = pc.is_in(
+                    reader.get_batch(i).column("target_id"), value_set=stub_ids
+                )
+                if pc.sum(mask).as_py():
+                    hit_batches.add(i)
+            if not hit_batches:
+                return
+
+            # Pass 2 — stream batches: no-hit batches pass through unmodified,
+            # only hit batches materialize Python objects. RSS at finalize
+            # stays bounded by one batch instead of the whole rels table.
+            tmp_out = self._rels_path.with_name(self._rels_path.name + ".rewrite")
+            rewritten = 0
+            try:
+                with ipc.new_file(str(tmp_out), reader.schema) as w:
+                    for i in range(reader.num_record_batches):
+                        batch = reader.get_batch(i)
+                        if i not in hit_batches:
+                            w.write_batch(batch)
+                            continue
+                        cols = batch.to_pydict()
+                        tids = cols["target_id"]
+                        for j, tid in enumerate(tids):
+                            hit = self._stub_rewrites.get(tid)
+                            if hit is None:
+                                continue
+                            resolved_id, confidence, meta = hit
+                            tids[j] = resolved_id
+                            cols["confidence"][j] = confidence
+                            if meta:
+                                existing = (
+                                    _json.loads(cols["metadata_json"][j])
+                                    if cols["metadata_json"][j]
+                                    else {}
+                                )
+                                existing.update(meta)
+                                cols["metadata_json"][j] = _json.dumps(existing)
+                            rewritten += 1
+                        w.write_batch(
+                            pa.RecordBatch.from_pydict(cols, schema=batch.schema)
+                        )
+            except Exception:
+                tmp_out.unlink(missing_ok=True)
+                raise
+        tmp_out.replace(self._rels_path)
+        LOGGER.info("stub_targets_rewritten", rewritten=rewritten, run_id=self.run_id)
+
+    def _apply_stub_entity_meta(self) -> None:
+        """Merge stub-resolution state into the run's agent_views tmp file.
+
+        Updates stub *entity* rows (entity_id in ``_stub_entity_meta``):
+        persisted ``metadata_json`` gains stub_resolution_state /
+        resolved_target_id / resolution_strategy / resolution_confidence so
+        artifact consumers can distinguish resolved / pruned / unresolved
+        stubs — the T5 entity-row half of the persistence contract.
+        """
+        if not self._stub_entity_meta or not self._agent_path.exists():
+            return
+        import json as _json
+
+        stub_ids = pa.array(list(self._stub_entity_meta.keys()))
+        # Same two-pass contract as _apply_stub_rewrites: mask-scan first so a
+        # zero-hit run creates no tmp file; then stream, materializing only
+        # batches containing a stub entity_id.
+        with pa.memory_map(str(self._agent_path), "r") as src:
+            reader = ipc.open_file(src)
+            if "metadata_json" not in reader.schema.names:
+                return
+            hit_batches = set()
+            for i in range(reader.num_record_batches):
+                mask = pc.is_in(
+                    reader.get_batch(i).column("entity_id"), value_set=stub_ids
+                )
+                if pc.sum(mask).as_py():
+                    hit_batches.add(i)
+            if not hit_batches:
+                return
+
+            tmp_out = self._agent_path.with_name(self._agent_path.name + ".rewrite")
+            rewritten = 0
+            try:
+                with ipc.new_file(str(tmp_out), reader.schema) as w:
+                    for i in range(reader.num_record_batches):
+                        batch = reader.get_batch(i)
+                        if i not in hit_batches:
+                            w.write_batch(batch)
+                            continue
+                        cols = batch.to_pydict()
+                        eids = cols["entity_id"]
+                        metas = cols["metadata_json"]
+                        for j, eid in enumerate(eids):
+                            hit = self._stub_entity_meta.get(eid)
+                            if hit is None:
+                                continue
+                            existing = _json.loads(metas[j]) if metas[j] else {}
+                            existing.update(hit)
+                            metas[j] = _json.dumps(existing)
+                            rewritten += 1
+                        w.write_batch(
+                            pa.RecordBatch.from_pydict(cols, schema=batch.schema)
+                        )
+            except Exception:
+                tmp_out.unlink(missing_ok=True)
+                raise
+        tmp_out.replace(self._agent_path)
+        LOGGER.info("stub_entities_rewritten", rewritten=rewritten, run_id=self.run_id)
+
     def finalize(self) -> dict[str, Path]:
         """Flush remaining rows and close IPC writers. Returns temp file paths."""
         with self._lock:
@@ -209,6 +367,20 @@ class BathoBundleWriter:
                 except Exception:
                     pass
                 setattr(self, attr, None)
+
+        # Persist stub-resolution rewrites into the run's rels table before
+        # the streams are committed (must run after the IPC writer is closed).
+        if self._stub_rewrites:
+            try:
+                self._apply_stub_rewrites()
+            except Exception as exc:
+                LOGGER.warning("stub_rewrite_failed", error=str(exc), run_id=self.run_id)
+        # Same for stub *entity* rows in agent_views (resolution state).
+        if self._stub_entity_meta:
+            try:
+                self._apply_stub_entity_meta()
+            except Exception as exc:
+                LOGGER.warning("stub_entity_rewrite_failed", error=str(exc), run_id=self.run_id)
 
         streams: dict[str, Path] = {}
         for name, path in [

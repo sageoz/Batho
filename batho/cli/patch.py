@@ -42,6 +42,13 @@ def register_patch_parser(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
 
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        default=False,
+        help="Disable progress bars (also: BATHO_NO_PROGRESS=1)",
+    )
+
     parser.set_defaults(func=cmd_patch)
 
 
@@ -54,6 +61,7 @@ def cmd_patch(args: argparse.Namespace) -> int:
         verbose=args.verbose,
         max_file_size_kb=args.max_file_size_kb,
         graph_backend=args.graph_backend,
+        no_progress=args.no_progress,
     )
 
     result = run_patch(options)
@@ -72,16 +80,21 @@ def cmd_patch(args: argparse.Namespace) -> int:
         return 0
 
     # Success summary
-    print(
-        f"Patched {args.root.resolve()}: "
-        f"{result.changes_applied} changes ("
-        f"{result.added} added, "
-        f"{result.modified} modified, "
-        f"{result.deleted} deleted) "
-        f"in {result.duration_ms}ms"
+    from batho.utils.cli_output import CLIOutput
+
+    cli_out = CLIOutput()
+    cli_out.success(
+        f"✓ patched in {result.duration_ms / 1000:.1f}s — "
+        f"{result.changes_applied} changes "
+        f"({result.added} added, {result.modified} modified, {result.deleted} deleted)"
     )
-    if (result.nodes_added or result.nodes_removed or result.nodes_modified or result.nodes_renamed):
-        print(
+    if (
+        result.nodes_added
+        or result.nodes_removed
+        or result.nodes_modified
+        or result.nodes_renamed
+    ):
+        cli_out.info(
             f"  Nodes: {result.nodes_added} added, "
             f"{result.nodes_removed} removed, "
             f"{result.nodes_modified} modified, "

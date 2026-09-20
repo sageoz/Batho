@@ -592,11 +592,14 @@ def format_file_connectivity(
 
     if external:
         stdlib = external.get("stdlib") or []
+        packages = external.get("packages") or []
         unresolved = external.get("unresolved_count") or 0
-        if stdlib or unresolved:
+        if stdlib or packages or unresolved:
             lines.append("### External")
             if stdlib:
                 lines.append(f"- stdlib: {', '.join(sorted(stdlib))}")
+            if packages:
+                lines.append(f"- packages: {', '.join(sorted(packages))}")
             if unresolved:
                 lines.append(f"- unresolved references: {unresolved}")
             lines.append("")

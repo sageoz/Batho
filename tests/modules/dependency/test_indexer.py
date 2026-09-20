@@ -186,7 +186,9 @@ class TestDependencyIndexer:
             4. Verify add_external_symbol is called on scope manager.
 
         Expectations:
-            - The mock scope manager's add_external_symbol method is called 4 times (1 for the module, 3 for symbols).
+            - The mock scope manager's add_external_symbol method is called 8 times
+              (module + 3 symbols, each registered under both the flat key and
+              the ``{language}:{name}`` namespaced key — T5).
         """
         indexer = DependencyIndexer(temp_dir, mock_scope_manager, mock_config)
         dep = DependencySpec(
@@ -198,9 +200,16 @@ class TestDependencyIndexer:
         )
         symbols_map = {"requests": ["get", "post", "Session"]}
         indexer._add_symbols_to_scope(dep, symbols_map)
-        
-        # Should have called add_external_symbol for module + 3 symbols
-        assert mock_scope_manager.add_external_symbol.call_count == 4
+
+        # Module + 3 symbols, each registered flat AND namespaced
+        assert mock_scope_manager.add_external_symbol.call_count == 8
+        names = [c.kwargs["name"] for c in mock_scope_manager.add_external_symbol.call_args_list]
+        assert "requests" in names and "python:requests" in names
+        assert "requests.get" in names and "python:requests.get" in names
+        # Flat and namespaced entries share one symbol_id (materialization dedupe)
+        by_name = {c.kwargs["name"]: c.kwargs["symbol_id"]
+                   for c in mock_scope_manager.add_external_symbol.call_args_list}
+        assert by_name["requests"] == by_name["python:requests"]
 
     def test_find_venv_priority(self, temp_dir, mock_scope_manager, mock_config):
         """Verify virtual environment detection prioritizes .venv over venv.

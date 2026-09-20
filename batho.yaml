@@ -5,6 +5,12 @@ logging:
   quiet: false
   file: null
   format: '%(message)s'
+progress:
+  enabled: true
+  style: progress
+  mininterval_s: 0.2
+  show_after_s: 2.0
+  keepalive_s: 60.0
 paths:
   artifact_dir: .batho/artifact
   cache_dir: .batho/cache
@@ -38,6 +44,16 @@ flags:
   fail_on_warning: false
   strict: false
   audit_log_enabled: true
+mcp:
+  enabled: true
+  tools:
+    disabled:
+    - batho_build
+    - batho_export
+    - batho_load
+    - batho_gc
+    enabled: null
+  toolsets: null
 rules:
   enabled: true
   auto_load_all_plugins: true
@@ -107,15 +123,12 @@ dependency:
     mode: shallow
     venv_auto_detect: true
     timeout_seconds: 5
-    full_scan: false
+    full_scan: true
     popular_packages_db_path: null
   stdlib:
     enabled: true
-    languages:
-    - python
-    - javascript
-    - go
-    - rust
+    # null = auto-detect languages from project manifests
+    languages: null
   cache:
     enabled: true
     ttl_days: 90
@@ -125,6 +138,8 @@ extraction:
     enabled: true
     ttl_days: 30
     max_entries: 5000
+  extract_parameters: false
+  extract_type_parameters: false
 community_detection:
   enabled: true
   skip_threshold: 200000

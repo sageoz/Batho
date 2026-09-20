@@ -102,7 +102,7 @@ class TestResolutionConfidenceConstant:
         """All expected resolution strategies have confidence scores."""
         expected = {
             "exact_match", "stdlib_method", "import_map",
-            "parent_chain", "scope_qualified", "receiver_type",
+            "parent_chain", "sibling_module", "scope_qualified", "receiver_type",
             "ambiguous", "unresolved",
         }
         assert set(_RESOLUTION_CONFIDENCE.keys()) == expected
@@ -911,3 +911,81 @@ class TestAmbiguousConfidence:
         assert "ambiguous_edge_count" in source, (
             "graph_overview should include ambiguous_edge_count in stats"
         )
+
+
+# ---------------------------------------------------------------------------
+# sibling_module join — fabricated-member guard (issue b41d7a92c53e)
+# ---------------------------------------------------------------------------
+
+
+class TestSiblingModuleJoin:
+    """Step 2b must only join on registered exports — never fabricate member ids.
+
+    Regression: step 2b used resolve_symbol_dotpath, which synthesizes a
+    SymbolInfo for ANY member path under an external module prefix without
+    checking the export table — a bare foo() stub co-scoped with
+    `import structlog` resolved to the nonexistent id `structlog/foo`.
+    """
+
+    def test_unregistered_member_stays_unresolved(self):
+        """Bare stub + external module sibling with no matching export → no edge."""
+        with tempfile.TemporaryDirectory() as tmp:
+            indexer = _make_indexer(tmp)
+            graph = InMemoryGraph()
+            sm = ScopeManager()
+
+            # External module registered (id ends "/") but NO 'foo' export.
+            sm.add_external_symbol(
+                name="structlog",
+                symbol_id="batho pip structlog 24 structlog/",
+                symbol_type="module",
+            )
+
+            # Sibling stubs under one caller_scope: module ref + bare call.
+            mod_stub = _make_stub("structlog", line=5)
+            foo_stub = _make_stub("foo", line=10)
+            graph.add_entity(mod_stub)
+            graph.add_entity(foo_stub)
+
+            indexer.resolve_contextual_stubs(graph, sm)
+
+            updated = graph.get_entity(foo_stub.id)
+            assert updated.metadata.get("stub_resolution_state") != "resolved"
+            assert "resolved_target_id" not in updated.metadata
+            # And nothing fabricated a structlog/foo target anywhere.
+            resolved_targets = [t[0] for t in indexer.stub_resolutions.values()]
+            assert not any(t.endswith("structlog/foo") for t in resolved_targets)
+            indexer.close()
+
+    def test_registered_export_member_resolves(self):
+        """The intended case: sibling join hits a registered export member."""
+        with tempfile.TemporaryDirectory() as tmp:
+            indexer = _make_indexer(tmp)
+            graph = InMemoryGraph()
+            sm = ScopeManager()
+
+            sm.add_external_symbol(
+                name="pydantic",
+                symbol_id="batho pip pydantic 2 pydantic/",
+                symbol_type="module",
+            )
+            sm.add_external_symbol(
+                name="pydantic.Field",
+                symbol_id="batho pip pydantic 2 pydantic/Field().",
+                symbol_type="external",
+            )
+
+            mod_stub = _make_stub("pydantic", line=5)
+            field_stub = _make_stub("Field", line=10)
+            graph.add_entity(mod_stub)
+            graph.add_entity(field_stub)
+
+            indexer.resolve_contextual_stubs(graph, sm)
+
+            updated = graph.get_entity(field_stub.id)
+            assert updated.metadata["stub_resolution_state"] == "resolved"
+            assert updated.metadata["resolved_target_id"] == (
+                "batho pip pydantic 2 pydantic/Field()."
+            )
+            assert updated.metadata["resolution_strategy"] == "sibling_module"
+            indexer.close()

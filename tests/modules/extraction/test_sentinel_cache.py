@@ -396,3 +396,62 @@ class TestSentinelCachePerformance:
             f"Cached pass ({second_pass_ms:.2f}ms) should be faster than "
             f"first pass ({first_pass_ms:.2f}ms)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Namespaced external precedence + unique symbol counting (review fixes)
+# ---------------------------------------------------------------------------
+
+
+class TestExternalSymbolPrecedence:
+    """Project-defined globals win over namespaced externals — a project-local
+    ``json`` module beats the stdlib stub for hinted callers
+    (issue 67f4a10df2f4)."""
+
+    def test_project_symbol_beats_namespaced_external(self):
+        sm = ScopeManager()
+        sm.define_symbol(
+            "json", "batho pip proj 1.0 json/__init__.", "MODULE",
+            is_global=True,
+        )
+        sm.add_external_symbol(
+            name="python:json",
+            symbol_id="batho stdlib python python json/.",
+            symbol_type="module",
+        )
+        info = sm.resolve_symbol("json", lang_hint="python")
+        assert info is not None
+        assert info.symbol_id == "batho pip proj 1.0 json/__init__."
+        assert info.is_external is False
+
+    def test_namespaced_external_resolves_when_no_project_symbol(self):
+        sm = ScopeManager()
+        sm.add_external_symbol(
+            name="python:os",
+            symbol_id="batho stdlib python python os/.",
+            symbol_type="module",
+        )
+        info = sm.resolve_symbol("os", lang_hint="python")
+        assert info is not None and info.is_external
+
+    def test_unhinted_lookup_unchanged(self):
+        sm = ScopeManager()
+        sm.define_symbol("thing", "proj:thing", "FUNCTION", is_global=True)
+        assert sm.resolve_symbol("thing").symbol_id == "proj:thing"
+
+
+class TestGlobalSymbolCount:
+    """``global_symbol_count`` counts unique symbol_ids — externals register
+    under both a flat and a ``"{lang}:{name}"`` key sharing one id
+    (issue 874dc8e272e3)."""
+
+    def test_flat_and_namespaced_external_count_once(self):
+        sm = ScopeManager()
+        sm.add_external_symbol(
+            name="json", symbol_id="stdlib:json", symbol_type="module"
+        )
+        sm.add_external_symbol(
+            name="python:json", symbol_id="stdlib:json", symbol_type="module"
+        )
+        sm.define_symbol("helper", "proj:helper", "FUNCTION", is_global=True)
+        assert sm.global_symbol_count == 2

@@ -28,12 +28,20 @@ def build_ast_cache_variant(
     *,
     include_gaps: bool,
     parsing_config: dict[str, Any] | None = None,
+    identity_fingerprint: str = "",
 ) -> str:
-    """Return a stable variant key for AST cache entries."""
+    """Return a stable variant key for AST cache entries.
+
+    ``identity_fingerprint`` (sha256 of the workspace package map) must be
+    part of the key: cached entities carry their stamped symbol IDs, so a
+    changed workspace identity map must invalidate them or stale prefixes
+    resurface from cache forever.
+    """
     payload = {
         "schema_version": CACHE_SCHEMA_VERSION,
         "include_gaps": bool(include_gaps),
         "parsing": parsing_config or {},
+        "identity": identity_fingerprint,
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:12]

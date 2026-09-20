@@ -70,6 +70,7 @@ def create_app(
     # Both None means "load from batho.yaml / env vars / defaults".
     if disabled_tools is None and enabled_tools is None:
         from batho.core.config import get_config_with_root
+        from batho.mcp.tools import resolve_disabled_tools
         cfg_root = Path(root).resolve() if root else Path.cwd().resolve()
         cfg = get_config_with_root(cfg_root)
         mcp_cfg = cfg.get("mcp", {})
@@ -78,12 +79,15 @@ def create_app(
             enabled_tools = set()
         else:
             tools_cfg = mcp_cfg.get("tools", {})
-            disabled = tools_cfg.get("disabled")
-            if disabled is not None:
-                disabled_tools = set(disabled)
             enabled = tools_cfg.get("enabled")
             if enabled is not None:
                 enabled_tools = set(enabled)
+            # Toolsets (mcp.toolsets): named groups that resolve to a
+            # disabled set. Only applied when explicit tools.disabled /
+            # tools.enabled were not set. Default behavior unchanged:
+            # admin build/export/load/gc stay disabled unless a toolset
+            # explicitly enables them.
+            disabled_tools = resolve_disabled_tools(mcp_cfg)
 
     app = FastMCP(
         name="batho",

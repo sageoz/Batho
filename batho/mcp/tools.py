@@ -15,16 +15,17 @@ from typing import Any, TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.compute as pc
 from fastmcp import FastMCP, Context
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult
 from mcp.types import TextContent, ToolAnnotations
 
 from batho.modules.storage.arrow_bundle.reader import BathoBundleReader
 from batho.modules.storage.arrow_bundle.bundle import BathoBundle
 from batho.mcp.entity_resolution import (
+    KIND_EXTERNAL_PACKAGE,
     KIND_EXTERNAL_STDLIB,
     KIND_EXTERNAL_UNRESOLVED,
+    external_ref_root,
     get_resolver,
-    stub_fqn,
 )
 from batho.mcp.graph_builder import (
     build_dual_output, build_meta, format_file_connectivity, format_summary,
@@ -54,6 +55,233 @@ def _json_default(o: Any) -> Any:
 
 
 _VALID_SYMBOL_ROLES = list(SymbolRole.__members__.keys())
+
+# ---------------------------------------------------------------------------
+# outputSchema declarations (MCP 2025-06-18+) for dual-output tools.
+# These mirror the structured_content shapes built by build_dual_output,
+# format_file_connectivity, and build_delta_structured; the mirrored
+# TextContent is kept per spec. Declared so hosts can validate
+# structuredContent and render typed UIs.
+# ---------------------------------------------------------------------------
+
+_META_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "total_nodes": {"type": "integer"},
+        "total_edges": {"type": "integer"},
+        "returned_nodes": {"type": "integer"},
+        "returned_edges": {"type": "integer"},
+        "offset": {"type": "integer"},
+        "limit": {"type": "integer"},
+        "truncated": {"type": "boolean"},
+        "artifact_generation": {"type": "integer"},
+        "tokens_used": {"type": "integer"},
+        "token_budget": {"type": "integer"},
+        "applied_filters": {"type": "object"},
+        "staleness_banner": {"type": "string"},
+    },
+}
+
+_NODE_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "type": {"type": "string"},
+        "name": {"type": "string"},
+        "file": {"type": "string"},
+        "start_line": {"type": ["integer", "null"]},
+        "end_line": {"type": ["integer", "null"]},
+        "signature": {"type": ["string", "null"]},
+        "is_exported": {"type": "boolean"},
+        "fqn": {"type": ["string", "null"]},
+        "parent_id": {"type": ["string", "null"]},
+        "metadata": {"type": "object"},
+    },
+    "required": ["id", "type", "name"],
+}
+
+_EDGE_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "source": {"type": "string"},
+        "target": {"type": "string"},
+        "relation_type": {"type": "string"},
+        "metadata": {"type": "object"},
+        "roles": {"type": ["integer", "null"]},
+        "confidence": {"type": ["number", "null"]},
+        "source_file": {"type": "string"},
+        "target_file": {"type": "string"},
+        "resolution": {"type": "string"},
+    },
+    "required": ["source", "target", "relation_type"],
+}
+
+# graph_query / get_entity / get_file_graph (build_dual_output shape)
+GRAPH_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "graph": {
+            "type": "object",
+            "properties": {
+                "nodes": {"type": "array", "items": _NODE_OUTPUT_SCHEMA},
+                "edges": {"type": "array", "items": _EDGE_OUTPUT_SCHEMA},
+            },
+            "required": ["nodes", "edges"],
+        },
+        "meta": _META_OUTPUT_SCHEMA,
+    },
+    "required": ["graph", "meta"],
+}
+
+# graph_overview
+OVERVIEW_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "overview": {
+            "type": "object",
+            "properties": {
+                "stats": {"type": "object"},
+                "communities": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["stats", "communities"],
+        },
+        "meta": {"type": "object"},
+    },
+    "required": ["overview", "meta"],
+}
+
+# trace_path
+TRACE_PATH_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "path": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "entity_id": {"type": "string"},
+                    "relation_type": {"type": "string"},
+                    "name": {"type": "string"},
+                    "direction": {"type": "string"},
+                },
+                "required": ["entity_id", "relation_type", "name"],
+            },
+        },
+        "depth": {"type": "integer"},
+        "meta": {"type": "object"},
+    },
+    "required": ["path", "depth", "meta"],
+}
+
+# file_connectivity
+_FILE_CONNECTIVITY_CELL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "file": {"type": "string"},
+        "relations": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer"},
+                    "max_confidence": {"type": "number"},
+                    "via": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+    },
+    "required": ["file", "relations"],
+}
+
+FILE_CONNECTIVITY_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "file": {"type": "string"},
+        "depends_on": {"type": "array", "items": _FILE_CONNECTIVITY_CELL_SCHEMA},
+        "depended_on_by": {"type": "array", "items": _FILE_CONNECTIVITY_CELL_SCHEMA},
+        "external": {"type": "object"},
+        "stats": {"type": "object"},
+        "meta": _META_OUTPUT_SCHEMA,
+    },
+    "required": ["file", "depends_on", "depended_on_by", "external", "stats", "meta"],
+}
+
+# search_entities
+SEARCH_ENTITIES_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "results": {"type": "array", "items": {"type": "object"}},
+        "meta": {"type": "object"},
+    },
+    "required": ["results", "meta"],
+}
+
+# get_delta
+GET_DELTA_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "changes": {"type": "array", "items": {"type": "object"}},
+        "delta_stats": {"type": "object"},
+        "run_info": {"type": ["object", "null"]},
+        "meta": {"type": "object"},
+    },
+    "required": ["changes", "delta_stats", "run_info"],
+}
+
+# Toolsets (mcp.toolsets in batho.yaml) — config-gated groups that resolve
+# to disabled/enabled tool sets. Default behavior is unchanged when the
+# section is absent (secure-by-default: admin build/export/load/gc disabled).
+TOOLSETS: dict[str, set[str]] = {
+    "retrieval": {
+        "graph_overview", "graph_query", "get_entity", "trace_path",
+        "get_file_graph", "file_connectivity", "search_entities", "get_delta",
+    },
+    "diagnostics": {"batho_status", "batho_list_runs", "batho_diff"},
+    "registry": {"list_repos", "add_repo", "remove_repo"},
+    "admin": {
+        "batho_build", "batho_patch", "batho_export",
+        "batho_gc", "batho_fix", "batho_load",
+    },
+}
+
+# Secure-by-default disabled set (Tier-3 admin subset).
+DEFAULT_DISABLED_TOOLS: set[str] = {"batho_build", "batho_export", "batho_load", "batho_gc"}
+
+
+def resolve_disabled_tools(mcp_cfg: dict[str, Any]) -> set[str] | None:
+    """Resolve ``mcp.tools.disabled`` / ``mcp.toolsets`` into a disabled set.
+
+    Returns ``None`` when neither is configured — the caller then applies
+    its own secure-by-default fallback. ``tools.enabled`` (allowlist) makes
+    ``disabled`` moot and also yields ``None`` here. Shared by the MCP server
+    and the ``batho mcp`` CLI entry so both resolve toolsets identically.
+    """
+    tools_cfg = mcp_cfg.get("tools", {})
+    disabled = tools_cfg.get("disabled")
+    if disabled is not None:
+        return set(disabled)
+    if tools_cfg.get("enabled") is not None:
+        return None
+    toolsets_cfg = mcp_cfg.get("toolsets")
+    if not toolsets_cfg:
+        return None
+    resolved = set(DEFAULT_DISABLED_TOOLS)
+    for ts_name, ts_val in toolsets_cfg.items():
+        members = TOOLSETS.get(ts_name)
+        if members is None:
+            LOGGER.warning("batho_mcp_unknown_toolset", toolset=ts_name)
+            continue
+        if ts_val is False:
+            resolved |= members
+        elif ts_val is True:
+            resolved -= members
+        else:
+            LOGGER.warning(
+                "batho_mcp_toolset_value_not_bool",
+                toolset=ts_name, value=ts_val,
+            )
+    return resolved
 
 
 def _parse_symbol_roles(role_names: list[str]) -> int | None:
@@ -418,9 +646,16 @@ def _resolve_entity_id(name_or_id: str, reader: BathoBundleReader) -> str | list
     if name_matched.num_rows == 1:
         return name_matched.to_pylist()[0].get("entity_id", "")
 
-    # Multiple matches — return disambiguation list
-    file_paths = _file_paths_map(reader)
+    # Multiple matches — synthesized MODULE entities are deprioritized: a file
+    # named `helper.py` collides with the `helper()` function it defines, and
+    # callers naming a symbol almost always mean the callable. When dropping
+    # MODULE rows leaves exactly one candidate, resolve to it silently.
     rows = name_matched.to_pylist()
+    non_module = [r for r in rows if r.get("entity_type") != "MODULE"]
+    if len(non_module) == 1:
+        return non_module[0].get("entity_id", "")
+
+    file_paths = _file_paths_map(reader)
     return [
         {
             "entity_id": r.get("entity_id", ""),
@@ -465,7 +700,7 @@ def register_tools(
     # expensive/administrative Tier-3 tools so the agent surface stays
     # focused on retrieval + diagnostics.
     if disabled_tools is None and enabled_tools is None:
-        disabled_tools = {"batho_build", "batho_export", "batho_load", "batho_gc"}
+        disabled_tools = set(DEFAULT_DISABLED_TOOLS)
     disabled_tools = disabled_tools or set()
 
     # All 20 tool names — used to compute the removal set when an allowlist
@@ -504,12 +739,14 @@ def register_tools(
     # Existing Tools (v1)
     # -------------------------------------------------------------------
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True))
     def list_repos() -> ToolResult:
         """List all registered repositories in the Batho MCP registry.
 
-        Use this to see available repos, their paths, entity counts, and artifact status.
-        Do NOT call this repeatedly — call it once when starting or switching context.
+        USE when starting a session, switching context, or checking which repos
+        have artifacts ready. DO NOT USE for querying code structure (use
+        graph_overview / get_entity) and do NOT call repeatedly — call once.
+        Returns repo names, paths, entity counts, artifact status, watch state.
         """
         if not registry:
             return _err("No registry configured. Start server with a registry or use --root.",
@@ -553,9 +790,11 @@ def register_tools(
     ) -> ToolResult:
         """Register a repository in the Batho MCP registry.
 
-        The repo must have a .batho artifact (run 'batho build' first).
-        Use this when you need to add a new repo to the MCP server at runtime.
-        Do NOT use this for querying — use list_repos to see existing repos.
+        USE when adding a new repo to the MCP server at runtime (the repo must
+        have a .batho artifact — run 'batho build' first). DO NOT USE for
+        querying (use list_repos / graph tools) or to re-register an existing
+        repo without checking list_repos first. Returns the registered entry
+        with entity count and watch state.
 
         Args:
             name: Unique name for the repo (e.g. 'myapp', 'frontend').
@@ -612,8 +851,9 @@ def register_tools(
     def remove_repo(name: str) -> ToolResult:
         """Remove a repository from the Batho MCP registry.
 
-        Use this when a repo is no longer needed. Does NOT delete the .batho artifact on disk.
-        Do NOT use this to query repos — use list_repos instead.
+        USE when a repo is no longer needed (does NOT delete the .batho
+        artifact on disk). DO NOT USE to query repos (use list_repos) or to
+        delete artifacts (use batho_gc). Returns the removed repo name.
 
         Args:
             name: Name of the repo to remove.
@@ -632,7 +872,10 @@ def register_tools(
         structured = {"name": name, "removed": True}
         return ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(
+        output_schema=OVERVIEW_OUTPUT_SCHEMA,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True),
+    )
     def graph_overview(
         repo: str | None = None,
         response_format: str = "summary",
@@ -640,10 +883,12 @@ def register_tools(
     ) -> ToolResult:
         """Get a high-level overview of the codebase graph.
 
-        Returns entity counts, relationship breakdown, file list, and community summaries.
-        Use this FIRST for any unfamiliar codebase — it provides context for all subsequent queries.
-        Do NOT use graph_query or get_file_graph before calling this — always start here.
-        Returns markdown summary (~200-500 tokens) and structured JSON with full stats.
+        USE FIRST for any unfamiliar codebase — entity counts, relationship
+        breakdown, file list, and community summaries give context for all
+        subsequent queries. DO NOT USE for entity-level detail (use get_entity)
+        or per-file structure (use get_file_graph); and do NOT call graph_query
+        or get_file_graph before this on a new codebase. Returns a markdown
+        summary plus structured stats and community summaries.
 
         Args:
             repo: Name of the registered repo. If None, uses the default (first registered) repo.
@@ -766,7 +1011,10 @@ def register_tools(
         res = ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
         return _inject_banner(res, repo_name)
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(
+        output_schema=GRAPH_OUTPUT_SCHEMA,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True),
+    )
     def graph_query(
         repo: str | None = None,
         file_path: str | None = None,
@@ -784,11 +1032,12 @@ def register_tools(
     ) -> ToolResult:
         """Query the code graph with optional filters. Returns paginated nodes and edges.
 
-        Use this for filtered graph traversal — by file, entity type, relation type, or name pattern.
-        Do NOT use this for single-entity lookup — use get_entity instead.
-        Do NOT use this for file-level analysis — use get_file_graph instead.
-        Do NOT use this for name search — use search_entities instead.
-        Use graph_overview first if you are unfamiliar with the codebase.
+        USE for filtered graph traversal — by file, entity type, relation type,
+        name pattern, symbol role, confidence, or direction. DO NOT USE for
+        single-entity lookup (use get_entity), file-level analysis (use
+        get_file_graph), or pure name search (use search_entities). Call
+        graph_overview first on unfamiliar codebases. Returns paginated
+        graph.nodes + graph.edges plus meta with totals and applied_filters.
 
         Args:
             repo: Name of the registered repo. If None, uses the default repo.
@@ -1002,7 +1251,10 @@ def register_tools(
         res = ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
         return _inject_banner(res, repo_name, file_path=file_path)
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(
+        output_schema=GRAPH_OUTPUT_SCHEMA,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True),
+    )
     def get_entity(
         entity_id: str,
         repo: str | None = None,
@@ -1011,10 +1263,11 @@ def register_tools(
     ) -> ToolResult:
         """Get detailed information about a single entity, including relationships and optionally source code.
 
-        Use this after search_entities or graph_query to deep-dive a specific entity.
-        Returns outgoing and incoming relationships (CALLS, IMPORTS, USES, etc.).
-        Do NOT use this to search — use search_entities for name-based lookup.
-        Do NOT use this for path tracing — use trace_path instead.
+        USE instead of opening a file to inspect one symbol — after
+        search_entities or graph_query has named the entity. Returns outgoing
+        and incoming relationships (CALLS, IMPORTS, USES, etc.) with
+        graph.nodes + graph.edges structure. DO NOT USE to search by name (use
+        search_entities) or for multi-hop path tracing (use trace_path).
 
         Args:
             entity_id: Entity ID or display name from search_entities or graph_query results.
@@ -1092,7 +1345,10 @@ def register_tools(
         entity_fp = file_paths.get(entity_row.get("file_id", -1))
         return _inject_banner(res, repo_name, file_path=entity_fp)
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(
+        output_schema=TRACE_PATH_OUTPUT_SCHEMA,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True),
+    )
     async def trace_path(
         source_entity_id: str,
         target_entity_id: str,
@@ -1107,10 +1363,12 @@ def register_tools(
     ) -> ToolResult:
         """Find the shortest dependency path between two entities in the code graph using BFS.
 
-        Use this to answer 'how does X reach Y?' or 'what is the call chain from A to B?'.
-        Returns the shortest path with relation types at each hop.
-        Do NOT use grep to trace call chains — this uses BFS on the pre-built graph.
-        Use search_entities first to find entity_ids if you only have names.
+        USE for multi-hop 'how does A reach B' or 'what is the call chain from
+        A to B' — BFS over the pre-built graph with relation types at each hop.
+        DO NOT USE grep to trace call chains, and do NOT use this for
+        single-hop caller lookup (use get_entity) or name search (use
+        search_entities first to resolve entity_ids). Returns the ordered path
+        with depth and per-hop relation types.
 
         Args:
             source_entity_id: Entity ID or display name of the starting point.
@@ -1233,6 +1491,13 @@ def register_tools(
                 redirect_cache[eid] = hit
             return hit
 
+        # Normalize endpoint args through the same stub rewiring used for edge
+        # endpoints: a caller may pass an `unresolved:` stub id (stub entities
+        # persist as reference-site records), which must land on its resolved
+        # definition for the BFS comparison below to match rewired hops.
+        source_entity_id = _redirect(source_entity_id)
+        target_entity_id = _redirect(target_entity_id)
+
         adjacency: dict[str, list[tuple[str, str, str]]] = {}
         # For 'both' direction, we need to track whether each hop is forward
         # (source→target) or reverse (target→source) for accurate rendering.
@@ -1336,7 +1601,10 @@ def register_tools(
         res = ToolResult(content=[TextContent(type="text", text="\n".join(lines))], structured_content=structured)
         return _inject_banner(res, repo_name)
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(
+        output_schema=GRAPH_OUTPUT_SCHEMA,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True),
+    )
     def get_file_graph(
         file_path: str,
         repo: str | None = None,
@@ -1346,10 +1614,11 @@ def register_tools(
     ) -> ToolResult:
         """Get all entities and relationships within a single file.
 
-        Optionally includes cross-file reference stubs (entities referenced from other files).
-        Use this to understand a file's internal structure and external dependencies.
-        Do NOT use read or grep — this returns all entities and relationships in one call.
-        Do NOT use graph_query for file analysis — this is faster and more complete.
+        USE instead of reading the whole file when you need its structure —
+        all entities and relationships in one call, optionally with cross-file
+        reference stubs. DO NOT USE read/grep for file structure, and do NOT
+        use graph_query for single-file analysis (this is faster and more
+        complete). Returns graph.nodes + graph.edges scoped to the file.
 
         Args:
             file_path: Path to the file (relative to repo root, forward slashes).
@@ -1431,7 +1700,10 @@ def register_tools(
         res = ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
         return _inject_banner(res, repo_name, file_path=norm_fp)
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(
+        output_schema=FILE_CONNECTIVITY_OUTPUT_SCHEMA,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True),
+    )
     def file_connectivity(
         file_path: str,
         repo: str | None = None,
@@ -1443,16 +1715,13 @@ def register_tools(
     ) -> ToolResult:
         """Get file-level connectivity: which files this file depends on and which files depend on it.
 
-        Cross-file references (stored as unresolved stubs in the artifact) are
-        resolved to their defining files, then aggregated per file with
-        relation-type counts and confidence. Ideal for dependency-graph UIs and
-        impact analysis ("who breaks if I change this file?").
-
-        The per-cell `via` list is direction-aware: `depends_on` cells name the
-        referenced (remote) symbol; `depended_on_by` cells name the referencing
-        (caller-side) symbol. Endpoints with no resolvable name contribute no
-        `via` entry (e.g. alias-named stubs, which are excluded from the name
-        index).
+        USE instead of reading imports — cross-file references are resolved to
+        their defining files and aggregated per file with relation-type counts
+        and confidence. Ideal for dependency-graph UIs and impact analysis
+        ("who breaks if I change this file?"). DO NOT USE for entity-level
+        callers (use get_entity) or intra-file structure (use get_file_graph).
+        Returns depends_on / depended_on_by cell lists with direction-aware
+        `via` symbol names, plus external stdlib/unresolved stats.
 
         Args:
             file_path: Path to the file (relative to repo root, forward slashes).
@@ -1527,7 +1796,7 @@ def register_tools(
         depends_on = _aggregate(outgoing_rows)
         depended_on_by = _aggregate(incoming_rows)
 
-        external: dict = {"stdlib": [], "unresolved_count": 0}
+        external: dict = {"stdlib": [], "packages": [], "unresolved_count": 0}
         file_rels = reader.get_file_artifacts_by_id(fid).get("rels_view", [])
         for rel in file_rels:
             if rel.get("relation_type") == "CONTAINS":
@@ -1537,13 +1806,19 @@ def register_tools(
                 # Parse the stdlib root via the resolver's stub_fqn (single
                 # choke point for stub-ID parsing) so dot-normalized Rust
                 # scoped refs (unresolved:scope::std.io.Write) report "std"
-                # instead of the bare last segment.
-                root = stub_fqn(rel["target_id"]).split(".")[0]
+                # instead of the bare last segment. Resolved stdlib ids
+                # (batho stdlib <lang> <ns> <mod>) yield the module name.
+                root = external_ref_root(rel["target_id"])
                 if root:
                     external["stdlib"].append(root)
+            elif tgt.kind == KIND_EXTERNAL_PACKAGE:
+                root = external_ref_root(rel["target_id"])
+                if root:
+                    external["packages"].append(root)
             elif tgt.kind == KIND_EXTERNAL_UNRESOLVED:
                 external["unresolved_count"] += 1
         external["stdlib"] = sorted(set(external["stdlib"]))
+        external["packages"] = sorted(set(external["packages"]))
 
         stats = {
             "outgoing_files": len(depends_on),
@@ -1580,7 +1855,10 @@ def register_tools(
         res = ToolResult(content=[TextContent(type="text", text=truncated_md)], structured_content=structured)
         return _inject_banner(res, repo_name, file_path=norm_fp)
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(
+        output_schema=SEARCH_ENTITIES_OUTPUT_SCHEMA,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True),
+    )
     def search_entities(
         query: str,
         repo: str | None = None,
@@ -1592,11 +1870,12 @@ def register_tools(
     ) -> ToolResult:
         """Search for entities by name using substring regex match.
 
-        Returns matching entities with optional type filter and file locations.
-        Each result includes the entity_id in backticks for use with get_entity or trace_path.
-        Use this to find entity_ids for get_entity or trace_path.
-        Do NOT use grep — this is faster and returns structured results with entity_ids.
-        Do NOT use graph_query for name search — this is optimized for name matching.
+        USE instead of grep when searching a symbol by name — faster and
+        returns structured results with entity_ids (in backticks) ready for
+        get_entity or trace_path. DO NOT USE for exact-string search in file
+        bodies (that is grep's job), and do NOT use graph_query for name
+        search (this is optimized for name matching). Returns matching
+        entities with type and file:line locations.
 
         Args:
             query: Substring or regex pattern to match entity names.
@@ -1706,7 +1985,10 @@ def register_tools(
         res = ToolResult(content=[TextContent(type="text", text="\n".join(lines))], structured_content=structured)
         return _inject_banner(res, repo_name)
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(
+        output_schema=GET_DELTA_OUTPUT_SCHEMA,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True),
+    )
     def get_delta(
         repo: str | None = None,
         run_id: str | None = None,
@@ -1718,10 +2000,13 @@ def register_tools(
     ) -> ToolResult:
         """Get incremental changes from the latest patch run (or a specific run).
 
-        Shows added/removed/modified/renamed nodes from 'batho patch'.
-        Use this after running 'batho patch' to review what changed.
-        Do NOT re-scan the entire codebase — this returns node-level changes only.
-        The graph is already updated via MVCC — no server restart needed.
+        USE instead of git diff for structural change review — after
+        'batho patch', this returns node-level added/removed/modified/renamed
+        changes with delta stats. DO NOT USE before any patch run exists (run
+        'batho patch' first), and do NOT re-scan the entire codebase — this
+        returns node-level changes only. The graph is already updated via
+        MVCC — no server restart needed.
+        Returns changes list, delta_stats, and run_info.
 
         Args:
             repo: Name of the registered repo. If None, uses the default repo.
@@ -1755,9 +2040,15 @@ def register_tools(
     # Phase 1 New Tools
     # -------------------------------------------------------------------
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True))
     def batho_status(repo: str | None = None) -> ToolResult:
         """Show artifact and watcher status for one or all repos.
+
+        USE FIRST in any session to verify the artifact exists and is fresh
+        (staleness banner, sync state, run count) before running graph queries.
+        DO NOT USE for code structure questions (use graph tools) or to change
+        state (it is read-only). Returns per-repo artifact presence, run count,
+        latest run, watcher state, and pending files.
 
         Args:
             repo: Name of the registered repo. If None, shows status for all repos.
@@ -1829,12 +2120,18 @@ def register_tools(
         structured = {"repos": results, "total": len(results)}
         return ToolResult(content=[TextContent(type="text", text="\n".join(lines).strip())], structured_content=structured)
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True))
     def batho_list_runs(
         repo: str | None = None,
         limit: int = 20,
     ) -> ToolResult:
         """List patch/build run IDs for a repo.
+
+        USE to discover run history before get_delta / batho_diff (pick a
+        run_id) or to confirm a patch advanced the artifact generation.
+        DO NOT USE for change contents (use get_delta) or artifact freshness
+        (use batho_status). Returns run UUIDs, types, timestamps, and git
+        commits.
 
         Args:
             repo: Name of the registered repo. If None, uses default repo.
@@ -1884,8 +2181,12 @@ def register_tools(
     ) -> ToolResult:
         """Run a full index build for a repository.
 
-        Creates a complete code graph in .batho/artifact/.
-        Do NOT use this for routine file changes — use batho_patch for incremental updates.
+        USE when no .batho artifact exists or a full rebuild was requested —
+        creates the complete code graph in .batho/artifact/. DO NOT USE for
+        routine file changes (use batho_patch for incremental updates) or when
+        the artifact just needs refreshing. Prefer the CLI (`batho build`) for
+        interactive sessions; this Tier-3 tool is disabled by default. Returns
+        run_id, entity/relationship/file counts, and duration.
 
         Args:
             repo: Name of the registered repo or root path. If None, uses default repo.
@@ -1944,7 +2245,7 @@ def register_tools(
             LOGGER.error("batho_build_failed", repo=repo_name, error=str(exc))
             return _err(f"Build failed: {exc}", error_type=EXTERNAL_ERROR, hint="Check permissions and repository integrity.")
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=True, destructiveHint=True))
+    @app.tool(annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=True, destructiveHint=True, idempotentHint=True))
     async def batho_patch(
         repo: str | None = None,
         max_file_size_kb: int | None = None,
@@ -1952,8 +2253,13 @@ def register_tools(
     ) -> ToolResult:
         """Run an incremental patch on an existing artifact.
 
-        Detects changes using content hashing. Use this after editing files to update the code graph.
-        Do NOT use this on unbuilt repositories — run batho_build first.
+        USE after editing files to update the code graph — content hashing
+        detects changed files and updates only those. DO NOT USE on unbuilt
+        repositories (run batho_build first) or as a substitute for a full
+        rebuild when the artifact is corrupt (use batho_fix / batho_build
+        full=True). Prefer the CLI (`batho patch`) when Tier-3 tools are
+        disabled. Returns changed-file counts and the new run_id; follow up
+        with get_delta to review what changed.
 
         Note: If the watcher engine is running (default), it auto-patches on file
         changes. Only call this manually if the watcher is off (--no-watch) or
@@ -2046,7 +2352,11 @@ def register_tools(
     ) -> ToolResult:
         """Export a JSON view or Pack artifact from the code graph.
 
-        Do NOT use this for single entity lookup — use get_entity or graph_query instead.
+        USE for bulk export of graph data (storage/agent/overview/files/
+        symbols/dependencies/delta/rel views) to JSON or a transport ZIP pack.
+        DO NOT USE for single entity lookup (use get_entity or graph_query) or
+        routine querying — this is a bulk/admin operation, disabled by default.
+        Returns the output path and (for small JSON views) inline content.
 
         Args:
             repo: Name of the registered repo or root path.
@@ -2128,7 +2438,7 @@ def register_tools(
             LOGGER.error("batho_export_failed", repo=repo_name, error=str(exc))
             return _err(f"Export failed: {exc}", error_type=EXTERNAL_ERROR, hint="Check logs for details and retry.")
 
-    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False))
+    @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True))
     def batho_diff(
         repo: str | None = None,
         run_id: str | None = None,
@@ -2138,8 +2448,11 @@ def register_tools(
     ) -> ToolResult:
         """Query node-level changes across runs, entities, or files.
 
-        Must provide exactly ONE of run_id, entity_id, or file_path.
-        Do NOT use git diff for code-graph node changes — use this tool instead.
+        USE instead of git diff for structural history — per-run change lists,
+        single-entity history across runs, or per-file change history. Must
+        provide exactly ONE of run_id, entity_id, or file_path. DO NOT USE for
+        the latest patch delta (use get_delta) or line-level diffs (use git).
+        Returns the matching change records with entity names and change kinds.
 
         Args:
             repo: Name of the registered repo.
@@ -2229,7 +2542,11 @@ def register_tools(
     ) -> ToolResult:
         """Run garbage collection and maintenance on an artifact database.
 
-        Do NOT use this during active indexing operations.
+        USE to prune old runs, vacuum storage, or remove orphan blobs
+        (subcommands: status, run, runs, vacuum, orphans). DO NOT USE during
+        active indexing operations, and do NOT use for routine queries — this
+        is a destructive admin operation, disabled by default. Returns the GC
+        subcommand result with a human-readable message.
 
         Args:
             repo: Name of the registered repo or root path.
@@ -2284,7 +2601,11 @@ def register_tools(
     ) -> ToolResult:
         """Run integrity verification and repair on an artifact database.
 
-        Do NOT run with dry_run=False unless issues have been verified.
+        USE when the artifact is corrupt or fails to load — verifies bundle,
+        state, blobs, and graph integrity, optionally repairing issues. Start
+        with dry_run=True to inspect before modifying. DO NOT USE as a routine
+        health check (use batho_status) or with dry_run=False before issues
+        have been verified. Returns a markdown report plus issue/repair counts.
 
         Args:
             repo: Name of the registered repo.
@@ -2372,7 +2693,11 @@ def register_tools(
     ) -> ToolResult:
         """Unpack a transport artifact ZIP into .batho/artifact/.
 
-        Do NOT use on non-zip files or corrupted archives.
+        USE to install a pre-built artifact received from another machine or
+        CI (a Pack ZIP from batho_export json_mode=False). DO NOT USE on
+        non-zip files or corrupted archives, and do NOT use when the artifact
+        can be rebuilt locally (batho_build is cheaper). Returns the unpacked
+        generation and table count.
 
         Args:
             artifact_path: Relative path to the input ZIP transport file, under the repo root.

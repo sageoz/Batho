@@ -52,6 +52,12 @@ def register_build_parser(subparsers: argparse._SubParsersAction) -> None:
             "Overrides graph.backend.backend in batho.yaml."
         ),
     )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        default=False,
+        help="Disable progress bars (also: BATHO_NO_PROGRESS=1)",
+    )
     parser.set_defaults(func=cmd_build)
 
 
@@ -66,6 +72,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         max_workers=args.max_workers,
         max_file_size_kb=args.max_file_size_kb,
         graph_backend=args.graph_backend,
+        no_progress=args.no_progress,
     )
 
     result = run_build(options)
@@ -84,11 +91,13 @@ def cmd_build(args: argparse.Namespace) -> int:
         return 1
 
     # Success summary
-    print(
-        f"Built {args.root.resolve()}: "
-        f"{result.entity_count} entities, "
-        f"{result.relationship_count} relationships, "
-        f"{result.file_count} files "
-        f"in {result.duration_ms}ms"
+    from batho.utils.cli_output import CLIOutput
+
+    cli_out = CLIOutput()
+    cli_out.success(
+        f"✓ built in {result.duration_ms / 1000:.1f}s — "
+        f"{result.file_count} files · "
+        f"{result.entity_count} entities · "
+        f"{result.relationship_count} relationships"
     )
     return 0

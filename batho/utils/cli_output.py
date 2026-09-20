@@ -15,6 +15,7 @@ class CLIOutput:
     def __init__(self, quiet: bool = False, json_mode: bool = False):
         self.quiet = quiet
         self.json_mode = json_mode
+        self._progress_engine: Any = None
 
     def configure(
         self, *, quiet: bool | None = None, json_mode: bool | None = None
@@ -23,6 +24,7 @@ class CLIOutput:
             self.quiet = quiet
         if json_mode is not None:
             self.json_mode = json_mode
+        self._progress_engine = None
 
     def classify(self, message: str) -> str:
         text = message.strip().lower()
@@ -144,22 +146,35 @@ class CLIOutput:
                 message, stream=sys.stdout, respect_quiet=True, end=end, flush=flush
             )
 
+    def _get_progress_engine(self) -> Any:
+        """Lazily build (and cache) the progress engine from current output policy."""
+        if self._progress_engine is None:
+            from batho.core.config import get_config_cached
+            from batho.utils.progress import ProgressEngine, ProgressGate
+
+            try:
+                cfg = get_config_cached()
+            except Exception:
+                cfg = {}
+            logging_quiet = bool((cfg.get("logging") or {}).get("quiet", False))
+            self._progress_engine = ProgressEngine(
+                gate=ProgressGate(
+                    quiet=self.quiet or logging_quiet,
+                    json_mode=self.json_mode,
+                ),
+                config=cfg.get("progress"),
+            )
+        return self._progress_engine
+
     @contextmanager
     def progress(self, total: int, desc: str) -> Iterator[Callable[[int], None]]:
-        if self.quiet:
-            yield lambda _step=1: None
-            return
+        engine = self._get_progress_engine()
+        with engine.phase(desc, total=total) as handle:
+            yield handle.update
 
-        current = 0
-        self.info(f"{desc}: 0/{total}")
-
-        def _update(step: int = 1) -> None:
-            nonlocal current
-            current = min(total, current + step)
-            self.info(f"{desc}: {current}/{total}")
-
-        try:
-            yield _update
-        finally:
-            if current < total:
-                self.info(f"{desc}: {total}/{total}")
+    @contextmanager
+    def progress_indeterminate(self, desc: str, unit: str = "items") -> Iterator[Any]:
+        """Phase without a known total; yields a handle with update()/set_total()."""
+        engine = self._get_progress_engine()
+        with engine.phase(desc, total=None, unit=unit) as handle:
+            yield handle

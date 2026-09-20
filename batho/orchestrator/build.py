@@ -79,6 +79,7 @@ class BuildOptions:
     max_workers: int | None = None
     max_file_size_kb: int | None = None
     graph_backend: str | None = None  # "auto" | "in-memory" | "arrow"; None = config
+    no_progress: bool | None = None  # None = resolve from env/config; True/False = explicit
 
 
 @dataclass
@@ -168,6 +169,7 @@ def run_build(options: BuildOptions) -> BuildResult:
     store = None
     graph = None
     run_uuid = ""
+    progress_engine = None
     try:
         with lock:
             try:
@@ -209,6 +211,16 @@ def run_build(options: BuildOptions) -> BuildResult:
                     critical_threshold_mb=memory_cfg.get("critical_threshold_mb", 1500.0),
                     rss_flush_threshold_mb=rss_flush_threshold_mb,
                     max_per_worker_mb=memory_cfg.get("max_per_worker_mb", 150.0),
+                )
+
+                from batho.utils.progress import ProgressEngine, ProgressGate
+
+                progress_engine = ProgressEngine(
+                    gate=ProgressGate(
+                        quiet=bool((cfg.get("logging") or {}).get("quiet", False)),
+                        no_progress=options.no_progress or False,
+                    ),
+                    config=cfg.get("progress"),
                 )
                 LOGGER.info(
                     "effective_community_detection_config",
@@ -297,7 +309,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                     batch.clear()
 
                 # --- Dependency Indexing (CDEU) ---
-                from batho.modules.dependency import build_dependency_index
+                from batho.modules.dependency import DependencyIndexer
                 from batho.modules.extraction.scope_manager import ScopeManager
 
                 dep_scope_manager = ScopeManager()
@@ -307,20 +319,63 @@ def run_build(options: BuildOptions) -> BuildResult:
 
                 if dep_cfg.get("enabled", True):
                     t_dep_0 = time.monotonic()
-                    dep_stats = build_dependency_index(
+                    ph_deps = progress_engine.open_phase("deps", unit="manifests")
+                    dep_indexer = DependencyIndexer(
                         root=root,
                         scope_manager=dep_scope_manager,
                         cfg=dep_cfg,
                         cache_dir=cfg.get("paths", {}).get("cache_dir"),
                     )
+                    dep_stats = dep_indexer.run()
                     dep_duration_ms = (time.monotonic() - t_dep_0) * 1000
                     LOGGER.info(
                         "dependency_index_complete",
                         manifests=dep_stats.manifests_found,
                         deps=dep_stats.deps_declared,
+                        unique_deps=dep_stats.deps_unique,
                         symbols=dep_stats.symbols_indexed,
+                        introspected=dep_stats.deps_introspected,
+                        cached=dep_stats.deps_cached,
+                        gate_dropped=dep_stats.deps_gate_dropped,
+                        manager_disabled=dep_stats.deps_manager_disabled,
+                        skipped_no_env=dep_stats.deps_skipped_no_env,
+                        no_symbols=dep_stats.deps_no_symbols,
+                        no_ecosystem=dep_stats.deps_no_ecosystem,
                         duration_ms=round(dep_duration_ms, 2),
                     )
+                    if dep_stats.deps_gate_dropped:
+                        LOGGER.info(
+                            "dependency_gate_drops",
+                            dropped=dep_stats.deps_gate_dropped,
+                            hint="declared deps not in the popular DB were not attempted; set dependency.introspection.full_scan: true to attempt all declared deps",
+                        )
+                    if dep_stats.deps_skipped_no_env or dep_stats.deps_no_symbols:
+                        LOGGER.info(
+                            "dependency_introspection_skips",
+                            hint="create the missing environment (e.g. python -m venv .venv, npm install) and re-run to introspect these deps",
+                            skipped_no_env=dep_stats.deps_skipped_no_env,
+                            no_symbols=dep_stats.deps_no_symbols,
+                        )
+                    ph_deps.close()
+
+                    # --- Persist workspace manifest data (T8) ---
+                    try:
+                        from batho.modules.dependency import build_workspace_manifest_rows
+                        from batho.modules.storage.arrow_bundle.schemas import WORKSPACE_MANIFESTS_SCHEMA
+                        from batho.modules.storage.arrow_bundle.writer import write_simple_ipc
+                        # Reuse the specs DependencyIndexer just parsed
+                        # instead of re-walking/re-parsing every manifest.
+                        ws_rows = build_workspace_manifest_rows(
+                            root, deps=dep_indexer.manifest_deps
+                        )
+                        if ws_rows:
+                            ws_tmp = bundle_dir / "workspace_manifests.tmp.ipc"
+                            write_simple_ipc(ws_rows, WORKSPACE_MANIFESTS_SCHEMA, ws_tmp)
+                            ws_final = bundle_dir / "workspace_manifests.ipc"
+                            ws_tmp.replace(ws_final)
+                            db.register_simple_file("workspace_manifests", ws_final.name)
+                    except Exception as exc:
+                        LOGGER.warning("workspace_manifests_emit_failed", error=str(exc))
 
                 def write_precompiled_callback(file_rel: str, blob_data: dict) -> None:
                     nonlocal precompiled_write_batch, precompiled_current_batch_bytes
@@ -375,6 +430,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                 with CodeGraphIndexer(
                     cache_path=str(root), root=str(root), ast_cache_dir=ast_cache_dir
                 ) as indexer:
+                    ph_extract = progress_engine.open_phase("extract")
                     graph = indexer.build_graph(
                         root=str(root),
                         max_workers=options.max_workers or 0,
@@ -386,10 +442,12 @@ def run_build(options: BuildOptions) -> BuildResult:
                         write_callback=write_precompiled_callback,
                         external_scope_manager=dep_scope_manager,
                         graph_backend=options.graph_backend,
+                        progress_callback=ph_extract.update,
+                        progress_discovered_callback=ph_extract.set_total,
                     )
-
                     entity_count = len(graph.entities)
                     rel_count = len(graph.relationships)
+                    ph_extract.close()
 
                     if indexer.build_stats["files_parsed"] + indexer.build_stats["files_cached"] == 0:
                         LOGGER.warning("build_no_entities", root=str(root))
@@ -413,6 +471,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                     # --- Community Detection ---
                     community_cfg = cfg.get("community_detection", {})
                     if community_cfg.get("enabled", True):
+                        ph_graph = progress_engine.open_phase("graph", unit="communities")
                         try:
                             from batho.modules.graph.community import detect_communities, communities_to_rows
                             from batho.modules.storage.arrow_bundle.schemas import COMMUNITIES_SCHEMA
@@ -433,6 +492,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                             )
                         except Exception as exc:
                             LOGGER.warning("community_detection_failed", error=str(exc))
+                        ph_graph.close()
 
                     # Bidirectional rules pass removed to avoid main-thread loading latency
                     bidi_stats = None
@@ -460,9 +520,11 @@ def run_build(options: BuildOptions) -> BuildResult:
                     from batho.modules.compression.bsg_map import BSGMap
                     from batho.modules.storage.arrow_bundle.helpers import _minify_graph_payload
 
+                    ph_bsg = progress_engine.open_phase("bsg", unit="files")
                     bsg_map = BSGMap.build(graph, str(root), opaque_snapshots=opaque_snapshots)
                     bsg_file_count = len(bsg_map._by_file)
                     LOGGER.info("build_bsg_complete", files=bsg_file_count)
+                    ph_bsg.close()
 
                     # Global entity ID set: lets cross-file rels resolve immediately instead of going to dangling
                     all_entity_ids: set[str] = set(graph.entities.keys())
@@ -497,6 +559,47 @@ def run_build(options: BuildOptions) -> BuildResult:
                     # store_files: all files that need Arrow scratch accumulation (includes precompiled)
                     store_files = all_file_paths
 
+                    # Append synthesized module entities (minted during
+                    # _register_module_entities, post-extraction) to their
+                    # files' agent views. Precompiled worker blobs were written
+                    # before these entities existed — an explicit post-graph
+                    # append is required. legacy_files are excluded: they get
+                    # synthesized entities via entities_by_file below.
+                    synth_items = []
+                    for _ent in graph.entities.values():
+                        if not (getattr(_ent, "metadata", None) or {}).get("synthesized"):
+                            continue
+                        _fp = _ent.file
+                        _rel = _fp[len(root_str) + 1:] if _fp.startswith(root_str) else _fp
+                        if _rel in legacy_files:
+                            continue
+                        synth_items.append({
+                            "file_path": _rel,
+                            "content_hash": "",
+                            "agent_view_data": {"entities": [{
+                                "id": _ent.id,
+                                "name": _ent.name,
+                                "type": _ent.type.name,
+                                "start_line": _ent.start_line,
+                                "end_line": _ent.end_line,
+                                "fqn": _ent.fqn,
+                                "signature": _ent.signature,
+                                "is_exported": False,
+                            }]},
+                            "storage_delta_data": {"entities": []},
+                            "relationships_data": [],
+                        })
+                    if synth_items:
+                        # store=None: the scratch store already accumulates
+                        # synthesized entities via entities_by_file below —
+                        # passing it would double-append entity rows.
+                        db.insert_file_artifacts_batch(
+                            run_internal_id, synth_items, store=None,
+                            entity_ids_global=all_entity_ids,
+                        )
+
+                    ph_persist = progress_engine.open_phase("persist", unit="files")
+
                     if legacy_files or store_files:
                         from collections import defaultdict
                         entities_by_file = defaultdict(list)
@@ -521,6 +624,8 @@ def run_build(options: BuildOptions) -> BuildResult:
                             entities_by_file[external_file_rel] = [
                                 e.to_dict() for e in external_entities
                             ]
+
+                        ph_persist.set_total(len(store_files))
 
                         rels_by_source_file = defaultdict(list)
                         for rel in graph.relationships:
@@ -625,6 +730,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                             legacy_write_batch.append(item)
                             t_batch_prep_ms += (time.monotonic() - t_prep_0) * 1000
                             legacy_current_batch_bytes += _estimate_batch_size_bytes(item)
+                            ph_persist.update(1)
 
                             batch_size = cfg.get("persistence", {}).get("batch_size", 500)
                             batch_bytes_threshold = cfg.get("persistence", {}).get("batch_bytes_threshold", 15_728_640)
@@ -686,6 +792,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                                 relationships_data=rds,
                                 entity_ids_in_batch=all_entity_ids,
                             )
+                            ph_persist.update(1)
 
                     # Compact Arrow scratch store
                     try:
@@ -714,6 +821,17 @@ def run_build(options: BuildOptions) -> BuildResult:
                     stored_entity_count = store.entity_count
                     stored_rel_count = store.rel_count
 
+                    # --- Persist stub-resolution rewrites ---
+                    # resolve_contextual_stubs rewrote graph.relationships in
+                    # memory; the stored worker rels still carry "unresolved:"
+                    # targets. Attach the rewrite map so the run's rels table
+                    # is patched at writer finalize (pre-commit, this run only).
+                    if indexer is not None:
+                        db.set_stub_resolutions(
+                            run_internal_id, indexer.stub_resolutions,
+                            entity_meta=getattr(indexer, "stub_entity_meta", None),
+                        )
+
                     # --- Complete run ---
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
                     db.complete_run(
@@ -726,6 +844,7 @@ def run_build(options: BuildOptions) -> BuildResult:
 
                     # --- Finalize Run Artifacts ---
                     store.finalize()
+                    ph_persist.close()
                     metrics = _compute_run_metrics(store, db, root)
                     telemetry = {
                         "duration_ms": elapsed_ms,
@@ -794,6 +913,8 @@ def run_build(options: BuildOptions) -> BuildResult:
 
             except Exception as exc:
                 LOGGER.error("build_failed", error=str(exc))
+                if progress_engine is not None:
+                    progress_engine.abort()
                 if db is not None and run_uuid:
                     try:
                         db.fail_run(run_uuid, error_message=str(exc))

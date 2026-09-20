@@ -53,7 +53,7 @@ node_modules/
 .docusaurus/
 .cache/
 docs-local/
-scripts/
+/scripts/
 gif.gif
 .devin/
 .specs/

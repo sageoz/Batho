@@ -471,3 +471,43 @@ class TestRegisterProjectSymbolsIntegration:
             sm.clear_failed_lookups()
             assert sm.resolve_symbol_strict("cached_fail") is not None
             indexer.close()
+
+
+# ---------------------------------------------------------------------------
+# Module-entity rooting (issue ce319064bc76)
+# ---------------------------------------------------------------------------
+
+
+class TestModuleEntityRoot:
+    """_register_module_entities must resolve paths against the build root
+    passed down from build_graph — not the ambient get_active_root()."""
+
+    def test_uses_explicit_root_over_active_root(self, tmp_path, monkeypatch):
+        import batho.modules.graph.builder.codegraph as codegraph
+
+        # If the code reads the ambient root instead of the build root, every
+        # relative_to() fails and zero module entities are minted.
+        monkeypatch.setattr(
+            codegraph, "get_active_root",
+            lambda: Path("/definitely/not/the/build/root"),
+        )
+
+        indexer = _make_indexer(str(tmp_path))
+        graph = InMemoryGraph()
+        pkg_file = tmp_path / "pkg" / "mod.py"
+        pkg_file.parent.mkdir(parents=True)
+        pkg_file.write_text("def f():\n    return 1\n")
+        graph.add_entity(_make_entity(
+            "f", EntityType.FUNCTION, file=str(pkg_file),
+            id_override="batho test pkg 1.0.0 pkg/mod.py/f#1",
+        ))
+        indexer._indexed_files = [str(pkg_file)]
+
+        sm = ScopeManager()
+        indexer._register_project_symbols(graph, sm, root=tmp_path)
+
+        mod_id = "batho test pkg 1.0.0 pkg/mod/"
+        assert graph.get_entity(mod_id) is not None
+        info = sm.resolve_symbol("pkg.mod")
+        assert info is not None and info.symbol_id == mod_id
+        indexer.close()

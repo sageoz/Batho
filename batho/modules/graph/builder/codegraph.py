@@ -16,35 +16,30 @@ Batho's Markdown-based memory model.
 
 from __future__ import annotations
 
-import hashlib
-import json
-import math
 import os
 import re
 import threading
 import time
-from collections import Counter, defaultdict
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 if TYPE_CHECKING:
+    from batho.core.schemas import FileSnapshot
     from batho.modules.graph.builder.arrow_graph import ArrowGraph
     from batho.modules.graph.builder.protocol import GraphBackend
 
 from batho.utils.ignore import walk_ignored_filtered
+from batho.modules.graph.builder import reexports
 
 import batho.utils.memory_monitor
-from batho.core.config import get_config_cached
+from batho.core.config import get_active_root, get_config_cached
 from batho.utils.file_io import read_file_bytes
 from batho.utils.hash import compute_bytes_hash
-from batho.utils.ignore import is_ignored, load_ignore_spec
+from batho.utils.ignore import load_ignore_spec
 from batho.utils.logging import get_logger
 from batho.utils.memory_monitor import (
     cap_workers_by_ram,
-    force_garbage_collection,
     memory_monitor,
 )
 
@@ -62,11 +57,9 @@ from batho.core.schemas import (
     GraphConsistencyError,
     Relationship,
     RelationshipType,
-    generate_hierarchical_id,
     detect_package_from_config,
 )
 from batho.modules.extraction.scope_manager import ScopeManager
-from batho.modules.extraction.symbol_table import FileSymbolTable
 
 # Binary detection is now handled in batho.utils.file_io
 
@@ -845,6 +838,7 @@ _RESOLUTION_CONFIDENCE: dict[str, float] = {
     "stdlib_method": 0.90,      # Tier 2: Stdlib method / module prefix match
     "import_map": 0.85,         # Tier 3: Import-map cross-file
     "parent_chain": 0.75,       # Tier 4: Parent stub chain building
+    "sibling_module": 0.75,     # Tier 4b: Sibling-stub module join (split attribute refs)
     "scope_qualified": 0.70,    # Tier 5: Caller-scope qualified path
     "receiver_type": 0.65,      # Tier 6: Receiver-type inference
     "ambiguous": 0.50,          # Tier 6.5: Multiple equally-plausible candidates
@@ -971,6 +965,17 @@ class CodeGraphIndexer:
         self._unindexed_files: list[tuple[str, str]] = []  # (abs_path_str, rel_path_str) populated by build_graph()
         self._indexed_files: list[str] = []
         self._keep_nodes: set[str] = set()
+        # Stub-resolution rewrites accumulated across resolve_contextual_stubs
+        # passes: stub_id -> (resolved_target_id, confidence, metadata_merge).
+        # Consumed by the orchestrator to persist resolved targets into
+        # rels_views (worker blobs carry pre-resolution "unresolved:" targets).
+        self.stub_resolutions: dict[str, tuple[str, float, dict[str, Any]]] = {}
+        # Stub-entity metadata merges: stub_id -> {stub_resolution_state,
+        # resolved_target_id, resolution_strategy, resolution_confidence,
+        # prune_reason}. Persisted onto agent_views stub rows at writer
+        # finalize so artifact consumers can distinguish resolved / pruned /
+        # unresolved stubs (T5 entity-row contract).
+        self.stub_entity_meta: dict[str, dict[str, Any]] = {}
 
     def close(self) -> None:
         """Close the cache database connection to release file locks."""
@@ -1016,7 +1021,6 @@ class CodeGraphIndexer:
 
     def get_file_snapshot(self, path_or_rel: str) -> Optional[FileSnapshot]:
         """Expose file snapshot from the unified cache."""
-        from batho.core.schemas import FileSnapshot
         if hasattr(self, "_cache") and self._cache is not None:
             return self._cache.get_file_snapshot(path_or_rel)
         return None
@@ -1034,7 +1038,7 @@ class CodeGraphIndexer:
         EntityType.TRAIT,
     })
 
-    def _register_project_symbols(self, graph: "GraphBackend", scope_manager: ScopeManager) -> int:
+    def _register_project_symbols(self, graph: "GraphBackend", scope_manager: ScopeManager, root: Path | None = None) -> int:
         """Register all project-internal definitions as global symbols.
 
         After extraction, every project-defined function, class, method,
@@ -1067,8 +1071,163 @@ class CodeGraphIndexer:
                     fqn, entity.id, entity.type.name, is_global=True
                 )
             registered += 1
-        self.logger.info("project_symbols_registered", count=registered)
+
+        # RC-7b: module-path references (`batho.cli.build`, `batho.modules.storage`)
+        # need a resolvable entity — mint a MODULE entity per source file.
+        file_parts = self._register_module_entities(graph, scope_manager, root=root)
+        # RC-7a: `pkg/__init__.py` re-exports (`from .loader import x`) make
+        # `pkg.x` resolve to the real `pkg.loader.x` definition.
+        reexports = self._register_package_reexports(scope_manager, file_parts)
+        if file_parts is not None and (reexports or file_parts.get("_modules")):
+            scope_manager.clear_failed_lookups()
+
+        self.logger.info(
+            "project_symbols_registered",
+            count=registered,
+            modules=len((file_parts or {}).get("_modules", [])),
+            reexport_aliases=reexports,
+        )
         return registered
+
+    # File-classification and re-export tables live in the dedicated
+    # reexports module (verified per-language syntax, dependency-light).
+    _INIT_STEMS = reexports.INIT_STEMS
+    _MODULE_ENTITY_EXTS = reexports.MODULE_ENTITY_EXTS
+    _JS_EXTS = reexports.JS_EXTS
+    _PY_EXTS = reexports.PY_EXTS
+    _RS_INIT_NAMES = reexports.RS_INIT_NAMES
+
+    def _register_module_entities(
+        self, graph: "GraphBackend", scope_manager: ScopeManager,
+        root: Path | None = None,
+    ) -> dict[str, list[str]] | None:
+        """Mint a MODULE entity per source file and register its dotted path.
+
+        Refs like ``batho.cli.build`` target the module itself, but no MODULE
+        entity exists (Python's extractor emits no file-level entity). The
+        minted id ``<prefix>path/to/mod/`` reuses the hierarchical namespace
+        scheme (trailing '/' = namespace), consistent with stdlib module ids.
+        Entities are keep-listed so orphan pruning cannot delete them.
+        Returns {abs_file_path: module_parts} for the re-export pass.
+        """
+        if root is None:
+            # Direct callers (tests, embedders) that never ran build_graph
+            # fall back to the ambient root.
+            root = get_active_root()
+        try:
+            root = root.resolve()  # canonicalize symlinked roots (/tmp→/private/tmp)
+        except OSError:
+            pass
+        # Id namespace prefix ("batho <mgr> <name> <ver> ") differs per package
+        # in monorepos — derive it per top-level directory from existing
+        # project entities. __init__.py files may produce zero entities, so
+        # iterate indexed files and fall back to the file's top-dir prefix.
+        prefix_by_topdir: dict[str, str] = {}
+        for ent in graph.entities.values():
+            if ent.is_contextual_stub or not ent.id.startswith("batho "):
+                continue
+            ent_path = Path(ent.file)
+            try:
+                ent_rel = ent_path.relative_to(root) if ent_path.is_absolute() else ent_path
+            except ValueError:
+                try:
+                    ent_rel = ent_path.resolve().relative_to(root)
+                except (ValueError, OSError):
+                    continue
+            topdir = ent_rel.parts[0] if len(ent_rel.parts) > 1 else ""
+            prefix_by_topdir.setdefault(
+                topdir, " ".join(ent.id.split(" ", 4)[:4]) + " "
+            )
+        default_prefix = (
+            prefix_by_topdir.get("")
+            or next(iter(prefix_by_topdir.values()), "")
+        )
+        if not prefix_by_topdir:
+            return {"_modules": []}
+
+        out: dict[str, list[str]] = {"_modules": []}
+        for fpath in sorted(self._indexed_files):
+            fp = Path(fpath)
+            if fp.suffix.lower() not in self._MODULE_ENTITY_EXTS:
+                continue
+            abs_fp = fp if fp.is_absolute() else (root / fp)
+            try:
+                rel = abs_fp.relative_to(root)
+            except ValueError:
+                try:
+                    abs_fp = abs_fp.resolve()
+                    rel = abs_fp.relative_to(root)
+                except (ValueError, OSError):
+                    continue
+            parts = list(rel.with_suffix("").parts)
+            # Compound declaration suffix: index.d.ts → "index.d" → "index"
+            # so it hits INIT_STEMS and aliases land under the package name.
+            if (
+                parts
+                and parts[-1].endswith(".d")
+                and fp.suffix.lower() in (".ts", ".mts", ".cts")
+            ):
+                parts[-1] = parts[-1][:-2]
+            init_exts = self._INIT_STEMS.get(parts[-1] if parts else "")
+            if init_exts and fp.suffix.lower() in init_exts:
+                parts = parts[:-1]
+            parts = [p for p in parts if p]
+            if not parts:
+                continue
+            prefix = prefix_by_topdir.get(rel.parts[0] if len(rel.parts) > 1 else "")
+            if not prefix:
+                prefix = default_prefix
+            if not prefix:
+                continue
+            out[str(abs_fp)] = parts
+            mod_id = f"{prefix}{'/'.join(parts)}/"
+            dotted = ".".join(parts)
+            if graph.get_entity(mod_id) is None:
+                mod_ent = Entity(
+                    type=EntityType.MODULE,
+                    name=parts[-1],
+                    file=str(abs_fp),
+                    start_line=1,
+                    end_line=1,
+                    signature=dotted,
+                    metadata={"synthesized": True, "module_path": dotted},
+                    id_override=mod_id,
+                )
+                graph.add_entity(mod_ent)
+                self._keep_nodes.add(mod_id)
+            # Register the module path (idempotent — also registers under the
+            # src/lib-stripped layout when applicable; Rust crates additionally
+            # get the `crate.` alias for `crate::a::b` refs). Bare single-segment
+            # names are skipped: `helper.py` registering bare `helper` would
+            # shadow same-named functions (last-write-wins in the symbol map).
+            if len(parts) > 1:
+                scope_manager.define_symbol(dotted, mod_id, "MODULE", is_global=True)
+                if parts[0] in ("src", "lib") and len(parts) > 2:
+                    stripped = ".".join(parts[1:])
+                    scope_manager.define_symbol(stripped, mod_id, "MODULE", is_global=True)
+                    if fp.suffix.lower() == ".rs":
+                        scope_manager.define_symbol(
+                            f"crate.{stripped}", mod_id, "MODULE", is_global=True
+                        )
+            out["_modules"].append(mod_id)
+        return out
+
+    def _register_package_reexports(
+        self,
+        scope_manager: ScopeManager,
+        file_parts: dict[str, list[str]] | None,
+    ) -> int:
+        """Alias package-level names re-exported by package/barrel entry files.
+
+        Delegates to the dedicated reexports module, which holds the verified
+        per-language regex tables (Python __init__, JS/TS index barrels, Rust
+        pub use, Dart export, Swift @_exported, Scala 3 export, Zig pub const
+        @import, Haskell module re-exports, Julia import+export, Elixir
+        defdelegate). See batho/modules/graph/builder/reexports.py.
+        """
+        return reexports.register_package_reexports(
+            scope_manager, file_parts, logger=self.logger
+        )
 
     # Mapping from common type names to stdlib module paths, used by
     # _check_stdlib_method to verify that a method exists on a known type.
@@ -1089,12 +1248,28 @@ class CodeGraphIndexer:
         "Promise": "Promise",
     }
 
+    @staticmethod
+    def _lang_hint_for_stub(stub: Entity) -> str | None:
+        """Language of the stub's importing file (T5 namespaced resolution).
+
+        Derived from the file extension via the parser registry — the same
+        table extraction used, so the hint matches registration keys.
+        """
+        stub_file = getattr(stub, "file", "") or ""
+        if not stub_file:
+            return None
+        from batho.modules.extraction.submodules.parser_factory.registry import (
+            get_language_for_extension,
+        )
+        return get_language_for_extension(Path(stub_file).suffix.lower())
+
     def _resolve_method_call(
         self,
         stub: Entity,
         graph: "GraphBackend",
         scope_manager: ScopeManager,
         _file_declared_type_cache: "dict[str, dict[str, str]] | None" = None,
+        lang_hint: str | None = None,
     ) -> Optional[Any]:
         """Resolve a method call by inferring the receiver type.
 
@@ -1118,12 +1293,12 @@ class CodeGraphIndexer:
 
         # 2. Look up method on the type: try "Type.method_name"
         qualified = f"{var_type}.{method_name}"
-        result = scope_manager.resolve_symbol_dotpath(qualified)
+        result = scope_manager.resolve_symbol_dotpath(qualified, lang_hint)
         if result:
             return result
 
         # 3. Check stdlib method table for the inferred type
-        return self._check_stdlib_method(var_type, method_name, scope_manager)
+        return self._check_stdlib_method(var_type, method_name, scope_manager, lang_hint)
 
     def _infer_variable_type(
         self,
@@ -1196,7 +1371,8 @@ class CodeGraphIndexer:
         return None
 
     def _check_stdlib_method(
-        self, var_type: str, method_name: str, scope_manager: ScopeManager
+        self, var_type: str, method_name: str, scope_manager: ScopeManager,
+        lang_hint: str | None = None,
     ) -> Optional[Any]:
         """Check if method_name is a known stdlib method on var_type.
 
@@ -1213,7 +1389,7 @@ class CodeGraphIndexer:
         for lang in ("rust", "javascript", "typescript"):
             methods = table.get_symbols(lang, module_path)
             if methods and method_name in methods:
-                return scope_manager.resolve_symbol_dotpath(module_path)
+                return scope_manager.resolve_symbol_dotpath(module_path, lang_hint)
 
         return None
 
@@ -1286,6 +1462,16 @@ class CodeGraphIndexer:
         # same file. Local to this call to avoid staleness across builds.
         _file_declared_type_cache: dict[str, dict[str, str]] = {}
 
+        # Sibling index for the sibling_module strategy: attribute refs like
+        # pydantic.Field(...) split into sibling stubs ("pydantic" + "Field")
+        # under one caller_scope rather than a stub->stub chain, so the
+        # parent_chain strategy never sees them. Index once; O(1) per stub.
+        siblings_by_scope: dict[str, list[Entity]] = defaultdict(list)
+        for s in stubs:
+            sib_scope = s.metadata.get("caller_scope")
+            if sib_scope:
+                siblings_by_scope[sib_scope].append(s)
+
         for stub in stubs:
             caller_scope = stub.metadata.get("caller_scope")
             target_name = stub.metadata.get("target_name")
@@ -1294,7 +1480,7 @@ class CodeGraphIndexer:
                 continue
 
             resolved_info, strategy, all_candidates = self._resolve_stub_with_candidates(
-                stub, graph, scope_manager, _file_declared_type_cache
+                stub, graph, scope_manager, _file_declared_type_cache, siblings_by_scope
             )
 
             if resolved_info:
@@ -1358,6 +1544,27 @@ class CodeGraphIndexer:
                     updated_meta.update(amb_meta)
                 graph.update_entity(stub_id, stub._evolve(metadata=updated_meta))
 
+        # Record the rewrite set for persistence: the stored per-file rels
+        # were written during extraction with "unresolved:" targets, before
+        # this resolution pass ran. The orchestrator applies this map to the
+        # run's rels_views rows at writer finalize time.
+        for stub_id, target_id in stub_to_target.items():
+            strategy = stub_to_strategy.get(stub_id, "exact_match")
+            meta: dict[str, Any] = dict(stub_to_ambiguous.get(stub_id) or {})
+            meta["resolution_strategy"] = strategy
+            confidence = _RESOLUTION_CONFIDENCE.get(strategy, 0.5)
+            self.stub_resolutions[stub_id] = (target_id, confidence, meta)
+            # Entity-row half of the T5 contract: the same state the in-memory
+            # stub entity was just tagged with, persisted into agent_views.
+            entity_meta = dict(stub_to_ambiguous.get(stub_id) or {})
+            entity_meta.update({
+                "stub_resolution_state": "resolved",
+                "resolved_target_id": target_id,
+                "resolution_strategy": strategy,
+                "resolution_confidence": confidence,
+            })
+            self.stub_entity_meta[stub_id] = entity_meta
+
         # Phase 4: Conservative pruning — mark common stdlib method names on
         # unknown receiver types as "pruned" instead of leaving them as
         # unresolved gaps. This reduces graph noise without hiding genuine
@@ -1373,6 +1580,12 @@ class CodeGraphIndexer:
                 updated_meta["resolution_confidence"] = 0.0
                 updated_meta["resolution_strategy"] = "unresolved"
                 graph.update_entity(stub.id, stub._evolve(metadata=updated_meta))
+                self.stub_entity_meta[stub.id] = {
+                    "stub_resolution_state": "pruned",
+                    "prune_reason": "common_method_unknown_receiver",
+                    "resolution_strategy": "unresolved",
+                    "resolution_confidence": 0.0,
+                }
                 pruned_count += 1
                 unresolved_count -= 1
 
@@ -1393,6 +1606,7 @@ class CodeGraphIndexer:
         graph: "GraphBackend",
         scope_manager: ScopeManager,
         _file_declared_type_cache: "dict[str, dict[str, str]] | None" = None,
+        _siblings_by_scope: "dict[str, list[Entity]] | None" = None,
     ) -> tuple[Any, str, list[tuple[Any, str]]]:
         """Run the full resolution pipeline once, collecting all candidates.
 
@@ -1411,6 +1625,7 @@ class CodeGraphIndexer:
             return None, "unresolved", []
 
         caller_scope = stub.metadata.get("caller_scope")
+        lang_hint = self._lang_hint_for_stub(stub)
         all_candidates: list[tuple[Any, str]] = []
         seen_ids: set[str] = set()
         primary_info = None
@@ -1427,17 +1642,17 @@ class CodeGraphIndexer:
                     primary_strategy = strat
 
         # 1. Try resolving target_name directly
-        _try(scope_manager.resolve_symbol_dotpath(target_name), "exact_match")
+        _try(scope_manager.resolve_symbol_dotpath(target_name, lang_hint), "exact_match")
 
         # 1b. Stdlib-prefix fast-path
         if "." in target_name:
             first_segment = target_name.split(".")[0]
             if first_segment in _STDLIB_MODULE_PREFIXES or first_segment.startswith("std::"):
-                _try(scope_manager.resolve_symbol_dotpath(first_segment), "stdlib_method")
+                _try(scope_manager.resolve_symbol_dotpath(first_segment, lang_hint), "stdlib_method")
 
         # 1c. Receiver-type-aware method resolution
         _try(
-            self._resolve_method_call(stub, graph, scope_manager, _file_declared_type_cache),
+            self._resolve_method_call(stub, graph, scope_manager, _file_declared_type_cache, lang_hint),
             "receiver_type",
         )
 
@@ -1448,7 +1663,38 @@ class CodeGraphIndexer:
                 parent_name = source_ent.metadata.get("target_name")
                 if parent_name:
                     full_path = f"{parent_name}.{target_name}"
-                    _try(scope_manager.resolve_symbol_dotpath(full_path), "parent_chain")
+                    _try(scope_manager.resolve_symbol_dotpath(full_path, lang_hint), "parent_chain")
+
+        # 2b. Sibling-module join — attribute refs like `pydantic.Field(...)`
+        # emit sibling stubs ("pydantic" + "Field") under the same caller_scope
+        # with no stub->stub edge, so parent_chain cannot reach them. Join each
+        # sibling's target_name with this leaf and try the qualified path; only
+        # joins that hit a registered symbol resolve (the export table is the
+        # false-positive guard). Strict resolution is required here —
+        # resolve_symbol_dotpath synthesizes member ids under external module
+        # prefixes without checking the export table, which would fabricate
+        # `structlog/foo`-style edges for any unresolved bare name co-scoped
+        # with a module import.
+        if "." not in target_name and caller_scope and _siblings_by_scope:
+            for sib in _siblings_by_scope.get(caller_scope, ()):
+                if sib.id == stub.id:
+                    continue
+                sib_tn = sib.metadata.get("target_name")
+                if not sib_tn:
+                    continue
+                # Guard: only join when the sibling is a module/namespace —
+                # a sibling that resolves to a class/function (id not ending
+                # in "/") would produce bogus member-of-class targets like
+                # ".../BaseModel().Field". Unregistered siblings (project
+                # module paths) stay eligible — their joined path can still
+                # exact-match a registered qualified project symbol.
+                sib_info = scope_manager.resolve_symbol(sib_tn, lang_hint)
+                if sib_info is not None and not sib_info.symbol_id.endswith("/"):
+                    continue
+                _try(
+                    scope_manager.resolve_symbol_strict(f"{sib_tn}.{target_name}", lang_hint),
+                    "sibling_module",
+                )
 
         # 3. Caller-scope qualified path
         if caller_scope:
@@ -1462,10 +1708,10 @@ class CodeGraphIndexer:
             if '/' in base_path:
                 parent_dir = base_path.rsplit('/', 1)[0]
                 qualified_try = f"{parent_dir}/{target_name}"
-                info = scope_manager.resolve_symbol_strict(qualified_try)
+                info = scope_manager.resolve_symbol_strict(qualified_try, lang_hint)
                 if not info:
                     qualified_try_dot = qualified_try.replace('/', '.')
-                    info = scope_manager.resolve_symbol_strict(qualified_try_dot)
+                    info = scope_manager.resolve_symbol_strict(qualified_try_dot, lang_hint)
                 _try(info, "scope_qualified")
 
         if primary_info is None:
@@ -1669,6 +1915,8 @@ class CodeGraphIndexer:
         graph_backend: str | None = None,
         skip_orphan_pruning: bool = False,
         lazy_stub_resolution: bool = False,
+        progress_callback: Callable[[int], None] | None = None,
+        progress_discovered_callback: Callable[[int], None] | None = None,
     ) -> "InMemoryGraph | ArrowGraph":
         """
         Walk *root* recursively, index every matching source file, and return
@@ -1708,6 +1956,12 @@ class CodeGraphIndexer:
                        the rust-analyzer/Pyright on-demand pattern for large
                        repos where indexing speed matters more than upfront
                        completeness. Default: False (eager resolution).
+            progress_callback: Optional parent-process sink invoked once per
+                       completed file result during extraction (for progress bars).
+                       Never invoked from worker processes.
+            progress_discovered_callback: Optional sink invoked once with the
+                       number of discovered candidate files, after the directory
+                       walk / file-list filtering completes.
 
         Returns:
             Populated graph (compacted ArrowGraph when backend="arrow").
@@ -1891,6 +2145,12 @@ class CodeGraphIndexer:
                     else:
                         seen_lower[rel_lower] = rel
 
+            if progress_discovered_callback is not None:
+                try:
+                    progress_discovered_callback(len(candidates))
+                except Exception:
+                    pass
+
             if verbose:
                 self.logger.info(
                     "index_candidates_discovered",
@@ -2065,6 +2325,23 @@ class CodeGraphIndexer:
             package_obj = detect_package_from_config(root_path)
             package_dict = package_obj.to_dict() if package_obj else None
 
+            # T3: per-file identity — map every manifest dir to its package
+            # metadata so each file is stamped with its governing package.
+            package_map: dict[str, list[dict]] | None = None
+            try:
+                from batho.modules.dependency.manifest_parser import ManifestParser
+                ws_packages = ManifestParser.detect_workspace_packages(root_path)
+                if ws_packages:
+                    package_map = {
+                        rel_dir: [m.to_dict() for m in metas]
+                        for rel_dir, metas in ws_packages.items()
+                    }
+            except Exception as map_error:
+                self.logger.warning(
+                    "workspace_package_map_failed", error=str(map_error)
+                )
+                package_map = None
+
             # Store precompiled content hashes for async persistence/file tracking.
             # Heavy blobs are streamed to persistence via write_callback instead.
             self._precompiled_hashes: dict[str, str] = {}
@@ -2074,7 +2351,6 @@ class CodeGraphIndexer:
                     return
                 filepath = res[0]
                 content_hash = res[1]
-                hollow_bytes = res[2]
                 rel_bytes = res[3]
                 agent_blob = res[4]
                 storage_blob = res[5]
@@ -2115,10 +2391,12 @@ class CodeGraphIndexer:
                 configured_max_file_size_kb,
                 bsg_cfg_payload,
                 package_dict=package_dict,
+                package_map=package_map,
                 index_id=index_id,
                 include_gaps=include_gaps_flag,
                 result_callback=on_result_extracted,
                 ast_cache_dir=ast_cache_dir_str,
+                progress_callback=progress_callback,
             )
             errors += extract_errors
 
@@ -2163,6 +2441,10 @@ class CodeGraphIndexer:
             # Capture indexed file paths up front so `results` can be freed
             # incrementally during the materialization loop below.
             indexed_files = [result[0] for result in results]
+            # Set now (not at the end of build_graph): _register_module_entities
+            # runs mid-method and needs every indexed file, including files
+            # that produced zero entities (e.g. empty-marker __init__.py).
+            self._indexed_files = indexed_files
 
             for i in range(len(results)):
                 result = results[i]
@@ -2233,7 +2515,7 @@ class CodeGraphIndexer:
             # that stubs referencing project functions/classes/methods defined
             # in other files/scope can be resolved (rust-analyzer DefMap pattern).
             _t_project_symbols = time.monotonic()
-            self._register_project_symbols(graph, scope_manager)
+            self._register_project_symbols(graph, scope_manager, root=root_path)
             project_symbol_ms = (time.monotonic() - _t_project_symbols) * 1000
             # Clear failed-lookup cache: new project symbols may resolve
             # stubs that previously failed during extraction.
@@ -2242,7 +2524,7 @@ class CodeGraphIndexer:
             # Batch resolve contextual stubs using populated ScopeManager.
             # Phase 5: when lazy_stub_resolution=True, skip upfront resolution.
             _t_stub_res = time.monotonic()
-            stub_resolved_count, stub_unresolved_count = self.resolve_contextual_stubs(
+            stub_resolved_count, _ = self.resolve_contextual_stubs(
                 graph, scope_manager, lazy=lazy_stub_resolution,
             )
             stub_resolution_ms = (time.monotonic() - _t_stub_res) * 1000
@@ -2261,9 +2543,8 @@ class CodeGraphIndexer:
                 # may resolve stubs that failed in the first pass.
                 scope_manager.clear_failed_lookups()
                 _t_stub_res_2 = time.monotonic()
-                second_resolved, second_unresolved = self.resolve_contextual_stubs(graph, scope_manager)
+                second_resolved, _ = self.resolve_contextual_stubs(graph, scope_manager)
                 stub_resolved_count += second_resolved
-                stub_unresolved_count = second_unresolved  # replace with latest count
                 # Add only the second pass's own duration to avoid double-counting
                 # the first pass + materialization time (which is already in
                 # stub_resolution_ms from line 2037).
@@ -2417,7 +2698,7 @@ class CodeGraphIndexer:
             # Write snapshots for unindexed files to cache (Bug 1 & Bug 5 Fix)
             if bsg_cache_cfg.get("enabled", True):
                 from batho.core.schemas import FileSnapshot
-                from batho.utils.hash import compute_bytes_hash, _is_binary
+                from batho.utils.hash import compute_bytes_hash
                 from batho.utils.file_io import read_file_bytes
 
                 for abs_path_str, rel in self._unindexed_files:

@@ -179,3 +179,47 @@ async def test_secure_by_default_no_args(tmp_path: Path):
     assert "batho_patch" in names
     assert "graph_overview" in names
     assert len(names) == 16
+
+
+# -----------------------------------------------------------------------
+# mcp.toolsets
+# -----------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_toolsets_admin_true_enables(tmp_path: Path):
+    """mcp.toolsets: {admin: true} enables Tier-3 tools."""
+    (tmp_path / "batho.yaml").write_text(
+        "mcp:\n  toolsets:\n    admin: true\n"
+    )
+    app = create_app(root=str(tmp_path.resolve()))
+    tools = await app.list_tools()
+    names = {t.name for t in tools}
+    assert "batho_build" in names
+    assert "batho_export" in names
+
+
+@pytest.mark.asyncio
+async def test_toolsets_retrieval_false_disables(tmp_path: Path):
+    """mcp.toolsets: {retrieval: false} removes the retrieval group."""
+    (tmp_path / "batho.yaml").write_text(
+        "mcp:\n  toolsets:\n    retrieval: false\n"
+    )
+    app = create_app(root=str(tmp_path.resolve()))
+    tools = await app.list_tools()
+    names = {t.name for t in tools}
+    assert "graph_overview" not in names
+    assert "search_entities" not in names
+    assert "batho_status" in names  # diagnostics untouched
+
+
+@pytest.mark.asyncio
+async def test_toolsets_yaml_bool_strings_coerce(tmp_path: Path):
+    """toolsets: {admin: 'yes'} — pydantic coerces yaml bool spellings before
+    resolution, so 'yes' enables the group like true."""
+    (tmp_path / "batho.yaml").write_text(
+        "mcp:\n  toolsets:\n    admin: 'yes'\n"
+    )
+    app = create_app(root=str(tmp_path.resolve()))
+    tools = await app.list_tools()
+    names = {t.name for t in tools}
+    assert "batho_build" in names

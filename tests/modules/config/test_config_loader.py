@@ -321,3 +321,186 @@ class TestMemoryConfig:
         assert cfg is not None
         assert (target_dir / "batho.yaml").exists()
         assert not (invocation_dir / "batho.yaml").exists()
+
+
+class TestProgressConfig:
+    """Verify the progress: section is parsed and not stripped by Pydantic validation.
+
+    Regression: ProgressConfig was missing from the Config model, so
+    Config.model_validate() silently dropped the whole section and every
+    progress.* key (including the documented enabled master switch) was dead.
+    """
+
+    def test_progress_config_defaults(self):
+        cfg = Config()
+        assert cfg.progress.enabled is True
+        assert cfg.progress.style == "progress"
+        assert cfg.progress.mininterval_s == 0.2
+        assert cfg.progress.show_after_s == 2.0
+        assert cfg.progress.keepalive_s == 60.0
+
+    def test_progress_config_from_yaml_not_stripped(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "progress:\n"
+            "  enabled: false\n"
+            "  style: classic\n"
+            "  mininterval_s: 5.0\n"
+            "  show_after_s: 1.0\n"
+            "  keepalive_s: 30\n",
+            encoding="utf-8",
+        )
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert "progress" in cfg
+        assert cfg["progress"]["enabled"] is False
+        assert cfg["progress"]["style"] == "classic"
+        assert cfg["progress"]["mininterval_s"] == 5.0
+        assert cfg["progress"]["show_after_s"] == 1.0
+        assert cfg["progress"]["keepalive_s"] == 30.0
+
+    def test_progress_config_invalid_style_fails_explicitly(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text("progress:\n  style: sparkly\n", encoding="utf-8")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            get_config_with_root(tmp_path)
+
+        assert "Invalid Batho configuration in 'batho.yaml'" in str(exc_info.value)
+
+
+class TestMcpToolsetsConfig:
+    """Verify mcp.toolsets survives Pydantic validation.
+
+    Regression: McpConfig had no toolsets field, so the key was stripped
+    before batho/mcp/server.py could read it — the toolset gating feature
+    was unreachable via batho.yaml.
+    """
+
+    def test_mcp_toolsets_defaults_to_none(self):
+        cfg = Config()
+        assert cfg.mcp.toolsets is None
+
+    def test_mcp_toolsets_from_yaml_not_stripped(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "mcp:\n"
+            "  toolsets:\n"
+            "    admin: true\n"
+            "    registry: false\n",
+            encoding="utf-8",
+        )
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert cfg["mcp"]["toolsets"] == {"admin": True, "registry": False}
+
+
+class TestIntrospectionSkipConfig:
+    """Verify dependency.introspection.skip_missing_env / managers survive
+    Pydantic validation (core-01).
+
+    Regression pattern (same as progress/mcp.toolsets): every new config key
+    must be declared on the pydantic model or Config.model_validate()
+    silently strips it and the feature is unreachable via batho.yaml.
+    """
+
+    def test_introspection_skip_defaults(self):
+        cfg = Config()
+        assert cfg.dependency.introspection.skip_missing_env is True
+        assert cfg.dependency.introspection.managers is None
+
+    def test_introspection_skip_from_yaml_not_stripped(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "dependency:\n"
+            "  introspection:\n"
+            "    skip_missing_env: false\n"
+            "    managers:\n"
+            "      gem: false\n"
+            "      pip: true\n",
+            encoding="utf-8",
+        )
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert cfg["dependency"]["introspection"]["skip_missing_env"] is False
+        assert cfg["dependency"]["introspection"]["managers"] == {
+            "gem": False,
+            "pip": True,
+        }
+
+
+
+class TestWorkspaceProjectConfig:
+    """Verify workspace: / project: sections survive Pydantic validation.
+
+    Regression (issue 9f3c2e1a47b8, third instance of the dropped-config
+    class): Config had no workspace/project fields, so model_validate()
+    stripped both sections — workspace.manifest_dirs and project.package
+    were dead config, hidden because the parser tests monkeypatched
+    _workspace_config instead of exercising the real loader.
+    """
+
+    def test_workspace_project_default_to_none(self):
+        cfg = Config()
+        assert cfg.workspace is None
+        assert cfg.project is None
+
+    def test_workspace_manifest_dirs_from_yaml_not_stripped(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "workspace:\n"
+            "  manifest_dirs:\n"
+            "    deny: [docs-site]\n"
+            "    allow: [src]\n",
+            encoding="utf-8",
+        )
+        cfg = get_config_with_root(tmp_path)
+        assert cfg["workspace"]["manifest_dirs"] == {
+            "deny": ["docs-site"], "allow": ["src"],
+        }
+
+    def test_workspace_manifest_dirs_list_form(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "workspace:\n  manifest_dirs: [docs-site, examples]\n",
+            encoding="utf-8",
+        )
+        cfg = get_config_with_root(tmp_path)
+        assert cfg["workspace"]["manifest_dirs"] == ["docs-site", "examples"]
+
+    def test_project_package_from_yaml_not_stripped(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "project:\n"
+            "  package:\n"
+            "    manager: npm\n"
+            "    name: overridden-name\n"
+            "    version: 9.9.9\n",
+            encoding="utf-8",
+        )
+        cfg = get_config_with_root(tmp_path)
+        assert cfg["project"]["package"] == {
+            "manager": "npm", "name": "overridden-name", "version": "9.9.9",
+        }
+
+    def test_workspace_config_reaches_manifest_filter(self, tmp_path: Path):
+        """End-to-end: real loader -> _workspace_config -> _manifest_allowed."""
+        from batho.core.config import set_active_root
+        from batho.modules.dependency.manifest_parser import ManifestParser
+
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "workspace:\n  manifest_dirs:\n    deny: [docs-site]\n",
+            encoding="utf-8",
+        )
+        set_active_root(tmp_path)
+        try:
+            assert ManifestParser._manifest_allowed(
+                tmp_path, tmp_path / "docs-site" / "package.json") is False
+            assert ManifestParser._manifest_allowed(
+                tmp_path, tmp_path / "src" / "package.json") is True
+        finally:
+            set_active_root(Path.cwd())

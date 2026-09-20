@@ -9,6 +9,7 @@ source_notes:
   - "Python: Top PyPI packages by recent download count (30-day window)."
   - "npm: Most depended-upon npm packages."
   - "Rust/Go/Java: Curated from community 'most used' and 'blessed' crate/module lists."
+  - "Ruby/PHP/C#/Dart/Julia/R/Haskell/Swift/Zig/Erlang/OCaml/Lua/Perl: curated from community 'most used' lists (2026-09 language-coverage expansion)."
 
 defaults:
   # Global default when config doesn't override per language
@@ -526,3 +527,595 @@ languages:
         rank: 12
         selection_source: "curated popular Maven artifacts"
       # TODO: extend list.
+
+  ruby:
+    language_id: ruby
+    display_name: "Ruby"
+    package_manager: gem
+    ecosystem: "RubyGems"
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: live_introspection_with_stub_fallback
+      notes: >
+        Ruby support is Gemfile/gemspec-driven; introspection can later read
+        installed gem specifications. Fallback is the minimal tracking stub.
+    packages:
+      # Curated most-depended RubyGems (bundler stats + community lists).
+      - name: rails
+        manager: gem
+        rank: 1
+        selection_source: "RubyGems most-downloaded + community curated"
+      - name: rake
+        manager: gem
+        rank: 2
+        selection_source: "RubyGems most-downloaded"
+      - name: devise
+        manager: gem
+        rank: 3
+        selection_source: "curated popular RubyGems"
+      - name: rspec
+        manager: gem
+        rank: 3
+        selection_source: "curated popular RubyGems"
+      - name: rack
+        manager: gem
+        rank: 4
+        selection_source: "curated popular RubyGems"
+      - name: puma
+        manager: gem
+        rank: 5
+        selection_source: "curated popular RubyGems"
+      - name: sidekiq
+        manager: gem
+        rank: 5
+        selection_source: "curated popular RubyGems"
+      - name: nokogiri
+        manager: gem
+        rank: 6
+        selection_source: "curated popular RubyGems"
+      - name: devise
+        manager: gem
+        rank: 7
+        selection_source: "curated popular RubyGems"
+      - name: sinatra
+        manager: gem
+        rank: 7
+        selection_source: "curated popular RubyGems"
+      - name: rubocop
+        manager: gem
+        rank: 8
+        selection_source: "curated popular RubyGems"
+
+  php:
+    language_id: php
+    display_name: "PHP"
+    package_manager: composer
+    ecosystem: packagist
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: live_introspection_with_stub_fallback
+      notes: >
+        Composer vendor/ directory scan is the natural introspection target
+        (composer.lock + installed.json); deferred to a follow-on CDEU task.
+    packages:
+      # Curated from packagist most-installed lists.
+      - name: php
+        manager: composer
+        rank: 1
+        selection_source: "packagist most-installed"
+        notes: "Platform requirement; tracked for completeness."
+      - name: psr/log
+        manager: composer
+        rank: 2
+        selection_source: "packagist most-installed"
+      - name: monolog/monolog
+        manager: composer
+        rank: 3
+        selection_source: "packagist most-installed"
+      - name: guzzlehttp/guzzle
+        manager: composer
+        rank: 4
+        selection_source: "packagist most-installed"
+      - name: symfony/console
+        manager: composer
+        rank: 5
+        selection_source: "packagist most-installed"
+      - name: laravel/framework
+        manager: composer
+        rank: 6
+        selection_source: "packagist most-installed"
+      - name: phpunit/phpunit
+        manager: composer
+        rank: 7
+        selection_source: "packagist most-installed"
+      - name: doctrine/orm
+        manager: composer
+        rank: 8
+        selection_source: "packagist most-installed"
+
+  csharp:
+    language_id: csharp
+    display_name: "C# / .NET"
+    package_manager: nuget
+    ecosystem: nuget
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: live_introspection_with_stub_fallback
+      notes: >
+        NuGet packages resolve from the global packages folder
+        (~/.nuget/packages) — introspection follow-on.
+    packages:
+      # Curated from NuGet most-downloaded.
+      - name: Newtonsoft.Json
+        manager: nuget
+        rank: 1
+        selection_source: "nuget most-downloaded"
+      - name: Serilog
+        manager: nuget
+        rank: 2
+        selection_source: "nuget most-downloaded"
+      - name: xunit
+        manager: nuget
+        rank: 3
+        selection_source: "nuget most-downloaded"
+      - name: NUnit
+        manager: nuget
+        rank: 4
+        selection_source: "nuget most-downloaded"
+      - name: Moq
+        manager: nuget
+        rank: 5
+        selection_source: "nuget most-downloaded"
+      - name: Dapper
+        manager: nuget
+        rank: 6
+        selection_source: "nuget most-downloaded"
+      - name: AutoMapper
+        manager: nuget
+        rank: 7
+        selection_source: "nuget most-downloaded"
+      - name: FluentAssertions
+        manager: nuget
+        rank: 8
+        selection_source: "nuget most-downloaded"
+
+  dart:
+    language_id: dart
+    display_name: "Dart / Flutter"
+    package_manager: pub
+    ecosystem: pub.dev
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: live_introspection_with_stub_fallback
+      notes: >
+        pubspec.yaml manifests; installed packages live under
+        .dart_tool/package_config.json — introspection follow-on.
+    packages:
+      # Curated from pub.dev most-depended packages.
+      - name: http
+        manager: pub
+        rank: 1
+        selection_source: "pub.dev most-used"
+      - name: provider
+        manager: pub
+        rank: 2
+        selection_source: "pub.dev most-liked"
+      - name: shared_preferences
+        manager: pub
+        rank: 3
+        selection_source: "pub.dev most-used"
+      - name: dio
+        manager: pub
+        rank: 4
+        selection_source: "pub.dev most-downloaded"
+      - name: flutter_test
+        manager: pub
+        rank: 5
+        selection_source: "curated Flutter ecosystem"
+        notes: "SDK-bundled test framework."
+      - name: bloc
+        manager: pub
+        rank: 6
+        selection_source: "pub.dev most-used"
+      - name: riverpod
+        manager: pub
+        rank: 6
+        selection_source: "pub.dev most-used"
+
+  julia:
+    language_id: julia
+    display_name: "Julia"
+    package_manager: pkg
+    ecosystem: "Julia General registry"
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        Julia stdlib handled via StdlibSymbolTable; depot introspection is a
+        follow-on.
+    packages:
+      # Curated from General registry most-used packages.
+      - name: DataFrames
+        manager: pkg
+        rank: 1
+        selection_source: "curated popular Julia packages"
+      - name: Plots
+        manager: pkg
+        rank: 2
+        selection_source: "curated popular Julia packages"
+      - name: CSV
+        manager: pkg
+        rank: 3
+        selection_source: "curated popular Julia packages"
+      - name: Flux
+        manager: pkg
+        rank: 4
+        selection_source: "curated popular Julia packages"
+      - name: DifferentialEquations
+        manager: pkg
+        rank: 6
+        selection_source: "curated popular Julia packages"
+      - name: Test
+        manager: pkg
+        rank: 7
+        selection_source: "curated popular Julia packages"
+        notes: "Stdlib module but commonly declared in [extras]/[targets]."
+
+  r:
+    language_id: r
+    display_name: "R"
+    package_manager: cran
+    ecosystem: CRAN
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        R packages resolve against installed library trees; introspection
+        deferred to a follow-on CDEU version.
+    packages:
+      # Curated from CRAN most-downloaded.
+      - name: ggplot2
+        manager: cran
+        rank: 1
+        selection_source: "CRAN most-downloaded + community curated"
+      - name: dplyr
+        manager: cran
+        rank: 2
+        selection_source: "CRAN most-downloaded"
+      - name: data.table
+        manager: cran
+        rank: 3
+        selection_source: "curated popular CRAN packages"
+      - name: shiny
+        manager: cran
+        rank: 4
+        selection_source: "curated popular CRAN packages"
+      - name: tidyr
+        manager: cran
+        rank: 5
+        selection_source: "curated popular CRAN packages"
+      - name: httr
+        manager: cran
+        rank: 6
+        selection_source: "curated popular CRAN packages"
+      - name: testthat
+        manager: cran
+        rank: 7
+        selection_source: "curated popular CRAN packages"
+
+  haskell:
+    language_id: haskell
+    display_name: "Haskell"
+    package_manager: cabal
+    ecosystem: Hackage
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        Introspection deferred; ghc-pkg based introspection is a follow-on.
+    packages:
+      # Curated from Hackage "most depended" + stackage LTS staples.
+      - name: aeson
+        manager: cabal
+        rank: 1
+        selection_source: "Hackage most-depended + community curated"
+      - name: text
+        manager: cabal
+        rank: 2
+        selection_source: "curated popular Hackage packages"
+      - name: containers
+        manager: cabal
+        rank: 3
+        selection_source: "curated popular Hackage packages"
+      - name: lens
+        manager: cabal
+        rank: 4
+        selection_source: "curated popular Hackage packages"
+      - name: hspec
+        manager: cabal
+        rank: 5
+        selection_source: "curated popular Hackage packages"
+      - name: persistent
+        manager: cabal
+        rank: 6
+        selection_source: "curated popular Hackage packages"
+      - name: yesod
+        manager: cabal
+        rank: 7
+        selection_source: "curated popular Hackage packages"
+
+  swift:
+    language_id: swift
+    display_name: "Swift"
+    package_manager: spm
+    ecosystem: "Swift Package Index"
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        SwiftPM checkouts (.build/checkouts) introspection is a follow-on.
+    packages:
+      # Curated from popular SwiftPM packages.
+      - name: swift-nio
+        manager: spm
+        rank: 1
+        selection_source: "curated popular SwiftPM packages"
+      - name: alamofire
+        manager: spm
+        rank: 2
+        selection_source: "curated popular SwiftPM packages"
+      - name: vapor
+        manager: spm
+        rank: 3
+        selection_source: "curated popular SwiftPM packages"
+      - name: swift-composable-architecture
+        manager: spm
+        rank: 4
+        selection_source: "curated popular SwiftPM packages"
+      - name: snapkit
+        manager: spm
+        rank: 5
+        selection_source: "curated popular SwiftPM packages"
+
+  zig:
+    language_id: zig
+    display_name: "Zig"
+    package_manager: zigmod
+    ecosystem: "Zig package hub"
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        Zig dependency ecosystem is young; build.zig.zon parsing (G2b) feeds
+        declarations, introspection deferred.
+    packages:
+      # Zig ecosystem is young — curated from notable zig packages.
+      - name: zap
+        manager: zigmod
+        rank: 1
+        selection_source: "curated notable Zig packages"
+      - name: zig-network
+        manager: zigmod
+        rank: 2
+        selection_source: "curated notable Zig packages"
+      - name: zig-sqlite
+        manager: zigmod
+        rank: 3
+        selection_source: "curated notable Zig packages"
+
+  erlang:
+    language_id: erlang
+    display_name: "Erlang/OTP"
+    package_manager: rebar3
+    ecosystem: hex.pm
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        Erlang/OTP stdlib via StdlibSymbolTable; deps from rebar.config.
+    packages:
+      # Curated from hex.pm most-downloaded Erlang packages.
+      - name: cowboy
+        manager: rebar3
+        rank: 1
+        selection_source: "hex.pm most-downloaded"
+      - name: jsx
+        manager: rebar3
+        rank: 2
+        selection_source: "hex.pm most-downloaded"
+      - name: hackney
+        manager: rebar3
+        rank: 3
+        selection_source: "hex.pm most-downloaded"
+      - name: lager
+        manager: rebar3
+        rank: 4
+        selection_source: "hex.pm most-downloaded"
+      - name: jsone
+        manager: rebar3
+        rank: 5
+        selection_source: "hex.pm most-downloaded"
+
+  ocaml:
+    language_id: ocaml
+    display_name: "OCaml"
+    package_manager: opam
+    ecosystem: opam
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        opam root introspection deferred; stdlib tables cover core surface.
+    packages:
+      # Curated from opam repository popularity.
+      - name: lwt
+        manager: opam
+        rank: 1
+        selection_source: "curated popular opam packages"
+      - name: core
+        manager: opam
+        rank: 2
+        selection_source: "curated popular opam packages"
+      - name: yojson
+        manager: opam
+        rank: 3
+        selection_source: "curated popular opam packages"
+      - name: alcotest
+        manager: opam
+        rank: 4
+        selection_source: "opam repository"
+      - name: dune
+        manager: opam
+        rank: 5
+        selection_source: "opam repository"
+        notes: "Build tool; near-universal OCaml dependency."
+
+  lua:
+    language_id: lua
+    display_name: "Lua"
+    package_manager: luarocks
+    ecosystem: LuaRocks
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        LuaRocks tree introspection is a follow-on; rockspec parsing (G2b)
+        declares deps for the workspace_manifests table.
+    packages:
+      # Curated from LuaRocks most-downloaded rocks.
+      - name: lpeg
+        manager: luarocks
+        rank: 1
+        selection_source: "LuaRocks most-downloaded"
+      - name: luasocket
+        manager: luarocks
+        rank: 2
+        selection_source: "LuaRocks most-downloaded"
+      - name: lua-cjson
+        manager: luarocks
+        rank: 3
+        selection_source: "LuaRocks most-downloaded"
+      - name: busted
+        manager: luarocks
+        rank: 5
+        selection_source: "LuaRocks most-downloaded"
+        notes: "Test framework — commonly a test dependency."
+      - name: penlight
+        manager: luarocks
+        rank: 6
+        selection_source: "LuaRocks most-downloaded"
+
+  perl:
+    language_id: perl
+    display_name: "Perl"
+    package_manager: cpan
+    ecosystem: CPAN
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        CPAN distributions resolve via local @INC; introspection deferred.
+    packages:
+      # Curated from MetaCPAN leaderboards.
+      - name: DBI
+        manager: cpan
+        rank: 1
+        selection_source: "MetaCPAN most-depended"
+      - name: Plack
+        manager: cpan
+        rank: 2
+        selection_source: "MetaCPAN most-depended"
+      - name: Test::More
+        manager: cpan
+        rank: 3
+        selection_source: "curated popular CPAN distributions"
+      - name: LWP::UserAgent
+        manager: cpan
+        rank: 5
+        selection_source: "MetaCPAN most-depended"
+      - name: JSON::XS
+        manager: cpan
+        rank: 6
+        selection_source: "MetaCPAN most-depended"
+      - name: Mojolicious
+        manager: cpan
+        rank: 7
+        selection_source: "MetaCPAN most-depended"
+
+  agda:
+    language_id: agda
+    display_name: "Agda"
+    package_manager: agda
+    ecosystem: "agda-stdlib / Git libraries"
+    limits:
+      max_preindexed_packages: 200
+      default_preindexed_packages: 100
+      full_scan_default: false
+    symbol_indexing:
+      default_strategy: bundled_tables_only
+      notes: >
+        Agda has no version-solved package manager; .agda-lib depend: names
+        are library identities. agda-stdlib surface is bundled in
+        StdlibSymbolTable; introspection deferred.
+    packages:
+      # Curated from the agda library ecosystem (small; Git-distributed).
+      - name: standard-library
+        manager: agda
+        rank: 1
+        selection_source: "curated agda libraries"
+        notes: "agda-stdlib — the dominant library."
+      - name: cubical
+        manager: agda
+        rank: 2
+        selection_source: "curated agda libraries"
+      - name: agda-unimath
+        manager: agda
+        rank: 3
+        selection_source: "curated agda libraries"
+      - name: plfa
+        manager: agda
+        rank: 4
+        selection_source: "curated agda libraries"
+      - name: agda-prelude
+        manager: agda
+        rank: 5
+        selection_source: "curated agda libraries"

@@ -8,7 +8,7 @@ from .loader import (
     set_active_root,
     get_active_root,
 )
-from .models import Config, SCHEMA_VERSIONS
+from .models import Config, ProgressConfig, SCHEMA_VERSIONS
 
 __all__ = [
     "get_config_cached",
@@ -17,5 +17,6 @@ __all__ = [
     "set_active_root",
     "get_active_root",
     "Config",
+    "ProgressConfig",
     "SCHEMA_VERSIONS",
 ]

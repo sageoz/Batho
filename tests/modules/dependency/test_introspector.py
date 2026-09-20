@@ -75,12 +75,14 @@ class TestThirdPartyIntrospector:
         """Verify python package introspection when subprocess succeeds.
 
         Scenario:
-            A subprocess command successfully returns json output of package symbols.
+            A venv with a python binary is provided and the subprocess returns
+            json output of package symbols.
 
         Execution Flow:
-            1. Mock subprocess.run return value with returncode=0 and valid JSON stdout.
-            2. Invoke introspect_python on "requests".
-            3. Assert that the parsed dictionary is returned and subprocess.run was executed.
+            1. Create a venv dir with bin/python.
+            2. Mock subprocess.run return value with returncode=0 and valid JSON stdout.
+            3. Invoke introspect_python on "requests" with the venv env_path.
+            4. Assert that the parsed dictionary is returned and subprocess.run was executed.
 
         Expectations:
             - The returned dictionary matches the mocked JSON stdout.
@@ -90,12 +92,37 @@ class TestThirdPartyIntrospector:
             returncode=0,
             stdout='{"requests": ["get", "post", "Session"]}'
         )
-        
+
         introspector = ThirdPartyIntrospector()
-        result = introspector.introspect_python("requests", None)
-        
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp)
+            (venv / "bin").mkdir()
+            (venv / "bin" / "python").touch()
+            result = introspector.introspect_python("requests", None, venv)
+
         assert result == {"requests": ["get", "post", "Session"]}
         mock_run.assert_called_once()
+
+    @patch('subprocess.run')
+    def test_introspect_python_no_venv_skips(self, mock_run):
+        """Verify the skip policy: no venv → no subprocess at all (D3).
+
+        Scenario:
+            introspect_python is called without a resolvable venv.
+
+        Execution Flow:
+            1. Call introspect_python with env_path=None.
+            2. Assert an empty dict is returned.
+
+        Expectations:
+            - No subprocess is spawned (never introspects Batho's own
+              interpreter); the dep is skipped upstream by the dep-01 policy.
+        """
+        introspector = ThirdPartyIntrospector()
+        result = introspector.introspect_python("requests", None, None)
+
+        assert result == {}
+        mock_run.assert_not_called()
 
     @patch('subprocess.run')
     def test_introspect_python_failure(self, mock_run):
@@ -106,7 +133,7 @@ class TestThirdPartyIntrospector:
 
         Execution Flow:
             1. Mock subprocess.run to return code 1 and a "Module not found" stderr.
-            2. Invoke introspect_python on a nonexistent package.
+            2. Invoke introspect_python on a nonexistent package (with a venv).
             3. Assert that an empty dictionary is returned.
 
         Expectations:
@@ -117,10 +144,14 @@ class TestThirdPartyIntrospector:
             stdout="",
             stderr="Module not found"
         )
-        
+
         introspector = ThirdPartyIntrospector()
-        result = introspector.introspect_python("nonexistent", None)
-        
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp)
+            (venv / "bin").mkdir()
+            (venv / "bin" / "python").touch()
+            result = introspector.introspect_python("nonexistent", None, venv)
+
         assert result == {}
 
     @patch('subprocess.run')
@@ -132,17 +163,21 @@ class TestThirdPartyIntrospector:
 
         Execution Flow:
             1. Mock subprocess.run to raise a Timeout exception.
-            2. Invoke introspect_python on a package.
+            2. Invoke introspect_python on a package (with a venv).
             3. Assert that an empty dictionary is returned on failure/timeout.
 
         Expectations:
             - Returns an empty dictionary gracefully instead of raising.
         """
         mock_run.side_effect = Exception("Timeout")
-        
+
         introspector = ThirdPartyIntrospector(timeout_seconds=1)
-        result = introspector.introspect_python("slow_package", None)
-        
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp)
+            (venv / "bin").mkdir()
+            (venv / "bin" / "python").touch()
+            result = introspector.introspect_python("slow_package", None, venv)
+
         assert result == {}
 
     @patch('subprocess.run')
@@ -166,22 +201,22 @@ class TestThirdPartyIntrospector:
             venv_python = venv_path / "bin" / "python"
             venv_python.parent.mkdir(parents=True)
             venv_python.touch()
-            
+
             mock_run.return_value = MagicMock(
                 returncode=0,
                 stdout='{"pkg": ["func"]}'
             )
-            
+
             introspector = ThirdPartyIntrospector()
-            result = introspector.introspect_python("pkg", venv_path)
-            
+            result = introspector.introspect_python("pkg", None, venv_path)
+
             # Should try venv python first
             first_call = mock_run.call_args_list[0]
             assert str(venv_python) in first_call[0][0]
 
     @patch('subprocess.run')
-    def test_introspect_python_fallback_to_system(self, mock_run):
-        """Verify introspection falls back to system Python if no venv python exists.
+    def test_introspect_python_venv_without_python_returns_empty(self, mock_run):
+        """Verify a venv dir without a python binary yields no introspection.
 
         Scenario:
             A venv directory path is provided but it contains no Python executable.
@@ -189,78 +224,76 @@ class TestThirdPartyIntrospector:
         Execution Flow:
             1. Create a temporary directory without a Python executable.
             2. Call introspect_python with this path.
-            3. Verify subprocess.run was executed.
+            3. Verify no subprocess was executed.
 
         Expectations:
-            - System Python is used as fallback.
-            - subprocess.run is called exactly once.
+            - Returns {} without spawning any subprocess (the old
+              sys.executable fallback is removed — wrong-env symbols are
+              worse than no symbols).
         """
         with tempfile.TemporaryDirectory() as tmp:
             venv_path = Path(tmp)
             # No venv python exists
-            
+
             mock_run.return_value = MagicMock(
                 returncode=0,
                 stdout='{"pkg": ["func"]}'
             )
-            
+
             introspector = ThirdPartyIntrospector()
-            result = introspector.introspect_python("pkg", venv_path)
-            
-            # Should fall back to system python
-            assert mock_run.call_count == 1
+            result = introspector.introspect_python("pkg", None, venv_path)
+
+            assert result == {}
+            assert mock_run.call_count == 0
 
     @patch('subprocess.run')
-    def test_introspect_python_venv_fallback_on_error(self, mock_run):
-        """Verify falling back to system Python when venv Python fails.
+    def test_introspect_python_venv_error_no_system_fallback(self, mock_run):
+        """Verify no system-python fallback when the venv python fails.
 
         Scenario:
             Venv python exists but execution fails with exit code 1.
 
         Execution Flow:
             1. Create a temporary venv directory and python file.
-            2. Mock subprocess.run side_effects to fail on first call and succeed on second.
+            2. Mock subprocess.run to fail.
             3. Call introspect_python.
-            4. Assert subprocess.run is called twice.
+            4. Assert subprocess.run is called exactly once and {} is returned.
 
         Expectations:
-            - Introspection executes venv Python, fails, falls back to system Python, and returns the successful results.
+            - Introspection executes the venv python once, fails, and returns
+              {} — Batho's own interpreter is never probed.
         """
         with tempfile.TemporaryDirectory() as tmp:
             venv_path = Path(tmp)
             venv_python = venv_path / "bin" / "python"
             venv_python.parent.mkdir(parents=True)
             venv_python.touch()
-            
-            # First call (venv) fails, second call (system) succeeds
-            mock_run.side_effect = [
-                MagicMock(returncode=1, stderr="error"),
-                MagicMock(returncode=0, stdout='{"pkg": ["func"]}')
-            ]
-            
+
+            # First (and only) call fails
+            mock_run.side_effect = MagicMock(returncode=1, stderr="error")
+
             introspector = ThirdPartyIntrospector()
-            result = introspector.introspect_python("pkg", venv_path)
-            
-            assert mock_run.call_count == 2
-            assert result == {"pkg": ["func"]}
+            result = introspector.introspect_python("pkg", None, venv_path)
+
+            assert mock_run.call_count == 1
+            assert result == {}
 
     def test_introspect_npm_placeholder(self):
-        """Verify npm package introspection placeholder behavior.
+        """Verify npm package introspection returns {} for a missing env.
 
         Scenario:
-            An npm package introspection is requested.
+            An npm package introspection is requested with no node_modules env.
 
         Execution Flow:
-            1. Call introspect_npm.
+            1. Call introspect_npm with env_path pointing at a non-existent dir.
             2. Assert that an empty dictionary is returned.
 
         Expectations:
-            - Current placeholder implementation returns an empty dictionary.
+            - Missing env → {} (skip policy; no {name: [name]} stub).
         """
         introspector = ThirdPartyIntrospector()
-        result = introspector.introspect_npm("express", Path("/tmp/node_modules"))
-        
-        # Currently returns empty dict as placeholder
+        result = introspector.introspect_npm("express", None, Path("/nonexistent-node_modules"))
+
         assert result == {}
 
 

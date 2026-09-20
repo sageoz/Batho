@@ -47,7 +47,7 @@ _VERSIONED_IPC_RE = re.compile(r"\.v(\d+)\.ipc$")
 # "<name>.ipc" filename across generations and are never stamped with .vN.
 # Used by unpack_artifact to distinguish genuine non-versioned side tables
 # from legacy versioned tables whose stamp was lost in old export formats.
-_NON_VERSIONED_TABLES = frozenset({"communities"})
+_NON_VERSIONED_TABLES = frozenset({"communities", "workspace_manifests"})
 
 
 class BathoBundleManager:

@@ -12,6 +12,29 @@ from batho.core.config import get_active_root
 # Pre-compiled regex for removing parameter hash suffixes from symbol names
 _PARAM_HASH_PATTERN = re.compile(r'_\[[a-fA-F0-9]+\]')
 
+# Languages sharing one stdlib/dep surface — a namespaced lookup for one
+# falls back to its sibling before the flat key (npm covers both JS and TS;
+# the JVM family compiles jointly — G1).
+_LANG_SIBLINGS: dict[str, tuple[str, ...]] = {
+    "javascript": ("typescript",),
+    "typescript": ("javascript",),
+    "java": ("kotlin", "scala"),
+    "kotlin": ("java", "scala"),
+    "scala": ("java", "kotlin"),
+}
+
+
+def _namespaced_keys(name: str, lang_hint: str) -> List[str]:
+    """Namespaced lookup candidates for ``name`` under ``lang_hint``.
+
+    Yields ``"{lang}:{name}"`` then sibling-language variants. The flat
+    ``name`` fallback is handled by the caller.
+    """
+    keys = [f"{lang_hint}:{name}"]
+    for sibling in _LANG_SIBLINGS.get(lang_hint, ()):
+        keys.append(f"{sibling}:{name}")
+    return keys
+
 
 @dataclass
 class SymbolInfo:
@@ -222,30 +245,47 @@ class ScopeManager:
         if is_global:
             root = get_active_root()
             module_parts = []
+            fp = Path(filepath)
             if root:
                 try:
-                    rel_path = Path(filepath).relative_to(root)
+                    candidate = fp if fp.is_absolute() else root / fp
+                    rel_path = candidate.relative_to(root)
                     module_parts = list(rel_path.with_suffix("").parts)
                 except ValueError:
                     pass
+            if not module_parts and not fp.is_absolute():
+                # filepath is already repo-relative; its parts ARE the module path.
+                # Degenerate paths ('', '.') have no name — with_suffix raises
+                # "PosixPath('.') has an empty name" for them; external-scope
+                # rows ride on the '.' pseudo-file, so this must not crash.
+                try:
+                    module_parts = list(fp.with_suffix("").parts)
+                except ValueError:
+                    pass
             if not module_parts:
-                stem = Path(filepath).stem
-                if stem != "__init__":
+                stem = fp.stem if fp.name else ""
+                if stem and stem != "__init__":
                     module_parts = [stem]
-                else:
-                    module_parts = [Path(filepath).parent.name]
-            
+                elif fp.parent.name:
+                    module_parts = [fp.parent.name]
+
             if module_parts and module_parts[-1] == "__init__":
                 module_parts.pop()
-                
+
             module_parts = [p for p in module_parts if p]
             if module_parts:
-                module_dot = ".".join(module_parts)
-                module_slash = "/".join(module_parts)
-                
-                # Define qualified variants
-                self.define_symbol(f"{module_dot}.{name}", symbol_id, symbol_type, is_global=is_global)
-                self.define_symbol(f"{module_slash}/{name}", symbol_id, symbol_type, is_global=is_global)
+                variants = [module_parts]
+                # src/lib-layout: register the import-path variant too
+                # (stub FQNs use import paths, not file paths)
+                if module_parts[0] in ("src", "lib") and len(module_parts) > 1:
+                    variants.append(module_parts[1:])
+                for parts in variants:
+                    module_dot = ".".join(parts)
+                    module_slash = "/".join(parts)
+
+                    # Define qualified variants
+                    self.define_symbol(f"{module_dot}.{name}", symbol_id, symbol_type, is_global=is_global)
+                    self.define_symbol(f"{module_slash}/{name}", symbol_id, symbol_type, is_global=is_global)
 
     def add_external_symbol(self, name: str, symbol_id: str, symbol_type: str) -> None:
         """Add an external symbol (from another package) to global table."""
@@ -262,13 +302,35 @@ class ScopeManager:
         with lock.write_lock():
             self._partitioned_global[partition][name] = symbol_info
 
-    def resolve_symbol(self, name: str) -> Optional[SymbolInfo]:
+    def iter_global_symbols(self, prefix: str = "") -> Iterator[Tuple[str, SymbolInfo]]:
+        """Iterate registered global symbols whose name starts with prefix.
+
+        Used for package re-export aliasing (``from .mod import *`` in
+        __init__.py) which must enumerate a submodule's public names.
+
+        Each partition is snapshotted before yielding: callers register
+        aliases mid-iteration (``define_symbol`` inside the loop), and a
+        live ``dict.items()`` view raises ``RuntimeError`` on mutation.
         """
-        Resolve symbol by searching from the current scope stack outward, 
+        with self._global_lock:
+            for table in self._partitioned_global.values():
+                for name, info in list(table.items()):
+                    if not prefix or name.startswith(prefix):
+                        yield name, info
+
+    def resolve_symbol(self, name: str, lang_hint: str | None = None) -> Optional[SymbolInfo]:
+        """
+        Resolve symbol by searching from the current scope stack outward,
         then check the exact global partition matching the name.
+
+        With ``lang_hint`` (the importing file's language), namespaced
+        external keys (``"{lang}:{name}"`` — including the JS/TS sibling
+        language) outrank an external flat hit, but project-defined flat
+        symbols always win over same-named externals (e.g. a project-local
+        ``json`` module beats the stdlib stub).
         """
         stack = self._scope_stack
-        
+
         # 1. Search local scopes (innermost first)
         for scope in reversed(stack):
             partition = self._get_partition_key(scope)
@@ -278,17 +340,36 @@ class ScopeManager:
                 if local_map and name in local_map:
                     return local_map[name]
 
-        # 2. Search exact global partition matching the name
+        # 2. Flat global lookup — a project-defined (non-external) symbol wins
+        #    over same-named externals. An *external* flat hit is only held as
+        #    a fallback: the namespaced keys still pick the hint's own language
+        #    first (the flat key is last-writer-wins across languages).
+        flat_hit = self._resolve_global_flat(name)
+        if flat_hit is not None and not flat_hit.is_external:
+            return flat_hit
+
+        # 3. Namespaced external keys (per-language external fallback)
+        if lang_hint:
+            for ns_name in _namespaced_keys(name, lang_hint):
+                info = self._resolve_global(ns_name)
+                if info:
+                    return info
+        return flat_hit
+
+    def _resolve_global(self, name: str) -> Optional[SymbolInfo]:
+        """Exact global-partition lookup for ``name``."""
         primary_partition = self._get_partition_key(name)
         lock = self._get_partition_lock(primary_partition)
         with lock.read_lock():
             global_map = self._partitioned_global[primary_partition]
             if name in global_map:
                 return global_map[name]
-
         return None
 
-    def resolve_symbol_strict(self, name: str) -> Optional[SymbolInfo]:
+    # Historical alias — flat lookup used by unhinted callers
+    _resolve_global_flat = _resolve_global
+
+    def resolve_symbol_strict(self, name: str, lang_hint: str | None = None) -> Optional[SymbolInfo]:
         """
         Resolve symbol with exact match only, with sentinel caching.
 
@@ -297,17 +378,21 @@ class ScopeManager:
         Call clear_failed_lookups() after registering new symbols so that
         previously-failed lookups are retried.
         """
+        # Namespaced and flat lookups can disagree — key the sentinel by the
+        # hinted form so a namespaced miss doesn't poison the flat lookup.
+        cache_key = f"{lang_hint}:{name}" if lang_hint else name
+
         # Fast path: check failed-lookup cache
         with self._failed_lock:
-            if name in self._failed_lookups:
+            if cache_key in self._failed_lookups:
                 return None
 
-        result = self.resolve_symbol(name)
+        result = self.resolve_symbol(name, lang_hint)
 
         # Cache failures
         if result is None:
             with self._failed_lock:
-                self._failed_lookups.add(name)
+                self._failed_lookups.add(cache_key)
 
         return result
 
@@ -321,24 +406,26 @@ class ScopeManager:
         with self._failed_lock:
             self._failed_lookups.clear()
 
-    def resolve_symbol_dotpath(self, name: str) -> Optional[SymbolInfo]:
+    def resolve_symbol_dotpath(
+        self, name: str, lang_hint: str | None = None
+    ) -> Optional[SymbolInfo]:
         """
         Resolve a dotted symbol by progressively checking:
         1. Exact match (existing resolve_symbol)
-        2. Module prefix match: "json.dumps" → check if "json" is external, 
+        2. Module prefix match: "json.dumps" → check if "json" is external,
            then synthesize SymbolInfo for "json.dumps"
         """
         # 1. Exact match
-        info = self.resolve_symbol(name)
+        info = self.resolve_symbol(name, lang_hint)
         if info:
             return info
-            
+
         # 2. Module prefix match (for external symbols)
         if "." in name:
             parts = name.split(".")
             for i in range(len(parts) - 1, 0, -1):
                 prefix = ".".join(parts[:i])
-                prefix_info = self.resolve_symbol(prefix)
+                prefix_info = self.resolve_symbol(prefix, lang_hint)
                 if prefix_info and prefix_info.is_external:
                     # Synthesize SymbolInfo for the sub-symbol
                     # We assume it exists if the parent module is external
@@ -348,24 +435,29 @@ class ScopeManager:
                         scope_path=prefix_info.scope_path,
                         is_external=True
                     )
-        
+
         return None
 
     @property
     def global_symbol_count(self) -> int:
-        """Return the total number of global symbols across all partitions.
-        
+        """Return the number of unique global symbols across all partitions.
+
+        Counts distinct ``symbol_id``s: externals register under both a flat
+        and a ``"{lang}:{name}"`` key sharing one id, and project symbols
+        under FQN variants — a raw key count would report ~2x for externals.
+
         Note: Under concurrent access, this count is an approximation
         as partition locks are acquired sequentially, not atomically.
         """
         with self._global_lock:
             partitions = list(self._partitioned_global.keys())
-        total = 0
+        seen: set[str] = set()
         for part in partitions:
             lock = self._get_partition_lock(part)
             with lock.read_lock():
-                total += len(self._partitioned_global[part])
-        return total
+                for info in self._partitioned_global[part].values():
+                    seen.add(info.symbol_id)
+        return len(seen)
 
     def get_global_symbols(self) -> dict[str, dict[str, dict[str, Any]]]:
         """Serialize global symbol partitions."""

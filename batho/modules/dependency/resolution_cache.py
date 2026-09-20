@@ -58,9 +58,9 @@ class ResolutionCache:
         except Exception as e:
             logger.debug(f"Failed to save manifest index: {e}")
 
-    def get_symbols(self, pkg: str, version: str, manager: str) -> Dict[str, List[str]] | None:
+    def get_symbols(self, pkg: str, version: str, manager: str, scope: str = "") -> Dict[str, List[str]] | None:
         """Retrieve cached symbols for a package."""
-        pkg_hash = self._compute_pkg_hash(pkg, version, manager)
+        pkg_hash = self._compute_pkg_hash(pkg, version, manager, scope)
         cache_file = self.dep_dir / f"{pkg_hash}.msgpack"
 
         if cache_file.exists():
@@ -71,10 +71,10 @@ class ResolutionCache:
                 logger.debug(f"Failed to read cache for {pkg}: {e}")
         return None
 
-    def put_symbols(self, pkg: str, version: str, manager: str, symbols: Dict[str, List[str]]) -> None:
+    def put_symbols(self, pkg: str, version: str, manager: str, symbols: Dict[str, List[str]], scope: str = "") -> None:
         """Store symbols for a package in the cache (thread-safe, atomic write)."""
         with self._lock:
-            pkg_hash = self._compute_pkg_hash(pkg, version, manager)
+            pkg_hash = self._compute_pkg_hash(pkg, version, manager, scope)
             cache_file = self.dep_dir / f"{pkg_hash}.msgpack"
 
             try:
@@ -157,7 +157,18 @@ class ResolutionCache:
             except Exception as e:
                 logger.debug(f"Failed to write metadata cache: {e}")
 
-    def _compute_pkg_hash(self, pkg: str, version: str, manager: str) -> str:
-        """Deterministic hash for a package identity."""
-        key = f"{pkg}:{version}:{manager}"
+    def _compute_pkg_hash(self, pkg: str, version: str, manager: str, scope: str = "") -> str:
+        """Deterministic hash for a package identity.
+
+        ``scope`` (the declaring manifest's repo-relative dir) distinguishes
+        the same dep/spec resolved from different subproject environments.
+
+        The ``v3:`` prefix invalidates caches written before the Cython/builtin
+        callable fix in the Python introspection script (v2 entries lack
+        C-extension symbols like pyarrow.schema / numpy.array), and the
+        pre-universal-introspection ``{name: [name]}`` fallback stubs before
+        that. Old files are simply misses — they are never read with a
+        matching hash.
+        """
+        key = f"v3:{pkg}:{version}:{manager}:{scope}"
         return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
