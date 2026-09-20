@@ -575,13 +575,45 @@ def test_pipeline_no_callback_is_default_safe(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def _wall_clock_benchmark_valid() -> bool:
+    """True when a wall-clock ratio measurement is meaningful.
+
+    The guard compares build wall-clock with vs without the progress engine.
+    Under a coverage tracer (pytest-cov / CI) the tracer's own overhead
+    dwarfs the ~60ns/iter signal being measured, and shared CI runners add
+    co-tenant noise plus a tight per-test timeout — two full builds of the
+    fixture tree under coverage can exceed the 60s budget on 2-core runners
+    (CI failure 2026-09-20). Skip there; the throttle regression it guards
+    against (2-10x slowdown) still shows up in local, untraced runs.
+    """
+    import os
+
+    if os.environ.get("CI", "").lower() in {"true", "1"}:
+        return False
+    if hasattr(sys, "monitoring"):
+        try:
+            if sys.monitoring.get_tool(sys.monitoring.COVERAGE_ID) is not None:
+                return False
+        except Exception:
+            pass
+    return sys.gettrace() is None
+
+
 @pytest.mark.slow
+@pytest.mark.timeout(300)
+@pytest.mark.skipif(
+    not _wall_clock_benchmark_valid(),
+    reason="wall-clock benchmark is invalid under coverage tracing / on shared CI runners",
+)
 def test_progress_overhead_within_budget(tmp_path):
     """Engine-on vs engine-off build wall-clock on a small fixture tree.
 
     Design budget is 1% (documented overhead is ~60ns/iter vs ms-scale parses);
     the asserted margin is 10% to stay robust on shared CI runners while still
     catching a broken throttle (which would show up as 2-10x slowdown).
+
+    Skipped when a coverage tracer is active or on CI: the tracer dominates
+    the measurement and the per-test timeout can fire mid-build.
     """
     import shutil
     import time as time_mod
