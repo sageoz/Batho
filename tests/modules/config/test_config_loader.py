@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 import pytest
 
 from batho.core.config import set_active_root
 from batho.core.config.loader import _get_config_cached_for_root, get_config_with_root
-from batho.core.config.models import Config
+from batho.core.config.models import DEFAULT_LOG_LEVEL, Config
 from batho.utils.path_sanitizer import PathSecurityError
 
 
@@ -504,3 +505,85 @@ class TestWorkspaceProjectConfig:
                 tmp_path, tmp_path / "src" / "package.json") is True
         finally:
             set_active_root(Path.cwd())
+
+
+class TestExplicitNullFallsBackToDefault:
+    """Explicit YAML nulls fall back to schema defaults instead of crashing.
+
+    Regression (CI failure on v1.4.2): a batho.yaml written by v1.4.3 sets
+    ``dependency.stdlib.languages: null`` ("auto-detect"), but the v1.4.2
+    model declared ``languages: list[str``]``. _merge_config copied the None
+    override over the default, and Config.model_validate() hard-failed with
+    "dependency.stdlib.languages Input should be a valid list" — every batho
+    command exited 1 before doing any work.
+    """
+
+    def test_stdlib_languages_null_falls_back_to_default(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "dependency:\n  stdlib:\n    languages: null\n",
+            encoding="utf-8",
+        )
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert cfg["dependency"]["stdlib"]["languages"] == Config().dependency.stdlib.languages
+        assert cfg["dependency"]["stdlib"]["enabled"] is True
+
+    def test_explicit_null_on_non_nullable_field_falls_back_to_default(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text("logging:\n  level: null\n", encoding="utf-8")
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert cfg["logging"]["level"] == logging.ERROR
+
+    def test_null_overrides_do_not_mask_real_values(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "dependency:\n"
+            "  stdlib:\n"
+            "    languages: null\n"
+            "    enabled: false\n",
+            encoding="utf-8",
+        )
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert cfg["dependency"]["stdlib"]["languages"] == Config().dependency.stdlib.languages
+        assert cfg["dependency"]["stdlib"]["enabled"] is False
+
+    def test_explicit_list_still_overrides_default(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "dependency:\n  stdlib:\n    languages: [python, rust]\n",
+            encoding="utf-8",
+        )
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert cfg["dependency"]["stdlib"]["languages"] == ["python", "rust"]
+
+    def test_v143_style_config_with_many_nulls_loads(self, tmp_path: Path):
+        cfg_yaml = tmp_path / "batho.yaml"
+        cfg_yaml.write_text(
+            "logging:\n"
+            "  level: WARNING\n"
+            "  json_format: null\n"
+            "  file: null\n"
+            "dependency:\n"
+            "  introspection:\n"
+            "    popular_packages_db_path: null\n"
+            "    managers: null\n"
+            "  stdlib:\n"
+            "    languages: null\n"
+            "mcp:\n"
+            "  toolsets: null\n",
+            encoding="utf-8",
+        )
+
+        cfg = get_config_with_root(tmp_path)
+
+        assert cfg["logging"]["level"] == logging.WARNING
+        assert cfg["dependency"]["stdlib"]["languages"] is None
+        assert cfg["mcp"]["toolsets"] is None

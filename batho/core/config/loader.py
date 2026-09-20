@@ -77,6 +77,11 @@ def _env_list(name: str) -> list[str] | None:
 def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = {**base}
     for key, value in override.items():
+        if value is None:
+            # Explicit YAML null = "not set": keep the schema default so
+            # configs written by newer Batho versions (e.g. v1.4.3 writes
+            # dependency.stdlib.languages: null) still load on older models.
+            continue
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
             merged[key] = _merge_config(merged[key], value)
         else:

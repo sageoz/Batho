@@ -40,6 +40,10 @@ description: "Batho release history"
 - **`fastmcp==3.4.7`** (was `>=3.4.0`, which resolved to the breaking fastmcp 4.0.x on fresh installs): fastmcp 4.0 removed the `fastmcp.tools.tool` module, crashing `batho mcp` at import time. 3.4.7 is the maintained 3.x head and carries security backports — SSRF via NAT64/6to4/Teredo transition addresses, a DNS-rebinding Host/Origin guard, and JWT/OAuth fixes — that 3.4.2 predates.
 - **fastmcp 4.x-ready imports**: `batho.mcp.tools` and `batho.mcp.errors` now import `ToolResult` from the canonical `fastmcp.tools` package instead of the removed `fastmcp.tools.tool` deep path. The canonical path works on both fastmcp 3.4.x and 4.x, so the import layer of any future 4.x migration is already in place.
 
+### Fixed
+
+- **Config loader tolerates explicit `null` values in `batho.yaml`**: `_merge_config` now treats an explicit YAML null as "not set" and keeps the schema default, instead of copying the `None` into the config dict and failing pydantic validation. Symptom: a `batho.yaml` written by v1.4.3 (`dependency.stdlib.languages: null`, as produced by `batho.yaml.example` and default config dumps) crashed every batho command on the v1.4.2 model with `RuntimeError: Invalid Batho configuration in 'batho.yaml': dependency.stdlib.languages — Input should be a valid list` before any work ran (reported in CI via the composite action). Blank hand-edited values (`key:` with no value) get the same graceful fallback.
+
 ## v1.4.2 — 2026-09-08
 
 **MCP relationship filtering (symbol roles, confidence, direction), entity categories and PROPERTY extraction, the `file_connectivity` tool, stub-based cross-file traversal, and unambiguous stub IDs.**
