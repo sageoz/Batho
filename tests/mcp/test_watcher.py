@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from batho.mcp.registry import RepoRegistry, RepoEntry
-from batho.mcp.watcher import BathoWatcherEngine, WatchEntry
+from batho.mcp.registry import RepoRegistry
+from batho.mcp.watcher import BathoWatcherEngine
 from batho.orchestrator.build import run_build, BuildOptions
 
 
@@ -33,7 +33,7 @@ def registry(tmp_path: Path) -> RepoRegistry:
 
 
 def test_watch_starts_observer(repo_with_artifact: Path, registry: RepoRegistry):
-    entry = registry.add("sample", str(repo_with_artifact), watch=True)
+    registry.add("sample", str(repo_with_artifact), watch=True)
     engine = BathoWatcherEngine(registry)
     try:
         engine.start()
@@ -46,7 +46,7 @@ def test_watch_starts_observer(repo_with_artifact: Path, registry: RepoRegistry)
 
 
 def test_debounce_schedules_single_patch(repo_with_artifact: Path, registry: RepoRegistry):
-    entry = registry.add("sample", str(repo_with_artifact), watch=True, debounce_ms=200)
+    registry.add("sample", str(repo_with_artifact), watch=True, debounce_ms=200)
     engine = BathoWatcherEngine(registry)
     patch_mock = MagicMock()
 
@@ -69,7 +69,7 @@ def test_debounce_schedules_single_patch(repo_with_artifact: Path, registry: Rep
 
 
 def test_ignore_patterns(repo_with_artifact: Path, registry: RepoRegistry):
-    entry = registry.add("sample", str(repo_with_artifact), watch=True, debounce_ms=100)
+    registry.add("sample", str(repo_with_artifact), watch=True, debounce_ms=100)
     engine = BathoWatcherEngine(registry)
     try:
         engine.start()
@@ -82,14 +82,14 @@ def test_ignore_patterns(repo_with_artifact: Path, registry: RepoRegistry):
 
 
 def test_patch_on_success_clears_pending(repo_with_artifact: Path, registry: RepoRegistry):
-    entry = registry.add("sample", str(repo_with_artifact), watch=True, debounce_ms=100)
+    registry.add("sample", str(repo_with_artifact), watch=True, debounce_ms=100)
     engine = BathoWatcherEngine(registry)
     file1 = repo_with_artifact / "main.py"
     file1.write_text("def hello(): return 2\n", encoding="utf-8")
 
     with patch("batho.mcp.tools.invalidate_reader_pool") as inv_mock:
         try:
-            engine.watch(entry)
+            engine.start()
             engine._watches["sample"].pending_files.add("main.py")
             engine._run_patch("sample")
             assert engine.status()["sample"]["sync_state"] == "idle"
@@ -100,13 +100,13 @@ def test_patch_on_success_clears_pending(repo_with_artifact: Path, registry: Rep
 
 
 def test_patch_on_failure_sets_error(repo_with_artifact: Path, registry: RepoRegistry):
-    entry = registry.add("sample", str(repo_with_artifact), watch=True, debounce_ms=100)
+    registry.add("sample", str(repo_with_artifact), watch=True, debounce_ms=100)
     engine = BathoWatcherEngine(registry)
     file1 = repo_with_artifact / "main.py"
 
     with patch("batho.orchestrator.patch.run_patch", side_effect=RuntimeError("Patch error")):
         try:
-            engine.watch(entry)
+            engine.start()
             engine._run_patch("sample")
             status = engine.status()["sample"]
             assert status["sync_state"] == "error"
@@ -118,7 +118,7 @@ def test_patch_on_failure_sets_error(repo_with_artifact: Path, registry: RepoReg
 
 
 def test_catch_up_detects_changed_files(repo_with_artifact: Path, registry: RepoRegistry):
-    entry = registry.add("sample", str(repo_with_artifact), watch=True)
+    registry.add("sample", str(repo_with_artifact), watch=True)
     engine = BathoWatcherEngine(registry)
 
     # Modify file while watcher is down
@@ -127,13 +127,15 @@ def test_catch_up_detects_changed_files(repo_with_artifact: Path, registry: Repo
 
     with patch.object(engine, "_run_patch") as patch_mock:
         engine.catch_up("sample")
-        patch_mock.assert_called_once_with("sample")
+        patch_mock.assert_called_once()
+        assert patch_mock.call_args[0][0] == "sample"
+        assert patch_mock.call_args.kwargs.get("reason") == "catchup"
 
 
 def test_staleness_banner_patching(repo_with_artifact: Path, registry: RepoRegistry):
-    entry = registry.add("sample", str(repo_with_artifact), watch=True)
+    registry.add("sample", str(repo_with_artifact), watch=True)
     engine = BathoWatcherEngine(registry)
-    engine.watch(entry)
+    engine.start()
     try:
         engine._watches["sample"].sync_state = "patching"
         banner = engine.get_staleness_banner("sample")
@@ -143,9 +145,9 @@ def test_staleness_banner_patching(repo_with_artifact: Path, registry: RepoRegis
 
 
 def test_staleness_banner_pending_file(repo_with_artifact: Path, registry: RepoRegistry):
-    entry = registry.add("sample", str(repo_with_artifact), watch=True)
+    registry.add("sample", str(repo_with_artifact), watch=True)
     engine = BathoWatcherEngine(registry)
-    engine.watch(entry)
+    engine.start()
     try:
         engine._watches["sample"].pending_files.add("main.py")
         engine._watches["sample"].sync_state = "pending"
@@ -157,9 +159,9 @@ def test_staleness_banner_pending_file(repo_with_artifact: Path, registry: RepoR
 
 
 def test_staleness_banner_idle(repo_with_artifact: Path, registry: RepoRegistry):
-    entry = registry.add("sample", str(repo_with_artifact), watch=True)
+    registry.add("sample", str(repo_with_artifact), watch=True)
     engine = BathoWatcherEngine(registry)
-    engine.watch(entry)
+    engine.start()
     try:
         assert engine.get_staleness_banner("sample") is None
     finally:
@@ -167,7 +169,7 @@ def test_staleness_banner_idle(repo_with_artifact: Path, registry: RepoRegistry)
 
 
 def test_stop_cleans_up_observers(repo_with_artifact: Path, registry: RepoRegistry):
-    entry = registry.add("sample", str(repo_with_artifact), watch=True)
+    registry.add("sample", str(repo_with_artifact), watch=True)
     engine = BathoWatcherEngine(registry)
     engine.start()
     assert len(engine._watches) == 1

@@ -75,6 +75,16 @@ _EXTERNAL_STDLIB_PREFIX = "batho stdlib "
 _ENTITY_NAME_HASH = re.compile(r"_\[[a-fA-F0-9]+\]")
 
 
+def is_unresolved(entity_id: str) -> bool:
+    """True for quarantined `unresolved:` reference stubs (T2).
+
+    These entities stay in storage for provenance but are excluded from
+    default query surfaces (search_entities, graph_query, graph_overview)
+    unless the caller passes ``include_unresolved=true``.
+    """
+    return entity_id.startswith("unresolved:")
+
+
 def external_ref_root(entity_id: str) -> str:
     """Root name of an external reference for reporting.
 
@@ -82,7 +92,7 @@ def external_ref_root(entity_id: str) -> str:
     segment) and resolved external ids (``batho stdlib <lang> <ns> <mod>``
     or ``batho <ns> <dep> <spec> <mod>``, root = module/dep name).
     """
-    if entity_id.startswith("unresolved:"):
+    if is_unresolved(entity_id):
         return stub_fqn(entity_id).split(".")[0]
     if entity_id.startswith(_EXTERNAL_STDLIB_PREFIX):
         toks = entity_id.split()

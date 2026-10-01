@@ -209,6 +209,39 @@ def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str,
     env_default_patterns_file = _env("BATHO_DEFAULT_PATTERNS_FILE")
     if env_default_patterns_file is not None:
         _safe_set_nested(base_cfg, ["indexer", "default_patterns_file"], env_default_patterns_file)
+    _safe_set_nested(
+        base_cfg,
+        ["indexer", "ignore_defaults"],
+        _env_bool("BATHO_IGNORE_DEFAULTS", _safe_get_nested(base_cfg, ["indexer", "ignore_defaults"], True)),
+    )
+    env_package_roots = _env_list("BATHO_PACKAGE_ROOTS")
+    if env_package_roots is not None:
+        _safe_set_nested(base_cfg, ["indexer", "package_roots"], env_package_roots)
+    _safe_set_nested(
+        base_cfg,
+        ["indexer", "strict_hashing"],
+        _env_bool("BATHO_STRICT_HASHING", _safe_get_nested(base_cfg, ["indexer", "strict_hashing"], False)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["indexer", "file_changelog_max_runs"],
+        _env_int("BATHO_FILE_CHANGELOG_MAX_RUNS", _safe_get_nested(base_cfg, ["indexer", "file_changelog_max_runs"], 100)),
+    )
+
+    # Watch overrides
+    env_watch_mode = _env("BATHO_WATCH_MODE")
+    if env_watch_mode is not None:
+        _safe_set_nested(base_cfg, ["watch", "mode"], env_watch_mode)
+    _safe_set_nested(
+        base_cfg,
+        ["watch", "max_staleness_ms"],
+        _env_int("BATHO_WATCH_MAX_STALENESS_MS", _safe_get_nested(base_cfg, ["watch", "max_staleness_ms"], 60000)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["watch", "flush_threshold"],
+        _env_int("BATHO_WATCH_FLUSH_THRESHOLD", _safe_get_nested(base_cfg, ["watch", "flush_threshold"], 300)),
+    )
 
     # Graph overrides
     _safe_set_nested(
@@ -312,6 +345,9 @@ def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str,
     env_custom_rules_path = _env("BATHO_RULES_CUSTOM_RULES_PATH")
     if env_custom_rules_path is not None:
         _safe_set_nested(base_cfg, ["rules", "custom_rules_path"], env_custom_rules_path)
+    env_custom_rules_dir = _env("BATHO_RULES_CUSTOM_RULES_DIR")
+    if env_custom_rules_dir is not None:
+        _safe_set_nested(base_cfg, ["rules", "custom_rules_dir"], env_custom_rules_dir)
     _safe_set_nested(
         base_cfg,
         ["rules", "strict_validation"],
@@ -374,6 +410,21 @@ def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str,
         ["artifact_blobs", "run_artifacts", "delta_stats"],
         _env_bool("BATHO_ARTIFACT_BLOBS_DELTA_STATS", _safe_get_nested(base_cfg, ["artifact_blobs", "run_artifacts", "delta_stats"], True)),
     )
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "run_artifacts", "rule_stats"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_RULE_STATS", _safe_get_nested(base_cfg, ["artifact_blobs", "run_artifacts", "rule_stats"], True)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "run_artifacts", "enrich_profile"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_ENRICH_PROFILE", _safe_get_nested(base_cfg, ["artifact_blobs", "run_artifacts", "enrich_profile"], True)),
+    )
+    _safe_set_nested(
+        base_cfg,
+        ["artifact_blobs", "run_artifacts", "enrich_score"],
+        _env_bool("BATHO_ARTIFACT_BLOBS_ENRICH_SCORE", _safe_get_nested(base_cfg, ["artifact_blobs", "run_artifacts", "enrich_score"], True)),
+    )
 
     # Memory overrides
     _safe_set_nested(
@@ -412,6 +463,29 @@ def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str,
         base_cfg,
         ["community_detection", "sample_threshold"],
         _env_int("BATHO_COMMUNITY_DETECTION_SAMPLE_THRESHOLD", _safe_get_nested(base_cfg, ["community_detection", "sample_threshold"], 100_000)),
+    )
+    # T15: hierarchical domain tier
+    _safe_set_nested(
+        base_cfg,
+        ["community_detection", "domain_grouping"],
+        _env_bool("BATHO_COMMUNITY_DOMAIN_GROUPING", _safe_get_nested(base_cfg, ["community_detection", "domain_grouping"], False)),
+    )
+    # T16: optional LLM community labeling (off by default)
+    _safe_set_nested(
+        base_cfg,
+        ["community_detection", "llm", "enabled"],
+        _env_bool("BATHO_COMMUNITY_LLM_ENABLED", _safe_get_nested(base_cfg, ["community_detection", "llm", "enabled"], False)),
+    )
+    env_llm_provider = os.getenv("BATHO_COMMUNITY_LLM_PROVIDER")
+    if env_llm_provider:
+        _safe_set_nested(base_cfg, ["community_detection", "llm", "provider"], env_llm_provider)
+    env_llm_model = os.getenv("BATHO_COMMUNITY_LLM_MODEL")
+    if env_llm_model:
+        _safe_set_nested(base_cfg, ["community_detection", "llm", "model"], env_llm_model)
+    _safe_set_nested(
+        base_cfg,
+        ["community_detection", "llm", "max_card_tokens"],
+        _env_int("BATHO_COMMUNITY_LLM_MAX_CARD_TOKENS", _safe_get_nested(base_cfg, ["community_detection", "llm", "max_card_tokens"], 200)),
     )
 
     # MCP overrides
@@ -501,6 +575,16 @@ def get_config_with_root(root_dir: Path, auto_create: bool = False) -> dict[str,
             f"Invalid Batho configuration in '{cfg_path.name}': {exc}\n"
             f"Please fix the configuration file or delete it to regenerate defaults."
         ) from exc
+
+    # Unknown top-level sections are silently dropped by model validation —
+    # surface them so a typo'd section doesn't die quietly.
+    unknown_sections = sorted(set(base_cfg) - set(Config.model_fields))
+    if unknown_sections:
+        _get_logger().warning(
+            "config_unknown_sections_ignored",
+            sections=unknown_sections,
+            config_file=str(cfg_path),
+        )
 
     cfg_dict = cfg.model_dump()
     cfg_dict["logging"]["level"] = cfg.logging.std_level

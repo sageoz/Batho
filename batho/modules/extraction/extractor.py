@@ -40,12 +40,10 @@ def get_pooled_parser(language: str) -> Any:
     return _TS_THREAD_LOCAL.parsers[language]
 
 
-from batho.utils.encoding import normalize_to_utf8
 from batho.utils.hash import compute_bytes_hash
 from batho.utils.logging import get_logger
 
 from batho.core.schemas import (
-    CoverageError,
     Entity,
     EntityMetadata,
     EntityType,
@@ -56,8 +54,6 @@ from batho.core.schemas import (
     generate_hierarchical_id,
     SymbolRole,
 )
-from batho.modules.extraction.symbol_table import FileSymbolTable, SymbolDefinition, ImportStatement
-from batho.modules.extraction.scope_manager import ScopeManager
 
 
 def _sanitize_identifier(name: str) -> str:
@@ -151,6 +147,83 @@ _CAPTURE_REL_MAP: dict[str, RelationshipType] = {
 _CONTAINS_HINT_CAPTURES: frozenset[str] = frozenset({
     "ref.impl_type",
     "ref.receiver_type",
+})
+
+# ---------------------------------------------------------------------------
+# T5 rationale layer — comment syntax per language
+# ---------------------------------------------------------------------------
+# Marker comments (`# WHY:`, `// NOTE:`, `/* WHY: */`, ...) are promoted to
+# COMMENT_BLOCK entities carrying a RATIONALE_FOR edge to the symbol they
+# explain. Delimiters are comment-syntax-aware per language — a `#`-only
+# default would miss lua `--` and the whole `/* */` C-family. The marker list
+# and case sensitivity come from `extraction.rationale_markers` /
+# `extraction.rationale_markers_case_sensitive` (parsing_config passthrough).
+_DEFAULT_RATIONALE_MARKERS: tuple[str, ...] = ("WHY:", "NOTE:")
+
+_LINE_COMMENT_PREFIXES: dict[str, tuple[str, ...]] = {
+    "python": ("#",),
+    "ruby": ("#",),
+    "perl": ("#",),
+    "bash": ("#",),
+    "yaml": ("#",),
+    "toml": ("#",),
+    "r": ("#",),
+    "julia": ("#",),
+    "php": ("//", "#"),
+    "typescript": ("//",),
+    "javascript": ("//",),
+    "rust": ("//",),
+    "go": ("//",),
+    "java": ("//",),
+    "kotlin": ("//",),
+    "scala": ("//",),
+    "csharp": ("//",),
+    "swift": ("//",),
+    "dart": ("//",),
+    "cpp": ("//",),
+    "c": ("//",),
+    "zig": ("//",),
+    "verilog": ("//",),
+    "lua": ("--",),
+    "haskell": ("--",),
+    "agda": ("--",),
+    "hcl": ("#", "//"),
+    "hack": ("//",),
+    "objectivec": ("//",),
+    "erlang": ("%",),
+}
+
+_BLOCK_COMMENT_PAIRS: dict[str, tuple[tuple[str, str], ...]] = {
+    "typescript": (("/*", "*/"),),
+    "javascript": (("/*", "*/"),),
+    "rust": (("/*", "*/"),),
+    "go": (("/*", "*/"),),
+    "java": (("/*", "*/"),),
+    "kotlin": (("/*", "*/"),),
+    "scala": (("/*", "*/"),),
+    "csharp": (("/*", "*/"),),
+    "swift": (("/*", "*/"),),
+    "dart": (("/*", "*/"),),
+    "cpp": (("/*", "*/"),),
+    "c": (("/*", "*/"),),
+    "php": (("/*", "*/"),),
+    "css": (("/*", "*/"),),
+    "zig": (("/*", "*/"),),
+    "verilog": (("/*", "*/"),),
+    "ocaml": (("(*", "*)"),),
+    "haskell": (("{-", "-}"),),
+    "agda": (("{-", "-}"),),
+    "hcl": (("/*", "*/"),),
+    "hack": (("/*", "*/"),),
+    "objectivec": (("/*", "*/"),),
+    "html": (("<!--", "-->"),),
+}
+
+# RATIONALE_FOR edges only point at the symbol kinds a comment can explain.
+_RATIONALE_TARGET_TYPES: frozenset[EntityType] = frozenset({
+    EntityType.FUNCTION,
+    EntityType.METHOD,
+    EntityType.CLASS,
 })
 
 
@@ -300,6 +373,207 @@ def _stub_ref_key(ref_text: str) -> str:
     return ref_text.replace("::", ".")
 
 
+# Attribute/member node types whose object field names the receiver of a
+# call like ``svc.get_entity()`` — keyed by node type to the object-side
+# field names used across tree-sitter grammars.
+_RECEIVER_PARENT_FIELDS: dict[str, tuple[str, ...]] = {
+    "attribute": ("object",),                    # Python, Ruby
+    "member_expression": ("object",),            # JS/TS
+    "selector_expression": ("operand",),         # Go
+    "field_expression": ("value",),              # Rust, C++
+    "method_invocation": ("object",),            # Java
+    "member_access_expression": ("expression", "object"),  # C#
+    "navigation_expression": ("expression",),    # Kotlin/Swift-ish
+    "field_access": ("object", "value"),         # fallback shapes
+    "call_expression": ("object", "value"),      # safety net
+}
+
+# Ancestor node types where a call expression is bound to a name on the
+# left-hand side (``var = f()``, ``param: T = Depends(f)``, ``let x = f()``).
+_BINDING_ANCESTOR_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    # node_type: (name-ish fields, value-ish fields)
+    "assignment": (("left",), ("right",)),                    # Python, Go, JS
+    "augmented_assignment": (("left",), ("right",)),
+    "typed_default_parameter": (("name",), ("value",)),       # Python
+    "typed_parameter": (("name",), ("value",)),
+    "default_parameter": (("name", "pattern"), ("value",)),
+    "required_parameter": (("pattern", "name"), ("value",)),  # TS
+    "optional_parameter": (("pattern", "name"), ("value",)),  # TS
+    "variable_declarator": (("name",), ("value",)),           # JS/TS/Java
+    "short_var_declaration": (("left",), ("right",)),         # Go
+    "let_declaration": (("pattern",), ("value",)),            # Rust
+    "let_mut_declaration": (("pattern",), ("value",)),
+    "field_declaration": (("declarator", "name"), ("value",)),
+    "public_field_definition": (("name",), ("value",)),       # TS class fields
+    "pair": (("key",), ("value",)),                           # object literals
+}
+
+_IDENT_RE = re.compile(r"[A-Za-z_]\w*\Z")
+
+# Call-like node types across grammars — ``call`` is Python's shape; most
+# other tree-sitter grammars spell it differently, so binding walks and
+# inner-call scans must recognize the whole set.
+_CALL_NODE_TYPES = frozenset({
+    "call",                      # Python
+    "call_expression",           # JS/TS, Go, Rust, C/C++
+    "method_invocation",         # Java
+    "function_call_expression",  # PHP
+    "method_call_expression",    # PHP
+})
+
+# Known DI-wrapper callee names whose single argument is the *meaningful*
+# callee — ``Depends(f)``, ``Provide(f)``, ``inject(f)``. ``assigned_inner``
+# is only recorded for these wrappers; a generic single-argument call like
+# ``list(User)`` or ``sorted(users)`` must not record it, or the inner name
+# gets treated as a type producer downstream (``x = list(User)`` would type
+# ``x`` as ``User`` and fabricate ``x.foo()`` edges).
+_DI_WRAPPER_NAMES: frozenset[str] = frozenset({
+    "Depends",
+    "Provide",
+    "provide",
+    "Inject",
+    "inject",
+})
+
+
+def _receiver_object_text(node: Node, source: bytes) -> str | None:
+    """Receiver object text for a call-site capture, e.g. ``svc`` in
+    ``svc.get_entity()`` or ``self.db`` in ``self.db.execute()``.
+
+    The call ref capture lands on the *attribute* identifier; its parent is
+    the attribute/member node whose ``object`` (or grammar equivalent) field
+    is the receiver expression. Returns None for bare calls (``f()``).
+    """
+    parent = node.parent
+    if parent is None:
+        return None
+    field_names = _RECEIVER_PARENT_FIELDS.get(parent.type)
+    if not field_names:
+        return None
+    obj = None
+    for fname in field_names:
+        obj = parent.child_by_field_name(fname)
+        if obj is not None:
+            break
+    if obj is None or obj == node:
+        return None
+    txt = _node_text(obj, source)
+    # Only simple receiver expressions qualify (identifier / dotted chain);
+    # complex receivers like ``get_svc().m()`` carry no usable var name.
+    if txt and len(txt) <= 128 and re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", txt):
+        return txt
+    return None
+
+
+def _assigned_binding(node: Node, source: bytes) -> tuple[str | None, str | None]:
+    """Name bound to this call's result, if the call is an assignment RHS.
+
+    ``svc = get_graph_service()``      → ("svc", None)
+    ``x: T = Depends(get_service)``    → ("x", "get_service")  # inner call
+    ``const db = makeDb()``            → ("db", None)
+
+    Returns (var_name, inner_callee). ``inner_callee`` is set only when the
+    outer callee is a known DI wrapper (``_DI_WRAPPER_NAMES``: ``Depends(f)``/
+    ``Provide(f)``/``inject(f)``-style patterns) whose sole argument is itself
+    a call or bare identifier — the meaningful callee is the inner one.
+    ``var_name`` is returned for any bound RHS; ``inner_callee`` stays None
+    for ordinary calls like ``x = sorted(users)`` or ``x = list(User)``.
+    """
+    # The captured node is the callee identifier; climb to its call node
+    # (grammar-specific type: `call` in Python, `call_expression` in JS/TS/Go/…).
+    cur: Node | None = node
+    while cur is not None and cur.type not in _CALL_NODE_TYPES:
+        if cur.parent is None:
+            return None, None
+        # Stop at statement/block boundaries — capture isn't inside a call.
+        if cur.parent.type in (
+            "block", "program", "module", "function_definition",
+            "class_definition", "source_file", "declaration_list",
+        ):
+            return None, None
+        cur = cur.parent
+    if cur is None:
+        return None, None
+
+    parent = cur.parent
+    if parent is None:
+        return None, None
+    spec = _BINDING_ANCESTOR_FIELDS.get(parent.type)
+    if spec is None:
+        return None, None
+    name_fields, value_fields = spec
+    name_node = None
+    for f in name_fields:
+        name_node = parent.child_by_field_name(f)
+        if name_node is not None:
+            break
+    value_node = None
+    for f in value_fields:
+        value_node = parent.child_by_field_name(f)
+        if value_node is not None:
+            break
+    if name_node is None or value_node is None or value_node != cur:
+        return None, None
+    var_txt = _node_text(name_node, source)
+    if not _IDENT_RE.fullmatch(var_txt or ""):
+        return None, None
+
+    # Wrapper-call inner callee: value is a call whose argument list holds
+    # exactly one argument which is itself a call or a bare identifier —
+    # DI helpers like ``Depends(get_service)``/``Provide[f]`` patterns where
+    # the meaningful callee is the inner reference. Restricted to known DI
+    # wrappers: any single-arg call (``sorted(users)``, ``list(User)``)
+    # matches the shape structurally, so gating on the outer callee name
+    # keeps ``assigned_inner`` from mislabeling ordinary calls.
+    inner_callee = None
+    fn_node = cur.child_by_field_name("function")
+    outer_txt = _node_text(fn_node, source) if fn_node is not None else ""
+    if not outer_txt:
+        outer_txt = _node_text(node, source)
+    if outer_txt.rsplit(".", 1)[-1] not in _DI_WRAPPER_NAMES:
+        return var_txt, None
+    args = cur.child_by_field_name("arguments")
+    if args is not None:
+        inner_calls = [c for c in args.children if c.type in _CALL_NODE_TYPES]
+        non_punct = [c for c in args.children if c.type not in ("(", ")", ",", "comment")]
+        if len(inner_calls) == 1 and len(non_punct) == 1:
+            fn = inner_calls[0].child_by_field_name("function")
+            if fn is not None:
+                inner_txt = _node_text(fn, source)
+                if re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", inner_txt or ""):
+                    inner_callee = inner_txt
+        elif len(non_punct) == 1 and non_punct[0].type in ("identifier", "attribute", "member_expression"):
+            inner_txt = _node_text(non_punct[0], source)
+            if re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", inner_txt or ""):
+                inner_callee = inner_txt
+    return var_txt, inner_callee
+
+
+def _comment_node_at(root_node: Node, byte_offset: int) -> "Node | None":
+    """Return the innermost ancestor covering *byte_offset* whose type is a
+    comment node, or None.
+
+    Comment node types differ across grammars (``comment``, ``line_comment``,
+    ``block_comment``, ``multiline_comment``), so membership is checked by
+    name substring on the deepest node covering the offset and each of its
+    ancestors — a marker inside a string literal bottoms out in
+    ``string``/``string_content`` nodes instead and returns None.
+    """
+    node: Node | None = root_node.descendant_for_byte_range(
+        byte_offset, byte_offset
+    )
+    while node is not None:
+        if "comment" in node.type:
+            return node
+        node = node.parent
+    return None
+
+
+def _byte_in_comment_node(root_node: Node, byte_offset: int) -> bool:
+    """True when *byte_offset* lies inside a tree-sitter comment node."""
+    return _comment_node_at(root_node, byte_offset) is not None
+
+
 def _expand_import_targets(raw: str) -> list[str]:
     """Expand grouped import forms into resolvable target candidates."""
     normalized = _normalize_import_target(raw)
@@ -328,7 +602,11 @@ def _expand_import_targets(raw: str) -> list[str]:
         token = _normalize_import_target(candidate)
         if token.lower() in stopwords:
             return
-        if not token or token in seen:
+        # Brace-group text is never itself a resolvable target — expansion
+        # below emits the qualified member refs instead.
+        if not token or "{" in token or "}" in token:
+            return
+        if token in seen:
             return
         seen.add(token)
         candidates.append(token)
@@ -353,7 +631,10 @@ def _expand_import_targets(raw: str) -> list[str]:
             else:
                 _push(token)
 
-    if "/" in normalized:
+    # Leaf fallback helps `pkg.mod.sym` / `dir/file` forms where the leaf is a
+    # first-party symbol — but a scoped npm leaf (@scope/pkg → "pkg") is a
+    # package name, never a local symbol; pushing it only adds noise stubs.
+    if "/" in normalized and not normalized.startswith("@"):
         _push(normalized.rsplit("/", 1)[-1])
 
     if "." in normalized:
@@ -531,7 +812,8 @@ class ASTExtractor(abc.ABC):
                 raw_captures = self._filter_comment_captures(raw_captures)
 
             entities, relationships = self._process_captures(
-                raw_captures, content, filepath, index_id=index_id, package=package
+                raw_captures, content, filepath, index_id=index_id,
+                package=package, root_node=tree.root_node,
             )
             entities = self._enrich_bidirectional_attributes(entities, content)
         except Exception as exc:
@@ -601,6 +883,7 @@ class ASTExtractor(abc.ABC):
         filepath: str,
         index_id: str | None = None,
         package: PackageMetadata | None = None,
+        root_node: Node | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """
         Group raw captures into entity definitions + auxiliary metadata,
@@ -625,7 +908,8 @@ class ASTExtractor(abc.ABC):
             definition_nodes, auxiliary_nodes, source, filepath, index_id=index_id, package=package
         )
         unresolved_entities, relationships = self._build_relationships(
-            captures, entities, source, filepath, def_name_bytes, package=package
+            captures, entities, source, filepath, def_name_bytes,
+            package=package, root_node=root_node,
         )
         entities.extend(unresolved_entities)
         return entities, relationships
@@ -923,7 +1207,11 @@ class ASTExtractor(abc.ABC):
                     enclosing_start_byte=doc_node.start_byte,
                     enclosing_end_byte=doc_node.end_byte,
                     signature=None,
-                    metadata={"is_docstring": True, "language": self._language_name},
+                    metadata={
+                        "is_docstring": True,
+                        "rationale_kind": "docstring",
+                        "language": self._language_name,
+                    },
                     raw_content=decoded_doc,
                     content_hash=compute_bytes_hash(doc_bytes_slice),
                     raw_bytes=stored_doc_bytes,
@@ -976,6 +1264,7 @@ class ASTExtractor(abc.ABC):
         filepath: str,
         def_name_bytes: set[int],
         package: PackageMetadata | None = None,
+        root_node: Node | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Build Relationship models from reference captures.
 
@@ -1013,10 +1302,16 @@ class ASTExtractor(abc.ABC):
             # The ref key is dot-normalized (_stub_ref_key) so the "::" scope
             # separator stays unambiguous for Rust/Ruby scoped ref text;
             # name/target_name/receiver_var keep the caller-written spelling.
-            stub_id = f"unresolved:{caller_scope}::{_stub_ref_key(ref_text)}"
-            # Extract receiver variable: "cursor.execute" -> "cursor"
-            # Used by receiver-type-aware method resolution (Phase 2).
-            receiver_var = ref_text.split(".")[0] if "." in ref_text else None
+            # The occurrence line sits in the scope half (never in the ref
+            # half — rsplit("::",1)[-1] must stay the clean ref key): stub
+            # identity is per CALL SITE so position-aware binding sees each
+            # occurrence's own start_line instead of the first occurrence's.
+            stub_id = f"unresolved:{caller_scope}@{line}::{_stub_ref_key(ref_text)}"
+            # Extract the full receiver chain: "self.db.execute" -> "self.db".
+            # Storing only the first segment (`self`) types the call by the
+            # enclosing class and fabricates `Enclosing.execute`-style edges —
+            # the deep-receiver guard needs the real chain (`self.db`).
+            receiver_var = ".".join(ref_text.split(".")[:-1]) if "." in ref_text else None
             meta: dict[str, Any] = {
                 "reference_type": rel_type.name.lower(),
                 "resolution_reason": "contextual_stub",
@@ -1076,6 +1371,23 @@ class ASTExtractor(abc.ABC):
                         confidence=confidence,
                     )
                 )
+
+        # T5 rationale layer: marker comments (`# WHY:`, `// NOTE:`, `/* */`)
+        # become first-class COMMENT_BLOCK entities so they can carry
+        # RATIONALE_FOR edges. Merged before the CONTAINS pass so they nest
+        # inside their enclosing symbol like docstring entities do.
+        # Honors bsg.parsing.skip_comments — markers are comments, so the
+        # opt-out suppresses them too.
+        marker_entities = (
+            []
+            if self._parsing_config.get("skip_comments", False)
+            else self._extract_marker_comment_entities(
+                source, filepath, root_node=root_node
+            )
+        )
+        if marker_entities:
+            entities.extend(marker_entities)
+            entities.sort(key=lambda e: e.start_byte)
 
         # Extract file imports for local resolution support
         file_imports = []
@@ -1438,8 +1750,24 @@ class ASTExtractor(abc.ABC):
                         continue
                     source_id = source_ent.id
 
+                    # T1 receiver capture: for attribute calls like
+                    # ``svc.get_entity()`` the ref node is the bare attribute
+                    # identifier; the receiver object lives on the parent
+                    # attribute node. Qualifying the ref key with the receiver
+                    # (``svc.get_entity``) keeps distinct receivers from
+                    # collapsing into one stub and seeds receiver-type
+                    # resolution downstream.
+                    receiver_txt = None
+                    if rel_type == RelationshipType.CALLS:
+                        receiver_txt = _receiver_object_text(node, source)
+                        bound_to, inner_callee = _assigned_binding(node, source)
+                        if bound_to:
+                            rel_meta["assigned_to"] = bound_to
+                        if inner_callee:
+                            rel_meta["assigned_inner"] = inner_callee
+
                     target_id = None
-                    target_ent = by_name.get(ref_text)
+                    target_ent = by_name.get(ref_text) if receiver_txt is None else None
                     if target_ent is not None:
                         target_id = target_ent.id
 
@@ -1467,17 +1795,22 @@ class ASTExtractor(abc.ABC):
 
                     ref_to_use = ref_text
                     if target_id is None:
-                        # FIX 10: use precomputed from_symbol_to_module (O(1))
-                        # and non_from_modules list (O(I) but only for prefix
-                        # matching — cannot replace with set membership).
-                        mp = from_symbol_to_module.get(ref_text)
-                        if mp is not None:
-                            ref_to_use = f"{mp}.{ref_text}"
+                        if receiver_txt is not None:
+                            # T1: receiver-qualified ref key — `svc.get_entity`
+                            # keeps receiver context for member resolution.
+                            ref_to_use = f"{receiver_txt}.{ref_text}"
                         else:
-                            for mp in non_from_modules:
-                                if ref_text == mp or ref_text.startswith(mp + ".") or ref_text.startswith(mp + "/"):
-                                    ref_to_use = ref_text
-                                    break
+                            # FIX 10: use precomputed from_symbol_to_module (O(1))
+                            # and non_from_modules list (O(I) but only for prefix
+                            # matching — cannot replace with set membership).
+                            mp = from_symbol_to_module.get(ref_text)
+                            if mp is not None:
+                                ref_to_use = f"{mp}.{ref_text}"
+                            else:
+                                for mp in non_from_modules:
+                                    if ref_text == mp or ref_text.startswith(mp + ".") or ref_text.startswith(mp + "/"):
+                                        ref_to_use = ref_text
+                                        break
 
                     target_ent = by_id.get(target_id) if target_id else None
 
@@ -1641,7 +1974,318 @@ class ASTExtractor(abc.ABC):
                                 roles=role,
                             )
 
+        # T5 rationale layer: every comment/doc entity gets a RATIONALE_FOR
+        # edge to the symbol it explains — docstrings resolve via their
+        # parent_id; marker comments attribute to the smallest enclosing
+        # FUNCTION/METHOD/CLASS, else the immediately-following one.
+        _ents_by_id = {e.id: e for e in entities}
+        for ent in entities:
+            if ent.type != EntityType.COMMENT_BLOCK:
+                continue
+            target_id = getattr(ent, "parent_id", None)
+            if target_id:
+                # parent_id bypasses the enclosing-symbol scan — but only
+                # when the parent is a kind a comment can explain (a docstring
+                # parented to MODULE/FILE must still attribute, not point at
+                # the file container).
+                parent_ent = _ents_by_id.get(target_id)
+                if (
+                    parent_ent is None
+                    or parent_ent.type not in _RATIONALE_TARGET_TYPES
+                ):
+                    target_id = None
+            if not target_id or target_id == ent.id:
+                target_id = self._rationale_target_id(
+                    ent, sorted_ents, sorted_starts, source
+                )
+            if target_id and target_id != ent.id:
+                _add(
+                    ent.id,
+                    target_id,
+                    RelationshipType.RATIONALE_FOR,
+                    ent.start_line,
+                    {
+                        # Annotation-edge contract (schemas.ANNOTATION_RELATIONS
+                        # / rules.py tag postpass): derived semantics, not
+                        # structure — always stamped so G4/G6 edge_class
+                        # filters see a consistent shape. `edge_class` also
+                        # distinguishes this extraction emission from
+                        # apply-layer overlay edges during `plugins apply`.
+                        "edge_class": "annotation",
+                        "semantic": True,
+                        "rationale_kind": (ent.metadata or {}).get(
+                            "rationale_kind", "comment"
+                        ),
+                    },
+                    # INFERRED-grade confidence, matching the rules-engine
+                    # convention for derived edges: 0.75 when the comment is
+                    # parse-verified; marker entities found by the raw line
+                    # scan (no parse tree to verify the hit is a real comment)
+                    # get 0.5 — the marker could sit inside a string.
+                    confidence=(
+                        0.5
+                        if (ent.metadata or {}).get("line_scan_fallback")
+                        else 0.75
+                    ),
+                )
+
         return unresolved_entities, relationships
+
+    # ------------------------------------------------------------------
+    # T5 rationale layer — marker comments
+    # ------------------------------------------------------------------
+
+    def _marker_comment_pattern(self) -> re.Pattern[bytes] | None:
+        """Build the byte-regex matching ``<delim> <MARKER>`` for this language.
+
+        Line prefixes and block openers come from the per-language delimiter
+        tables; repeated delimiter chars are allowed (`///`, `##`, `/**`).
+        Returns None for languages without configured comment syntax.
+        """
+        # `get(key, default)` not `or`: an explicit empty list must flow
+        # through to `if not markers` and disable the marker layer (EXT-14);
+        # only a missing/null value falls back to defaults.
+        markers = self._parsing_config.get(
+            "rationale_markers", list(_DEFAULT_RATIONALE_MARKERS)
+        )
+        if markers is None:
+            markers = list(_DEFAULT_RATIONALE_MARKERS)
+        line_prefixes = _LINE_COMMENT_PREFIXES.get(self._language_name, ())
+        block_pairs = _BLOCK_COMMENT_PAIRS.get(self._language_name, ())
+        if not markers or (not line_prefixes and not block_pairs):
+            return None
+        delims: list[bytes] = []
+        for prefix in line_prefixes:
+            enc = prefix.encode()
+            delims.append(re.escape(enc[:-1]) + re.escape(enc[-1:]) + b"+")
+        for opener, _closer in block_pairs:
+            enc = opener.encode()
+            delims.append(re.escape(enc[:-1]) + re.escape(enc[-1:]) + b"+")
+        marker_alt = b"|".join(re.escape(m.encode()) for m in markers)
+        flags = (
+            0
+            if self._parsing_config.get("rationale_markers_case_sensitive", True)
+            else re.IGNORECASE
+        )
+        return re.compile(rb"(?:" + b"|".join(delims) + rb")\s*(" + marker_alt + rb")", flags)
+
+    def _extract_marker_comment_entities(
+        self,
+        source: bytes,
+        filepath: str,
+        root_node: Node | None = None,
+    ) -> list[Entity]:
+        """Scan source lines for marker comments and promote each to a
+        COMMENT_BLOCK entity carrying ``rationale_kind`` metadata.
+
+        Works on raw bytes so offsets stay exact even under
+        ``errors="replace"`` decoding elsewhere. Matches markers at line start
+        and in trailing comments (`x = f()  # WHY: fast path`).
+
+        When *root_node* is provided (the normal ``parse_file`` path), each
+        regex hit is verified against the parse tree: only hits whose bytes
+        sit inside a real comment node are promoted, so a ``# WHY:`` line
+        inside a triple-quoted string or a ``// WHY:`` inside a JS template
+        literal produces nothing. Without *root_node* the raw line scan is
+        kept and the entity is tagged ``line_scan_fallback`` so downstream
+        RATIONALE_FOR edges emit at reduced confidence.
+        """
+        pat = self._marker_comment_pattern()
+        if pat is None:
+            return []
+        # Block-continuation hits (`* WHY: …` inside a /* */ body) carry no
+        # delimiter on their own line — only valid when a parse tree can
+        # prove the byte sits inside a comment node.
+        cont_pat: re.Pattern[bytes] | None = None
+        if root_node is not None:
+            markers = self._parsing_config.get(
+                "rationale_markers", list(_DEFAULT_RATIONALE_MARKERS)
+            )
+            if markers is None:
+                markers = list(_DEFAULT_RATIONALE_MARKERS)
+            if markers:
+                marker_alt = b"|".join(re.escape(m.encode()) for m in markers)
+                cont_flags = (
+                    0
+                    if self._parsing_config.get(
+                        "rationale_markers_case_sensitive", True
+                    )
+                    else re.IGNORECASE
+                )
+                cont_pat = re.compile(
+                    rb"^\s*\*+\s*(" + marker_alt + rb")",
+                    cont_flags | re.MULTILINE,
+                )
+        # Cheap reject before the line loop — must check BOTH patterns: a
+        # jsdoc-style marker (`/**\n * WHY:`) only matches the continuation
+        # form, so gating on pat alone would skip those files entirely.
+        if not pat.search(source) and not (
+            cont_pat is not None and cont_pat.search(source)
+        ):
+            return []
+        stem = Path(filepath).stem
+        entities: list[Entity] = []
+        offset = 0
+        for lineno, raw_line in enumerate(source.split(b"\n"), start=1):
+            # A line can carry multiple delimiter+marker hits (`s = "# WHY:"
+            # # WHY: real`); when a parse tree is available, take the first
+            # hit that lands inside a real comment node.
+            m: re.Match[bytes] | None = None
+            m_start = -1
+            comment_node: Node | None = None
+            for cand in pat.finditer(raw_line):
+                if root_node is None:
+                    m = cand
+                    m_start = offset + cand.start()
+                    break
+                node = _comment_node_at(root_node, offset + cand.start())
+                if node is not None:
+                    m = cand
+                    m_start = offset + cand.start()
+                    comment_node = node
+                    break
+            if m is None and cont_pat is not None:
+                cand = cont_pat.search(raw_line)
+                if cand is not None:
+                    node = _comment_node_at(root_node, offset + cand.start())
+                    if node is not None:
+                        m = cand
+                        m_start = offset + cand.start()
+                        comment_node = node
+            if m is not None:
+                marker_text = m.group(1).decode("utf-8", errors="replace")
+                kind = marker_text.rstrip(":").strip().lower() or "comment"
+                if comment_node is not None:
+                    # Span the whole comment node — a multi-line /* */ marker
+                    # must end at `*/`, not end-of-line, so the gap to the
+                    # following def is pure whitespace (attaches cleanly) and
+                    # same-line code after `*/` isn't swallowed into the span.
+                    start_byte = comment_node.start_byte
+                    start_line = comment_node.start_point[0] + 1
+                    end_byte = comment_node.end_byte
+                    end_line = comment_node.end_point[0] + 1
+                else:
+                    # Fallback (no parse tree): keep the end-of-line span.
+                    start_byte = m_start
+                    start_line = lineno
+                    end_byte = offset + len(raw_line)
+                    end_line = lineno
+                metadata: dict[str, Any] = {
+                    "rationale_kind": kind,
+                    "marker_comment": True,
+                    "language": self._language_name,
+                }
+                if root_node is None:
+                    metadata["line_scan_fallback"] = True
+                # Content/hash must cover the comment itself, not the whole
+                # code line — a trailing `x = f()  # WHY:` hit must not bake
+                # the code prefix into the entity's identity.
+                if comment_node is not None:
+                    comment_bytes = source[
+                        comment_node.start_byte:comment_node.end_byte
+                    ]
+                else:
+                    comment_bytes = raw_line[m.start():]
+                entities.append(
+                    Entity(
+                        type=EntityType.COMMENT_BLOCK,
+                        name=f"{stem}::comment@{lineno}",
+                        file=filepath,
+                        start_line=start_line,
+                        end_line=end_line,
+                        start_byte=start_byte,
+                        end_byte=end_byte,
+                        enclosing_start_byte=start_byte,
+                        enclosing_end_byte=end_byte,
+                        signature=None,
+                        metadata=metadata,
+                        raw_content=comment_bytes.decode("utf-8", errors="replace").strip(),
+                        content_hash=compute_bytes_hash(comment_bytes),
+                        is_documentation=True,
+                    )
+                )
+            offset += len(raw_line) + 1
+        return entities
+
+    def _rationale_target_id(
+        self,
+        comment: Entity,
+        sorted_ents: list[Entity],
+        sorted_starts: list[int],
+        source: bytes,
+    ) -> str | None:
+        """Attribute a marker comment to its symbol.
+
+        Inside case: smallest enclosing FUNCTION/METHOD/CLASS span.
+        Preceding case: the next such entity whose span starts after the
+        comment, when only blank/comment/decorator lines sit between —
+        a comment between two functions attributes to the following def.
+        """
+        # Inside: smallest enclosing target-kind entity.
+        idx = bisect.bisect_right(sorted_starts, comment.start_byte) - 1
+        best: Entity | None = None
+        while idx >= 0:
+            ent = sorted_ents[idx]
+            if (
+                ent.type in _RATIONALE_TARGET_TYPES
+                and ent.id != comment.id
+                and ent.start_byte <= comment.start_byte
+                and comment.end_byte <= ent.end_byte
+            ):
+                if best is None or (
+                    ent.end_byte - ent.start_byte < best.end_byte - best.start_byte
+                ):
+                    best = ent
+            if best and ent.start_byte < best.start_byte:
+                break
+            idx -= 1
+        if best is not None:
+            return best.id
+
+        # Preceding: first following target-kind entity, attachable gap only.
+        # The gap ends at the START OF THE LINE containing the definition so
+        # leading modifiers (`export`, `pub`, `async`, `public static`) do not
+        # count as intervening code.
+        nxt = bisect.bisect_left(sorted_starts, comment.end_byte)
+        while nxt < len(sorted_ents):
+            ent = sorted_ents[nxt]
+            if ent.type in _RATIONALE_TARGET_TYPES:
+                line_start = source.rfind(b"\n", 0, ent.start_byte) + 1
+                if self._rationale_gap_is_attachable(
+                    source, comment.end_byte, line_start
+                ):
+                    return ent.id
+                return None
+            nxt += 1
+        return None
+
+    def _rationale_gap_is_attachable(
+        self, source: bytes, gap_start: int, gap_end: int
+    ) -> bool:
+        """True when only blank lines, comment lines, or decorators/annotations
+        sit between a marker comment and the following definition."""
+        gap = source[gap_start:gap_end].decode("utf-8", errors="replace")
+        line_prefixes = _LINE_COMMENT_PREFIXES.get(self._language_name, ())
+        block_pairs = _BLOCK_COMMENT_PAIRS.get(self._language_name, ())
+        block_openers = tuple(o for o, _ in block_pairs)
+        block_closers = tuple(c for _o, c in block_pairs)
+        for line in gap.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if line_prefixes and stripped.startswith(line_prefixes):
+                continue
+            if block_openers and stripped.startswith(block_openers):
+                continue
+            # Comment-tail lines: `* continuation` or a bare block closer —
+            # a truncated marker end_byte (root_node=None fallback) can leave
+            # the comment's remaining lines inside the gap.
+            if re.fullmatch(r"\*+\s.*", stripped) or stripped in block_closers:
+                continue
+            if stripped.startswith("@"):  # decorator / annotation
+                continue
+            return False
+        return True
 
     def _determine_symbol_role(self, cap_name: str, node: Node) -> SymbolRole:
         """Process tree-sitter capture and return symbol role."""

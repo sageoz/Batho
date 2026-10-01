@@ -73,7 +73,9 @@ def test_iter_reexport_files_dispatch():
 
 
 def test_package_prefixes_src_layout():
-    assert package_prefixes(["src", "pkg"], "rust") == [
+    # Variants are evidence-derived (package_roots.py); callers pass them in —
+    # nothing inside package_prefixes guesses layout by directory name.
+    assert package_prefixes(["src", "pkg"], "rust", variants=[["pkg"]]) == [
         "src.pkg", "pkg", "crate.pkg"
     ]
     assert package_prefixes(["pkg"], "python") == ["pkg"]
@@ -210,6 +212,36 @@ def test_rust_module_reexport():
     n = reexports.reexports_rust("pub use self::sub;\n", ["pk"], ["pk"], scope)
     assert n == 1
     assert scope.aliases["pk.sub"].symbol_id == "id.pk.sub/"
+
+
+def test_rust_use_prefers_crate_root_over_sibling():
+    """`use foo::Bar` is crate-root-absolute in Rust 2018 — a sibling `foo`
+    module under the file's own package must not shadow the crate-root
+    `foo` (4c6190430471). `crate.b` in prefixes encodes the manifest-derived
+    root (`a`), so `foo.Bar` (the root-relative spelling members register
+    under) is tried before same-dir `a.b.foo.Bar`."""
+    scope = FakeScope()
+    _seed(scope, "a.b.foo", {"Bar": "id.sibling.Bar#"})  # same-dir decoy
+    _seed(scope, "foo", {"Bar": "id.root.Bar#"})         # crate-root module
+    n = reexports.reexports_rust(
+        "pub use foo::Bar;\n", ["a", "b"], ["a.b", "b", "crate.b"], scope
+    )
+    assert n == 1
+    assert scope.aliases["a.b.Bar"].symbol_id == "id.root.Bar#"
+
+
+def test_rust_use_crate_prefix_prefers_root_file_path_spelling():
+    """`crate::foo::Bar` in a nested mod.rs resolves via the evidence-derived
+    crate root (`a` — from the `crate.b` prefix), not a same-package `foo`
+    sibling (4c6190430471)."""
+    scope = FakeScope()
+    _seed(scope, "a.b.foo", {"Bar": "id.sibling.Bar#"})  # same-dir decoy
+    _seed(scope, "a.foo", {"Bar": "id.root.Bar#"})       # root, file-path spelling
+    n = reexports.reexports_rust(
+        "pub use crate::foo::Bar;\n", ["a", "b"], ["a.b", "b", "crate.b"], scope
+    )
+    assert n == 1
+    assert scope.aliases["a.b.Bar"].symbol_id == "id.root.Bar#"
 
 
 # ---------------------------------------------------------------------------
@@ -473,3 +505,90 @@ def test_index_dts_module_id_and_barrel_aliases(tmp_path):
     n = register_package_reexports(scope, file_parts)
     assert n == 1
     assert scope.resolve_symbol("pkg.Foo").symbol_id == "id.Foo"
+
+
+def test_rust_crate_alias_prefers_callers_crate_in_workspace():
+    """GRH-04: in a two-crate workspace, `crate::util::helper` inside crate
+    `b` must bind to b's util — the shared literal `crate.` namespace must
+    not shadow the caller's own crate-root spelling."""
+    from batho.modules.graph.builder.reexports import _rust_base_candidates
+
+    # Caller: b/src/lib.rs — parts are the file's module path; `crate.<v>`
+    # prefixes encode v = the file's spelling below the crate root, so for
+    # `crate.lib` the root is parts[:3-1] = ["b", "src"] and `crate::util`
+    # anchors at the caller's own crate: ["b", "src", "util"].
+    cands = _rust_base_candidates(
+        ["crate", "util"],
+        ["b", "src", "lib"],
+        ["b.src.lib", "lib", "crate.lib"],
+    )
+    # The caller-crate spelling `b.src.util` must precede the shared
+    # literal `crate.util` (a global last-write-wins namespace that can
+    # point at the OTHER crate's same-named module).
+    assert cands[0] == ["b", "src", "util"]
+    assert ["crate", "util"] in cands
+    assert cands.index(["b", "src", "util"]) < cands.index(["crate", "util"])
+
+
+def test_rust_crate_stub_resolves_callers_crate(tmp_path):
+    """GRH-04 end-to-end: a `crate.util.helper` stub in b/src/main.rs must
+    resolve to b's member even though `crate.util` is globally bound to
+    crate a's module (last-write-wins)."""
+    import tempfile
+    from batho.modules.graph.builder.codegraph import (
+        CodeGraphIndexer, InMemoryGraph,
+    )
+    from batho.modules.extraction.scope_manager import ScopeManager
+    from batho.core.schemas import Entity, EntityType
+
+    indexer = CodeGraphIndexer(
+        cache_path=str(tmp_path / "c"), root=str(tmp_path)
+    )
+    graph = InMemoryGraph()
+    sm = ScopeManager()
+
+    def _ent(name, etype, file, line=1):
+        return Entity(
+            type=etype, name=name, file=file, start_line=line, end_line=line,
+            metadata={},
+            id_override=f"batho test pkg 1.0.0 {file}/{name}#{line}",
+        )
+
+    # Crate a: a/src/util.rs with member `help`; crate b same layout.
+    a_mod = _ent("util", EntityType.MODULE, "a/src/util.rs")
+    a_help = _ent("util.help", EntityType.FUNCTION, "a/src/util.rs", 5)
+    b_mod = _ent("util", EntityType.MODULE, "b/src/util.rs")
+    b_help = _ent("util.help", EntityType.FUNCTION, "b/src/util.rs", 5)
+    for e in (a_mod, a_help, b_mod, b_help):
+        graph.add_entity(e)
+    sm.define_symbol("a.src.util", a_mod.id, "MODULE", is_global=True)
+    sm.define_symbol("a.src.util.help", a_help.id, "FUNCTION", is_global=True)
+    sm.define_symbol("b.src.util", b_mod.id, "MODULE", is_global=True)
+    sm.define_symbol("b.src.util.help", b_help.id, "FUNCTION", is_global=True)
+    # The shared `crate.util` namespace: crate a won the write.
+    sm.define_symbol("crate.util", a_mod.id, "MODULE", is_global=True)
+    sm.define_symbol("crate.util.help", a_help.id, "FUNCTION", is_global=True)
+
+    caller_scope = "batho test pkg 1.0.0 b/src/main.rs#main"
+    stub = Entity(
+        type=EntityType.EXTERNAL_SYMBOL, name="crate.util.help",
+        file=str(tmp_path / "b" / "src" / "main.rs"),
+        start_line=3, end_line=3,
+        metadata={
+            "reference_type": "calls",
+            "resolution_reason": "contextual_stub",
+            "stub_resolution_state": "pending",
+            "caller_scope": caller_scope,
+            "target_name": "crate.util.help",
+            "receiver_var": None,
+        },
+        id_override=f"unresolved:{caller_scope}@3::crate.util.help",
+    )
+    graph.add_entity(stub)
+
+    info, strategy = indexer._resolve_single_stub(stub, graph, sm)
+    assert info is not None, "crate:: ref stayed unresolved"
+    assert info.symbol_id == b_help.id, (
+        f"crate:: edge left the caller's crate: {info.symbol_id}"
+    )
+    indexer.close()

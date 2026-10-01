@@ -90,8 +90,15 @@ class IndexerConfig(BaseModel):
     ignore_patterns: list[str] = Field(default_factory=list)
     ignore_files: list[str] | None = Field(default=None)
     default_patterns_file: str | None = Field(default=None)
+    ignore_defaults: bool = Field(default=True)
+    package_roots: list[str] = Field(default_factory=list)
     fail_on_warning: bool = Field(default=False)
     strict: bool = Field(default=False)
+    # True = SHA-256 every tracked file on every patch; False enables the
+    # mtime/inode/size fast-path in IncrementalEngine.scan_changes.
+    strict_hashing: bool = Field(default=False)
+    # Cap on file_changelog rows retained per file across patch runs.
+    file_changelog_max_runs: int = Field(default=100, ge=1)
 
 
 class GraphCycleDetectionConfig(BaseModel):
@@ -137,10 +144,61 @@ class GraphConfig(BaseModel):
     )
 
 
+class CommunityLLMConfig(BaseModel):
+    """T16: `batho communities label` — optional post-build LLM labeling."""
+    enabled: bool = Field(default=False)
+    provider: str = Field(default="anthropic")
+    model: str = Field(default="claude-haiku-4-5-20251001")
+    # Cap on card content (~200 tokens ≈ ~800 chars target).
+    max_card_tokens: int = Field(default=200, ge=50)
+
+
 class CommunityDetectionConfig(BaseModel):
     enabled: bool = Field(default=True)
     skip_threshold: int = Field(default=200_000, ge=1)
     sample_threshold: int = Field(default=100_000, ge=1)
+    # T4: per-kind edge weights for clustering input; a weight of 0 excludes
+    # the kind entirely (CONTAINS encodes file layout, not coupling).
+    # Combined with call-site multiplicity × edge confidence per pair.
+    edge_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "CALLS": 3.0,
+            "INHERITS": 3.0,
+            "IMPLEMENTS": 3.0,
+            "IMPORTS": 2.0,
+            "READS": 1.0,
+            "WRITES": 1.0,
+            "CONTAINS": 0.0,
+        }
+    )
+    # Communities smaller than this merge into their strongest neighbor;
+    # unmergeable ones are flagged is_singleton and hidden from overview.
+    min_community_entities: int = Field(default=3, ge=1)
+    # A community larger than this fraction of clustered entities is split by
+    # a recursive clustering pass on its induced subgraph (depth cap 2).
+    max_community_fraction: float = Field(default=0.25, gt=0, le=1.0)
+    # Entities above this degree percentile are dropped before detection
+    # (god-nodes like utils/loggers) and reattached to the neighboring
+    # community with maximum shared edge weight.
+    superhub_degree_percentile: float = Field(default=99.0, ge=50.0, le=100.0)
+    # Directory names too generic to label a community (labeling tier 1).
+    generic_dir_blocklist: list[str] = Field(
+        default_factory=lambda: [
+            "src", "lib", "app", "core", "utils", "common",
+            "shared", "helpers", "test", "tests",
+        ]
+    )
+    # graph_overview shows the top-N communities by entity count.
+    overview_top_n: int = Field(default=12, ge=1)
+    # T15: optional L0 domain tier — entities are pre-grouped by dominant
+    # bsg.* metadata (bsg.domain → bsg.service_tag → bsg.category priority,
+    # untagged → "(untagged)") and structural clustering runs within each
+    # domain group, producing domain → community → sub-community trees.
+    domain_grouping: bool = Field(default=False)
+    # T16: optional post-build LLM labeler (`batho communities label`).
+    # Disabled by default — never runs in the query path; labels persist to
+    # communities.ipc so later reads are deterministic and LLM-free.
+    llm: CommunityLLMConfig = Field(default_factory=lambda: CommunityLLMConfig())
 
 
 class MemoryConfig(BaseModel):
@@ -196,6 +254,7 @@ class RulesConfig(BaseModel):
     )
     disabled_rules: list[str] = Field(default_factory=list)
     custom_rules_path: str | None = Field(default=None)
+    custom_rules_dir: str | None = Field(default=".batho/plugins")
     custom_rules_inline: list[dict[str, Any]] = Field(default_factory=list)
     strict_validation: bool = Field(default=False)
     cache_ttl: int = Field(default=3600, ge=0)
@@ -219,6 +278,9 @@ class RunArtifactBlobsConfig(BaseModel):
     security_audit: bool = Field(default=False)
     artifact_payload: bool = Field(default=True)
     delta_stats: bool = Field(default=True)
+    rule_stats: bool = Field(default=True)
+    enrich_profile: bool = Field(default=True)
+    enrich_score: bool = Field(default=True)
 
 
 class ArtifactBlobsConfig(BaseModel):
@@ -349,6 +411,62 @@ class ExtractionConfig(BaseModel):
     # TYPE_PARAMETER are opt-in to avoid entity count inflation.
     extract_parameters: bool = Field(default=False)
     extract_type_parameters: bool = Field(default=False)
+    # T5 rationale layer: comment markers that promote a standalone comment to
+    # a first-class COMMENT_BLOCK entity with a RATIONALE_FOR edge. An
+    # explicit empty list disables the marker layer entirely; null/unset
+    # keeps the defaults.
+    rationale_markers: list[str] = Field(
+        default_factory=lambda: ["WHY:", "NOTE:"]
+    )
+    rationale_markers_case_sensitive: bool = Field(default=True)
+
+
+class WatchConfig(BaseModel):
+    """File-watcher / auto-patch tuning for the MCP watcher engine.
+
+    ``mode``: ``auto`` enables the git sentinel layer when the repo resolves a
+    git dir (falls back to file events otherwise); ``fs`` = file events only;
+    ``off`` = track state for staleness banners but never auto-patch.
+    """
+
+    mode: Literal["auto", "fs", "off"] = Field(default="auto")
+    max_staleness_ms: int = Field(default=60_000)
+    flush_threshold: int = Field(default=300)
+    git_settle_ms: int = Field(default=300)
+    vcs_op_hold_ms: int = Field(default=30_000)
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _normalize_mode(cls, value: Any) -> str:
+        if value not in {"auto", "fs", "off"}:
+            raise ValueError("watch.mode must be 'auto', 'fs', or 'off'")
+        return value
+
+    @field_validator("max_staleness_ms")
+    @classmethod
+    def _clamp_staleness(cls, value: int) -> int:
+        return max(5_000, min(600_000, int(value)))
+
+    @field_validator("flush_threshold")
+    @classmethod
+    def _clamp_threshold(cls, value: int) -> int:
+        return max(10, min(100_000, int(value)))
+
+    @field_validator("git_settle_ms")
+    @classmethod
+    def _clamp_settle(cls, value: int) -> int:
+        return max(50, min(5_000, int(value)))
+
+    @field_validator("vcs_op_hold_ms")
+    @classmethod
+    def _clamp_hold(cls, value: int) -> int:
+        return max(1_000, min(300_000, int(value)))
+
+
+class SkillsConfig(BaseModel):
+    """Agent skill-pack management (``batho skills`` + auto-sync on ``batho mcp``)."""
+
+    auto_install: bool = Field(default=True)
 
 
 class Config(BaseModel):
@@ -357,6 +475,7 @@ class Config(BaseModel):
     progress: ProgressConfig = Field(default_factory=ProgressConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     indexer: IndexerConfig = Field(default_factory=IndexerConfig)
+    watch: WatchConfig = Field(default_factory=WatchConfig)
     graph: GraphConfig = Field(default_factory=GraphConfig)
     flags: FlagsConfig = Field(default_factory=FlagsConfig)
     mcp: McpConfig = Field(default_factory=McpConfig)
@@ -373,6 +492,7 @@ class Config(BaseModel):
     community_detection: CommunityDetectionConfig = Field(
         default_factory=CommunityDetectionConfig
     )
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
     @field_validator("logging")
     @classmethod

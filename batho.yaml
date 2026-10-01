@@ -70,6 +70,7 @@ rules:
   - bsg_auth_boundary_shield
   disabled_rules: []
   custom_rules_path: null
+  custom_rules_dir: null      # e.g. .batho/plugins — loads every *.yaml/*.yml plugin in the dir
   custom_rules_inline: []
   strict_validation: false
   cache_ttl: 3600

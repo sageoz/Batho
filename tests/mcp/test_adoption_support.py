@@ -279,5 +279,6 @@ def test_instructions_mention_skill_pack_flow():
     assert "batho-specs" in INSTRUCTIONS
     assert "batho-execute" in INSTRUCTIONS
     assert "batho-review" in INSTRUCTIONS
+    assert "batho install" in INSTRUCTIONS
     # ≤500 tokens (rough proxy: 4 chars/token)
     assert len(INSTRUCTIONS) < 500 * 4 * 2  # generous bound

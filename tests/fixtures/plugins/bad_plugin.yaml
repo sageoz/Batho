@@ -1,0 +1,14 @@
+schema_version: not-a-real-schema
+plugin_id: bad_plugin
+name: Bad Plugin
+version: 1.0.0
+enabled: true
+rules:
+  - rule_id: bad-rule
+    name: bad-rule
+    matchers:
+      regex_patterns:
+        - pattern: "[unclosed("
+    actions:
+      metadata:
+        bsg.domain: demo

@@ -273,7 +273,7 @@ def _estimate_batch_size_bytes(batch_item: dict) -> int:
 def run_patch(options: PatchOptions) -> PatchResult:
     """Incremental patch of an existing .batho artifact bundle."""
     from batho.modules.storage.arrow_bundle import resolve_bundle_dir, get_bundle
-    from batho.modules.storage.arrow_bundle.incremental import IncrementalEngine, FileChangeType, FileChange
+    from batho.modules.storage.arrow_bundle.incremental import IncrementalEngine, FileChangeType
 
     t0 = time.monotonic()
     root = options.root.resolve()
@@ -297,6 +297,13 @@ def run_patch(options: PatchOptions) -> PatchResult:
         )
 
     set_active_root(root)
+    # Package boundaries can move between runs (new/removed __init__.py,
+    # manifest edits) — reset process-global extraction caches up front so
+    # no consumer can be skipped by a scope-load failure downstream.
+    from batho.modules.extraction.package_roots import (
+        reset_caches as _reset_package_roots,
+    )
+    _reset_package_roots()
     bundle_dir = resolve_bundle_dir(root)
     meta_path = bundle_dir / "meta.json"
 
@@ -357,7 +364,20 @@ def run_patch(options: PatchOptions) -> PatchResult:
         max_file_size_kb = options.max_file_size_kb or cfg.get("indexer", {}).get("max_file_size_kb", 500)
 
         # --- Detect changes natively (Batho's Local Git Model) ---
-        strict_hashing = bool(cfg.get("indexer", {}).get("strict_hashing", True))
+        strict_hashing = bool(cfg.get("indexer", {}).get("strict_hashing", False))
+
+        # Change detection must see the same files the build indexes: honor
+        # indexer.ignore_defaults / ignore_patterns / ignore_files /
+        # default_patterns_file, mirroring the build's load_ignore_spec call.
+        from batho.utils.ignore import load_ignore_spec
+        indexer_cfg = cfg.get("indexer", {})
+        patch_ignore_spec = load_ignore_spec(
+            root,
+            extra_patterns=indexer_cfg.get("ignore_patterns"),
+            ignore_files=indexer_cfg.get("ignore_files"),
+            default_patterns_file=indexer_cfg.get("default_patterns_file"),
+            use_defaults=indexer_cfg.get("ignore_defaults", True),
+        )
 
         incremental_engine = IncrementalEngine(db, base_run_uuid)
         ph_detect = progress_engine.open_phase("detect", unit="changes")
@@ -365,6 +385,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
             root=root,
             max_file_size_kb=max_file_size_kb,
             strict_hashing=strict_hashing,
+            ignore_spec=patch_ignore_spec,
         )
         ph_detect.close()
 
@@ -564,7 +585,6 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 LOGGER.warning("project_scope_load_failed", error=str(exc))
 
             from batho.modules.graph.builder.codegraph import CodeGraphIndexer
-            from batho.modules.storage.arrow_bundle.helpers import _minify_graph_payload
             from collections import defaultdict
 
             with CodeGraphIndexer(
@@ -960,29 +980,13 @@ def run_patch(options: PatchOptions) -> PatchResult:
             "churn_pct": churn_pct,
             "base_run_uuid": base_run_uuid or None,
         }
-        
-        artifact_blobs_cfg = cfg.get("artifact_blobs", {})
-
-        db.finalize_run_artifacts(
-            run_internal_id,
-            artifacts={
-                "context_overview": metrics["context_overview"],
-                "telemetry_metrics": telemetry,
-                "structural_metrics": metrics["structural_metrics"],
-                "security_audit": {
-                    "schema_version": "interception-stats.v1",
-                    "plugins": {},
-                },
-                "artifact_payload": metrics["artifact_payload"],
-                "delta_stats": delta_stats,
-            },
-            blob_config=artifact_blobs_cfg
-        )
 
         store.cleanup_streams()
         delta_store.cleanup_streams()
 
         # --- Rebuild communities from updated graph ---
+        # Runs BEFORE the enrich collect so the gap profile's community
+        # stats reflect this run, not the previous one.
         community_cfg = cfg.get("community_detection", {})
         if community_cfg.get("enabled", True):
             try:
@@ -1013,11 +1017,30 @@ def run_patch(options: PatchOptions) -> PatchResult:
                             # T13: unknown types fall back to EXTERNAL_SYMBOL
                             # (UNRESOLVED is deprecated).
                             etype = EntityType.EXTERNAL_SYMBOL
+                        # Rehydrate the persisted metadata projection (bsg.*
+                        # keys: quarantine flags, domain/service_tag/category)
+                        # plus signature — without it the quarantine filter,
+                        # domain_grouping tier, and label-card hashes silently
+                        # degrade on the patch path.
+                        try:
+                            _meta = json.loads(row.get("metadata_json") or "") or {}
+                        except (TypeError, ValueError):
+                            _meta = {}
+                        _rel = file_id_to_path.get(row.get("file_id", -1), "")
                         entities[eid] = SimpleNamespace(
                             id=eid,
                             name=row.get("name", ""),
-                            file=file_id_to_path.get(row.get("file_id", -1), ""),
+                            # Absolute path — matches _load_graph_from_artifact
+                            # (root / rel).resolve() and the extractor's entity
+                            # file field. Community cards derive file_paths and
+                            # dominant_dirs from ent.file; a relative path would
+                            # change both and break label carry-forward digests.
+                            file=str((root / _rel).resolve()) if _rel else "",
                             type=etype,
+                            signature=row.get("signature"),
+                            fqn=row.get("fqn"),
+                            is_exported=row.get("is_exported", False),
+                            metadata=_meta,
                         )
 
                 relationships: list[Any] = []
@@ -1036,14 +1059,39 @@ def run_patch(options: PatchOptions) -> PatchResult:
                             source_id=row.get("source_id", ""),
                             target_id=row.get("target_id", ""),
                             type=rtype,
+                            confidence=row.get("confidence"),
                         ))
 
                 graph = InMemoryGraph(entities=entities, relationships=relationships)
                 communities = detect_communities(graph, community_cfg)
                 comm_rows = communities_to_rows(communities)
+
+                # Rebuilds produce fresh rows with empty llm_* columns —
+                # carry forward prior labels whose card input is unchanged
+                # (keyed on card_input_hash, not detection-order community_id)
+                # so a patch can't erase paid labels or the incremental
+                # re-label gate. Reads the PRE-rebuild file before replace().
+                final_comm_path = bundle_dir / "communities.ipc"
+                try:
+                    from batho.modules.graph.community_labels import carry_forward_labels
+                    from batho.modules.storage.arrow_bundle.writer import read_ipc_table
+                    _prev_rows = (
+                        read_ipc_table(final_comm_path).to_pylist()
+                        if final_comm_path.exists() else []
+                    )
+                    _max_card = int(
+                        (community_cfg.get("llm") or {}).get("max_card_tokens", 200)
+                    )
+                    _carried = carry_forward_labels(
+                        comm_rows, _prev_rows, graph, _max_card
+                    )
+                    if _carried:
+                        LOGGER.info("community_labels_carried", carried=_carried)
+                except Exception as exc:
+                    LOGGER.warning("community_labels_carry_failed", error=str(exc))
+
                 comm_path = bundle_dir / "communities.tmp.ipc"
                 write_simple_ipc(comm_rows, COMMUNITIES_SCHEMA, comm_path)
-                final_comm_path = bundle_dir / "communities.ipc"
                 comm_path.replace(final_comm_path)
                 db.register_simple_file("communities", final_comm_path.name)
                 comm_duration_ms = (time.monotonic() - t_comm_0) * 1000
@@ -1054,6 +1102,62 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 )
             except Exception as exc:
                 LOGGER.warning("community_detection_rebuild_failed", error=str(exc))
+
+        artifact_blobs_cfg = cfg.get("artifact_blobs", {})
+
+        # T05: rule-stats.v1 payload — per-rule telemetry for longitudinal
+        # fitness scoring; null when rules disabled.
+        _rules_section = (getattr(indexer, "build_stats", {}) or {}).get("rules") or {}
+        _rule_stats_payload = _rules_section.get("rule_stats_payload")
+        if _rule_stats_payload:
+            _rule_stats_payload = {**_rule_stats_payload, "run_kind": "patch"}
+
+        # Security audit: reuse the interception stats merged during worker
+        # extraction (same source build uses); empty skeleton when rules are
+        # disabled so the column shape stays stable. run_kind/scope mark the
+        # payload as delta-scoped so consumers can distinguish a whole-repo
+        # audit (build) from a changed-files audit (patch).
+        _security_audit = {
+            **(
+                _rules_section.get("security_audit")
+                or {"schema_version": "interception-stats.v1", "plugins": {}}
+            ),
+            "run_kind": "patch",
+            "scope": "delta",
+        }
+
+        # enrich_profile + enrich_score — refreshed each patch so reports
+        # and scoring reflect the latest graph (best-effort).
+        from batho.modules.enrich import (
+            collect_enrich_artifacts,
+            write_enrich_reports,
+        )
+        _enrich = collect_enrich_artifacts(
+            db, run_internal_id, run_uuid, root,
+            rule_stats_payload=_rule_stats_payload,
+            entity_count=total_entities,
+        )
+
+        db.finalize_run_artifacts(
+            run_internal_id,
+            artifacts={
+                "context_overview": metrics["context_overview"],
+                "telemetry_metrics": telemetry,
+                "structural_metrics": metrics["structural_metrics"],
+                "security_audit": _security_audit,
+                "artifact_payload": metrics["artifact_payload"],
+                "delta_stats": delta_stats,
+                "rule_stats": _rule_stats_payload,
+                **_enrich,
+            },
+            blob_config=artifact_blobs_cfg
+        )
+        write_enrich_reports(
+            root,
+            profile=_enrich.get("enrich_profile"),
+            score=_enrich.get("enrich_score"),
+            context_overview=metrics.get("context_overview"),
+        )
 
         LOGGER.info(
             "patch_complete",

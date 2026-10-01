@@ -20,7 +20,7 @@ Batho works out of the box with zero config. For production use, configure with 
 The `batho.yaml` config is structured into the following sections:
 
 ### 1. `schema_version`
-String identifier for configuration schema compatibility. For v1.4.2, this is `"batho-config.v1"`.
+String identifier for configuration schema compatibility. As of v1.4.3, this is `"batho-config.v1"`.
 
 ### 2. `logging`
 Controls process-wide logging and CLI verbosity behavior.
@@ -43,6 +43,8 @@ Controls indexing limits and warning/strict levels.
 - `ignore_patterns`: List of gitignore-style glob patterns.
 - `ignore_files`: Custom ignore files path.
 - `default_patterns_file`: Custom patterns file path.
+- `ignore_defaults`: Whether built-in default ignore patterns apply (default: `true`). Covers lockfiles, `node_modules/`, build artifacts, sourcemaps/minified bundles, and agent-tool output dirs (`graphify-out/`, `.cursor/`, `.claude/`, `.devin/`, `.specs/`, …). Set to `false` only for exotic repos — `ignore_patterns` and `.gitignore` still apply. Build, `batho patch` change detection, and watch mode all honor this flag, and build logs `ignore_skip_breakdown` (INFO) with the defaults-vs-user skip counts.
+- `package_roots`: Extra import-root directories (default: `[]`). Batho normally derives a file's import namespace from repo evidence — `__init__.py` marker chains, `pyproject.toml`/`setup.cfg`/`Cargo.toml`/`go.mod`/`tsconfig*.json` (`paths`, `baseUrl`) — so `backend/app/…` imported as `app.…` resolves with no configuration. Use this list only for layouts no evidence describes (e.g. `sys.path` manipulation at runtime): `package_roots: ["backend"]` makes `backend/` an import root.
 - `fail_on_warning`: Treat indexing warnings as failure.
 - `strict`: Parse strictly, treating warnings as errors.
 - `strict_hashing`: When `true`, force SHA-256 content hashing on every tracked file during patch change detection. When `false` (default), skip hashing when `mtime`+`inode`+`size` all match (fast-path).
@@ -96,9 +98,12 @@ Fine-grained control over database size. Disable unused blobs to conserve disk s
   - `context_overview`: Metadata summary.
   - `telemetry_metrics`: Timing and counts.
   - `structural_metrics`: LOC, fan-in/out, etc.
-  - `security_audit`: Security rule violations.
+  - `security_audit`: Security rule violations (default `false` — opt in to persist).
   - `artifact_payload`: Minified LLM injection payload.
   - `delta_stats`: Churn and node diffs.
+  - `rule_stats`: Per-rule match/edge stats from the rules engine.
+  - `enrich_profile`: Enrichment profile report.
+  - `enrich_score`: Enrichment score payload.
 
 ### 9. `rules`
 Configures the BSG rule plugins engine.
@@ -107,6 +112,7 @@ Configures the BSG rule plugins engine.
 - `builtin_plugins`: List of built-in plugins to run.
 - `disabled_rules`: List of rules to explicitly disable.
 - `custom_rules_path`: Path to an external YAML file with custom rules.
+- `custom_rules_dir`: Directory of `*.yaml`/`*.yml` plugin files loaded as custom rules (default `.batho/plugins`; each file is fingerprinted individually).
 - `custom_rules_inline`: List of inline custom rules.
 - `strict_validation`: Fail if a rule is invalid.
 - `cache_ttl`: Cache time-to-live for rule evaluations.
@@ -143,14 +149,28 @@ Configures the AST parser cache and opt-in entity extraction.
   - `enabled`: Cache parsed AST structures.
   - `ttl_days`: Expiry for AST entries.
   - `max_entries`: Max files in the cache.
-- `extract_parameters`: Extract function/method parameters as `PARAMETER` entities (default: `false`). Enabling this can significantly increase entity counts.
+- `extract_parameters`: Extract function/method parameters as `PARAMETER` entities (default: `false`). Enabling this can significantly increase entity counts. Note: parameter *type annotations* and return types are always captured in the stored signature regardless of this flag — receiver-type resolution (`svc: GraphService = Depends(...)`, `svc = get_svc()` assignment flow) does not require `extract_parameters: true`.
 - `extract_type_parameters`: Extract generic type parameters (T, K, V) as `TYPE_PARAMETER` entities (default: `false`). Enabling this can significantly increase entity counts.
+- `rationale_markers`: Comment prefixes that promote a standalone comment into a first-class `COMMENT_BLOCK` entity with a `RATIONALE_FOR` edge to the entity it annotates (default: `["WHY:", "NOTE:"]`).
+- `rationale_markers_case_sensitive`: Whether `rationale_markers` matching is case-sensitive (default: `true`). Set `false` to also match `why:`, `note:`, etc.
 
 ### 13. `community_detection`
-Configures graph clustering and community detection algorithms.
+Configures greedy modularity clustering (networkx) for community detection.
 - `enabled`: Enable community detection (`true`).
 - `skip_threshold`: Skip detection if node count exceeds this (`200000`).
 - `sample_threshold`: Sample graph if node count exceeds this (`100000`).
+- `edge_weights`: Per-relationship-kind weights for clustering input (`CALLS`/`INHERITS`/`IMPLEMENTS` 3, `IMPORTS` 2, `READS`/`WRITES` 1, `CONTAINS` 0). A weight of `0` excludes the kind; effective edge weight = kind weight × call-site multiplicity × edge confidence.
+- `min_community_entities`: Communities smaller than this merge into their strongest neighbor; unmergeable ones are flagged `is_singleton` and hidden from overview (`3`).
+- `max_community_fraction`: Communities exceeding this fraction of clustered entities are re-clustered on their induced subgraph (`0.25`).
+- `superhub_degree_percentile`: Entities above this degree percentile are dropped before detection and reattached afterward (`99`).
+- `generic_dir_blocklist`: Directory names too generic for community labels (`src, lib, app, core, utils, common, shared, helpers, test, tests`).
+- `overview_top_n`: Number of communities shown in `graph_overview` (`12`).
+- `domain_grouping`: When `true` (default `false`), entities are pre-grouped by dominant `bsg.*` metadata (`bsg.domain` → `bsg.service_tag` → `bsg.category`, untagged → `(untagged)`) and clustering runs within each domain group, producing domain → community → sub-community trees.
+- `llm`: Optional post-build LLM labeler used by `batho communities label`. Disabled by default; never runs in the query path — labels persist to `communities.ipc` so later reads are deterministic and LLM-free.
+  - `enabled`: Enable LLM labeling (default `false`).
+  - `provider`: LLM provider (default `anthropic`).
+  - `model`: Labeling model (default `claude-haiku-4-5-20251001`).
+  - `max_card_tokens`: Cap on community-card content sent to the LLM (default `200`; ~200 tokens ≈ ~800 chars).
 
 ### 14. `memory`
 Configures memory usage limits and warnings.
@@ -204,6 +224,38 @@ project:
     version: 1.0.0
 ```
 
+### 19. `watch`
+Tuning for the MCP watcher engine's auto-patch triggers. Per-repo overrides live in
+`~/.batho/mcp-repos.json` via `add_repo(name, path, watch=True, watch_mode=..., ...)`.
+- `mode`: `auto` (default) adds a git-sentinel trigger layer when the repo resolves a
+  git dir — writes to `index`, `HEAD`, `refs/` (stage/commit/checkout/merge) flush the
+  pending queue after a short settle delay — falling back to file events in non-git
+  repos. `fs` = file events only. `off` = pending state is still tracked for staleness
+  banners, but nothing auto-patches.
+- `max_staleness_ms`: Hard bound — pending changes flush within this window even when
+  edits never stop (`60000`, range `5000`–`600000`). Fixes debounce starvation during
+  long agent sessions.
+- `flush_threshold`: Flush immediately once this many files are pending (`300`).
+- `git_settle_ms`: Settle delay after a git boundary event before flushing (`300`).
+- `vcs_op_hold_ms`: While `index.lock` or an in-progress sentinel (`rebase-merge/`,
+  `MERGE_HEAD`, `sequencer/` …) exists, flushes are deferred — capped at this duration
+  so a stale lock after a crash can't block patching forever (`30000`).
+
+While a git operation is mid-flight, `batho_status` reports
+`Git operation in progress — re-index deferred`, and query banners show pending file
+counts and oldest-pending age.
+
+### 20. `skills`
+Agent skill-pack management (`batho install` + auto-sync on `batho mcp` start).
+- `auto_install`: When `true` (default), `batho mcp` installs/refreshes the skill
+  pack on start when it's missing or version-drifted. Set to `false` to opt out —
+  e.g. enterprise/CI environments that must not fetch from the network.
+  `BATHO_NO_SKILL_SYNC=1` also disables sync regardless of this setting.
+
+> **Note:** Unknown top-level sections in `batho.yaml` are ignored during
+> validation — a `config_unknown_sections_ignored` warning is logged naming
+> them, so a misspelled section can't silently disable an intended setting.
+
 ---
 
 ## Environment Variables
@@ -219,10 +271,39 @@ Override settings on demand without changing your `batho.yaml` file:
 | `BATHO_MAX_FILE_SIZE_KB` | `500` | Max file size to parse |
 | `BATHO_MAX_INDEXED_FILES` | `200000` | Upper limit on file counts |
 | `BATHO_INDEX_WORKERS` | `0` | Workers count (0 = auto CPU count) |
-| `BATHO_PLUGINS_ENABLED` | `true` | Enable or disable rule plugins |
-| `BATHO_PLUGINS_CUSTOM_PLUGINS_PATH` | unset | Custom rules file path override |
-| `BATHO_PLUGINS_BUILTIN_PLUGINS` | config list | Comma-separated built-in plugin list |
+| `BATHO_RULES_ENABLED` | `true` | Enable or disable rule plugins |
+| `BATHO_RULES_CUSTOM_RULES_PATH` | unset | Custom rules file path override |
+| `BATHO_RULES_CUSTOM_RULES_DIR` | `.batho/plugins` | Directory of `*.yaml`/`*.yml` rule plugin files |
+| `BATHO_RULES_BUILTIN_PLUGINS` | config list | Comma-separated built-in plugin list |
+| `BATHO_RULES_DISABLED_RULES` | unset | Comma-separated rule names to disable |
+| `BATHO_RULES_STRICT_VALIDATION` | `false` | Fail if a rule definition is invalid |
+| `BATHO_RULES_FAIL_ON_RULE_ERROR` | `false` | Fail the build on rule execution error |
+| `BATHO_RULES_CACHE_TTL` | `3600` | Rules-evaluation cache TTL (seconds) |
+| `BATHO_IGNORE_PATTERNS` | unset | Comma-separated extra ignore globs |
+| `BATHO_IGNORE_FILES` | unset | Comma-separated ignore file paths |
+| `BATHO_IGNORE_DEFAULTS` | `true` | Apply the bundled default ignore patterns |
+| `BATHO_DEFAULT_PATTERNS_FILE` | unset | Override path for the default-patterns YAML |
+| `BATHO_PACKAGE_ROOTS` | unset | Comma-separated user-declared package roots |
 | `BATHO_NO_PROGRESS` | unset | `1`/`true`/`yes` disables progress bars (strict — `0` does NOT disable) |
+| `BATHO_STRICT_HASHING` | `false` | `true` forces SHA-256 hashing of every tracked file during patch change detection |
+| `BATHO_FILE_CHANGELOG_MAX_RUNS` | `100` | Cap on `file_changelog` rows retained per file |
+| `BATHO_WATCH_MODE` | `auto` | Watcher mode: `auto` (git sentinels in git repos), `fs`, `off` |
+| `BATHO_WATCH_MAX_STALENESS_MS` | `60000` | Max time pending changes may go unpatched |
+| `BATHO_WATCH_FLUSH_THRESHOLD` | `300` | Immediate flush when this many files are pending |
+| `BATHO_GRAPH_BACKEND` | `auto` | Graph storage backend: `auto`, `in-memory`, `arrow` |
+| `BATHO_COMMUNITY_DETECTION_ENABLED` | `true` | Enable community detection at build time |
+| `BATHO_COMMUNITY_DETECTION_SKIP_THRESHOLD` | `200000` | Skip detection above this node count |
+| `BATHO_COMMUNITY_DETECTION_SAMPLE_THRESHOLD` | `100000` | Sample graph above this node count |
+| `BATHO_COMMUNITY_DOMAIN_GROUPING` | `false` | Pre-group entities by `bsg.*` domain metadata before clustering |
+| `BATHO_COMMUNITY_LLM_ENABLED` | `false` | Enable LLM community labeling (`batho communities label`) |
+| `BATHO_COMMUNITY_LLM_PROVIDER` | `anthropic` | LLM provider for community labeling |
+| `BATHO_COMMUNITY_LLM_MODEL` | `claude-haiku-4-5-20251001` | LLM model for community labeling |
+| `BATHO_COMMUNITY_LLM_MAX_CARD_TOKENS` | `200` | Token cap on community cards sent to the LLM |
+| `BATHO_LLM_API_KEY` | unset | API key for the configured LLM provider |
+| `BATHO_NO_SKILL_SYNC` | unset | `1`/`true` disables skill auto-sync on `batho mcp` start |
+| `BATHO_VERSION` | unset | Pin the skill-pack release tag instead of `latest` |
+| `BATHO_MCP_TOOLS_ENABLED` | unset | Comma-separated allowlist of MCP tools to register |
+| `BATHO_MCP_TOOLS_DISABLED` | unset | Comma-separated blocklist of MCP tools |
 
 Native tqdm overrides (`TQDM_DISABLE`, `TQDM_MININTERVAL`, `TQDM_MINITERS`, ...) are also
 honored. Caution: **any non-empty `TQDM_DISABLE` value disables, including `"0"`** — prefer

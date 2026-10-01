@@ -43,11 +43,13 @@ class TestOverviewStubPattern:
         }
 
     def test_pattern_fires_on_stub_count(self):
+        # MCP-02: denominator includes quarantined stubs — 30/(100+30) = 23%.
         stats = self._stats(stub_count=30, total=100)
         md = format_summary(stats)
-        assert "External dependencies significant (30% unresolved)" in md
+        assert "External dependencies significant (23% unresolved)" in md
 
     def test_pattern_below_threshold_stays_silent(self):
+        # 10/(100+10) ≈ 9% — below the 20% threshold either way.
         stats = self._stats(stub_count=10, total=100)
         md = format_summary(stats)
         assert "External dependencies significant" not in md

@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -24,10 +25,17 @@ try:
 except Exception:  # pragma: no cover - handled by runtime error in validator init
     Draft202012Validator = None  # type: ignore[assignment]
 
-from batho.core.schemas import Entity, EntityType, Relationship, RelationshipType
+from batho.core.schemas import (
+    ANNOTATION_RELATIONS,
+    Entity,
+    EntityType,
+    Relationship,
+    RelationshipType,
+    entity_is_quarantined,
+)
 
 from batho.utils.logging import get_logger
-from batho.utils.path_sanitizer import PathSecurityError, sanitize_path
+from batho.utils.path_sanitizer import sanitize_path
 
 if TYPE_CHECKING:
     from batho.modules.graph.builder.protocol import GraphBackend
@@ -633,6 +641,24 @@ def list_builtin_plugins() -> list[str]:
     discovered = set(_discover_packaged_plugins().keys())
     discovered.update(_PLUGIN_ALIASES.keys())
     return sorted(discovered)
+
+
+def effective_rules_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Fold ``plugins.overrides`` into the rules config as ``plugins_overrides``.
+
+    Single construction site for the merge — every rules consumer (serial
+    ``_bsg_rules``, the parallel ``bsg_cfg_payload["rules"]`` passed to
+    ``extract_and_emit_parallel``, and ``plugins_apply``'s narrowed config)
+    must see the same effective config or the rules_fingerprint and loaded
+    rule set silently diverge between paths.
+    """
+    rules_cfg = cfg.get("rules", {}) if isinstance(cfg, dict) else {}
+    plugins_cfg = cfg.get("plugins", {}) if isinstance(cfg, dict) else {}
+    if isinstance(rules_cfg, dict) and isinstance(plugins_cfg, dict):
+        overrides = plugins_cfg.get("overrides")
+        if overrides:
+            rules_cfg = {**rules_cfg, "plugins_overrides": overrides}
+    return rules_cfg if isinstance(rules_cfg, dict) else {}
 
 
 def _as_str_list(value: Any, field_name: str) -> list[str]:
@@ -1574,12 +1600,17 @@ def _resolve_custom_rules_path(path_value: str, root_path: Path) -> Path:
 def _compute_source_hashes(
     builtin_plugin_paths: list[Path],
     custom_rules_path: Path | None,
+    custom_rules_dir_files: list[Path] | None = None,
 ) -> dict[str, str]:
     hashes: dict[str, str] = {}
     for path in sorted(builtin_plugin_paths, key=lambda item: item.as_posix()):
         hashes[path.as_posix()] = _hash_file(path)
     if custom_rules_path is not None:
         hashes[custom_rules_path.as_posix()] = _hash_file(custom_rules_path)
+    for path in sorted(
+        custom_rules_dir_files or [], key=lambda item: item.as_posix()
+    ):
+        hashes[path.as_posix()] = _hash_file(path)
     return hashes
 
 
@@ -1591,6 +1622,7 @@ def _rules_config_fingerprint(
         "builtin_plugins": rules_config.get("builtin_plugins"),
         "disabled_rules": rules_config.get("disabled_rules"),
         "custom_rules_path": rules_config.get("custom_rules_path"),
+        "custom_rules_dir": rules_config.get("custom_rules_dir"),
         "custom_rules_inline": rules_config.get("custom_rules_inline"),
         "strict_validation": bool(rules_config.get("strict_validation", False)),
         "plugins_overrides": rules_config.get("plugins_overrides") or {},
@@ -1922,6 +1954,8 @@ def load_effective_rules(
         "rules_disabled": 0,
         "custom_inline_count": 0,
         "custom_file_count": 0,
+        "custom_dir_files": 0,
+        "custom_dir_rule_count": 0,
         "overrides_applied": 0,
         "shadowed_rules": [],
         "errors": [],
@@ -2002,11 +2036,43 @@ def load_effective_rules(
                 f"Failed to resolve custom rule file '{custom_rules_path_value}': {exc}"
             )
 
+    custom_rules_dir: Path | None = None
+    custom_rules_dir_value = cfg.get("custom_rules_dir")
+    if custom_rules_dir_value:
+        try:
+            custom_rules_dir = _resolve_custom_rules_path(
+                str(custom_rules_dir_value), root_path
+            )
+        except Exception as exc:
+            _handle_error(
+                f"Failed to resolve custom rules directory '{custom_rules_dir_value}': {exc}"
+            )
+
+    custom_rules_dir_files: list[Path] = []
+    if custom_rules_dir is not None:
+        if custom_rules_dir.is_dir():
+            custom_rules_dir_files = sorted(
+                {
+                    path
+                    for pattern in ("*.yaml", "*.yml")
+                    for path in custom_rules_dir.glob(pattern)
+                },
+                key=lambda item: item.as_posix(),
+            )
+        elif custom_rules_dir.exists():
+            _handle_error(
+                f"rules.custom_rules_dir '{custom_rules_dir}' is not a directory"
+            )
+
+    stats["custom_dir_files"] = len(custom_rules_dir_files)
+
     source_hashes = _compute_source_hashes(
         builtin_plugin_paths=[item[2] for item in selected_plugins],
         custom_rules_path=custom_rules_path,
+        custom_rules_dir_files=custom_rules_dir_files,
     )
     config_fingerprint = _rules_config_fingerprint(cfg, source_hashes)
+    stats["rules_fingerprint"] = config_fingerprint
 
     cache_payload = _read_cache(cache_path)
     if cache_payload is not None:
@@ -2029,6 +2095,9 @@ def load_effective_rules(
     loaded_plugin_versions: dict[str, str] = {}
     loaded_plugin_schema_versions: dict[str, str] = {}
     plugin_dependencies: dict[str, list[str]] = {}
+    # plugin_id (as stamped on rules) -> source YAML path — persisted into
+    # run_artifacts.rule_stats so fitness scores attribute rules to files.
+    plugin_files: dict[str, str] = {}
 
     for alias_name, plugin_name, plugin_path in selected_plugins:
         try:
@@ -2047,6 +2116,7 @@ def load_effective_rules(
                 continue
 
             stats["builtin_plugins_loaded"] += 1
+            plugin_files[plugin_name] = plugin_path.as_posix()
             loaded_plugin_versions[plugin_name] = str(
                 plugin_doc.get("version", "1.0.0")
             )
@@ -2100,28 +2170,44 @@ def load_effective_rules(
         except Exception as exc:
             _handle_error(f"Invalid inline custom rules: {exc}")
 
+    custom_plugin_files: list[tuple[Path, str]] = []
     if custom_rules_path is not None:
+        custom_plugin_files.append((custom_rules_path, "custom_file"))
+    for path in custom_rules_dir_files:
+        # RUL-08: a custom_rules_path inside custom_rules_dir would load the
+        # same YAML twice (double stats + spurious shadowed_rules).
+        if custom_rules_path is not None and path == custom_rules_path:
+            continue
+        # RUL-07: full filename keeps same-stem .yaml/.yml pairs distinct
+        # (retry.yaml vs retry.yml) instead of colliding on the stem.
+        custom_plugin_files.append((path, f"custom_dir:{path.name}"))
+
+    for plugin_path, plugin_name in custom_plugin_files:
         try:
-            raw_data, source_text = _read_yaml_with_text(custom_rules_path)
+            raw_data, source_text = _read_yaml_with_text(plugin_path)
             plugin_doc = _normalize_plugin_document(
                 raw_data,
-                "custom_file",
-                custom_rules_path.stem,
+                plugin_name,
+                plugin_path.stem,
             )
             plugin_schema_version = str(
                 plugin_doc.get("schema_version", _SCHEMA_VERSION)
             )
             _validate_plugin_document(
                 plugin_doc,
-                custom_rules_path.as_posix(),
+                plugin_path.as_posix(),
                 source_text,
                 schema_version=plugin_schema_version,
             )
-            stats["custom_file_count"] = len(plugin_doc.get("rules", []))
+            rules_in_file = len(plugin_doc.get("rules", []))
+            stats["custom_file_count"] += rules_in_file
+            plugin_files[plugin_name] = plugin_path.as_posix()
+            if plugin_name.startswith("custom_dir:"):
+                stats["custom_dir_rule_count"] += rules_in_file
             plugin_bidirectional = bool(plugin_doc.get("bidirectional", False))
             for raw_rule in plugin_doc.get("rules", []):
                 compiled = _rule_from_plugin_rule(
-                    "custom_file",
+                    plugin_name,
                     raw_rule,
                     schema_version=plugin_schema_version,
                     plugin_bidirectional=plugin_bidirectional,
@@ -2134,15 +2220,15 @@ def load_effective_rules(
                 line_hint = int(mark.line) + 1
             if line_hint is not None:
                 _handle_error(
-                    f"Failed to parse custom rule file '{custom_rules_path}': line {line_hint}: {exc}"
+                    f"Failed to parse custom rule file '{plugin_path}': line {line_hint}: {exc}"
                 )
             else:
                 _handle_error(
-                    f"Failed to parse custom rule file '{custom_rules_path}': {exc}"
+                    f"Failed to parse custom rule file '{plugin_path}': {exc}"
                 )
         except Exception as exc:
             _handle_error(
-                f"Failed to load custom rule file '{custom_rules_path}': {exc}"
+                f"Failed to load custom rule file '{plugin_path}': {exc}"
             )
 
     rules_by_name = _apply_rule_overrides(
@@ -2174,6 +2260,7 @@ def load_effective_rules(
     )
     conflict_warnings = _detect_rule_conflicts(effective_rules)
 
+    stats["plugin_files"] = dict(sorted(plugin_files.items()))
     stats["plugin_versions"] = dict(sorted(loaded_plugin_versions.items()))
     stats["plugin_schema_versions"] = dict(
         sorted(loaded_plugin_schema_versions.items())
@@ -2211,11 +2298,14 @@ def load_effective_rules(
             "rules_disabled": stats.get("rules_disabled", 0),
             "custom_inline_count": stats.get("custom_inline_count", 0),
             "custom_file_count": stats.get("custom_file_count", 0),
+            "custom_dir_files": stats.get("custom_dir_files", 0),
+            "custom_dir_rule_count": stats.get("custom_dir_rule_count", 0),
             "overrides_applied": stats.get("overrides_applied", 0),
             "shadowed_rules": list(stats.get("shadowed_rules", [])),
             "errors": list(stats.get("errors", [])),
             "plugin_versions": dict(stats.get("plugin_versions", {})),
             "plugin_schema_versions": dict(stats.get("plugin_schema_versions", {})),
+            "plugin_files": dict(stats.get("plugin_files", {})),
             "dependency_issues": list(stats.get("dependency_issues", [])),
             "conflict_warnings": list(stats.get("conflict_warnings", [])),
         },
@@ -2231,6 +2321,30 @@ def load_effective_rules(
         )
 
     return effective_rules, stats
+
+
+def rules_fingerprint_for_config(
+    rules_config: dict[str, Any] | None,
+    root_path: Path,
+) -> str:
+    """Stable digest of the effective rules config + plugin source contents.
+
+    Used to key AST cache variants: per-file rules stamp metadata onto
+    entities before caching, so a changed rule set (plugin file edits,
+    disabled_rules, builtin_plugins, plugins.overrides, custom_rules_dir
+    contents) must produce a new variant or pre-rule entities resurface
+    from cache.
+
+    Returns "" when rules are disabled/absent or fingerprinting fails
+    (callers treat "" as "no rules dimension in the variant").
+    """
+    if not rules_config or not bool(rules_config.get("enabled", False)):
+        return ""
+    try:
+        _, stats = load_effective_rules(rules_config, Path(root_path), quiet=True)
+    except Exception:
+        return ""
+    return str(stats.get("rules_fingerprint") or "")
 
 
 def _to_relative_posix(file_path: str, root_path: Path | str) -> str:
@@ -2742,7 +2856,398 @@ def _derive_semantic_relations(graph: "GraphBackend") -> list[Relationship]:
             # REFERENCED_IN inverse edge.
             _add(infra_id, env_id, RelationshipType.READS, "env_name_overlap")
 
+    # T04 (batho-calibrate): tag-driven annotation-edge derivations — plugin
+    # tags, bsg.edge_hints, family similarity, TESTED_BY, rationale residual.
+    # Shares `seen` so derived edges dedupe against extracted AND overlay edges.
+    semantic_relations.extend(
+        _derive_tag_driven_relations(
+            graph, seen, tags_by_entity, key_tokens_by_entity
+        )
+    )
+
     return semantic_relations
+
+
+# ---------------------------------------------------------------------------
+# T04 (batho-calibrate): Tag-driven edge derivation layer
+# ---------------------------------------------------------------------------
+# Tag/metadata -> annotation-edge derivations. The `_EDGE_DERIVATIONS`
+# registry declares confidence + reason per edge type; the four hand-coded
+# passes below do the actual matching/selection:
+#   pass 4 enclosing_or_nearest — smallest enclosing FUNCTION/METHOD/CLASS in
+#       the same file, else the immediately-following symbol (mirrors the
+#       extractor's rationale target chain; only fires when no extracted edge
+#       already exists — dedupe via `seen`)
+#   pass 2 same_family_topk     — directory-bounded top-K pairs within a family
+#   pass 3 name_affinity        — computed TESTED_BY (test_<stem> naming +
+#       optional existing IMPORTS/CALLS/USES link as affinity evidence)
+#   pass 1 edge_hints           — explicit bsg.edge_hints metadata resolution
+# All emitted edges are annotation-class (excluded from structural clustering
+# by default-deny whitelist) and INFERRED confidence.
+_EDGE_HINT_MAX_PER_SOURCE = 50
+_FAMILY_EDGE_MAX_DEGREE = 5
+_FAMILY_MAX_GROUP = 200
+_EDGE_HINT_CONFIDENCE = 0.75
+_FAMILY_TAG_CONFIDENCE = 0.80
+_FAMILY_IMPLICIT_CONFIDENCE = 0.65
+_TESTED_BY_CONFIDENCE = 0.85
+_TESTED_BY_NAME_ONLY_CONFIDENCE = 0.65
+_RATIONALE_RESIDUAL_CONFIDENCE = 0.75
+_HINT_TARGET_MAX = 10
+
+_RATIONALE_RESIDUAL_TARGET_TYPES: frozenset[EntityType] = frozenset(
+    {EntityType.FUNCTION, EntityType.METHOD, EntityType.CLASS}
+)
+
+
+@dataclass(frozen=True)
+class _EdgeDerivation:
+    """Declared confidence + reason for a derived annotation edge type.
+
+    NOTE: this registry is a lookup table only — dispatch is the hand-coded
+    pass loops below (edge_hints, same_family_topk, name_affinity,
+    enclosing_or_nearest). Adding a new derivation requires wiring a pass,
+    not just a registry row.
+    """
+
+    edge_type: RelationshipType
+    confidence: float
+    reason: str
+
+
+_EDGE_DERIVATIONS: tuple[_EdgeDerivation, ...] = (
+    _EdgeDerivation(
+        RelationshipType.RATIONALE_FOR,
+        _RATIONALE_RESIDUAL_CONFIDENCE,
+        "plugin_rationale_tag",
+    ),
+    # Two SEMANTICALLY_SIMILAR_TO rows would collide in an edge_type-keyed
+    # dict — the family pass carries conf+reason in its bucket instead and
+    # only TESTED_BY / RATIONALE_FOR read this registry.
+    _EdgeDerivation(
+        RelationshipType.SEMANTICALLY_SIMILAR_TO,
+        _FAMILY_TAG_CONFIDENCE,
+        "plugin_family_tag",
+    ),
+    _EdgeDerivation(
+        RelationshipType.TESTED_BY,
+        _TESTED_BY_CONFIDENCE,
+        "test_naming_affinity",
+    ),
+)
+
+
+def _file_stem_lower(fpath: str) -> str:
+    """Lowercased file stem (no dir, no extension) — `a/test_foo.py` -> `test_foo`."""
+    base = fpath.rsplit("/", 1)[-1]
+    return base.rsplit(".", 1)[0].lower()
+
+
+def _test_name_bases(entity: Entity) -> set[str]:
+    """Convention names a test entity may cover: test_foo -> foo, foo_test -> foo,
+    foo.test.py / foo.spec.ts -> foo (applied to file stem AND entity name)."""
+    bases: set[str] = set()
+    for raw in (_file_stem_lower(getattr(entity, "file", "") or ""), str(entity.name).lower()):
+        if not raw:
+            continue
+        if raw.startswith("test_"):
+            bases.add(raw[len("test_"):])
+        if raw.endswith("_test"):
+            bases.add(raw[: -len("_test")])
+        for marker in (".test", ".spec"):
+            # Anchor: marker must be a full dot-segment — `foo.test`,
+            # `foo.test.util` match; `foo.testdata`/`a.specular` do not.
+            if raw.endswith(marker):
+                bases.add(raw[: -len(marker)])
+            elif marker + "." in raw:
+                bases.add(raw.split(marker + ".")[0])
+    return {b for b in bases if b}
+
+
+def _resolve_hint_targets(
+    hint: dict[str, Any],
+    graph: "GraphBackend",
+    fqn_index: dict[str, list[str]] | None = None,
+    pattern_cache: dict[str, list[str]] | None = None,
+) -> list[str]:
+    """Resolve one bsg.edge_hints entry to target entity ids (deterministic, capped).
+
+    `fqn_index` / `pattern_cache` are pass-level memoization built once per
+    derivation run — without them every hint linearly scans all entities.
+    """
+    if hint.get("target_entity_id"):
+        tid = str(hint["target_entity_id"])
+        return [tid] if tid in graph.entities else []
+    if hint.get("target_fqn"):
+        val = str(hint["target_fqn"])
+        return sorted((fqn_index or {}).get(val, ()))[:_HINT_TARGET_MAX]
+    if hint.get("target_name_pattern"):
+        pat = str(hint["target_name_pattern"]).lower()
+        if pattern_cache is not None and pat in pattern_cache:
+            return pattern_cache[pat]
+        hits = sorted(
+            eid
+            for eid, e in graph.entities.items()
+            if fnmatch.fnmatchcase(str(e.name).lower(), pat)
+        )[:_HINT_TARGET_MAX]
+        if pattern_cache is not None:
+            pattern_cache[pat] = hits
+        return hits
+    return []
+
+
+def _rationale_residual_target(
+    eid: str, ent: Entity, file_members: list[tuple[str, Entity]]
+) -> str | None:
+    """Smallest enclosing FUNCTION/METHOD/CLASS, else nearest following symbol —
+    mirrors the extractor's `_rationale_target_id` chain for tags applied
+    post-extraction (plugins see what extraction could not)."""
+    best_enclosing: str | None = None
+    best_span: int | None = None
+    best_following: str | None = None
+    best_gap: int | None = None
+    for tid, cand in file_members:
+        if tid == eid or cand.type not in _RATIONALE_RESIDUAL_TARGET_TYPES:
+            continue
+        if cand.start_line <= ent.start_line <= cand.end_line:
+            span = cand.end_line - cand.start_line
+            if best_span is None or span < best_span or (
+                span == best_span and tid < str(best_enclosing)
+            ):
+                best_enclosing, best_span = tid, span
+        elif cand.start_line > ent.end_line:
+            gap = cand.start_line - ent.end_line
+            if best_gap is None or gap < best_gap or (
+                gap == best_gap and tid < str(best_following)
+            ):
+                best_following, best_gap = tid, gap
+    return best_enclosing or best_following
+
+
+def _derive_tag_driven_relations(
+    graph: "GraphBackend",
+    seen: set[tuple[str, str, str]],
+    tags_by_entity: dict[str, set[str]],
+    key_tokens_by_entity: dict[str, set[str]],
+) -> list[Relationship]:
+    """Materialize declared annotation edges from plugin-applied tags/metadata.
+
+    Registry-driven (`_EDGE_DERIVATIONS`) plus explicit `metadata["bsg.edge_hints"]`
+    resolution — plugins mint declarative edges via the existing `metadata`
+    action with no schema change. Hint types are restricted to
+    ANNOTATION_RELATIONS so a generated rule can never forge structural edges.
+    """
+    derivations = {d.edge_type: d for d in _EDGE_DERIVATIONS}
+    out: list[Relationship] = []
+
+    def _emit(source_id: str, target_id: str, rel_type: RelationshipType, reason: str, confidence: float) -> bool:
+        if source_id == target_id:
+            return False
+        if source_id not in graph.entities or target_id not in graph.entities:
+            return False
+        key = (source_id, target_id, rel_type.name)
+        if key in seen:
+            return False
+        seen.add(key)
+        out.append(
+            Relationship(
+                source_id=source_id,
+                target_id=target_id,
+                type=rel_type,
+                metadata={
+                    "semantic": True,
+                    "edge_class": "annotation",
+                    "source": "tag_postpass",
+                    "reason": reason,
+                },
+                confidence=confidence,
+            )
+        )
+        return True
+
+    # File grouping shared by the enclosing_or_nearest selector.
+    ents_by_file: dict[str, list[tuple[str, Entity]]] = defaultdict(list)
+    for eid, ent in graph.entities.items():
+        ents_by_file[getattr(ent, "file", "") or ""].append((eid, ent))
+    for members in ents_by_file.values():
+        members.sort(key=lambda item: (item[1].start_line, item[0]))
+
+    # --- Pass 1: explicit bsg.edge_hints (declarative, annotation-only) ---
+    # RUL-06: one-time indexes — without them each hint linearly scans all
+    # entities (O(hints × N), quadratic when hints ~ N).
+    fqn_index: dict[str, list[str]] = defaultdict(list)
+    for _eid, _ent in graph.entities.items():
+        fqn_index[getattr(_ent, "fqn", "")].append(_eid)
+    pattern_cache: dict[str, list[str]] = {}
+    for eid in sorted(graph.entities):
+        ent = graph.entities[eid]
+        md = ent.metadata if isinstance(ent.metadata, dict) else {}
+        # RUL-04: same quarantine guard as passes 2-4 — a quarantined source
+        # must not emit edges, nor a quarantined target receive them.
+        if entity_is_quarantined(eid, md):
+            continue
+        hints = md.get("bsg.edge_hints")
+        if not isinstance(hints, list):
+            continue
+        resolved = 0
+        for hint in hints:
+            if resolved >= _EDGE_HINT_MAX_PER_SOURCE:
+                break
+            if not isinstance(hint, dict):
+                continue
+            type_name = str(hint.get("type") or "").upper()
+            rel_type = next(
+                (t for t in ANNOTATION_RELATIONS if t.name == type_name), None
+            )
+            if rel_type is None:
+                continue  # annotation-only: structural type names are rejected
+            confidence = _EDGE_HINT_CONFIDENCE
+            raw_conf = hint.get("confidence")
+            if isinstance(raw_conf, (int, float)):
+                confidence = max(0.1, min(0.95, float(raw_conf)))
+            for tid in _resolve_hint_targets(hint, graph, fqn_index, pattern_cache):
+                if resolved >= _EDGE_HINT_MAX_PER_SOURCE:
+                    break
+                tmd = graph.entities[tid].metadata
+                if not isinstance(tmd, dict):
+                    tmd = {}
+                if entity_is_quarantined(tid, tmd):
+                    continue
+                if _emit(eid, tid, rel_type, "edge_hint", confidence):
+                    resolved += 1
+
+    # --- Pass 2: semantic-family similarity (directory-bounded, top-K) ---
+    families: dict[str, tuple[float, list[str]]] = {}
+    for eid, ent in graph.entities.items():
+        md = ent.metadata if isinstance(ent.metadata, dict) else {}
+        if entity_is_quarantined(eid, md):
+            continue  # ghosts/noise never enter similarity edges
+        fam_val = md.get("bsg.semantic_family")
+        fams: list[str] = (
+            [str(fam_val)]
+            if isinstance(fam_val, str) and fam_val.strip()
+            else [str(v) for v in fam_val if str(v).strip()]
+            if isinstance(fam_val, list)
+            else []
+        )
+        for fam in fams:
+            key = f"key::{fam.strip()}"
+            conf, _reason, members = families.get(
+                key, (_FAMILY_TAG_CONFIDENCE, "plugin_family_tag", [])
+            )
+            members.append(eid)
+            families[key] = (conf, "plugin_family_tag", members)
+        if not fams and "semantic_family" in tags_by_entity.get(eid, set()):
+            conf, _reason, members = families.get(
+                "__tag__", (_FAMILY_IMPLICIT_CONFIDENCE, "family_tag_no_key", [])
+            )
+            members.append(eid)
+            families["__tag__"] = (conf, "family_tag_no_key", members)
+
+    for fam_key in sorted(families):
+        # RUL-03: the reason rides with the bucket — the edge_type-keyed
+        # derivations dict collapsed the two SEMANTICALLY_SIMILAR_TO rows,
+        # so an explicit-key family would have been stamped
+        # 'family_tag_no_key' instead of 'plugin_family_tag'.
+        fam_conf, fam_reason, members = families[fam_key]
+        by_scope: dict[str, list[str]] = defaultdict(list)
+        for eid in members:
+            fpath = getattr(graph.entities[eid], "file", "") or ""
+            scope = fpath.rsplit("/", 1)[0] if "/" in fpath else "."
+            by_scope[scope].append(eid)
+        for scope in sorted(by_scope):
+            scoped = sorted(by_scope[scope])[:_FAMILY_MAX_GROUP]
+            if len(scoped) < 2:
+                continue
+            scored: list[tuple[int, str, str]] = []
+            for i, a in enumerate(scoped):
+                ta = key_tokens_by_entity.get(a, set())
+                for b in scoped[i + 1:]:
+                    shared = len(ta & key_tokens_by_entity.get(b, set()))
+                    if shared:
+                        scored.append((shared, a, b))
+            scored.sort(key=lambda s: (-s[0], s[1], s[2]))
+            degree: dict[str, int] = {}
+            for _shared, a, b in scored:
+                if (
+                    degree.get(a, 0) >= _FAMILY_EDGE_MAX_DEGREE
+                    or degree.get(b, 0) >= _FAMILY_EDGE_MAX_DEGREE
+                ):
+                    continue
+                if _emit(
+                    a, b,
+                    RelationshipType.SEMANTICALLY_SIMILAR_TO,
+                    fam_reason,
+                    fam_conf,
+                ):
+                    degree[a] = degree.get(a, 0) + 1
+                    degree[b] = degree.get(b, 0) + 1
+
+    # --- Pass 3: TESTED_BY (computed naming + import/call affinity) ---
+    deriv = derivations[RelationshipType.TESTED_BY]
+    direct: set[tuple[str, str]] = {
+        (str(r.source_id), str(r.target_id))
+        for r in graph.relationships
+        if _relationship_type_name(r) in {"IMPORTS", "CALLS", "USES"}
+    }
+    name_index: dict[str, list[str]] = defaultdict(list)
+    stem_index: dict[str, list[str]] = defaultdict(list)
+    for eid, ent in graph.entities.items():
+        name_index[str(ent.name).lower()].append(eid)
+        stem = _file_stem_lower(getattr(ent, "file", "") or "")
+        if stem:
+            stem_index[stem].append(eid)
+
+    for eid in sorted(graph.entities):
+        ent = graph.entities[eid]
+        md = ent.metadata if isinstance(ent.metadata, dict) else {}
+        if entity_is_quarantined(eid, md):
+            continue
+        bases = _test_name_bases(ent)
+        if not bases:
+            continue
+        targets: set[str] = set()
+        for base in bases:
+            targets.update(name_index.get(base, ()))
+            targets.update(stem_index.get(base, ()))
+        for tid in sorted(targets)[:_EDGE_HINT_MAX_PER_SOURCE]:
+            tgt = graph.entities[tid]
+            if _test_name_bases(tgt):
+                continue  # never link test -> test
+            tmd = tgt.metadata if isinstance(tgt.metadata, dict) else {}
+            if entity_is_quarantined(tid, tmd):
+                continue  # never link test -> ghost/noise
+            conf = (
+                deriv.confidence
+                if (eid, tid) in direct
+                else _TESTED_BY_NAME_ONLY_CONFIDENCE
+            )
+            _emit(eid, tid, RelationshipType.TESTED_BY, deriv.reason, conf)
+
+    # --- Pass 4: rationale residual (plugin tags extraction could not see) ---
+    deriv = derivations[RelationshipType.RATIONALE_FOR]
+    rationale_sources = {s for s, _t, ty in seen if ty == "RATIONALE_FOR"}
+    for eid in sorted(graph.entities):
+        if eid in rationale_sources:
+            continue
+        ent = graph.entities[eid]
+        md = ent.metadata if isinstance(ent.metadata, dict) else {}
+        if entity_is_quarantined(eid, md):
+            continue  # quarantined comments/docs never emit rationale edges
+        if not md.get("bsg.rationale") and "rationale" not in tags_by_entity.get(
+            eid, set()
+        ):
+            continue
+        target = _rationale_residual_target(
+            eid, ent, ents_by_file.get(getattr(ent, "file", "") or "", [])
+        )
+        if target:
+            _emit(
+                eid, target, RelationshipType.RATIONALE_FOR,
+                deriv.reason, deriv.confidence,
+            )
+
+    return out
 
 
 def _append_semantic_relations(
@@ -3572,6 +4077,16 @@ def apply_rule_plugins(
         }
     }
 
+    # T04 postpass: re-derive annotation edges AFTER the rule loop — the
+    # pre-loop overlay ran before rules stamped their tags/metadata, so on
+    # the plugins-apply path bsg.edge_hints / bsg.semantic_family / TESTED_BY
+    # edges would never materialize from freshly-stamped tags. `seen` is
+    # rebuilt from current graph state, making the second pass idempotent.
+    semantic_relations = _derive_semantic_relations(graph)
+    semantic_edges_added += _append_semantic_relations(
+        graph=graph, relations=semantic_relations
+    )
+
     overall_elapsed_ns = time.perf_counter_ns() - overall_start_ns
 
     summary = {
@@ -3799,12 +4314,19 @@ def apply_bsg_rules_to_entities(
     root_path: str,
     file_path: str,
     security_audit_enabled: bool = False,
+    perf_out: dict[str, dict[str, int]] | None = None,
 ) -> tuple[list[Entity], dict[str, Any]]:
     """Apply non-bidirectional BSG rules to a single file's entities.
 
     Skips rules with bidirectional=True (those need full graph topology).
     Returns the updated entities list with BSG metadata applied, plus a
     per-file security_audit fragment.
+
+    When ``perf_out`` is a dict, per-rule match-call counts and total
+    evaluation nanoseconds are accumulated into it
+    (``{rule_name: {"match_calls": int, "total_ns": int}}``) — the
+    extraction workers forward this through ``local_hits`` so the
+    orchestrator can persist real `rule_perf` telemetry.
     """
     if not entities or not rules:
         return entities, {}
@@ -3875,74 +4397,83 @@ def apply_bsg_rules_to_entities(
         entity_tags = get_entity_tags(entity_id, entity)
 
         for rule in entity_rules:
-            # Check basic matchers (entity_type, name, file, usn_tags, regex, content)
-            if rule.match.entity_types:
+            _rule_t0 = time.perf_counter_ns() if perf_out is not None else 0
+            try:
+                # Check basic matchers (entity_type, name, file, usn_tags, regex, content)
+                if rule.match.entity_types:
+                    if (
+                        "*" not in rule.match._entity_types_set
+                        and ent_type_lower not in rule.match._entity_types_set
+                    ):
+                        continue
+
+                if rule.match.usn_tags_any:
+                    if not entity_tags.intersection(rule.match._usn_tags_any_set):
+                        continue
+
+                if rule.match.name_patterns:
+                    if not _pattern_matches_lower(entity_name_lower, rule.match._name_patterns_lower):
+                        continue
+
+                if rule.match.file_patterns:
+                    if not _pattern_matches_lower(rel_file_path_lower, rule.match._file_patterns_lower):
+                        continue
+
+                if rule.match.regex_patterns:
+                    if not _matches_regex_patterns(
+                        entity, rel_file_path, rule.match.regex_patterns, regex_cache
+                    ):
+                        continue
+
+                if rule.match.content_patterns:
+                    if not _matches_content_patterns(
+                        rel_file_path,
+                        rule.match._content_patterns_lower,
+                        None,  # graph not needed for per-file
+                        file_content_cache,
+                        root,
+                    ):
+                        continue
+
+                if rule.match.metadata_conditions:
+                    if not _matches_metadata_conditions(entity, rule.match.metadata_conditions):
+                        continue
+
+                # Skip ast_edges matchers for per-file processing
+                if rule.match.ast_edges_any or rule.match.ast_edges_all:
+                    continue
+
+                # Check bidirectional matchers (v2) - skip if present
                 if (
-                    "*" not in rule.match._entity_types_set
-                    and ent_type_lower not in rule.match._entity_types_set
+                    rule.match.gap_entity_types
+                    or rule.match.has_raw_content is not None
+                    or rule.match.has_coverage_gap is not None
+                    or rule.match.byte_range_start is not None
+                    or rule.match.byte_range_end is not None
+                    or rule.match.content_hash_pattern is not None
                 ):
                     continue
 
-            if rule.match.usn_tags_any:
-                if not entity_tags.intersection(rule.match._usn_tags_any_set):
+                # Conditional action gate
+                if not _matches_when_clause(entity, rule.actions.when):
                     continue
 
-            if rule.match.name_patterns:
-                if not _pattern_matches_lower(entity_name_lower, rule.match._name_patterns_lower):
-                    continue
+                matched_rules.append(rule.name)
+                plugin_hits[rule.plugin] = plugin_hits.get(rule.plugin, 0) + 1
+                file_rule_hits[rule.name] = file_rule_hits.get(rule.name, 0) + 1
 
-            if rule.match.file_patterns:
-                if not _pattern_matches_lower(rel_file_path_lower, rule.match._file_patterns_lower):
-                    continue
-
-            if rule.match.regex_patterns:
-                if not _matches_regex_patterns(
-                    entity, rel_file_path, rule.match.regex_patterns, regex_cache
-                ):
-                    continue
-
-            if rule.match.content_patterns:
-                if not _matches_content_patterns(
-                    rel_file_path,
-                    rule.match._content_patterns_lower,
-                    None,  # graph not needed for per-file
-                    file_content_cache,
-                    root,
-                ):
-                    continue
-
-            if rule.match.metadata_conditions:
-                if not _matches_metadata_conditions(entity, rule.match.metadata_conditions):
-                    continue
-
-            # Skip ast_edges matchers for per-file processing
-            if rule.match.ast_edges_any or rule.match.ast_edges_all:
-                continue
-
-            # Check bidirectional matchers (v2) - skip if present
-            if (
-                rule.match.gap_entity_types
-                or rule.match.has_raw_content is not None
-                or rule.match.has_coverage_gap is not None
-                or rule.match.byte_range_start is not None
-                or rule.match.byte_range_end is not None
-                or rule.match.content_hash_pattern is not None
-            ):
-                continue
-
-            # Conditional action gate
-            if not _matches_when_clause(entity, rule.actions.when):
-                continue
-
-            matched_rules.append(rule.name)
-            plugin_hits[rule.plugin] = plugin_hits.get(rule.plugin, 0) + 1
-            file_rule_hits[rule.name] = file_rule_hits.get(rule.name, 0) + 1
-
-            action_changed, entity_tags = _apply_rule_actions(
-                rule, entity, rel_file_path, metadata, entity_tags_cache
-            )
-            if action_changed:
-                changed = True
+                action_changed, entity_tags = _apply_rule_actions(
+                    rule, entity, rel_file_path, metadata, entity_tags_cache
+                )
+                if action_changed:
+                    changed = True
+            finally:
+                if perf_out is not None:
+                    pr = perf_out.setdefault(
+                        rule.name, {"match_calls": 0, "total_ns": 0}
+                    )
+                    pr["match_calls"] += 1
+                    pr["total_ns"] += time.perf_counter_ns() - _rule_t0
 
         if matched_rules:
             existing_rules = metadata.get("bsg.rules")
@@ -3976,3 +4507,58 @@ def apply_bsg_rules_to_entities(
                 }
 
     return updated_entities, file_security_audit
+
+
+def build_rule_telemetry(
+    entities: Any,
+    rules: Iterable[RuleDefinition],
+) -> list[dict[str, Any]]:
+    """Per-rule match telemetry for a build/patch run (T05).
+
+    Aggregates entity ``bsg.rules`` metadata (rule names stamped by
+    :func:`apply_bsg_rules_to_entities`) into per-rule counters joined back
+    to the loaded :class:`RuleDefinition` records for plugin, severity and
+    emitted-tag context.
+
+    Args:
+        entities: Iterable of entity objects with ``.metadata`` and ``.file``.
+        rules: The effective rule set applied during extraction.
+
+    Returns:
+        Sorted list of per-rule dicts::
+
+            [{"rule_id", "rule", "plugin", "severity",
+              "entities_matched", "files_touched", "tags_emitted"}, ...]
+
+    Persisted into run_artifacts telemetry_json by the orchestrator; feeds
+    the batho-calibrate score script (T12).
+    """
+    per_rule_entities: dict[str, int] = {}
+    per_rule_files: dict[str, set[str]] = {}
+    for ent in entities:
+        meta = getattr(ent, "metadata", None) or {}
+        applied = meta.get("bsg.rules")
+        if not isinstance(applied, list):
+            continue
+        for rule_name in applied:
+            per_rule_entities[rule_name] = per_rule_entities.get(rule_name, 0) + 1
+            per_rule_files.setdefault(rule_name, set()).add(
+                getattr(ent, "file", "") or ""
+            )
+
+    rule_defs = {r.name: r for r in rules}
+    telemetry: list[dict[str, Any]] = []
+    for rule_name in sorted(per_rule_entities):
+        rd = rule_defs.get(rule_name)
+        telemetry.append(
+            {
+                "rule_id": getattr(rd, "rule_id", rule_name),
+                "rule": rule_name,
+                "plugin": getattr(rd, "plugin", "") or "",
+                "severity": getattr(rd, "severity", "") or "",
+                "entities_matched": per_rule_entities[rule_name],
+                "files_touched": len(per_rule_files[rule_name]),
+                "tags_emitted": sorted(rd.actions.add_usn_tags) if rd else [],
+            }
+        )
+    return telemetry

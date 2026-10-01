@@ -33,6 +33,7 @@ def _make_entity(
     entity_type: EntityType,
     file: str = "/test/main.py",
     start_line: int = 1,
+    signature: str | None = None,
     metadata: dict | None = None,
     id_override: str | None = None,
 ) -> Entity:
@@ -43,6 +44,7 @@ def _make_entity(
         start_line=start_line,
         end_line=start_line,
         metadata=metadata or {},
+        signature=signature,
         id_override=id_override or f"batho test pkg 1.0.0 {file}/{name}#{start_line}",
     )
 
@@ -51,7 +53,6 @@ def _make_stub(
     target_name: str,
     caller_scope: str = "batho test pkg 1.0.0 /test/main.py",
     receiver_var: str | None = None,
-    receiver_type: str | None = None,
     file: str = "/test/main.py",
     line: int = 10,
     stub_id: str | None = None,
@@ -71,8 +72,6 @@ def _make_stub(
         "target_name": target_name,
         "receiver_var": receiver_var,
     }
-    if receiver_type:
-        meta["receiver_type"] = receiver_type
     return Entity(
         type=EntityType.EXTERNAL_SYMBOL,
         name=target_name,
@@ -395,14 +394,19 @@ class TestOnDemandResolution:
             sm.define_symbol("Cursor", class_ent.id, "STRUCT", is_global=True)
             sm.define_symbol("Cursor.execute", method_ent.id, "METHOD", is_global=True)
 
-            stub = _make_stub("cursor.execute", receiver_type="Cursor")
+            caller = _make_entity(
+                "handler", EntityType.FUNCTION,
+                signature="fn handler(cursor: Cursor)",
+            )
+            graph.add_entity(caller)
+            stub = _make_stub("cursor.execute", caller_scope=caller.id)
             graph.add_entity(stub)
 
             target_id = indexer.resolve_stub_on_demand(stub.id, graph, sm)
             assert target_id == method_ent.id
             updated_stub = graph.get_entity(stub.id)
-            assert updated_stub.metadata["resolution_strategy"] == "receiver_type"
-            assert updated_stub.metadata["resolution_confidence"] == 0.65
+            assert updated_stub.metadata["resolution_strategy"] == "receiver_param"
+            assert updated_stub.metadata["resolution_confidence"] == 0.90
             indexer.close()
 
     def test_on_demand_multiple_stubs(self):
@@ -485,13 +489,18 @@ class TestResolveSingleStub:
             sm.define_symbol("Cursor", class_ent.id, "STRUCT", is_global=True)
             sm.define_symbol("Cursor.execute", method_ent.id, "METHOD", is_global=True)
 
-            stub = _make_stub("cursor.execute", receiver_type="Cursor")
+            caller = _make_entity(
+                "handler", EntityType.FUNCTION,
+                signature="fn handler(cursor: Cursor)",
+            )
+            graph.add_entity(caller)
+            stub = _make_stub("cursor.execute", caller_scope=caller.id)
             graph.add_entity(stub)
 
             resolved_info, strategy = indexer._resolve_single_stub(stub, graph, sm)
             assert resolved_info is not None
             assert resolved_info.symbol_id == method_ent.id
-            assert strategy == "receiver_type"
+            assert strategy == "receiver_param"
             indexer.close()
 
     def test_unresolvable(self):
@@ -770,10 +779,15 @@ class TestExistingPatternsIntact:
         assert hasattr(InMemoryGraph, "update_relationships")
 
     def test_resolution_confidence_constant_unchanged(self):
-        """_RESOLUTION_CONFIDENCE still has all 9 tiers (incl. T08 ambiguous, T6b sibling_module)."""
+        """_RESOLUTION_CONFIDENCE tiers (incl. T08 ambiguous, T6b sibling_module,
+        T1 receiver_param/receiver_assignment, T11 package_alias,
+        post-v1.4.3 external_prefix ghost-synthesis strategy)."""
+        # `import_map` was dropped (GRH-10): no code path ever emitted it.
         expected = {
-            "exact_match", "stdlib_method", "import_map",
-            "parent_chain", "sibling_module", "scope_qualified", "receiver_type",
+            "exact_match", "stdlib_method", "package_alias",
+            "external_prefix",
+            "parent_chain", "sibling_module", "scope_qualified", "relative_path", "receiver_type",
+            "receiver_param", "receiver_assignment",
             "ambiguous", "unresolved",
         }
         assert set(_RESOLUTION_CONFIDENCE.keys()) == expected

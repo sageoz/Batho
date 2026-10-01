@@ -533,6 +533,16 @@ class RelationshipType(Enum):
     HAS_ATTRIBUTE = auto()
     LINKS_TO = auto()
     IMPORTS_STYLE = auto()
+    # T5 rationale layer: comment/doc entity → the symbol it explains.
+    # Annotation edge — excluded from trace_path traversal (T6 whitelist) and
+    # from community clustering input (T4 whitelist).
+    RATIONALE_FOR = auto()
+    # T04 (batho-calibrate): annotation edges materialized by the tag-driven
+    # derivation registry from plugin-applied tags/metadata. All are emitted
+    # with metadata["edge_class"] == "annotation" and INFERRED confidence.
+    SEMANTICALLY_SIMILAR_TO = auto()
+    TESTED_BY = auto()
+    REFERS_TO = auto()
 
     def __str__(self) -> str:
         return self.name.lower()
@@ -555,6 +565,20 @@ INVERSE_TO_FORWARD: dict[str, RelationshipType] = {
 # but no longer emitted by the graph builder or compression rules.
 DEPRECATED_RELATIONSHIP_TYPES: frozenset[str] = frozenset(INVERSE_TO_FORWARD)
 
+# T04: Annotation edges — derived/declared semantics, not structure. Every
+# edge of these types carries metadata["edge_class"] == "annotation". They are
+# excluded from community clustering (_CLUSTERING_RELATIONS in
+# modules/graph/community.py is default-deny: new types never enter the
+# clustering input automatically) and from default trace_path traversal.
+ANNOTATION_RELATIONS: frozenset[RelationshipType] = frozenset(
+    {
+        RelationshipType.RATIONALE_FOR,
+        RelationshipType.SEMANTICALLY_SIMILAR_TO,
+        RelationshipType.TESTED_BY,
+        RelationshipType.REFERS_TO,
+    }
+)
+
 
 class BSGViewType(Enum):
     """View types for dual-mode BSGMap rendering.
@@ -573,6 +597,26 @@ class BSGViewType(Enum):
 # --------------------------------------------------------------------------
 # Entity model
 # --------------------------------------------------------------------------
+
+
+# Metadata keys that quarantine an entity (set by generated/custom rules
+# plugins — e.g. `bsg.noise` for generated/vendor artifacts, `bsg.quarantined`
+# for ghost refs). Quarantined entities stay in storage but are excluded from
+# search results, overview counts, and community-detection input unless the
+# caller opts in. `unresolved:` entity-id stubs are always quarantined.
+QUARANTINE_METADATA_KEYS: tuple[str, ...] = ("bsg.noise", "bsg.quarantined")
+
+
+def metadata_is_quarantined(meta: dict[str, Any] | None) -> bool:
+    """True when entity metadata carries a truthy quarantine flag."""
+    if not meta:
+        return False
+    return any(bool(meta.get(key)) for key in QUARANTINE_METADATA_KEYS)
+
+
+def entity_is_quarantined(entity_id: str, meta: dict[str, Any] | None) -> bool:
+    """Unresolved-stub id prefix OR plugin-set quarantine metadata."""
+    return entity_id.startswith("unresolved:") or metadata_is_quarantined(meta)
 
 
 class Entity(BaseModel):

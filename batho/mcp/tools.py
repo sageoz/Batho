@@ -26,17 +26,26 @@ from batho.mcp.entity_resolution import (
     KIND_EXTERNAL_UNRESOLVED,
     external_ref_root,
     get_resolver,
+    is_unresolved,
 )
 from batho.mcp.graph_builder import (
     build_dual_output, build_meta, format_file_connectivity, format_summary,
     estimate_tokens, truncate_to_budget, normalize_legacy_rel_rows,
 )
+from batho.core.schemas import metadata_is_quarantined
 from batho.mcp.community_summaries import load_communities, format_communities_for_overview
 from batho.mcp.delta_reader import read_delta, format_delta_markdown, build_delta_structured
+from batho.mcp.search_ranking import rank_hits
 from batho.mcp.registry import RepoRegistry, RepoEntry
 from batho.mcp.errors import _err, CLIENT_ERROR, EXTERNAL_ERROR
 from batho.utils.path_sanitizer import sanitize_path, _canonicalize_untrusted_path, PathSecurityError
-from batho.core.schemas import SymbolRole, ENTITY_CATEGORIES, EntityCategory, INVERSE_TO_FORWARD
+from batho.core.schemas import (
+    DEPRECATED_RELATIONSHIP_TYPES,
+    EntityCategory,
+    ENTITY_CATEGORIES,
+    INVERSE_TO_FORWARD,
+    SymbolRole,
+)
 
 if TYPE_CHECKING:
     from batho.mcp.watcher import BathoWatcherEngine
@@ -152,6 +161,32 @@ OVERVIEW_OUTPUT_SCHEMA: dict[str, Any] = {
 }
 
 # trace_path
+# T6 (graph-accuracy-overhaul): structural edge kinds trace_path may traverse,
+# in tie-break preference order. Default-deny: relation types absent from this
+# map — RATIONALE_FOR or any future annotation/inferred relation —
+# are never traversed, even when they would produce a shorter path.
+TRACE_EDGE_PRIORITY: dict[str, int] = {
+    "CALLS": 0,
+    "INHERITS": 1,
+    "IMPLEMENTS": 1,
+    "IMPORTS": 2,
+    "READS": 3,
+    "WRITES": 3,
+    "CONTAINS": 4,
+    "USES": 5,
+    "DEFINES": 5,
+    "OVERRIDES": 5,
+    "STACK_BOUNDARY": 5,
+    "WRAPPED_BY": 5,
+    "DEPENDS_ON_API": 5,
+    "CLEANED_BY": 5,
+    "HAS_ATTRIBUTE": 5,
+    "LINKS_TO": 5,
+    "IMPORTS_STYLE": 5,
+    "REFERENCES": 5,  # legacy; normalized to READS/WRITES before traversal
+}
+TRACE_TRAVERSABLE_RELATIONS: frozenset[str] = frozenset(TRACE_EDGE_PRIORITY)
+
 TRACE_PATH_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -607,6 +642,40 @@ def _check_artifact_for_repo(entry: RepoEntry) -> str | None:
     return None
 
 
+def _quarantined_entity_ids(table: pa.Table) -> set[str]:
+    """IDs of entities whose metadata_json carries a quarantine flag.
+
+    Plugin-flagged entities (`bsg.noise`, `bsg.quarantined`) persist their
+    metadata in agent_views; a substring pre-filter narrows candidates to
+    the flagged subset, then JSON-parse confirms a truthy value (guards
+    against `"bsg.noise": false` rows). Mirrors the ambiguous-edge
+    detection pattern in graph_overview.
+    """
+    if table.num_rows == 0 or "metadata_json" not in table.schema.names:
+        return set()
+    meta_col = table.column("metadata_json")
+    candidates = table.filter(
+        pc.and_(
+            pc.is_valid(meta_col),
+            pc.match_substring_regex(meta_col, '"bsg\\.(noise|quarantined)"'),
+        )
+    )
+    if candidates.num_rows == 0:
+        return set()
+    ids: set[str] = set()
+    for eid, meta_str in zip(
+        candidates.column("entity_id").to_pylist(),
+        candidates.column("metadata_json").to_pylist(),
+    ):
+        try:
+            meta = json.loads(meta_str)
+        except (ValueError, TypeError):
+            continue
+        if metadata_is_quarantined(meta):
+            ids.add(eid)
+    return ids
+
+
 def _file_paths_map(reader: BathoBundleReader) -> dict[int, str]:
     tracking = reader.get_all_file_tracking()
     return {tr.get("file_id", -1): fp for fp, tr in tracking.items() if "file_id" in tr}
@@ -656,14 +725,17 @@ def _resolve_entity_id(name_or_id: str, reader: BathoBundleReader) -> str | list
         return non_module[0].get("entity_id", "")
 
     file_paths = _file_paths_map(reader)
+    # T8: disambiguation candidates ranked by the same deterministic scorer
+    # as search_entities — real code definitions first.
     return [
         {
             "entity_id": r.get("entity_id", ""),
             "name": r.get("name", ""),
             "type": r.get("entity_type", ""),
             "file": file_paths.get(r.get("file_id", -1), ""),
+            "score": score,
         }
-        for r in rows
+        for r, score in rank_hits(rows, name_or_id, file_paths)
     ]
 
 
@@ -787,6 +859,9 @@ def register_tools(
         watch: bool = False,
         debounce_ms: int = 2000,
         max_file_size_kb: int | None = None,
+        watch_mode: str = "auto",
+        max_staleness_ms: int | None = None,
+        flush_threshold: int | None = None,
     ) -> ToolResult:
         """Register a repository in the Batho MCP registry.
 
@@ -802,6 +877,15 @@ def register_tools(
             watch: If True, watcher engine will auto-patch this repo on file changes.
             debounce_ms: Debounce delay before auto-patch (100-60000 ms). Default: 2000.
             max_file_size_kb: Skip files larger than this during auto-patch.
+            watch_mode: 'auto' adds a git-sentinel trigger layer in git repos
+                (falls back to file events), 'fs' watches file events only,
+                'off' tracks pending state but never auto-patches. Default: auto.
+            max_staleness_ms: Hard bound — pending changes flush within this
+                window even under continuous edits (5000-600000). None = inherit
+                batho.yaml watch.max_staleness_ms (default 60000).
+            flush_threshold: Flush immediately when this many files are pending
+                (10-100000). None = inherit batho.yaml watch.flush_threshold
+                (default 300).
         """
         if not registry:
             return _err("No registry configured. Cannot add repos.",
@@ -822,7 +906,7 @@ def register_tools(
         if not artifact_dir.exists():
             return _err(f"No Batho artifact found at {artifact_dir}.",
                          error_type=EXTERNAL_ERROR, hint=f"Run 'batho build --root {resolved}' first to create the artifact.")
-        entry = registry.add(name=name, path=resolved, watch=watch, debounce_ms=debounce_ms, max_file_size_kb=max_file_size_kb)
+        entry = registry.add(name=name, path=resolved, watch=watch, debounce_ms=debounce_ms, max_file_size_kb=max_file_size_kb, watch_mode=watch_mode, max_staleness_ms=max_staleness_ms, flush_threshold=flush_threshold)
         _pool.invalidate(name)
 
         if watcher and watch:
@@ -835,12 +919,15 @@ def register_tools(
         except Exception:
             entity_count = 0
         watch_str = "✓ enabled" if watch else "✗ disabled"
-        markdown = f"## Repo Registered\n\n- **{name}** — {resolved}\n- Entities: {entity_count}\n- Artifact: ✓ ready\n- Watch: {watch_str}"
+        markdown = f"## Repo Registered\n\n- **{name}** — {resolved}\n- Entities: {entity_count}\n- Artifact: ✓ ready\n- Watch: {watch_str} (mode: {entry.watch_mode})"
         structured = {
             "name": name,
             "path": resolved,
             "watch": watch,
+            "watch_mode": entry.watch_mode,
             "debounce_ms": entry.debounce_ms,
+            "max_staleness_ms": entry.max_staleness_ms,
+            "flush_threshold": entry.flush_threshold,
             "max_file_size_kb": max_file_size_kb,
             "entity_count": entity_count,
             "has_artifact": True,
@@ -861,12 +948,16 @@ def register_tools(
         if not registry:
             return _err("No registry configured.",
                          error_type=CLIENT_ERROR, hint="Start the server with 'batho mcp --root /path/to/repo' instead.")
-        if watcher:
-            watcher.unwatch(name)
+        # Registry removal comes FIRST: watch() re-checks registry.get() under
+        # the engine lock before installing, so removing here makes a racing
+        # watch() bail instead of installing a zombie. unwatch() then tears
+        # down any watch that did get registered.
         removed = registry.remove(name)
         if not removed:
             return _err(f"Repo '{name}' not found in registry.",
                          error_type=CLIENT_ERROR, hint="Call list_repos to see available repos.")
+        if watcher:
+            watcher.unwatch(name)
         _pool.invalidate(name)
         markdown = f"## Repo Removed\n\n- **{name}** — removed from registry"
         structured = {"name": name, "removed": True}
@@ -918,16 +1009,37 @@ def register_tools(
 
         entity_type_counts: dict[str, int] = {}
         stub_entity_count = 0
+        quarantined_count = 0
+        first_party_table = agent_table
         if agent_table.num_rows > 0:
-            etypes = agent_table.column("entity_type").to_pylist()
-            for et in etypes:
-                entity_type_counts[et] = entity_type_counts.get(et, 0) + 1
             # T13: contextual stubs are identifiable by the `unresolved:` ID
             # prefix (their type is EXTERNAL_SYMBOL in new artifacts, so the
             # type breakdown alone cannot distinguish them from materialized
             # externals). Arrow pre-filter avoids a full Python scan.
             stub_mask = pc.starts_with(agent_table.column("entity_id"), "unresolved:")
-            stub_entity_count = agent_table.filter(stub_mask).num_rows
+            # Aggregate instead of filter().num_rows — no table materialized
+            # just to count (pc.sum of an empty mask is null -> 0).
+            stub_entity_count = pc.sum(pc.cast(stub_mask, pa.int64())).as_py() or 0
+            # T2-quarantine: entity-type counts and per-file counts report
+            # resolved entities only; the stub count stays visible separately.
+            first_party_table = agent_table.filter(pc.invert(stub_mask))
+            # T3-quarantine: plugin-flagged entities (bsg.noise /
+            # bsg.quarantined metadata) are likewise excluded from headline
+            # counts and reported as a separate total.
+            quarantined_ids = _quarantined_entity_ids(first_party_table)
+            quarantined_count = len(quarantined_ids)
+            if quarantined_ids:
+                first_party_table = first_party_table.filter(
+                    pc.invert(
+                        pc.is_in(
+                            first_party_table.column("entity_id"),
+                            value_set=pa.array(list(quarantined_ids)),
+                        )
+                    )
+                )
+            etypes = first_party_table.column("entity_type").to_pylist()
+            for et in etypes:
+                entity_type_counts[et] = entity_type_counts.get(et, 0) + 1
 
         rel_type_counts: dict[str, int] = {}
         ambiguous_edge_count = 0
@@ -962,8 +1074,8 @@ def register_tools(
 
         files_list = []
         entity_counts_by_file: dict[str, int] = {}
-        if agent_table.num_rows > 0:
-            file_ids = agent_table.column("file_id").to_pylist()
+        if first_party_table.num_rows > 0:
+            file_ids = first_party_table.column("file_id").to_pylist()
             fid_to_path = {tr.get("file_id"): fp for fp, tr in tracking.items()}
             for fid in file_ids:
                 fp = fid_to_path.get(fid)
@@ -974,11 +1086,13 @@ def register_tools(
         files_list.sort(key=lambda x: x["path"])
 
         stats = {
-            "total_entities": agent_table.num_rows,
+            "total_entities": first_party_table.num_rows,
             "total_relationships": rels_table.num_rows,
             "total_files": len(tracking),
             "entity_breakdown": entity_type_counts,
             "stub_entity_count": stub_entity_count,
+            "unresolved_refs": stub_entity_count,
+            "quarantined_entities": quarantined_count,
             "relationship_breakdown": rel_type_counts,
             "ambiguous_edge_count": ambiguous_edge_count,
             "files": files_list,
@@ -989,7 +1103,14 @@ def register_tools(
 
         artifact_dir = Path(root).resolve() / ".batho" / "artifact"
         communities_raw = load_communities(artifact_dir)
-        communities = format_communities_for_overview(communities_raw)
+        try:
+            from batho.core.config import get_config_cached
+
+            _comm_cfg = get_config_cached().get("community_detection", {})
+            _top_n = int(_comm_cfg.get("overview_top_n", 12))
+        except Exception:
+            _top_n = 12
+        communities = format_communities_for_overview(communities_raw, top_n=_top_n)
 
         markdown = format_summary(stats, communities)
         markdown, truncated = truncate_to_budget(markdown, max_tokens)
@@ -1029,6 +1150,8 @@ def register_tools(
         limit: int = 50,
         offset: int = 0,
         max_tokens: int = 25000,
+        include_unresolved: bool = False,
+        include_quarantined: bool = False,
     ) -> ToolResult:
         """Query the code graph with optional filters. Returns paginated nodes and edges.
 
@@ -1065,6 +1188,10 @@ def register_tools(
             limit: Maximum entities to return. Default: 50.
             offset: Pagination offset. Default: 0.
             max_tokens: Maximum tokens for content field. Default: 25000.
+            include_unresolved: If True, include `unresolved:` reference stubs in node results.
+                Default False: stubs are quarantined so node lists show resolved entities only.
+            include_quarantined: If True, include plugin-flagged entities
+                (metadata bsg.noise / bsg.quarantined) in node results. Default False.
         """
         role_mask, validation_err = _validate_rel_filters(symbol_roles, confidence_threshold, relation_direction)
         if validation_err is not None:
@@ -1116,6 +1243,35 @@ def register_tools(
                 table = table.filter(pc.match_substring_regex(table.column("name"), name_pattern))
             except Exception:
                 table = table.filter(pc.match_substring(table.column("name"), name_pattern))
+
+        # T2-quarantine: exclude `unresolved:` reference stubs from node results
+        # by default; edges referencing them are unaffected (they carry rel
+        # metadata) and include_unresolved=true restores full behavior.
+        # Applied after the selective filters above (conjunctive, so identical
+        # semantics) so the mask only scans the already-narrowed table.
+        unresolved_suppressed = 0
+        if not include_unresolved:
+            stub_mask = pc.starts_with(table.column("entity_id"), "unresolved:")
+            unresolved_suppressed = pc.sum(pc.cast(stub_mask, pa.int64())).as_py() or 0
+            if unresolved_suppressed:
+                table = table.filter(pc.invert(stub_mask))
+
+        # T3-quarantine: plugin-flagged entities (metadata bsg.noise /
+        # bsg.quarantined) are hidden by default; include_quarantined=true
+        # restores them. Same conjunctive placement rationale as above.
+        quarantined_suppressed = 0
+        if not include_quarantined:
+            quarantined_ids = _quarantined_entity_ids(table)
+            quarantined_suppressed = len(quarantined_ids)
+            if quarantined_ids:
+                table = table.filter(
+                    pc.invert(
+                        pc.is_in(
+                            table.column("entity_id"),
+                            value_set=pa.array(list(quarantined_ids)),
+                        )
+                    )
+                )
 
         total_nodes = table.num_rows
         rows = table.slice(offset, limit).to_pylist()
@@ -1238,6 +1394,10 @@ def register_tools(
             applied_filters["file_path"] = file_path
         if name_pattern:
             applied_filters["name_pattern"] = name_pattern
+        if include_unresolved:
+            applied_filters["include_unresolved"] = True
+        if include_quarantined:
+            applied_filters["include_quarantined"] = True
 
         markdown, structured = build_dual_output(
             rows, rels_rows, file_paths,
@@ -1248,6 +1408,24 @@ def register_tools(
             applied_filters=applied_filters or None,
             resolver=get_resolver(reader),
         )
+        # Report quarantine suppression the way search_entities does — nothing
+        # in the output otherwise states how many nodes were hidden.
+        if unresolved_suppressed or quarantined_suppressed:
+            suppressed_meta = structured.setdefault("meta", {})
+            footer: list[str] = []
+            if unresolved_suppressed:
+                suppressed_meta["unresolved_suppressed"] = unresolved_suppressed
+                footer.append(
+                    f"- … {unresolved_suppressed} unresolved reference(s) suppressed "
+                    f"(include_unresolved=true to show)"
+                )
+            if quarantined_suppressed:
+                suppressed_meta["quarantined_suppressed"] = quarantined_suppressed
+                footer.append(
+                    f"- … {quarantined_suppressed} quarantined entitie(s) suppressed "
+                    f"(include_quarantined=true to show)"
+                )
+            markdown += "\n" + "\n".join(footer)
         res = ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
         return _inject_banner(res, repo_name, file_path=file_path)
 
@@ -1370,6 +1548,17 @@ def register_tools(
         search_entities first to resolve entity_ids). Returns the ordered path
         with depth and per-hop relation types.
 
+        Traversal is default-deny: only whitelisted structural edge kinds are
+        expanded (CALLS > INHERITS/IMPLEMENTS > IMPORTS > READS/WRITES >
+        CONTAINS > other structural relations). Non-structural kinds —
+        RATIONALE_FOR or any future annotation/inferred relation —
+        are never traversed, even if they would shorten the path, and an
+        explicit relation_types filter can only narrow the whitelist. Among
+        equal-length paths, the one whose earliest hops use higher-priority
+        edge kinds is returned; remaining ties resolve deterministically by
+        entity_id ordering. meta.edge_priority reports the preference order,
+        the edge kinds used, and any non-structural kinds excluded.
+
         Args:
             source_entity_id: Entity ID or display name of the starting point.
             target_entity_id: Entity ID or display name of the destination.
@@ -1402,8 +1591,32 @@ def register_tools(
             return column_err
 
         # T09/T15: normalize to uppercase to match stored relation_type values.
+        non_traversable_types: list[str] = []
         if relation_types:
             relation_types = [rt.upper() for rt in relation_types]
+            # T15: accept legacy inverse names by translating them to their
+            # forward equivalents before the traversability check.
+            relation_types = [
+                inv.name if (inv := INVERSE_TO_FORWARD.get(rt)) else rt
+                for rt in relation_types
+            ]
+            # T6 default-deny: an explicit filter can only narrow the
+            # structural whitelist, never widen it — non-structural relations
+            # (RATIONALE_FOR, future types) are not traversable.
+            non_traversable_types = sorted(
+                {rt for rt in relation_types if rt not in TRACE_TRAVERSABLE_RELATIONS}
+            )
+            relation_types = [
+                rt for rt in relation_types if rt in TRACE_TRAVERSABLE_RELATIONS
+            ]
+            if not relation_types:
+                return _err(
+                    f"None of the requested relation_types are traversable structural edges: "
+                    f"{non_traversable_types}. trace_path only expands structural relations; "
+                    "use graph_query(relation_types=...) for annotation/inferred edges.",
+                    error_type=CLIENT_ERROR,
+                    hint="Drop the non-structural types, or query them via graph_query.",
+                )
 
         max_depth = min(max(max_depth, 1), 20)
 
@@ -1469,6 +1682,31 @@ def register_tools(
             filled = pc.fill_null(conf_col, 1.0)
             filtered_table = filtered_table.filter(pc.greater_equal(filled, pa.scalar(confidence_threshold, type=pa.float32())))
 
+        # T6 default-deny traversal: keep only whitelisted structural edge
+        # kinds. Non-structural kinds present in the filtered set are counted
+        # and reported in meta.edge_priority.excluded_edge_kinds.
+        # MCP-01: DEPRECATED_RELATIONSHIP_TYPES stay in the mask so legacy
+        # inverse rows (CALLED_BY, IMPORTED_BY, ...) survive to the T15
+        # normalization below instead of being dropped pre-normalization.
+        # Excluded-kind counting runs on normalized rows so a straggler
+        # legacy name would still report under its forward equivalent.
+        trav_mask = pc.is_in(
+            filtered_table.column("relation_type"),
+            value_set=pa.array(sorted(
+                TRACE_TRAVERSABLE_RELATIONS | DEPRECATED_RELATIONSHIP_TYPES
+            )),
+        )
+        excluded_kinds: dict[str, int] = {}
+        excluded_table = filtered_table.filter(pc.invert(trav_mask))
+        if excluded_table.num_rows:
+            excluded_rows = normalize_legacy_rel_rows(
+                excluded_table.to_pylist()
+            )
+            for row in excluded_rows:
+                rt = row.get("relation_type") or ""
+                excluded_kinds[rt] = excluded_kinds.get(rt, 0) + 1
+        filtered_table = filtered_table.filter(trav_mask)
+
         all_rels = filtered_table.to_pylist()
 
         # T15: re-classify legacy inverse types (forward type + swapped
@@ -1483,7 +1721,7 @@ def register_tools(
         redirect_cache: dict[str, str] = {}
 
         def _redirect(eid: str) -> str:
-            if not eid.startswith("unresolved:"):
+            if not is_unresolved(eid):
                 return eid
             hit = redirect_cache.get(eid)
             if hit is None:
@@ -1516,6 +1754,14 @@ def register_tools(
             else:
                 adjacency.setdefault(sid, []).append((tid, rt, "forward"))
                 adjacency.setdefault(tid, []).append((sid, rt, "reverse"))
+
+        # T6: deterministic equal-length tie-break — neighbors are enqueued in
+        # edge-priority order (CALLS > INHERITS/IMPLEMENTS > IMPORTS >
+        # READS/WRITES > CONTAINS > other structural), then entity_id, so BFS
+        # prefers semantic edges over structural detours and identical inputs
+        # yield identical paths.
+        for edges in adjacency.values():
+            edges.sort(key=lambda e: (TRACE_EDGE_PRIORITY.get(e[1], 99), e[0]))
 
         if source_entity_id not in adjacency and source_entity_id != target_entity_id:
             _dir_label = {"outgoing": "outgoing", "incoming": "incoming", "both": "connected"}
@@ -1582,6 +1828,17 @@ def register_tools(
         if relation_direction != "outgoing":
             trace_applied_filters["relation_direction"] = relation_direction
 
+        edge_priority_meta: dict[str, Any] = {
+            "preference": sorted(
+                TRACE_EDGE_PRIORITY, key=lambda k: (TRACE_EDGE_PRIORITY[k], k)
+            ),
+            "path_edge_kinds": [rt for _, rt, _ in path[1:]],
+        }
+        if excluded_kinds:
+            edge_priority_meta["excluded_edge_kinds"] = excluded_kinds
+        if non_traversable_types:
+            edge_priority_meta["non_traversable_requested"] = non_traversable_types
+
         structured = {
             "path": [
                 {
@@ -1595,6 +1852,7 @@ def register_tools(
             "depth": len(path) - 1,
             "meta": {
                 "artifact_generation": _manifest_gen(reader),
+                "edge_priority": edge_priority_meta,
                 **({"applied_filters": trace_applied_filters} if trace_applied_filters else {}),
             },
         }
@@ -1867,6 +2125,8 @@ def register_tools(
         symbol_roles: list[str] | None = None,
         limit: int = 25,
         response_format: str = "concise",
+        include_unresolved: bool = False,
+        include_quarantined: bool = False,
     ) -> ToolResult:
         """Search for entities by name using substring regex match.
 
@@ -1876,6 +2136,18 @@ def register_tools(
         bodies (that is grep's job), and do NOT use graph_query for name
         search (this is optimized for name matching). Returns matching
         entities with type and file:line locations.
+
+        Results are ranked by a deterministic scorer (search_ranking.py):
+        exact > prefix > substring (+100/60/30); regex-only hits (queries
+        containing regex metacharacters that matched via Arrow RE2) score as
+        substring (+30) — a defensive +10 floor exists for callers bypassing
+        Arrow matching but is unreachable through this tool; kind boost
+        CLASS/METHOD/FUNCTION/INTERFACE +40, MODULE +30,
+        COMMENT_BLOCK −40, EXTERNAL_SYMBOL −25; exported +15; query appearing
+        in fqn or a file-path segment +20; query using a separator native to
+        the hit's language +5. Ties break by start_line, file, entity_id —
+        identical queries always return identical order. Ranking reorders
+        only; recall is unchanged.
 
         Args:
             query: Substring or regex pattern to match entity names.
@@ -1890,6 +2162,12 @@ def register_tools(
                 Valid roles: Definition, Import, WriteAccess, ReadAccess, Generated, Declaration, Dynamic, Heuristic.
             limit: Maximum results. Default: 25.
             response_format: 'concise' (default), 'detailed'.
+            include_unresolved: If True, also return unresolved reference stubs
+                (`unresolved:` entities — failed cross-file resolutions). Default False:
+                stubs are quarantined so real definitions rank first.
+            include_quarantined: If True, also return plugin-flagged entities
+                (metadata bsg.noise / bsg.quarantined). Default False:
+                flagged entities are suppressed so real code ranks first.
         """
         role_mask, validation_err = _validate_rel_filters(symbol_roles, None, "both")
         if validation_err is not None:
@@ -1920,6 +2198,10 @@ def register_tools(
             mask = pc.match_substring(agent_table.column("name"), query)
         table = agent_table.filter(mask)
 
+        # Type/role filters run BEFORE the quarantine masks so the suppressed
+        # counts equal what include_*=true would actually return under the
+        # caller's filters — counting pre-filter rows would overreport
+        # (a stub excluded by entity_types isn't "suppressed", it's filtered).
         if merged_types:
             masks = [pc.equal(table.column("entity_type"), et) for et in merged_types]
             combined = masks[0]
@@ -1947,11 +2229,45 @@ def register_tools(
                 else:
                     table = table.slice(0, 0)
 
+        # T2-quarantine: hide `unresolved:` reference stubs by default so real
+        # definitions rank first. Suppressed count is reported in meta for
+        # transparency (ghost data still exists in storage — recall is kept).
+        unresolved_suppressed = 0
+        if not include_unresolved:
+            stub_mask = pc.starts_with(table.column("entity_id"), "unresolved:")
+            # Aggregate instead of filter().num_rows — no table materialized
+            # just to count (pc.sum of an empty mask is null -> 0).
+            unresolved_suppressed = pc.sum(pc.cast(stub_mask, pa.int64())).as_py() or 0
+            if unresolved_suppressed:
+                table = table.filter(pc.invert(stub_mask))
+
+        # T3-quarantine: plugin-flagged entities (metadata bsg.noise /
+        # bsg.quarantined) suppressed by default, reported for transparency.
+        quarantined_suppressed = 0
+        if not include_quarantined:
+            quarantined_ids = _quarantined_entity_ids(table)
+            quarantined_suppressed = len(quarantined_ids)
+            if quarantined_ids:
+                table = table.filter(
+                    pc.invert(
+                        pc.is_in(
+                            table.column("entity_id"),
+                            value_set=pa.array(list(quarantined_ids)),
+                        )
+                    )
+                )
+
         total = table.num_rows
-        rows = table.to_pylist()[:limit]
 
         file_paths = _file_paths_map(reader)
         gen = _manifest_gen(reader)
+
+        # T8: deterministic kind-aware ranking — reorders only, recall
+        # unchanged. Full match set is scored before the limit slice so
+        # pagination keeps score order.
+        ranked = rank_hits(table.to_pylist(), query, file_paths)
+        rows = [r for r, _ in ranked[:limit]]
+        score_by_id = {r.get("entity_id", ""): s for r, s in ranked[:limit]}
 
         lines: list[str] = [f"## Search Results ({total} matches, showing {len(rows)})"]
         for row in rows:
@@ -1965,6 +2281,16 @@ def register_tools(
             if sl:
                 lr = f"L{sl}" if not el or el == sl else f"L{sl}-{el}"
             lines.append(f"- {name} [{etype}] {fp}:{lr} — `{eid}`")
+        if unresolved_suppressed:
+            lines.append(
+                f"- … {unresolved_suppressed} unresolved reference(s) suppressed "
+                f"(include_unresolved=true to show)"
+            )
+        if quarantined_suppressed:
+            lines.append(
+                f"- … {quarantined_suppressed} quarantined entitie(s) suppressed "
+                f"(include_quarantined=true to show)"
+            )
 
         # T04/T07: report the filters actually applied, mirroring graph_query
         # (which nests applied_filters under meta via build_dual_output).
@@ -1975,11 +2301,25 @@ def register_tools(
             applied_filters["entity_types"] = merged_types
         if entity_categories:
             applied_filters["entity_categories"] = entity_categories
+        if include_unresolved:
+            applied_filters["include_unresolved"] = True
+        if include_quarantined:
+            applied_filters["include_quarantined"] = True
 
         structured = {
-            "results": [build_node_dict_simple(r, file_paths) for r in rows],
+            "results": [
+                {
+                    **build_node_dict_simple(r, file_paths),
+                    "score": score_by_id.get(r.get("entity_id", ""), 0),
+                }
+                for r in rows
+            ],
             "meta": {"total_matches": total, "returned": len(rows), "artifact_generation": gen},
         }
+        if unresolved_suppressed:
+            structured["meta"]["unresolved_suppressed"] = unresolved_suppressed
+        if quarantined_suppressed:
+            structured["meta"]["quarantined_suppressed"] = quarantined_suppressed
         if applied_filters:
             structured["meta"]["applied_filters"] = applied_filters
         res = ToolResult(content=[TextContent(type="text", text="\n".join(lines))], structured_content=structured)
@@ -2091,15 +2431,24 @@ def register_tools(
             is_watching = ws.get("watching", entry.watch)
             sync_state = ws.get("sync_state", entry.sync_state)
             pending_files = ws.get("pending_files", [])
+            watch_mode = ws.get("mode", getattr(entry, "watch_mode", "auto"))
+            oldest_age = ws.get("oldest_pending_age_s", 0)
+            last_flush_reason = ws.get("last_flush_reason")
+            vcs_op_hold = ws.get("vcs_op_hold", False)
             last_synced = entry.last_synced
 
             status_icon = "✓" if sync_state == "idle" else ("⏳" if sync_state in ("pending", "patching") else "❌")
             lines.append(f"### {entry.name} ({status_icon} {sync_state})")
             lines.append(f"- Path: `{entry.path}`")
             lines.append(f"- Artifact: {'✓ present' if has_art else '✗ missing'} ({run_count} runs, latest: `{latest_run_uuid or 'N/A'}`)")
-            lines.append(f"- Watcher: {'✓ active' if is_watching else '✗ inactive'} (debounce: {entry.debounce_ms}ms)")
+            lines.append(f"- Watcher: {'✓ active' if is_watching else '✗ inactive'} (mode: {watch_mode}, debounce: {entry.debounce_ms}ms)")
             if pending_files:
-                lines.append(f"- Pending files ({len(pending_files)}): {', '.join(pending_files[:5])}{'...' if len(pending_files) > 5 else ''}")
+                age_str = f", oldest {oldest_age}s ago" if oldest_age else ""
+                lines.append(f"- Pending files ({len(pending_files)}{age_str}): {', '.join(pending_files[:5])}{'...' if len(pending_files) > 5 else ''}")
+            if vcs_op_hold:
+                lines.append("- Git operation in progress — re-index deferred")
+            if last_flush_reason:
+                lines.append(f"- Last flush: {last_flush_reason}")
             if last_synced:
                 lines.append(f"- Last synced: {last_synced}")
             lines.append("")
@@ -2111,8 +2460,12 @@ def register_tools(
                 "run_count": run_count,
                 "latest_run_uuid": latest_run_uuid,
                 "watching": is_watching,
+                "watch_mode": watch_mode,
                 "sync_state": sync_state,
                 "pending_sync_files": pending_files,
+                "oldest_pending_age_s": oldest_age,
+                "last_flush_reason": last_flush_reason,
+                "vcs_op_hold": vcs_op_hold,
                 "last_synced": last_synced,
                 "debounce_ms": entry.debounce_ms,
             })

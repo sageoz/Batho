@@ -1,0 +1,32 @@
+schema_version: bsg-plugin.v2
+plugin_id: enrich_fixture
+name: Enrich Fixture Plugin
+version: 1.0.0
+enabled: true
+rules:
+  - rule_id: quarantine-dist-noise
+    name: quarantine-dist-noise
+    description: Quarantine generated dist/ output — planted noise in fixture
+    severity: warning
+    priority: 10
+    enabled: true
+    matchers:
+      file_patterns: ["**/dist/**"]
+    actions:
+      metadata:
+        bsg.noise: true
+        bsg.quarantined: true
+  - rule_id: tag-app-services
+    name: tag-app-services
+    description: Tag entities under app/ as the core service
+    severity: info
+    priority: 20
+    enabled: true
+    matchers:
+      file_patterns: ["**/app/**"]
+      entity_types: [function, class, method]
+    actions:
+      metadata:
+        bsg.service_tag: core
+        bsg.generated: true
+        bsg.gen.reason: "e2e fixture coverage"

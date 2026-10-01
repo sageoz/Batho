@@ -25,9 +25,7 @@ from batho.modules.storage.cache.unified_cache import (
 )
 from batho.modules.extraction.extractor import ASTExtractor
 from batho.core.schemas import Entity, EntityType, FileSnapshot, Relationship
-from batho.modules.extraction.symbol_table import FileSymbolTable
 from batho.utils.file_io import read_file_bytes
-from batho.utils.hash import _is_binary
 from batho.utils.logging import configure_logging, get_logger
 from batho.utils.memory_monitor import cap_workers_by_ram
 
@@ -180,6 +178,16 @@ def _serialize_extraction_result(
                 "type": e.type.value,
                 "file": filepath,
                 "parent_id": e.parent_id,
+                # T1: signature rides hollow topology so receiver-type
+                # resolution can read param annotations / return types
+                # (`svc: GraphService`, `-> GraphService`) at graph-build
+                # time without raw_content.
+                "signature": e.signature,
+                # T1 position-aware assignment binding: stub.start_line must
+                # be the real call-site line so Source 5 can order bindings
+                # (latest assignment at or before the call wins).
+                "start_line": e.start_line,
+                "end_line": e.end_line,
             }
             # Preserve stub resolution metadata if present
             if e.is_contextual_stub:
@@ -620,6 +628,7 @@ def process_file_single_pass_worker(
         # Apply BSG rules per-file in parallel (before serialization)
         file_security_audit: dict[str, Any] = {}
         local_hits = {"rules_applied": 0, "entities_tagged": 0, "rules_loaded": 0}
+        file_rule_perf: dict[str, dict[str, int]] = {}
         if _WORKER_RULES_CACHE:
             try:
                 from batho.modules.compression.rules import apply_bsg_rules_to_entities
@@ -629,6 +638,7 @@ def process_file_single_pass_worker(
                     rules=_WORKER_RULES_CACHE,
                     root_path=_WORKER_ROOT_PATH or str(file_path.parent),
                     file_path=filepath,
+                    perf_out=file_rule_perf,
                 )
             except Exception as exc:
                 logger.warning(
@@ -664,6 +674,7 @@ def process_file_single_pass_worker(
             file_security_audit=file_security_audit,
         )
         local_hits["rules_loaded"] = len(_WORKER_RULES_CACHE) if _WORKER_RULES_CACHE else 0
+        local_hits["rule_perf"] = file_rule_perf
 
         return (filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, global_manifest, file_security_audit, local_hits)
     except Exception as exc:
@@ -798,14 +809,28 @@ def extract_and_emit_parallel(
         identity_fp = hashlib.sha256(
             orjson.dumps(package_map, option=orjson.OPT_SORT_KEYS)
         ).hexdigest()[:12]
+    rules_config = bsg_cfg.get("rules", {})
+    root_path = bsg_cfg.get("root_path")
+
+    # Rules dimension of the cache variant: per-file rules stamp metadata
+    # onto entities inside workers before set_ast, so a changed rule set
+    # must invalidate cached entries or stale (un-enriched) entities return.
+    rules_fingerprint = ""
+    if root_path:
+        try:
+            from batho.modules.compression.rules import rules_fingerprint_for_config
+            rules_fingerprint = rules_fingerprint_for_config(
+                rules_config, Path(root_path)
+            )
+        except Exception as exc:
+            logger.warning("bsg_rules_fingerprint_failed", error=str(exc))
+
     cache_variant = _build_ast_cache_variant(
         include_gaps=include_gaps,
         parsing_config=bsg_cfg.get("parsing", {}),
         identity_fingerprint=identity_fp,
+        rules_fingerprint=rules_fingerprint,
     )
-
-    rules_config = bsg_cfg.get("rules", {})
-    root_path = bsg_cfg.get("root_path")
 
     raw_results = []
     error_count = 0

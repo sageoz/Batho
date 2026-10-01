@@ -41,8 +41,14 @@ class IncrementalEngine:
         root: Path,
         max_file_size_kb: int | None = None,
         strict_hashing: bool = True,
+        ignore_spec: Any = None,
     ) -> list[FileChange]:
-        """Scan filesystem for added/modified/deleted files."""
+        """Scan filesystem for added/modified/deleted files.
+
+        ``ignore_spec`` scopes candidate discovery to the same files the
+        build would index (config-driven ignore settings); when omitted, a
+        default spec (built-in defaults + .gitignore) is used.
+        """
         from batho.modules.graph.incremental import _collect_candidate_files
 
         known_tracking = self.db.get_all_file_tracking()
@@ -50,7 +56,7 @@ class IncrementalEngine:
         changes: list[FileChange] = []
         current_files: set[str] = set()
 
-        for abs_path in _collect_candidate_files(root):
+        for abs_path in _collect_candidate_files(root, ignore_spec=ignore_spec):
             try:
                 rel = abs_path.relative_to(root).as_posix()
             except ValueError:

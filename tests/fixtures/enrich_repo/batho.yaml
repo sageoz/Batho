@@ -1,0 +1,7 @@
+indexer:
+  ignore_defaults: false
+rules:
+  enabled: true
+  auto_load_all_plugins: false
+  builtin_plugins: []
+  custom_rules_dir: .batho/plugins

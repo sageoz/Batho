@@ -54,7 +54,7 @@ def test_graph_overview_communities_loaded(built_artifact: Path):
 
     artifact_dir = built_artifact / ".batho" / "artifact"
     communities = load_communities(artifact_dir)
-    # Communities may or may not be present depending on leidenalg availability
+    # Communities may or may not be present depending on networkx availability
     assert isinstance(communities, list)
 
 

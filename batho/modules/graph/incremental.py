@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 
 def _run_git(
@@ -39,6 +40,17 @@ def _run_git(
     env = os.environ.copy()
     env["PATH"] = safe_path
     env["GIT_PAGER"] = "cat"
+    # Strip session-level git overrides — an inherited GIT_DIR/GIT_WORK_TREE
+    # (e.g. exported by a parent shell sitting in another repo, or set by an
+    # outer build system) would silently redirect these rev-parse calls to a
+    # foreign gitdir while cwd points at ours.
+    for _k in (
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR",
+        "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    ):
+        env.pop(_k, None)
 
     try:
         return subprocess.run(
@@ -48,8 +60,9 @@ def _run_git(
             text=True,
             check=True,
             env=env,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
+            timeout=15,  # a stalled git (NFS/FUSE, credential helper) must not
+        )               # block the watcher engine lock indefinitely
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
 
 
@@ -76,12 +89,59 @@ def get_current_branch(repo_root: Path) -> str | None:
     return branch if branch else None
 
 
-def _collect_candidate_files(root: Path) -> list[Path]:
-    """Collect all non-ignored files under root using os.scandir for speed."""
+def resolve_git_dir(repo_root: Path) -> tuple[Path, Path] | None:
+    """Resolve (git_dir, common_dir) for a repo, or None if not a git worktree.
+
+    ``git_dir`` is the per-worktree private dir (holds ``index``, ``HEAD`` —
+    ``<main>/.git/worktrees/<id>`` for linked worktrees); ``common_dir`` is the
+    shared dir (holds ``refs/``, ``packed-refs``, ``MERGE_HEAD``, ``hooks/``).
+    Both coincide for a regular repo. Never parses gitfiles — ``rev-parse`` is
+    the only resolution mechanism.
+    """
+    res = _run_git(repo_root, ["rev-parse", "--absolute-git-dir"])
+    if res is not None and res.stdout.strip():
+        git_dir = Path(res.stdout.strip()).resolve()
+    else:
+        # Fallback for older git without --absolute-git-dir
+        res = _run_git(repo_root, ["rev-parse", "--git-dir"])
+        if res is None or not res.stdout.strip():
+            return None
+        git_dir = Path(res.stdout.strip())
+        if not git_dir.is_absolute():
+            git_dir = (repo_root / git_dir).resolve()
+
+    bare = _run_git(repo_root, ["rev-parse", "--is-bare-repository"])
+    if bare is not None and bare.stdout.strip().lower() == "true":
+        return None
+
+    cres = _run_git(repo_root, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    if cres is not None and cres.stdout.strip():
+        common_dir = Path(cres.stdout.strip()).resolve()
+    else:
+        cres = _run_git(repo_root, ["rev-parse", "--git-common-dir"])
+        if cres is None or not cres.stdout.strip():
+            common_dir = git_dir
+        else:
+            common_dir = Path(cres.stdout.strip())
+            if not common_dir.is_absolute():
+                # Output may be relative to git_dir
+                common_dir = (git_dir / common_dir).resolve()
+
+    return git_dir, common_dir
+
+
+def _collect_candidate_files(root: Path, ignore_spec: Any = None) -> list[Path]:
+    """Collect all non-ignored files under root using os.scandir for speed.
+
+    ``ignore_spec`` lets callers reuse the exact spec the build path uses
+    (config-driven defaults/user patterns + .gitignore); when omitted, a
+    default spec is loaded.
+    """
     import os
     from batho.utils.ignore import load_ignore_spec, should_ignore_path
 
-    spec = load_ignore_spec(root)
+    if ignore_spec is None:
+        ignore_spec = load_ignore_spec(root)
     candidates = []
     stack = [root]
     while stack:
@@ -90,7 +150,7 @@ def _collect_candidate_files(root: Path) -> list[Path]:
             with os.scandir(current) as it:
                 for entry in it:
                     full_path = Path(entry.path)
-                    if should_ignore_path(full_path, root, spec, include_hidden=True):
+                    if should_ignore_path(full_path, root, ignore_spec, include_hidden=True):
                         continue
                     if entry.is_dir(follow_symlinks=False):
                         stack.append(full_path)

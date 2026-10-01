@@ -20,6 +20,7 @@ for editing, or after a graph tool has named the files worth reading.
 For feature/change work, use the Batho skill pack flow:
 batho-specs (grounded spec) → batho-execute (plan + implement) →
 batho-review (verify). Every claim in a spec cites graph entities.
+Pack missing → ask the user to run `batho install`.
 
 ## Tool selection
 - Architecture / "what does this codebase do?" → graph_overview FIRST

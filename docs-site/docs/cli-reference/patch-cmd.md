@@ -67,3 +67,12 @@ If no changes are detected since the last index/patch, it outputs:
 ```
 No changes detected.
 ```
+
+## Limitations
+
+Derived cross-file edges — `OVERRIDES` (from `CONTAINS`+`INHERITS`) and doc→module
+`RATIONALE_FOR` (markdown path mentions) — are computed over the patch batch only.
+A changed doc that mentions an *unchanged* module, or an override spanning a changed
+file and an unchanged file, emits no edge until the next full `batho build`, which
+re-derives them over the complete entity set. Run a periodic full build to refresh
+these annotation edges.

@@ -30,6 +30,9 @@ def _build_parser() -> argparse.ArgumentParser:
     from batho.cli.gc import register_gc_parser
     from batho.cli.load import register_load_parser
     from batho.cli.mcp import register_mcp_parser
+    from batho.cli.install import register_install_parser
+    from batho.cli.plugins import register_plugins_parser
+    from batho.cli.communities import register_communities_parser
 
     register_build_parser(subparsers)
     register_patch_parser(subparsers)
@@ -39,6 +42,9 @@ def _build_parser() -> argparse.ArgumentParser:
     register_gc_parser(subparsers)
     register_load_parser(subparsers)
     register_mcp_parser(subparsers)
+    register_install_parser(subparsers)
+    register_plugins_parser(subparsers)
+    register_communities_parser(subparsers)
 
     return parser
 

@@ -41,6 +41,9 @@ const sidebars: SidebarsConfig = {
         'cli-reference/diff-cmd',
         'cli-reference/gc-cmd',
         'cli-reference/mcp-cmd',
+        'cli-reference/install-cmd',
+        'cli-reference/plugins-cmd',
+        'cli-reference/communities-cmd',
       ],
     },
     {

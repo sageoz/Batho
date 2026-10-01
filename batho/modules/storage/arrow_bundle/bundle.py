@@ -12,11 +12,9 @@ Storage layout:
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import threading
 import weakref
-from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,10 +36,6 @@ from .reader import BathoBundleReader
 from .writer import BathoBundleWriter, write_simple_ipc, read_ipc_table
 from .helpers import (
     _accumulate_scratch_rows,
-    _expand_graph_payload,
-    _expand_relationship,
-    _minify_graph_payload,
-    _minify_relationship,
 )
 
 LOGGER = get_logger(__name__, component="arrow_bundle")
@@ -1054,6 +1048,50 @@ class BathoBundle:
         return self._reader.get_file_changelog_raw(rel_path=str(rel_path).replace("\\", "/"), since_run_uuid=since)
 
     def prune_file_changelog(self, max_runs: int) -> None:
+        """Cap per-file changelog history at the newest ``max_runs`` runs.
+
+        Rows are grouped by ``file_id``; each file keeps only rows whose
+        ``run_uuid`` is among that file's ``max_runs`` most recently appended
+        distinct runs (table order is append/chronological — ``_flush_changelog``
+        appends new rows at the end). The surviving set is rewritten via the
+        usual tmp-file + ``commit_patch`` path, then GC cleans orphaned blobs.
+        """
+        try:
+            max_runs = max(int(max_runs), 1)
+        except (TypeError, ValueError):
+            self.garbage_collect()
+            return
+
+        existing_table = read_ipc_table(self._active_or_empty("file_changelog"))
+        if existing_table is not None and existing_table.num_rows > 0:
+            rows = existing_table.to_pylist()
+            # file_id -> ordered list of distinct run_uuids (append order)
+            runs_by_file: dict[int, list[str]] = {}
+            for r in rows:
+                fid = int(r["file_id"])
+                ruuid = r.get("run_uuid") or ""
+                seen = runs_by_file.setdefault(fid, [])
+                if ruuid not in seen:
+                    seen.append(ruuid)
+            keep_runs = {
+                fid: set(seen[-max_runs:]) for fid, seen in runs_by_file.items()
+            }
+            kept = [
+                r for r in rows
+                if r.get("run_uuid") in keep_runs.get(int(r["file_id"]), set())
+            ]
+            if len(kept) < len(rows):
+                tmp = self._artifact_dir / "file_changelog.tmp.ipc"
+                write_simple_ipc(kept, FILE_CHANGELOG_SCHEMA, tmp)
+                run_uuid = self.get_latest_run_id() or ""
+                self._manager.commit_patch({"file_changelog": tmp}, run_uuid)
+                self._reader.invalidate("file_changelog")
+                LOGGER.info(
+                    "file_changelog_pruned",
+                    dropped=len(rows) - len(kept),
+                    kept=len(kept),
+                    max_runs=max_runs,
+                )
         self.garbage_collect()
 
     # ------------------------------------------------------------------
@@ -1084,16 +1122,45 @@ class BathoBundle:
         if not run_uuid:
             run_uuid = self._reader.get_latest_run_id() or str(run_internal_id)
 
+        # Column-merge semantics: absent/None values preserve the existing
+        # row's columns — callers (e.g. `plugins apply`) may update a subset
+        # without clobbering telemetry/overviews written by an earlier step.
+        # A key explicitly disabled via blob_config is cleared, not preserved.
+        _artifact_to_col = {
+            "context_overview": "context_overview_json",
+            "telemetry_metrics": "telemetry_json",
+            "structural_metrics": "structural_json",
+            "security_audit": "security_audit_json",
+            "artifact_payload": "artifact_payload_json",
+            "delta_stats": "delta_stats_json",
+            "rule_stats": "rule_stats_json",
+            "enrich_profile": "enrich_profile_json",
+            "enrich_score": "enrich_score_json",
+        }
+
+        def _merge(key: str, val: Any) -> str | None:
+            if blob_config is not None:
+                cfg = blob_config.get("run_artifacts", {})
+                if not cfg.get(key, True):
+                    return None
+            if val is None:
+                return existing.get(_artifact_to_col.get(key, f"{key}_json"))
+            return _to_json(key, val)
+
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
+            existing = self._reader.get_run_artifacts(run_uuid) or {}
             self._run_artifact_rows.append({
                 "run_uuid": run_uuid,
-                "context_overview_json": _to_json("context_overview", artifacts.get("context_overview")),
-                "telemetry_json": _to_json("telemetry_metrics", artifacts.get("telemetry_metrics")),
-                "structural_json": _to_json("structural_metrics", artifacts.get("structural_metrics")),
-                "security_audit_json": _to_json("security_audit", artifacts.get("security_audit")),
-                "artifact_payload_json": _to_json("artifact_payload", artifacts.get("artifact_payload")),
-                "delta_stats_json": _to_json("delta_stats", artifacts.get("delta_stats")),
+                "context_overview_json": _merge("context_overview", artifacts.get("context_overview")),
+                "telemetry_json": _merge("telemetry_metrics", artifacts.get("telemetry_metrics")),
+                "structural_json": _merge("structural_metrics", artifacts.get("structural_metrics")),
+                "security_audit_json": _merge("security_audit", artifacts.get("security_audit")),
+                "artifact_payload_json": _merge("artifact_payload", artifacts.get("artifact_payload")),
+                "delta_stats_json": _merge("delta_stats", artifacts.get("delta_stats")),
+                "rule_stats_json": _merge("rule_stats", artifacts.get("rule_stats")),
+                "enrich_profile_json": _merge("enrich_profile", artifacts.get("enrich_profile")),
+                "enrich_score_json": _merge("enrich_score", artifacts.get("enrich_score")),
                 "created_at": now,
             })
             self._flush_run_artifacts(run_uuid)
@@ -1126,6 +1193,9 @@ class BathoBundle:
             "security_audit": _from_json(row.get("security_audit_json")),
             "artifact_payload": _from_json(row.get("artifact_payload_json")),
             "delta_stats": _from_json(row.get("delta_stats_json")),
+            "rule_stats": _from_json(row.get("rule_stats_json")),
+            "enrich_profile": _from_json(row.get("enrich_profile_json")),
+            "enrich_score": _from_json(row.get("enrich_score_json")),
             "created_at": row.get("created_at"),
         }
 

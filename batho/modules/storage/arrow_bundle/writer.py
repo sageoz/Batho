@@ -16,20 +16,25 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.ipc as ipc
 
+
 from batho.utils.logging import get_logger
 from .schemas import (
     AGENT_VIEWS_SCHEMA,
     STORAGE_VIEWS_SCHEMA,
     RELS_VIEWS_SCHEMA,
-    FILE_TRACKING_SCHEMA,
-    FILE_CHANGELOG_SCHEMA,
-    RUN_ARTIFACTS_SCHEMA,
-    RUNS_SCHEMA,
 )
 
 LOGGER = get_logger(__name__, component="arrow_bundle_writer")
 
 FLUSH_THRESHOLD_ROWS = 50_000
+
+# Extraction-metadata keys persisted alongside bsg.* in agent_views —
+# the fixed set rule matchers/actions read (decorator-based tag derivation,
+# docstring truncation, invocation-snippet rewrites). Anything else stays
+# out of the projection to bound row size.
+_AGENT_METADATA_EXTRA_KEYS = frozenset(
+    {"decorators", "docstring", "invocation_snippet"}
+)
 
 
 class BathoBundleWriter:
@@ -100,9 +105,22 @@ class BathoBundleWriter:
                 self._agent_buf["is_exported"].append(bool(ent.get("is_exported", False)))
                 self._agent_buf["fqn"].append(ent.get("fqn"))
                 # Stub rows keep their extraction-time metadata (pending
-                # state, caller_scope, target_name) for later merge; all
-                # other entities stay null to bound artifact size.
-                ent_meta = ent.get("metadata") if ent_id.startswith("unresolved:") else None
+                # state, caller_scope, target_name) for later merge. For all
+                # other entities the enrichment-layer projection (bsg.* keys:
+                # rules, usn tags, category, quarantine flags) is persisted —
+                # needed for quarantine filtering (T03) and so `batho plugins
+                # apply` re-enrichment stays durable (T08) — plus the fixed
+                # extraction keys rule matchers read (decorators/docstring/
+                # invocation_snippet): without them `plugins apply` re-matches
+                # against a bsg-only projection and rule hits diverge from
+                # build. All other extraction metadata stays null to bound size.
+                ent_meta = ent.get("metadata")
+                if ent_meta and not ent_id.startswith("unresolved:"):
+                    ent_meta = {
+                        k: v for k, v in ent_meta.items()
+                        if str(k).startswith("bsg.")
+                        or k in _AGENT_METADATA_EXTRA_KEYS
+                    } or None
                 try:
                     self._agent_buf["metadata_json"].append(
                         _json.dumps(ent_meta, default=str) if ent_meta else None

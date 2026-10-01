@@ -17,6 +17,7 @@ Batho's Markdown-based memory model.
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 import threading
 import time
@@ -36,7 +37,7 @@ import batho.utils.memory_monitor
 from batho.core.config import get_active_root, get_config_cached
 from batho.utils.file_io import read_file_bytes
 from batho.utils.hash import compute_bytes_hash
-from batho.utils.ignore import load_ignore_spec
+from batho.utils.ignore import is_ignored, load_ignore_spec
 from batho.utils.logging import get_logger
 from batho.utils.memory_monitor import (
     cap_workers_by_ram,
@@ -48,6 +49,13 @@ from batho.modules.storage.cache.unified_cache import (
     build_ast_cache_variant,
 )
 from batho.modules.extraction.extractor import ASTExtractor
+from batho.modules.extraction.package_roots import (
+    alias_candidates,
+    build_module_suffix_index,
+    derived_module_variants,
+    manifest_roots_and_aliases,
+    reset_caches as reset_package_root_caches,
+)
 from batho.modules.extraction.pipeline import (
     extract_and_emit_parallel,
 )
@@ -59,7 +67,7 @@ from batho.core.schemas import (
     RelationshipType,
     detect_package_from_config,
 )
-from batho.modules.extraction.scope_manager import ScopeManager
+from batho.modules.extraction.scope_manager import ScopeManager, SymbolInfo
 
 # Binary detection is now handled in batho.utils.file_io
 
@@ -836,14 +844,287 @@ _STDLIB_MODULE_PREFIXES = frozenset({
 _RESOLUTION_CONFIDENCE: dict[str, float] = {
     "exact_match": 0.95,        # Tier 1: Direct dotpath lookup
     "stdlib_method": 0.90,      # Tier 2: Stdlib method / module prefix match
-    "import_map": 0.85,         # Tier 3: Import-map cross-file
+    "package_alias": 0.85,      # Tier 3b: Derived import-namespace alignment (T11)
+    "external_prefix": 0.85,    # Tier 3c: External module-prefix member synthesis
     "parent_chain": 0.75,       # Tier 4: Parent stub chain building
     "sibling_module": 0.75,     # Tier 4b: Sibling-stub module join (split attribute refs)
+    "relative_path": 0.85,    # T12: importer-relative file specifier ('./', '../', '/')
     "scope_qualified": 0.70,    # Tier 5: Caller-scope qualified path
-    "receiver_type": 0.65,      # Tier 6: Receiver-type inference
+    "receiver_param": 0.90,     # T1: receiver type from annotated parameter (`svc: GraphService`)
+    "receiver_assignment": 0.75,  # T1: receiver type from assignment/DI-default flow (`svc = get_svc()`)
+    "receiver_type": 0.65,      # Tier 6: Receiver-type inference (hints, self, static)
     "ambiguous": 0.50,          # Tier 6.5: Multiple equally-plausible candidates
     "unresolved": 0.0,          # Tier 7: No match
 }
+
+
+# ---------------------------------------------------------------------------
+# T1: Receiver-type inference helpers
+# ---------------------------------------------------------------------------
+
+# Entity types a receiver variable's type can resolve to for member lookup.
+_TYPE_LIKE_ENTITY_TYPES = frozenset({
+    EntityType.CLASS, EntityType.STRUCT, EntityType.TRAIT,
+    EntityType.INTERFACE, EntityType.ENUM, EntityType.TYPE_ALIAS,
+})
+
+# Entity types that can be the target of a `var.method()` call.
+_CALLABLE_MEMBER_TYPES = frozenset({
+    EntityType.FUNCTION, EntityType.METHOD,
+    EntityType.CONSTRUCTOR, EntityType.PROPERTY,
+})
+
+# Generic/container names in annotations. Three flavors:
+# - _TYPE_CONTAINER_NAMES: the receiver IS the container — `users: list[User]`
+#   runs list methods (`users.add` is a list op, never `User.add`), and
+#   `opt.unwrap` is `Option.unwrap`. `_pick_type_ident` returns the wrapper.
+# - _TYPE_WRAPPER_NAMES (transparent): the meaningful type is the inner
+#   identifier — `Optional[GraphService]` → `GraphService`,
+#   `type[Foo]` → `Foo`, `Box<User>` → `User` (auto-deref).
+# - _TYPE_NON_TYPE_NAMES: annotation positions carrying no resolvable type
+#   (`-> None`, primitives) — skipped so they yield nothing instead of a
+#   bogus "None"/"int" receiver type.
+_TYPE_CONTAINER_NAMES = frozenset({
+    "list", "dict", "set", "tuple", "frozenset",
+    "List", "Dict", "Tuple", "Set", "FrozenSet",
+    "Sequence", "Mapping", "MutableMapping", "Iterable", "Iterator",
+    "Callable", "Awaitable", "Coroutine",
+    "Promise", "Array", "ReadonlyArray", "Record",
+    "Vec", "HashMap", "HashSet", "Option", "Result", "Maybe",
+    "Literal",
+})
+
+_TYPE_WRAPPER_NAMES = frozenset({
+    "Optional", "Union", "Annotated", "Type", "type",
+    "Partial", "Required", "NotRequired", "ClassVar", "Final",
+    "Box",
+})
+
+_TYPE_NON_TYPE_NAMES = frozenset({
+    "None", "NoneType", "null", "undefined", "void", "Any",
+    "unknown", "never", "Self",
+    # primitives — `x: int`/`-> str` carry no project/std member type
+    "int", "str", "float", "bool", "bytes", "complex",
+    "string", "number", "boolean", "object", "symbol", "bigint",
+    "char", "i8", "i16", "i32", "i64", "i128",
+    "u8", "u16", "u32", "u64", "u128", "usize", "isize",
+    "f16", "f32", "f64",
+})
+
+_TYPE_IDENT_RE = re.compile(r"[A-Za-z_]\w*")
+_MEMBER_NAME_SUFFIX_RE_TEMPLATE = r"(?:_\[[0-9a-fA-F]+\])?\Z"
+
+
+def _pick_type_ident(text: str | None) -> str | None:
+    """Most plausible type name inside an annotation/expression string.
+
+    A container generic returns the container itself — ``list[User]`` types
+    the receiver as ``list`` so ``users.add`` can't fabricate a
+    ``User.add`` edge. Transparent wrappers unwrap — ``Optional[GraphService]``
+    → ``GraphService``. Non-type names (``None``, primitives) yield nothing.
+    Prefers the first candidate starting uppercase; falls back to the first.
+    """
+    if not text:
+        return None
+    idents = _TYPE_IDENT_RE.findall(text)
+    candidates: list[str] = []
+    for ident in idents:
+        if ident in _TYPE_CONTAINER_NAMES:
+            return ident
+        if ident in _TYPE_WRAPPER_NAMES or ident in _TYPE_NON_TYPE_NAMES:
+            continue
+        candidates.append(ident)
+    for ident in candidates:
+        if ident[:1].isupper():
+            return ident
+    return candidates[0] if candidates else None
+
+
+def _single_call_arg_ident(text: str, arg_start: int) -> str | None:
+    """Inner ident of a wrapper call's sole call/ident argument.
+
+    ``arg_start`` is the offset just past the outer call's ``(``. Returns the
+    callee for ``Depends(get_svc())``, the bare ident for
+    ``Depends(get_svc)``, and None for empty/multi-arg/non-ident argument
+    lists — mirroring the extractor's ``assigned_inner`` capture (DI
+    wrappers like ``Depends(f)`` where the inner reference is the real
+    type producer).
+    """
+    depth = 1
+    i = arg_start
+    while i < len(text) and depth:
+        c = text[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    if depth:
+        return None
+    arg = text[arg_start:i].strip()
+    m = re.match(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", arg)
+    if not m:
+        return None
+    rest = arg[m.end():].lstrip()
+    if not rest:
+        return m.group(0)
+    if rest.startswith("("):
+        # Sole argument is itself a call — accept any balanced arg list.
+        d = 0
+        for j, ch in enumerate(rest):
+            if ch == "(":
+                d += 1
+            elif ch == ")":
+                d -= 1
+                if d == 0:
+                    return m.group(0) if not rest[j + 1:].strip() else None
+        return None
+    return None
+
+
+def _signature_param_map(signature: str) -> dict[str, tuple[str | None, str | None]]:
+    """Parse ``name: ann = default`` parameters out of a stored signature.
+
+    Returns ``{param_name: (annotation_text, default_text)}``. Language-agnostic:
+    works for Python/TS/Go-style ``(``…``)`` signatures; ignores ``self``/``cls``/
+    ``this`` and non-identifier params (``*args`` handled via the ``\\*+`` prefix).
+    """
+    out: dict[str, tuple[str | None, str | None]] = {}
+    if not signature:
+        return out
+    lpar = signature.find("(")
+    if lpar < 0:
+        return out
+    depth = 0
+    rpar = -1
+    in_default = False
+    for i in range(lpar, len(signature)):
+        c = signature[i]
+        if c in "([{" or (c == "<" and not in_default):
+            depth += 1
+        elif c in ")]}" or (c == ">" and not in_default):
+            depth -= 1
+            if depth == 0:
+                rpar = i
+                break
+        elif c == "=" and depth == 1:
+            # Entering a default value — `<`/`>` there are comparisons
+            # (`x > y`), not generics; stop angle-bracket depth counting.
+            in_default = True
+        elif c == "," and depth == 1:
+            in_default = False
+    if rpar < 0:
+        return out
+    params_text = signature[lpar + 1:rpar]
+
+    # Split on top-level commas (respecting nested brackets). Same rule as
+    # the rpar scan: `<`/`>` count only outside `= …` default regions.
+    parts: list[str] = []
+    depth = 0
+    in_default = False
+    cur: list[str] = []
+    for c in params_text:
+        if c in "([{" or (c == "<" and not in_default):
+            depth += 1
+        elif c in ")]}" or (c == ">" and not in_default):
+            depth -= 1
+        if c == "," and depth == 0:
+            in_default = False
+            parts.append("".join(cur))
+            cur = []
+        else:
+            if c == "=" and depth == 0:
+                in_default = True
+            cur.append(c)
+    if cur:
+        parts.append("".join(cur))
+
+    for raw in parts:
+        p = raw.strip()
+        if not p or p in ("self", "cls", "this"):
+            continue
+        m = re.match(r"^\*+\s*([A-Za-z_]\w*)\s*(.*)$", p, re.S) or re.match(
+            r"^([A-Za-z_]\w*)\s*(.*)$", p, re.S
+        )
+        if not m:
+            continue
+        name, rest = m.group(1), m.group(2).strip()
+        ann: str | None = None
+        default: str | None = None
+        if rest.startswith(":"):
+            ann_buf = rest[1:]
+            d = 0
+            cut = len(ann_buf)
+            for i, c in enumerate(ann_buf):
+                if c in "([{<":
+                    d += 1
+                elif c in ")]}>":
+                    d -= 1
+                elif c == "=" and d == 0:
+                    cut = i
+                    break
+            ann = ann_buf[:cut].strip() or None
+            if cut < len(ann_buf):
+                default = ann_buf[cut + 1:].strip() or None
+        elif rest.startswith("="):
+            default = rest[1:].strip() or None
+        out[name] = (ann, default)
+    return out
+
+
+def _return_type_name(signature: str | None) -> str | None:
+    """Return-type name from a stored signature.
+
+    Handles Python/C++ style ``-> T`` plus the TS/TSX builder's shape where
+    the captured ``type_annotation`` node retains its colon: ``-> : T``.
+    """
+    if not signature:
+        return None
+    m = re.search(r"->\s*:?\s*([A-Za-z_][\w.\[\]|,<> ]*)", signature)
+    if not m:
+        m = re.search(r"\)\s*:\s*([A-Za-z_][\w.\[\]<>]*)", signature)
+    if not m:
+        return None
+    return _pick_type_ident(m.group(1))
+
+
+def _member_name_matches(entity_name: str, expected: str) -> bool:
+    """``GraphService.get_entity_[800748]`` matches expected ``GraphService.get_entity``."""
+    return re.fullmatch(
+        re.escape(expected) + _MEMBER_NAME_SUFFIX_RE_TEMPLATE,
+        entity_name or "",
+    ) is not None
+
+
+def _external_qualified_name(entity_id: str) -> Optional[str]:
+    """Dotted qualified name inside a packaged-symbol entity id.
+
+    ``batho pip fastapi >=0.141.1 fastapi/FastAPI().`` → ``fastapi.FastAPI``;
+    module ids ``… fastapi/`` → ``fastapi``. Returns None for non-packaged
+    ids (project entities, stdlib, unresolved stubs).
+    """
+    # The trailing path field can never contain a space, but the version
+    # spec can (PEP 508 allows `>= 0.100, < 1.0`) — anchor the tail on the
+    # LAST space and parse the head fields left-to-right so spaced specs
+    # don't misalign the derived name.
+    head, _, tail = entity_id.rpartition(" ")
+    parts = head.split(" ")
+    if len(parts) < 4 or parts[0] != "batho" or not tail:
+        return None
+    tail = tail.strip().rstrip(".#")
+    if tail.endswith("()"):
+        tail = tail[:-2]
+    tail = tail.rstrip("/")
+    return tail.replace("/", ".") or None
+
+
+# Doc→module rationale-link derivation caps (T5): at most this many module
+# targets per document, and docs larger than this are not read for mention
+# tokens.
+_DOC_LINK_MAX_TARGETS = 5
+_DOC_LINK_MAX_BYTES = 1_000_000
 
 
 # ---------------------------------------------------------------------------
@@ -976,6 +1257,18 @@ class CodeGraphIndexer:
         # finalize so artifact consumers can distinguish resolved / pruned /
         # unresolved stubs (T5 entity-row contract).
         self.stub_entity_meta: dict[str, dict[str, Any]] = {}
+        # Repo-relative normalization of stub.file keyed by the raw path —
+        # `Path.resolve()` is a realpath syscall and the same absolute paths
+        # repeat across thousands of contextual stubs, so the mapping is
+        # cached once per distinct path for the indexer's lifetime.
+        self._stub_file_norm: dict[str, str] = {}
+        # Lazily populated effective BSG rules + the matching source/config
+        # fingerprint (see _bsg_rules). None = not yet loaded.
+        self._bsg_rules_loaded: list | None = None
+        self._bsg_rules_fingerprint: str = ""
+        # Stats from the same load_effective_rules call (rules_fingerprint,
+        # plugin_files, builtin counts) — used by the T05 rule_stats payload.
+        self._bsg_rules_stats: dict[str, Any] = {}
 
     def close(self) -> None:
         """Close the cache database connection to release file locks."""
@@ -989,6 +1282,42 @@ class CodeGraphIndexer:
         """Context manager exit - ensures cache is closed."""
         self.close()
         return False
+
+    def _bsg_rules(self) -> list:
+        """Lazy-load effective BSG rules once per indexer instance.
+
+        Mirrors the worker-path semantics in
+        ``batho.modules.extraction.pipeline`` (workers preload
+        ``load_effective_rules`` once per process): entities must carry
+        rule metadata *before* ``set_ast`` or the AST cache would persist
+        un-enriched entries under a rules-keyed variant.
+        Side effect: refreshes ``self._bsg_rules_fingerprint``.
+        """
+        if self._bsg_rules_loaded is None:
+            self._bsg_rules_fingerprint = ""
+            rules: list = []
+            cfg = get_config_cached()
+            from batho.modules.compression.rules import effective_rules_config
+            rules_cfg = effective_rules_config(cfg)
+            if isinstance(rules_cfg, dict) and rules_cfg.get("enabled", False):
+                try:
+                    from batho.modules.compression.rules import (
+                        load_effective_rules,
+                    )
+
+                    rules, rule_stats = load_effective_rules(
+                        rules_cfg,
+                        self._root or Path.cwd(),
+                        quiet=True,
+                    )
+                    self._bsg_rules_fingerprint = str(
+                        rule_stats.get("rules_fingerprint") or ""
+                    )
+                    self._bsg_rules_stats = rule_stats
+                except Exception as exc:
+                    self.logger.warning("bsg_rules_load_failed", error=str(exc))
+            self._bsg_rules_loaded = rules
+        return self._bsg_rules_loaded
 
     def _effective_parsing_config(self) -> dict[str, Any]:
         """Return the effective parsing config: bsg.parsing merged with the
@@ -1005,6 +1334,14 @@ class CodeGraphIndexer:
             parsing_cfg["extract_parameters"] = extraction_cfg["extract_parameters"]
         if "extract_type_parameters" in extraction_cfg:
             parsing_cfg["extract_type_parameters"] = extraction_cfg["extract_type_parameters"]
+        # T5 rationale layer: marker list + case sensitivity flow through to
+        # the extractor's parsing config.
+        if "rationale_markers" in extraction_cfg:
+            parsing_cfg["rationale_markers"] = extraction_cfg["rationale_markers"]
+        if "rationale_markers_case_sensitive" in extraction_cfg:
+            parsing_cfg["rationale_markers_case_sensitive"] = extraction_cfg[
+                "rationale_markers_case_sensitive"
+            ]
         return parsing_cfg
 
     def get_unindexed_files(self) -> list[tuple[str, str]]:
@@ -1054,6 +1391,8 @@ class CodeGraphIndexer:
         (~12k entities) this is <10ms. The ScopeManager uses partitioned
         locks for thread safety.
         """
+        # Marker/manifest evidence was reset at the top of build_graph;
+        # nothing to reset here — caches live only for the pass duration.
         registered = 0
         for entity in graph.entities.values():
             if entity.is_contextual_stub:
@@ -1195,20 +1534,22 @@ class CodeGraphIndexer:
                 )
                 graph.add_entity(mod_ent)
                 self._keep_nodes.add(mod_id)
-            # Register the module path (idempotent — also registers under the
-            # src/lib-stripped layout when applicable; Rust crates additionally
-            # get the `crate.` alias for `crate::a::b` refs). Bare single-segment
-            # names are skipped: `helper.py` registering bare `helper` would
-            # shadow same-named functions (last-write-wins in the symbol map).
+            # Register the module path plus every evidence-derived spelling
+            # (package-marker chains, manifest roots, configured roots — see
+            # package_roots.py). Rust crates additionally get the `crate.`
+            # alias for `crate::a::b` refs. Bare single-segment names are
+            # skipped: `helper.py` registering bare `helper` would shadow
+            # same-named functions (last-write-wins in the symbol map).
             if len(parts) > 1:
                 scope_manager.define_symbol(dotted, mod_id, "MODULE", is_global=True)
-                if parts[0] in ("src", "lib") and len(parts) > 2:
-                    stripped = ".".join(parts[1:])
-                    scope_manager.define_symbol(stripped, mod_id, "MODULE", is_global=True)
-                    if fp.suffix.lower() == ".rs":
-                        scope_manager.define_symbol(
-                            f"crate.{stripped}", mod_id, "MODULE", is_global=True
-                        )
+                for dv in derived_module_variants(root, parts):
+                    dv_dotted = ".".join(dv)
+                    if dv_dotted != dotted:
+                        scope_manager.define_symbol(dv_dotted, mod_id, "MODULE", is_global=True)
+                        if fp.suffix.lower() == ".rs":
+                            scope_manager.define_symbol(
+                                f"crate.{dv_dotted}", mod_id, "MODULE", is_global=True
+                            )
             out["_modules"].append(mod_id)
         return out
 
@@ -1226,7 +1567,7 @@ class CodeGraphIndexer:
         defdelegate). See batho/modules/graph/builder/reexports.py.
         """
         return reexports.register_package_reexports(
-            scope_manager, file_parts, logger=self.logger
+            scope_manager, file_parts, logger=self.logger, root=self._root
         )
 
     # Mapping from common type names to stdlib module paths, used by
@@ -1268,37 +1609,171 @@ class CodeGraphIndexer:
         stub: Entity,
         graph: "GraphBackend",
         scope_manager: ScopeManager,
-        _file_declared_type_cache: "dict[str, dict[str, str]] | None" = None,
         lang_hint: str | None = None,
+        _file_param_type_cache: "dict[str, dict[str, str]] | None" = None,
+        _assigned_by_scope_var: "dict[tuple[str, str], list[tuple[int | None, str, str | None]]] | None" = None,
     ) -> Optional[Any]:
         """Resolve a method call by inferring the receiver type.
 
         Implements rust-analyzer's two-phase method resolution:
         1. Infer the receiver variable's type from scope/declarations
         2. Look up the method on that type (inherent methods, then stdlib)
+
+        Returns just the resolved SymbolInfo; the resolution pipeline uses
+        ``_resolve_method_call_with_tier`` so per-source confidence tiers
+        (annotated param vs assignment flow vs hints) reach the edge metadata.
         """
+        res = self._resolve_method_call_with_tier(
+            stub, graph, scope_manager, lang_hint,
+            _file_param_type_cache, _assigned_by_scope_var,
+        )
+        return res[0] if res else None
+
+    def _resolve_method_call_with_tier(
+        self,
+        stub: Entity,
+        graph: "GraphBackend",
+        scope_manager: ScopeManager,
+        lang_hint: str | None = None,
+        _file_param_type_cache: "dict[str, dict[str, str]] | None" = None,
+        _assigned_by_scope_var: "dict[tuple[str, str], list[tuple[int | None, str, str | None]]] | None" = None,
+    ) -> "Optional[tuple[Any, str]]":
+        """Like ``_resolve_method_call`` but returns ``(info, strategy_key)``
+        where the strategy key reflects the inference source that produced
+        the receiver type (``receiver_param`` 0.90, ``receiver_assignment``
+        0.75, ``receiver_type`` 0.65 — T1 confidence tiers)."""
         target_name = stub.metadata.get("target_name", "")
         receiver_var = stub.metadata.get("receiver_var")
-        if not receiver_var or "." not in target_name:
+        if "." in target_name:
+            parts = target_name.split(".")
+            # For receiver-qualified refs (`svc.get_entity`) the stub key
+            # itself encodes the receiver. Everything before the method
+            # segment is the receiver chain — derive it from target_name
+            # unconditionally: extraction stores only the FIRST segment in
+            # receiver_var (`self.db.execute` → `self`), so trusting the
+            # metadata would type the call by the enclosing class and
+            # fabricate `Enclosing.execute` edges.
+            receiver_var = ".".join(parts[:-1])
+            method_name = parts[-1]
+        else:
+            method_name = target_name
+        if not receiver_var or not method_name or receiver_var == method_name:
             return None
 
-        method_name = target_name.split(".", 1)[1]
-
-        # 1. Infer the receiver variable's declared type
-        var_type = self._infer_variable_type(
-            receiver_var, stub, graph, scope_manager, _file_declared_type_cache
-        )
-        if not var_type:
-            return None
+        # Deep receivers (`a.b.method`, `self.db.execute`) — the base var's
+        # type does NOT type the call: `self.db.execute` is a call on the
+        # attribute's type, not the enclosing class. Only infer when the
+        # full attribute chain resolves to a symbol with a known type;
+        # otherwise leave the stub unresolved rather than fabricate
+        # `Enclosing.execute`-style edges.
+        if "." in receiver_var:
+            attr_type = self._resolve_receiver_attr_type(
+                receiver_var, stub, graph, scope_manager,
+                lang_hint,
+                _file_param_type_cache, _assigned_by_scope_var,
+            )
+            if not attr_type:
+                return None
+            inferred = (attr_type, "receiver_type")
+        else:
+            # 1. Infer the receiver variable's declared type
+            inferred = self._infer_variable_type_with_source(
+                receiver_var, stub, graph, scope_manager,
+                lang_hint, _file_param_type_cache, _assigned_by_scope_var,
+            )
+            if not inferred:
+                return None
+        var_type, tier = inferred
 
         # 2. Look up method on the type: try "Type.method_name"
         qualified = f"{var_type}.{method_name}"
         result = scope_manager.resolve_symbol_dotpath(qualified, lang_hint)
         if result:
-            return result
+            if result.is_external:
+                # Synthesized external members (e.g. `fastapi.FastAPI
+                # .include_router` under the external `fastapi.FastAPI`
+                # prefix) aren't in the global table — register them, and
+                # materialize the entity immediately so the retargeted edge
+                # never dangles regardless of resolution-pass ordering.
+                scope_manager.add_external_symbol(qualified, result.symbol_id, "external")
+                if graph.get_entity(result.symbol_id) is None:
+                    graph.add_entity(Entity.model_construct(
+                        id_override=result.symbol_id,
+                        name=qualified,
+                        type=EntityType.EXTERNAL_SYMBOL,
+                        file="",
+                        start_line=1,
+                        end_line=1,
+                        start_byte=0,
+                        end_byte=0,
+                        parent_id=None,
+                        raw_content=None,
+                        raw_bytes=None,
+                        metadata={
+                            "is_hollow": True,
+                            "is_external": True,
+                            "symbol_type": "external",
+                            "scope_path": result.scope_path,
+                        },
+                    ))
+            return result, tier
 
-        # 3. Check stdlib method table for the inferred type
-        return self._check_stdlib_method(var_type, method_name, scope_manager, lang_hint)
+        # 2b. Member scan — method entity names carry `_[paramhash]` suffixes
+        # that dotpath cannot match. Resolve the inferred type to its entity
+        # and scan its file for `<Type>.<method>[_hash]` members; for module
+        # receivers (`graph_service.get_entity()`), scan for top-level
+        # `<method>[_hash]` callables.
+        type_info = scope_manager.resolve_symbol_strict(var_type, lang_hint)
+        if type_info is not None and not type_info.is_external:
+            type_ent = graph.get_entity(type_info.symbol_id)
+            if type_ent is not None:
+                if type_ent.type in _TYPE_LIKE_ENTITY_TYPES:
+                    prefix = f"{type_ent.name}.{method_name}"
+                    match = self._find_member_callable(graph, type_ent.file, prefix)
+                    if match is not None:
+                        return SymbolInfo(
+                            symbol_id=match.id,
+                            symbol_type=match.type.value,
+                            scope_path=match.file,
+                            is_external=False,
+                        ), tier
+                elif type_ent.type in (EntityType.MODULE, EntityType.NAMESPACE):
+                    match = self._find_member_callable(graph, type_ent.file, method_name)
+                    if match is not None:
+                        return SymbolInfo(
+                            symbol_id=match.id,
+                            symbol_type=match.type.value,
+                            scope_path=match.file,
+                            is_external=False,
+                        ), tier
+
+        # 3. Check stdlib method table for the inferred type. The hit came
+        # from the stdlib lookup, not receiver-type inference — stamp
+        # `stdlib_method` (0.90 tier) so provenance and confidence survive
+        # instead of flattening to the weakest `receiver_type` tier.
+        stdlib = self._check_stdlib_method(var_type, method_name, scope_manager, lang_hint)
+        return (stdlib, "stdlib_method") if stdlib is not None else None
+
+    @staticmethod
+    def _find_member_callable(
+        graph: "GraphBackend", file_path: str, expected_name: str
+    ) -> "Entity | None":
+        """Find a callable entity in ``file_path`` whose name is
+        ``expected_name`` optionally suffixed by the ``_[paramhash]``
+        disambiguator (``get_entity`` matches ``get_entity_[800748]``).
+        """
+        # entities_by_file iterates a set — order is PYTHONHASHSEED-salted.
+        # Collect all matches, prefer an exact-name hit over a paramhash
+        # suffix, tie-break by entity id so the pick is deterministic.
+        matches = [
+            ent for ent in graph.entities_by_file(file_path)
+            if ent.type in _CALLABLE_MEMBER_TYPES
+            and _member_name_matches(ent.name, expected_name)
+        ]
+        if not matches:
+            return None
+        matches.sort(key=lambda e: (e.name != expected_name, e.id))
+        return matches[0]
 
     def _infer_variable_type(
         self,
@@ -1306,18 +1781,56 @@ class CodeGraphIndexer:
         stub: Entity,
         graph: "GraphBackend",
         scope_manager: ScopeManager,
-        _file_declared_type_cache: "dict[str, dict[str, str]] | None" = None,
+        lang_hint: str | None = None,
+        _file_param_type_cache: "dict[str, dict[str, str]] | None" = None,
+        _assigned_by_scope_var: "dict[tuple[str, str], list[tuple[int | None, str, str | None]]] | None" = None,
     ) -> Optional[str]:
         """Infer the type of a variable from multiple sources.
 
+        Back-compat wrapper around ``_infer_variable_type_with_source`` that
+        discards the confidence-tier key (used by on-demand resolution paths
+        and tests that only need the type name).
+        """
+        res = self._infer_variable_type_with_source(
+            var_name, stub, graph, scope_manager,
+            lang_hint, _file_param_type_cache, _assigned_by_scope_var,
+        )
+        return res[0] if res else None
+
+    def _infer_variable_type_with_source(
+        self,
+        var_name: str,
+        stub: Entity,
+        graph: "GraphBackend",
+        scope_manager: ScopeManager,
+        lang_hint: str | None = None,
+        _file_param_type_cache: "dict[str, dict[str, str]] | None" = None,
+        _assigned_by_scope_var: "dict[tuple[str, str], list[tuple[int | None, str, str | None]]] | None" = None,
+    ) -> "Optional[tuple[str, str]]":
+        """Infer ``(type_name, strategy_key)`` for a variable.
+
+        The strategy key carries the T1 confidence tier of the winning
+        source: ``receiver_param`` (0.90) for annotated parameters,
+        ``receiver_assignment`` (0.75) for assignment/DI-default flow,
+        ``receiver_type`` (0.65) for hints/self/static/fallback sources.
+
         Type inference sources (from Pyright and rust-analyzer research):
         1. self/this -> enclosing class type (from caller_scope)
-        2. receiver_type hint in stub metadata (captured by tree-sitter queries)
-        3. Variable declaration with type annotation in the same file
+        (former sources 2 receiver_type-hint and 3 declared_type scan were
+        removed: nothing in extraction ever wrote those metadata keys)
+        4. Parameter annotation in the enclosing callable's signature
+           (``graph_svc: GraphService = Depends(...)``) — works without
+           ``extract_parameters`` since signatures are always stored.
+        5. Assignment binding — ``svc = get_graph_service()`` — callee's
+           return annotation or class name (captured via ``assigned_to``
+           edge metadata at extraction time).
+        6. The receiver name itself resolves to a type-like entity
+           (``GraphService.get_entity()`` static/class access).
         """
+        caller_scope = stub.metadata.get("caller_scope", "") or ""
+
         # Source 1: self/this -> enclosing class type
-        if var_name in ("self", "this"):
-            caller_scope = stub.metadata.get("caller_scope", "")
+        if var_name in ("self", "this", "cls"):
             # caller_scope format: "batho <pm> <pkg> <ver> <path/to/Class/method>"
             parts = caller_scope.split()
             if len(parts) >= 5:
@@ -1334,40 +1847,323 @@ class CodeGraphIndexer:
                 if result and result.symbol_type in (
                     "CLASS", "STRUCT", "TRAIT", "INTERFACE",
                 ):
-                    return seg
+                    return seg, "receiver_type"
+            # 1b: enclosing class via the caller entity's parent chain —
+            # the scope path embeds `ClassName#method` for methods.
+            caller_ent = graph.get_entity(caller_scope) if caller_scope else None
+            while caller_ent is not None:
+                if caller_ent.type in _TYPE_LIKE_ENTITY_TYPES:
+                    return caller_ent.name, "receiver_type"
+                parent_id = getattr(caller_ent, "parent_id", None)
+                caller_ent = graph.get_entity(parent_id) if parent_id else None
             return None
 
-        # Source 2: receiver_type hint in stub metadata
-        # (extractor.py captures "ref.receiver_type" via _CONTAINS_HINT_CAPTURES)
-        receiver_type = stub.metadata.get("receiver_type")
-        if receiver_type:
-            return receiver_type
-
-        # Source 3: Look for a variable declaration in the same file with a type.
-        # FIX 3: Use a per-file {var_name -> declared_type} cache built once
-        # per unique file instead of re-walking entities_by_file() for every
-        # stub. Cache is passed in from resolve_contextual_stubs and is local
-        # to that call to avoid staleness across build/patch operations.
+        # Sources 2/3 removed: `stub.metadata["receiver_type"]` and
+        # `entity.metadata["declared_type"]` were read here but nothing in
+        # extraction ever wrote those keys — dead inference sources.
         stub_file = getattr(stub, "file", "")
-        if stub_file:
-            if _file_declared_type_cache is not None:
-                if stub_file not in _file_declared_type_cache:
-                    # Build the cache entry for this file on first access
-                    file_map: dict[str, str] = {}
-                    for entity in graph.entities_by_file(stub_file):
-                        dt = entity.metadata.get("declared_type")
-                        if dt:
-                            file_map[entity.name] = dt
-                    _file_declared_type_cache[stub_file] = file_map
-                declared_type = _file_declared_type_cache[stub_file].get(var_name)
-                if declared_type:
-                    return declared_type
-            else:
-                # Fallback when no cache is provided (on-demand resolution path)
-                for entity in graph.entities_by_file(stub_file):
-                    if entity.name == var_name and entity.metadata.get("declared_type"):
-                        return entity.metadata["declared_type"]
 
+        # Source 4: parameter annotation of the enclosing callable.
+        # `caller_scope` IS the enclosing entity's id — its signature holds
+        # `graph_svc: GraphService = Depends(get_graph_service)` even when
+        # extract_parameters is off (signatures are always captured).
+        caller_ent = graph.get_entity(caller_scope) if caller_scope else None
+        if caller_ent is not None:
+            sig = getattr(caller_ent, "signature", None)
+            if sig:
+                ann, default = _signature_param_map(sig).get(var_name, (None, None))
+                if ann:
+                    picked = _pick_type_ident(ann)
+                    if picked:
+                        return picked, "receiver_param"
+                if default:
+                    picked = self._default_expr_type(default, graph, scope_manager, lang_hint)
+                    if picked:
+                        return picked, "receiver_assignment"
+
+        # Source 5: assignment binding — `svc = get_graph_service()` records
+        # `assigned_to: "svc"` on the callee's edge at extraction time.
+        # Bindings carry the assignment's line (edge ``line_number``): only
+        # assignments at or before the call site (``stub.start_line``) are
+        # eligible and the latest wins, so a reassignment
+        # (``svc = a(); svc.x(); svc = b(); svc.y()``) infers ``y`` from ``b``,
+        # not ``a``. A call that precedes every assignment gets no type from
+        # this source — a later assignment cannot have influenced it. Edges
+        # without positions (legacy artifacts) fall back to first-match order.
+        if caller_scope and _assigned_by_scope_var is not None:
+            bindings = _assigned_by_scope_var.get((caller_scope, var_name), ())
+            positioned = [b for b in bindings if b[0] is not None]
+            stub_line = getattr(stub, "start_line", 0) or 0
+            if positioned and stub_line:
+                eligible = [b for b in positioned if b[0] <= stub_line]
+                if eligible:
+                    _line, target_id, inner_callee = max(eligible, key=lambda c: c[0])
+                    picked = self._call_result_type(
+                        target_id, inner_callee, graph, scope_manager, lang_hint
+                    )
+                    if picked:
+                        return picked, "receiver_assignment"
+                    # Strict: the latest binding defines the variable's type;
+                    # if its callee's type is unknown, an earlier binding
+                    # must not shadow it.
+                    return None
+            else:
+                # No usable position on the stub (or no positioned bindings):
+                # fall back to first-match order, in capture sequence.
+                for _line, target_id, inner_callee in bindings:
+                    picked = self._call_result_type(
+                        target_id, inner_callee, graph, scope_manager, lang_hint
+                    )
+                    if picked:
+                        return picked, "receiver_assignment"
+
+        # Source 6: the receiver name itself resolves to a type-like entity —
+        # `GraphService.get_entity()` (staticmethod/class access) or an
+        # imported module (`graph_service.get_entity()` returns the MODULE
+        # entity; member scan in _resolve_method_call handles it via
+        # the module branch, but returning the name here lets the type
+        # resolution proceed for both cases).
+        if var_name:
+            info = scope_manager.resolve_symbol_strict(var_name, lang_hint)
+            if info is not None and not info.is_external:
+                ent = graph.get_entity(info.symbol_id)
+                if ent is not None and ent.type in _TYPE_LIKE_ENTITY_TYPES:
+                    return ent.name, "receiver_type"
+
+        # Source 4b (weakest): file-wide parameter annotations — same param
+        # name annotated elsewhere in the file.
+        if stub_file:
+            if _file_param_type_cache is not None:
+                if stub_file not in _file_param_type_cache:
+                    fmap: dict[str, str] = {}
+                    # entities_by_file iterates a set — process the enclosing
+                    # callable's signature first, then entities sorted by id,
+                    # so first-wins ties resolve deterministically.
+                    _ents = sorted(
+                        graph.entities_by_file(stub_file), key=lambda e: e.id
+                    )
+                    _ents.sort(key=lambda e: e.id != caller_scope)
+                    for entity in _ents:
+                        esig = getattr(entity, "signature", None)
+                        if not esig:
+                            continue
+                        for pname, (ann, _default) in _signature_param_map(esig).items():
+                            if ann and pname not in fmap:
+                                picked = _pick_type_ident(ann)
+                                if picked:
+                                    fmap[pname] = picked
+                    _file_param_type_cache[stub_file] = fmap
+                picked = _file_param_type_cache[stub_file].get(var_name)
+                if picked:
+                    return picked, "receiver_type"
+
+        return None
+
+    def _resolve_receiver_attr_type(
+        self,
+        receiver_chain: str,
+        stub: Entity,
+        graph: "GraphBackend",
+        scope_manager: ScopeManager,
+        lang_hint: str | None = None,
+        _file_param_type_cache: "dict[str, dict[str, str]] | None" = None,
+        _assigned_by_scope_var: "dict[tuple[str, str], list[tuple[int | None, str, str | None]]] | None" = None,
+    ) -> Optional[str]:
+        """Type of a multi-segment receiver chain (``a.b`` in ``a.b.m()``).
+
+        Tries the chain itself as a symbol (``pkg.sub`` module paths,
+        ``Outer.Inner`` nested types); ``self.attr``/``this.attr``/``cls.attr``
+        chains additionally try the enclosing-class-qualified attribute
+        (``MyClass.db``) since instance attributes register under the class.
+        Returns the resolved key for type-like/module targets; None when the
+        intermediate attribute's type is unknowable — the caller then leaves
+        the stub unresolved rather than guessing the base variable's type.
+        """
+        candidates = [receiver_chain]
+        base, _, rest = receiver_chain.partition(".")
+        if base in ("self", "this", "cls") and rest:
+            enclosing = self._infer_variable_type_with_source(
+                base, stub, graph, scope_manager,
+                lang_hint, _file_param_type_cache, _assigned_by_scope_var,
+            )
+            if enclosing:
+                candidates.insert(0, f"{enclosing[0]}.{rest}")
+        for cand in candidates:
+            info = scope_manager.resolve_symbol_strict(cand, lang_hint)
+            if info is None or info.is_external:
+                continue
+            ent = graph.get_entity(info.symbol_id)
+            if ent is None:
+                continue
+            if ent.type in _TYPE_LIKE_ENTITY_TYPES or ent.type in (
+                EntityType.MODULE, EntityType.NAMESPACE
+            ):
+                return cand
+        return None
+
+    def _default_expr_type(
+        self,
+        default_text: str,
+        graph: "GraphBackend",
+        scope_manager: ScopeManager,
+        lang_hint: str | None = None,
+    ) -> Optional[str]:
+        """Type implied by a parameter default expression.
+
+        ``Depends(get_graph_service)`` → tries `Depends` (external → skipped),
+        then inner call `get_graph_service` → its return annotation.
+        Iterates callables outermost→innermost so ``x = f(g())`` binds ``f``'s
+        return type, not ``g``'s.
+        """
+        # DI-wrapper inner callee: `Depends(get_svc)` / `Depends(get_svc())`
+        # — when the outer callee resolves external (`fastapi.Depends`) or
+        # produces no type, the sole call/ident argument is the real type
+        # producer (mirrors the `assigned_inner` threading of the Source-5
+        # assignment path). Without it a bare `Depends` types the var as
+        # `fastapi.Depends` and member calls fabricate external edges.
+        for m in re.finditer(r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(", default_text):
+            picked = self._call_result_type(
+                m.group(1),
+                _single_call_arg_ident(default_text, m.end()),
+                graph, scope_manager, lang_hint,
+            )
+            if picked:
+                return picked
+        return None
+
+    def _call_result_type(
+        self,
+        callee: str,
+        inner_callee: str | None,
+        graph: "GraphBackend",
+        scope_manager: ScopeManager,
+        lang_hint: str | None = None,
+    ) -> Optional[str]:
+        """Type produced by calling ``callee`` — its return annotation, or the
+        class name itself when the callee resolves to a type (constructor).
+
+        ``callee`` may be an entity_id (resolved edge target), an
+        ``unresolved:`` stub id, or a bare callee name. ``inner_callee`` is the
+        single-call-argument wrapper's inner callee (e.g. ``get_graph_service``
+        inside ``Depends(get_graph_service)``) tried when the outer callee
+        yields no type.
+        """
+        ent = graph.get_entity(callee)
+        names: tuple[str, ...] | None = None
+        if callee.startswith("unresolved:"):
+            # The callee is a contextual stub. The stub entity may already
+            # exist in the graph (EXTERNAL_SYMBOL) — typing off the stub id
+            # itself is meaningless; recover the real callee ref from the
+            # stub's target_name metadata (falling back to the id tail).
+            callee_key = (
+                (ent.metadata or {}).get("target_name") if ent is not None else None
+            ) or callee.rsplit("::", 1)[-1]
+            names = (callee_key, callee_key.rsplit(".", 1)[-1])
+            ent = None
+        elif ent is None:
+            names = (callee,)
+        if names is not None:
+            # Stub id or bare callee name — resolve it (full dotted form
+            # first, then last segment).
+            for callee_name in names:
+                info = scope_manager.resolve_symbol_dotpath(callee_name, lang_hint)
+                if info is not None and info.is_external:
+                    # External constructor/type — no entity may be
+                    # materialized yet; the qualified name still types the
+                    # binding (e.g. `app = FastAPI()` → `fastapi.FastAPI`).
+                    # A DI wrapper's inner callee is preferred when present
+                    # (`x = Depends(get_svc())` types x as get_svc's return);
+                    # when the inner callee yields no type the wrapper's own
+                    # qname must NOT be returned — `x = Depends(<unresolvable>)`
+                    # must not type `x` as `fastapi.Depends`.
+                    if inner_callee:
+                        return self._call_result_type(
+                            inner_callee, None, graph, scope_manager, lang_hint
+                        )
+                    qname = _external_qualified_name(info.symbol_id)
+                    if qname and qname.rsplit(".", 1)[-1][:1].isupper():
+                        return qname
+                    continue
+                if info is not None:
+                    ent = graph.get_entity(info.symbol_id)
+                    break
+
+        if ent is not None:
+            if ent.type in _TYPE_LIKE_ENTITY_TYPES:
+                return ent.name
+            if ent.type in _CALLABLE_MEMBER_TYPES:
+                rt = _return_type_name(getattr(ent, "signature", None))
+                if rt:
+                    return rt
+            if ent.type == EntityType.EXTERNAL_SYMBOL:
+                # External constructor (`app = FastAPI()`) — the binding's
+                # type is the external class; member joins synthesize under
+                # its qualified name via dotpath prefix rules. Only
+                # capitalized externals count as type producers —
+                # `x = pkg.func()` must not fabricate `pkg.func.member`.
+                # A DI wrapper's inner callee (`x = Depends(get_svc())`)
+                # still wins when it yields a type — and when it doesn't, the
+                # wrapper's qname is wrong rather than merely unknown.
+                if inner_callee:
+                    return self._call_result_type(
+                        inner_callee, None, graph, scope_manager, lang_hint
+                    )
+                qname = _external_qualified_name(ent.id)
+                if qname and qname.rsplit(".", 1)[-1][:1].isupper():
+                    return qname
+
+        if inner_callee:
+            return self._call_result_type(inner_callee, None, graph, scope_manager, lang_hint)
+        return None
+
+    def _resolve_package_alias(
+        self,
+        target_name: str,
+        scope_manager: ScopeManager,
+        lang_hint: str | None,
+    ) -> Optional[Any]:
+        """Resolve an import-path ref against file-path-registered modules.
+
+        Refs use the *import* namespace (`app.services.errors.ServiceError`,
+        `@/components/x.Button`); project symbols register under the *file
+        path* (`backend.app.services.errors.ServiceError`). Two derived
+        bridges, both name-free (T11):
+
+        - tsconfig/manifest alias pairs rewrite the ref prefix
+          (`@/…` → `src/…`).
+        - module-suffix alignment: split the ref into (module, symbol) at
+          each boundary and match the module part as a path suffix against
+          registered MODULE keys — unique suffix only; ambiguous suffixes
+          are skipped rather than fabricating an edge.
+        """
+        index = getattr(scope_manager, "_batho_module_suffix_index", None)
+        alias_pairs = getattr(scope_manager, "_batho_alias_pairs", None)
+        if index is None or alias_pairs is None:
+            root = self._root or get_active_root()
+            _, alias_pairs = manifest_roots_and_aliases(root) if root else ([], [])
+            index = build_module_suffix_index(scope_manager)
+            scope_manager._batho_module_suffix_index = index
+            scope_manager._batho_alias_pairs = alias_pairs
+        if not index:
+            return None
+
+        for cand in alias_candidates(target_name, alias_pairs):
+            parts = cand.split(".")
+            for i in range(len(parts) - 1, 0, -1):
+                mod, sym = ".".join(parts[:i]), ".".join(parts[i:])
+                keys = index.get(mod)
+                if keys and len(keys) == 1:
+                    info = scope_manager.resolve_symbol_strict(
+                        f"{next(iter(keys))}.{sym}", lang_hint
+                    )
+                    if info is not None and not info.is_external:
+                        return info
+            # The whole ref may name a module itself (`app.services.errors`).
+            keys = index.get(cand)
+            if keys and len(keys) == 1:
+                info = scope_manager.resolve_symbol_strict(next(iter(keys)), lang_hint)
+                if info is not None and not info.is_external:
+                    return info
         return None
 
     def _check_stdlib_method(
@@ -1457,10 +2253,20 @@ class CodeGraphIndexer:
         # T08: track ambiguous resolution metadata per stub
         stub_to_ambiguous: dict[str, dict[str, Any]] = {}
 
-        # FIX 3: per-file declared_type cache — built once per unique file,
-        # avoids re-walking entities_by_file() O(k) for every stub in the
-        # same file. Local to this call to avoid staleness across builds.
-        _file_declared_type_cache: dict[str, dict[str, str]] = {}
+        # T1: per-file parameter-annotation cache (Source 4b fallback) and
+        # the assignment-binding map (Source 5): ``{(caller_scope, var):
+        # [(line, callee_target_id, inner_callee)]}`` from `assigned_to`
+        # edge metadata. The line (edge ``line_number``) orders bindings so
+        # the latest assignment at or before a call site wins.
+        _file_param_type_cache: dict[str, dict[str, str]] = {}
+        _assigned_by_scope_var: dict[tuple[str, str], list[tuple[int | None, str, str | None]]] = defaultdict(list)
+        for rel in graph.relationships:
+            _md = rel.metadata or {}
+            _bound = _md.get("assigned_to")
+            if _bound and rel.source_id:
+                _assigned_by_scope_var[(rel.source_id, _bound)].append(
+                    (_md.get("line_number"), rel.target_id, _md.get("assigned_inner"))
+                )
 
         # Sibling index for the sibling_module strategy: attribute refs like
         # pydantic.Field(...) split into sibling stubs ("pydantic" + "Field")
@@ -1473,6 +2279,11 @@ class CodeGraphIndexer:
                 siblings_by_scope[sib_scope].append(s)
 
         for stub in stubs:
+            # Stubs already resolved/pruned in an earlier pass are terminal —
+            # the second pass exists only to reach newly-materialized
+            # EXTERNAL_SYMBOL targets, not to re-run the pipeline.
+            if stub.metadata.get("stub_resolution_state") in ("resolved", "pruned"):
+                continue
             caller_scope = stub.metadata.get("caller_scope")
             target_name = stub.metadata.get("target_name")
             self.logger.debug("checking_stub", stub_id=stub.id, target_name=target_name, caller_scope=caller_scope)
@@ -1480,7 +2291,8 @@ class CodeGraphIndexer:
                 continue
 
             resolved_info, strategy, all_candidates = self._resolve_stub_with_candidates(
-                stub, graph, scope_manager, _file_declared_type_cache, siblings_by_scope
+                stub, graph, scope_manager, siblings_by_scope,
+                _file_param_type_cache, _assigned_by_scope_var,
             )
 
             if resolved_info:
@@ -1605,8 +2417,9 @@ class CodeGraphIndexer:
         stub: Entity,
         graph: "GraphBackend",
         scope_manager: ScopeManager,
-        _file_declared_type_cache: "dict[str, dict[str, str]] | None" = None,
         _siblings_by_scope: "dict[str, list[Entity]] | None" = None,
+        _file_param_type_cache: "dict[str, dict[str, str]] | None" = None,
+        _assigned_by_scope_var: "dict[tuple[str, str], list[tuple[int | None, str, str | None]]] | None" = None,
     ) -> tuple[Any, str, list[tuple[Any, str]]]:
         """Run the full resolution pipeline once, collecting all candidates.
 
@@ -1641,8 +2454,66 @@ class CodeGraphIndexer:
                     primary_info = info
                     primary_strategy = strat
 
-        # 1. Try resolving target_name directly
-        _try(scope_manager.resolve_symbol_dotpath(target_name, lang_hint), "exact_match")
+        stub_file = getattr(stub, "file", "") or ""
+        # Module symbols register under repo-relative dotted paths, so the
+        # importer's file path must be normalized to repo-relative first —
+        # stub.file is absolute on most builds. `self._root` is resolved
+        # once at __init__ (loop-invariant) and `sf.resolve()` costs a
+        # realpath syscall per distinct path, so the normalized form is
+        # cached per raw path rather than recomputed per stub.
+        if stub_file:
+            if stub_file not in self._stub_file_norm:
+                norm = stub_file
+                sf = Path(stub_file)
+                if sf.is_absolute() and self._root is not None:
+                    try:
+                        norm = sf.resolve().relative_to(self._root).as_posix()
+                    except (ValueError, OSError):
+                        norm = sf.as_posix().lstrip("/")
+                self._stub_file_norm[stub_file] = norm
+            stub_file = self._stub_file_norm[stub_file]
+
+        # 0. Crate-scoped rewrite — `crate.<tail>` (the dot-normalized
+        # `crate::` ref) is crate-root-relative, but the literal `crate.`
+        # alias space is ONE global namespace: in a multi-crate workspace
+        # same-named modules collide last-write-wins. The caller's own
+        # crate spelling (the `<crate>/src` layout prefix on its file path)
+        # is tried BEFORE the shared space so `crate::` edges stay
+        # crate-local.
+        if target_name.startswith("crate.") and stub_file:
+            fparts = stub_file.split("/")
+            if "src" in fparts[:-1]:
+                base = ".".join(fparts[: fparts.index("src") + 1])
+                _try(
+                    scope_manager.resolve_symbol_strict(
+                        f"{base}.{target_name[6:]}", lang_hint
+                    ),
+                    "scope_qualified",
+                )
+
+        # 1. Try resolving target_name directly — strict exact match only.
+        # dotpath's external-prefix synthesis must not run at this step: it
+        # would fabricate an external ghost as primary before first-party
+        # package-alias resolution (1a) can reach the real local entity.
+        _try(scope_manager.resolve_symbol_strict(target_name, lang_hint), "exact_match")
+
+        # 1a. Package-alias: align import-path refs against file-path-registered
+        # modules (marker-chain/manifest evidence + suffix matching), so
+        # `app.services.x.Y` finds `backend/app/services/x.py::Y` and tsconfig
+        # alias refs like `@/lib/z.W` reach `src/lib/z` — first-party before
+        # any external-prefix synthesis can claim the target.
+        alias_info = self._resolve_package_alias(target_name, scope_manager, lang_hint)
+        if alias_info is not None:
+            _try(alias_info, "package_alias")
+
+        # 1a-ext. External-prefix synthesis — deliberately AFTER first-party
+        # strategies so a fabricated external can never keep primary over a
+        # real local entity. dotpath re-runs the exact match internally;
+        # seen_ids dedupes when 1 already found it.
+        _try(
+            scope_manager.resolve_symbol_dotpath(target_name, lang_hint),
+            "external_prefix",
+        )
 
         # 1b. Stdlib-prefix fast-path
         if "." in target_name:
@@ -1650,11 +2521,15 @@ class CodeGraphIndexer:
             if first_segment in _STDLIB_MODULE_PREFIXES or first_segment.startswith("std::"):
                 _try(scope_manager.resolve_symbol_dotpath(first_segment, lang_hint), "stdlib_method")
 
-        # 1c. Receiver-type-aware method resolution
-        _try(
-            self._resolve_method_call(stub, graph, scope_manager, _file_declared_type_cache, lang_hint),
-            "receiver_type",
+        # 1c. Receiver-type-aware method resolution — the tier key varies with
+        # the inference source (receiver_param 0.90 / receiver_assignment 0.75
+        # / receiver_type 0.65, per T1 spec).
+        method_res = self._resolve_method_call_with_tier(
+            stub, graph, scope_manager, lang_hint,
+            _file_param_type_cache, _assigned_by_scope_var,
         )
+        if method_res is not None:
+            _try(*method_res)
 
         # 2. Try building qualified path from parent stubs
         for parent_id in graph.neighbors(stub.id, "in"):
@@ -1696,23 +2571,73 @@ class CodeGraphIndexer:
                     "sibling_module",
                 )
 
-        # 3. Caller-scope qualified path
-        if caller_scope:
-            parts = caller_scope.split()
-            if len(parts) >= 5:
-                scope_path = parts[4]
+        # 3a. T12: importer-relative specifiers — './x', '../x', '/x' address
+        # files, so join against the stub's real file directory (stub.file),
+        # not the caller-scope entity path (whose tail segment is an entity,
+        # not a directory). Leading '/' is repo-root-relative (bundler
+        # convention); '../' collapses via normpath — paths escaping root
+        # yield no candidate (a bare-name fallback could fabricate an edge).
+        if target_name.startswith(("./", "../", "/")) and not target_name.startswith("//"):
+            if target_name.startswith("/"):
+                qualified_try = target_name.lstrip("/")
+            elif stub_file:
+                if "/" in stub_file:
+                    qualified_try = posixpath.normpath(
+                        f"{stub_file.rsplit('/', 1)[0]}/{target_name}"
+                    )
+                else:
+                    # Root-level importer — the specifier itself is already
+                    # root-relative, and `../` escapes the root outright
+                    # (rsplit on a slash-less name would treat the filename
+                    # as its own dir and mask the escape).
+                    qualified_try = posixpath.normpath(target_name)
+                # Root-escaping specifiers produce no candidate — the old
+                # `lstrip("./")` fallback stripped ALL leading dots into a
+                # bare-name lookup that could hit an unrelated registered
+                # symbol, fabricating an IMPORTS edge.
+                if qualified_try == ".." or qualified_try.startswith("../"):
+                    qualified_try = ""
             else:
-                scope_path = caller_scope
-
-            base_path = scope_path.split('#')[0].split('(')[0]
-            if '/' in base_path:
-                parent_dir = base_path.rsplit('/', 1)[0]
-                qualified_try = f"{parent_dir}/{target_name}"
+                qualified_try = ""
+            if qualified_try:
                 info = scope_manager.resolve_symbol_strict(qualified_try, lang_hint)
                 if not info:
-                    qualified_try_dot = qualified_try.replace('/', '.')
-                    info = scope_manager.resolve_symbol_strict(qualified_try_dot, lang_hint)
-                _try(info, "scope_qualified")
+                    info = scope_manager.resolve_symbol_strict(
+                        qualified_try.replace('/', '.'), lang_hint)
+                if not info and '-' in qualified_try:
+                    # Module ids are snake_cased — 'spatial-collision.ts'
+                    # registers as 'spatial_collision'.
+                    info = scope_manager.resolve_symbol_strict(
+                        qualified_try.replace('-', '_'), lang_hint)
+                if not info and '.' in qualified_try.rsplit('/', 1)[-1]:
+                    # Specifier may carry an explicit extension ('./x.ts')
+                    # while modules register under the stem.
+                    info = scope_manager.resolve_symbol_strict(
+                        qualified_try.rsplit('.', 1)[0], lang_hint)
+                _try(info, "relative_path")
+
+        # 3. Caller-scope qualified path — prefer the stub's real file dir
+        # (stub.file): caller_scope paths are '<module>/<Entity>' shaped, so
+        # a rsplit-derived 'parent dir' can land one level too deep inside the
+        # module segment.
+        dirs_to_try: list[str] = []
+        if stub_file and '/' in stub_file:
+            dirs_to_try.append(stub_file.rsplit('/', 1)[0])
+        if caller_scope:
+            parts = caller_scope.split()
+            scope_path = parts[4] if len(parts) >= 5 else caller_scope
+            base_path = scope_path.split('#')[0].split('(')[0]
+            if '/' in base_path:
+                scope_dir = base_path.rsplit('/', 1)[0]
+                if scope_dir not in dirs_to_try:
+                    dirs_to_try.append(scope_dir)
+        for parent_dir in dirs_to_try:
+            qualified_try = f"{parent_dir}/{target_name}"
+            info = scope_manager.resolve_symbol_strict(qualified_try, lang_hint)
+            if not info:
+                info = scope_manager.resolve_symbol_strict(
+                    qualified_try.replace('/', '.'), lang_hint)
+            _try(info, "scope_qualified")
 
         if primary_info is None:
             return None, "unresolved", all_candidates
@@ -1723,7 +2648,6 @@ class CodeGraphIndexer:
         stub: Entity,
         graph: "GraphBackend",
         scope_manager: ScopeManager,
-        _file_declared_type_cache: "dict[str, dict[str, str]] | None" = None,
     ) -> tuple[Any, str]:
         """Resolve a single stub using the full resolution pipeline.
 
@@ -1737,7 +2661,7 @@ class CodeGraphIndexer:
             is the resolution strategy string used for confidence scoring.
         """
         primary_info, primary_strategy, _ = self._resolve_stub_with_candidates(
-            stub, graph, scope_manager, _file_declared_type_cache
+            stub, graph, scope_manager
         )
         return primary_info, primary_strategy
 
@@ -1758,11 +2682,13 @@ class CodeGraphIndexer:
 
         Tie-break convention: the "primary" resolution is always the first
         strategy that succeeds in the pipeline's priority order
-        (exact_match > stdlib_method > receiver_type > parent_chain >
-        scope_qualified). If a later strategy also resolves to a different
-        target, the edge is marked ambiguous but the primary target is kept
-        as the resolved target. This is deterministic — the same input always
-        produces the same primary and the same ambiguous_candidates list.
+        (exact_match > package_alias > external_prefix > stdlib_method >
+        receiver_param > receiver_assignment > receiver_type > parent_chain >
+        sibling_module > relative_path > scope_qualified). If a later
+        strategy also resolves to a different target, the edge is marked
+        ambiguous but the primary target is kept as the resolved target.
+        This is deterministic — the same input always produces the same
+        primary and the same ambiguous_candidates list.
         """
         # Filter to distinct target IDs different from the primary resolution.
         # Exclude external symbols — they are synthesized from module prefix
@@ -1824,10 +2750,43 @@ class CodeGraphIndexer:
         if stub.metadata.get("stub_resolution_state") == "pruned":
             return None
 
+        # Lazy-path parity: Source-4b/5 and the sibling-module join need the
+        # same per-build maps the batch pass constructs — build them once per
+        # graph (keyed by identity; holding the graph ref keeps the id valid)
+        # and reuse across on-demand calls.
+        maps_key = id(graph)
+        maps = getattr(self, "_lazy_resolution_maps", None)
+        if maps is None or maps[0] != maps_key:
+            _file_param_type_cache: dict[str, dict[str, str]] = {}
+            _assigned_by_scope_var: dict[
+                tuple[str, str], list[tuple[int | None, str, str | None]]
+            ] = defaultdict(list)
+            siblings_by_scope: dict[str, list[Entity]] = defaultdict(list)
+            for rel in graph.relationships:
+                _md = rel.metadata or {}
+                _bound = _md.get("assigned_to")
+                if _bound and rel.source_id:
+                    _assigned_by_scope_var[(rel.source_id, _bound)].append(
+                        (_md.get("line_number"), rel.target_id, _md.get("assigned_inner"))
+                    )
+            for etype in (EntityType.EXTERNAL_SYMBOL, EntityType.UNRESOLVED):
+                for s in graph.entities_by_type(etype):
+                    if s.is_contextual_stub:
+                        sib_scope = s.metadata.get("caller_scope")
+                        if sib_scope:
+                            siblings_by_scope[sib_scope].append(s)
+            self._lazy_resolution_maps = (
+                maps_key, _file_param_type_cache, _assigned_by_scope_var,
+                siblings_by_scope,
+            )
+        else:
+            _, _file_param_type_cache, _assigned_by_scope_var, siblings_by_scope = maps
+
         # Run resolution pipeline for this single stub (collects candidates
         # for ambiguity detection in a single pass — no re-resolution)
         resolved_info, strategy, all_candidates = self._resolve_stub_with_candidates(
-            stub, graph, scope_manager
+            stub, graph, scope_manager,
+            siblings_by_scope, _file_param_type_cache, _assigned_by_scope_var,
         )
 
         if resolved_info:
@@ -1888,12 +2847,10 @@ class CodeGraphIndexer:
             method_name = target_name
 
         if method_name in _PRUNABLE_METHOD_NAMES:
-            # Check if receiver type is known
-            receiver_type = stub.metadata.get("receiver_type")
-            if not receiver_type:
-                # Receiver type is unknown — this is a stdlib method on an
-                # unknown type. Safe to prune.
-                return True
+            # Stdlib method on an unknown type — the stub's `receiver_type`
+            # metadata key is never written by extraction, so the receiver
+            # type is always unknown here. Safe to prune.
+            return True
 
         return False  # Keep for investigation
 
@@ -1980,6 +2937,12 @@ class CodeGraphIndexer:
         if not root_path.is_dir():
             raise OSError(f"Root path is not a directory: {root_path}")
 
+        # Fresh package-root/manifest evidence per pass, BEFORE extraction
+        # consumes it: the module-level caches in package_roots are keyed
+        # process-wide, so a previous build_graph/set_active_root for a
+        # different root would otherwise leak stale roots into this run.
+        reset_package_root_caches()
+
         if max_file_size_kb is not None and (
             not isinstance(max_file_size_kb, (int, float)) or max_file_size_kb <= 0
         ):
@@ -2061,6 +3024,7 @@ class CodeGraphIndexer:
                 extra_patterns=cfg["indexer"].get("ignore_patterns"),
                 ignore_files=cfg["indexer"].get("ignore_files"),
                 default_patterns_file=cfg["indexer"].get("default_patterns_file"),
+                use_defaults=cfg["indexer"].get("ignore_defaults", True),
             )
 
             # --- Collect files to process ---
@@ -2099,8 +3063,13 @@ class CodeGraphIndexer:
                     if max_indexed_files_cap and len(candidates) >= max_indexed_files_cap:
                         break
             else:
-                # Walk directory tree (full build mode)
-                for dirpath, dirnames, filenames in walk_ignored_filtered(root_path, spec=ignore_spec):
+                # Walk directory tree (full build mode).
+                # T3: build-report visibility — collect every path the ignore
+                # spec filters out so the build can report skip breakdown.
+                skipped_paths: list[Path] = []
+                for dirpath, dirnames, filenames in walk_ignored_filtered(
+                    root_path, spec=ignore_spec, skipped_paths=skipped_paths
+                ):
                     for filename in filenames:
                         file_path = dirpath / filename
                         if not file_path.is_file():
@@ -2129,6 +3098,36 @@ class CodeGraphIndexer:
                             break
                     if max_indexed_files_cap and len(candidates) >= max_indexed_files_cap:
                         break
+
+            # T3: hygiene visibility — report how many paths the built-in
+            # default patterns vs user/gitignore patterns filtered out, so
+            # users can see the default hygiene layer working.
+            if not file_list and skipped_paths:
+                if cfg["indexer"].get("ignore_defaults", True):
+                    user_only_spec = load_ignore_spec(
+                        root_path,
+                        extra_patterns=cfg["indexer"].get("ignore_patterns"),
+                        ignore_files=cfg["indexer"].get("ignore_files"),
+                        use_defaults=False,
+                    )
+                    skipped_by_user = sum(
+                        1 for p in skipped_paths if is_ignored(p, root_path, user_only_spec)
+                    )
+                else:
+                    # Defaults off — re-check against the spec that actually
+                    # skipped these paths (user/gitignore patterns only).
+                    # Attributing every skip to defaults would invert the
+                    # breakdown for the exact config it diagnoses; hidden-file
+                    # skips correctly land in the defaults bucket either way.
+                    skipped_by_user = sum(
+                        1 for p in skipped_paths if is_ignored(p, root_path, ignore_spec)
+                    )
+                self.logger.info(
+                    "ignore_skip_breakdown",
+                    skipped_by_default_patterns=len(skipped_paths) - skipped_by_user,
+                    skipped_by_user_patterns=skipped_by_user,
+                    total_skipped=len(skipped_paths),
+                )
 
             # Check for case-insensitive collisions if on a case-insensitive filesystem
             from batho.utils.path_sanitizer import is_filesystem_case_insensitive
@@ -2373,7 +3372,11 @@ class CodeGraphIndexer:
             self.logger.info("single_pass_extraction_started", candidates=len(candidates))
             bsg_cfg_payload = dict(bsg_cfg)
             bsg_cfg_payload["root_path"] = str(root_path)
-            bsg_cfg_payload["rules"] = cfg.get("rules", {})
+            # Effective rules config incl. plugins.overrides -> plugins_overrides
+            # so the worker rules load and rules_fingerprint match the serial
+            # _bsg_rules path (previously the parallel path dropped overrides).
+            from batho.modules.compression.rules import effective_rules_config
+            bsg_cfg_payload["rules"] = effective_rules_config(cfg)
 
             # Ensure cache path is present so workers can initialize BathoCache
             _cache_cfg = dict(bsg_cfg_payload.get("cache", {}))
@@ -2437,6 +3440,9 @@ class CodeGraphIndexer:
             total_rules_applied = 0
             total_entities_tagged = 0
             total_rules_loaded = 0
+            # Per-rule match-eval timing aggregated across workers — feeds
+            # run_artifacts.rule_stats.rule_perf for the enrich scorer.
+            total_rule_perf: dict[str, dict[str, int]] = {}
 
             # Capture indexed file paths up front so `results` can be freed
             # incrementally during the materialization loop below.
@@ -2456,6 +3462,12 @@ class CodeGraphIndexer:
                     total_entities_tagged += local_hits.get("entities_tagged", 0)
                     if not total_rules_loaded:
                         total_rules_loaded = local_hits.get("rules_loaded", 0)
+                    for _rn, _pr in (local_hits.get("rule_perf") or {}).items():
+                        _acc = total_rule_perf.setdefault(
+                            _rn, {"match_calls": 0, "total_ns": 0}
+                        )
+                        _acc["match_calls"] += int(_pr.get("match_calls") or 0)
+                        _acc["total_ns"] += int(_pr.get("total_ns") or 0)
 
                     # Deserialize hollow topology (lightweight - not compressed)
                     hollow_topology = msgpack.unpackb(hollow_bytes)
@@ -2494,6 +3506,7 @@ class CodeGraphIndexer:
                             parent_id=node.get("parent_id"),
                             raw_content=None,
                             raw_bytes=None,
+                            signature=node.get("signature"),
                             metadata=metadata
                         )
                         graph.add_entity(ent)
@@ -2552,6 +3565,7 @@ class CodeGraphIndexer:
 
             derived_hierarchy_edges = self._derive_hierarchy_relations(graph)
             derived_overrides_edges = self._derive_override_edges(graph)
+            derived_rationale_doc_edges = self._derive_rationale_doc_links(graph)
 
             semantic_stats: dict[str, int] = {
                 "semantic_tags_added": 0,
@@ -2569,12 +3583,7 @@ class CodeGraphIndexer:
                 self.logger.warning("bsg_semantic_stage_failed", error=str(exc))
 
             # Load and apply BSG rules
-            rules_cfg = cfg.get("rules", {}) if isinstance(cfg, dict) else {}
-            plugins_cfg = cfg.get("plugins", {}) if isinstance(cfg, dict) else {}
-            if isinstance(rules_cfg, dict) and isinstance(plugins_cfg, dict):
-                overrides = plugins_cfg.get("overrides")
-                if overrides:
-                    rules_cfg = {**rules_cfg, "plugins_overrides": overrides}
+            rules_cfg = effective_rules_config(cfg)
 
             rule_stats: dict[str, Any] = {
                 "enabled": False,
@@ -2603,6 +3612,61 @@ class CodeGraphIndexer:
                     "errors": [],
                 }
 
+            # T05 rule telemetry (rule-stats.v1): per-rule match counts for
+            # this run, derived from entity `bsg.rules` metadata + joined back
+            # to the loaded RuleDefinitions for plugin/severity/tags. The
+            # orchestrator stamps run_kind and persists the payload into
+            # run_artifacts.rule_stats_json; feeds the batho-calibrate score
+            # script (T12). None when rules are disabled → column stays null.
+            rules_payload: dict[str, Any] | None = None
+            if rule_stats.get("enabled"):
+                from batho.modules.compression.rules import build_rule_telemetry
+
+                per_rule = build_rule_telemetry(
+                    graph.entities.values(), self._bsg_rules() or []
+                )
+                _plugin_hits: dict[str, int] = {}
+                for _t in per_rule:
+                    _plugin_hits[_t["plugin"]] = (
+                        _plugin_hits.get(_t["plugin"], 0) + _t["entities_matched"]
+                    )
+                interception_totals = {
+                    pid: pdata.get("interceptions", 0)
+                    for pid, pdata in (merged_audit.get("plugins") or {}).items()
+                }
+                _loaded_rule_defs = {r.name: r for r in (self._bsg_rules() or [])}
+                _hits_by_rule = {
+                    t["rule"]: t["entities_matched"] for t in per_rule
+                }
+                rules_payload = {
+                    "schema_version": "rule-stats.v1",
+                    "rules_fingerprint": self._bsg_rules_fingerprint,
+                    "rules_loaded": total_rules_loaded,
+                    "rules_loaded_names": sorted(_loaded_rule_defs),
+                    "entities_updated": total_entities_tagged,
+                    "rule_hits": _hits_by_rule,
+                    "plugin_hits": _plugin_hits,
+                    "rule_perf": {
+                        name: {
+                            "plugin": getattr(
+                                _loaded_rule_defs.get(name), "plugin", ""
+                            ) or "",
+                            "hits": int(_hits_by_rule.get(name, 0)),
+                            "match_calls": int(pr.get("match_calls") or 0),
+                            "total_ns": int(pr.get("total_ns") or 0),
+                            "avg_ns": (
+                                int(pr["total_ns"] / pr["match_calls"])
+                                if pr.get("match_calls")
+                                else 0
+                            ),
+                        }
+                        for name, pr in sorted(total_rule_perf.items())
+                    },
+                    "interception_totals": interception_totals,
+                    "plugin_files": self._bsg_rules_stats.get("plugin_files") or {},
+                    "per_rule": per_rule,
+                }
+            rule_stats["rule_stats_payload"] = rules_payload
 
             if skip_orphan_pruning:
                 orphan_pruned_count = 0
@@ -2663,6 +3727,7 @@ class CodeGraphIndexer:
                 "lazy_stub_resolution": bool(lazy_stub_resolution),
                 "derived_hierarchy_edges": derived_hierarchy_edges,
                 "derived_overrides_edges": derived_overrides_edges,
+                "derived_rationale_doc_edges": derived_rationale_doc_edges,
                 "semantic_tags_added": int(semantic_stats.get("semantic_tags_added", 0)),
                 "semantic_edges_added": int(semantic_stats.get("semantic_edges_added", 0)),
                 "rules_enabled": bool(rule_stats.get("enabled", False)),
@@ -2782,6 +3847,32 @@ class CodeGraphIndexer:
             self.logger.warning("index_file_failed", filepath=filepath, error=str(exc))
             return [], []
 
+        # Apply BSG rules per-file before caching — entities must carry rule
+        # metadata when written under a rules-keyed cache variant (matches
+        # the parallel worker path semantics in extraction/pipeline.py).
+        bsg_rules = self._bsg_rules()
+        if bsg_rules:
+            try:
+                from batho.modules.compression.rules import (
+                    apply_bsg_rules_to_entities,
+                )
+
+                entities, _ = apply_bsg_rules_to_entities(
+                    entities=entities,
+                    relationships=rels,
+                    rules=bsg_rules,
+                    root_path=(
+                        str(self._root)
+                        if self._root is not None
+                        else str(Path(filepath).parent)
+                    ),
+                    file_path=filepath,
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "bsg_rules_failed", filepath=filepath, error=str(exc)
+                )
+
         # Cache the extracted entities if cache is enabled
         bsg_cache_cfg = get_config_cached().get("bsg", {}).get("cache", {})
         if bsg_cache_cfg.get("enabled"):
@@ -2802,6 +3893,7 @@ class CodeGraphIndexer:
                     variant=build_ast_cache_variant(
                         include_gaps=include_gaps,
                         parsing_config=self._effective_parsing_config(),
+                        rules_fingerprint=self._bsg_rules_fingerprint,
                     ),
                 )
             except OSError:
@@ -3278,8 +4370,123 @@ class CodeGraphIndexer:
 
         return added
 
+    def _doc_text(self, doc: Entity) -> str:
+        """Read a DOCUMENT entity's source text from disk (graph entities are
+        hollow — raw_content is not materialized at this stage)."""
+        path = Path(str(getattr(doc, "file", "") or ""))
+        candidates = [path]
+        if self._root is not None and not path.is_absolute():
+            candidates.append(self._root / path)
+        for cand in candidates:
+            try:
+                if cand.is_file() and cand.stat().st_size <= _DOC_LINK_MAX_BYTES:
+                    return cand.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+        return ""
+
+    def _derive_rationale_doc_links(self, graph: "GraphBackend") -> int:
+        """T5: DOCUMENT → MODULE RATIONALE_FOR edges from path mentions.
+
+        A doc token links to a module only when the token's path segments form
+        an exact *unique* suffix of the module's path segments — never a bare
+        substring (common segments like `core`/`utils`/`services` must not
+        fabricate edges on large repos), and ambiguous suffixes are skipped
+        entirely. Cap: 5 edges per document, emitted in deterministic order.
+
+        Build-time-only derivation: this pass sees only the in-build graph.
+        On the patch path that graph holds the changed-file batch, so a
+        changed doc that mentions an *unchanged* module emits no edge here —
+        full `batho build` re-derives over the complete entity set.
+        """
+        docs = [
+            e
+            for e in graph.entities.values()
+            if e.type == EntityType.DOCUMENT
+            and (
+                (e.metadata or {}).get("language") == "markdown"
+                or str(getattr(e, "file", "")).lower().endswith((".md", ".markdown"))
+            )
+        ]
+        mod_segments: list[tuple[str, list[str]]] = []
+        for ent in graph.entities.values():
+            if ent.type == EntityType.MODULE:
+                parts = [
+                    p
+                    for p in str((ent.metadata or {}).get("module_path") or "").split(".")
+                    if p
+                ]
+                if parts:
+                    mod_segments.append((ent.id, parts))
+        if not docs or not mod_segments:
+            return 0
+
+        from batho.modules.extraction.submodules.parser_factory.registry import (
+            _EXT_TO_LANG,
+        )
+
+        code_exts = {ext.lstrip(".").lower() for ext in _EXT_TO_LANG}
+        token_pat = re.compile(r"[A-Za-z0-9_@\-]+(?:[./\\][A-Za-z0-9_@\-]+)+")
+        # FIX: suffix-map the module segments once — {suffix tuple -> module
+        # ids} (same shape as build_module_suffix_index in package_roots.py).
+        # Token matching is then one dict lookup per token instead of an
+        # O(modules) scan with a `mparts[-k:]` slice per compare.
+        suffix_map: dict[tuple[str, ...], list[str]] = {}
+        for mid, mparts in mod_segments:
+            for i in range(len(mparts)):
+                suffix_map.setdefault(tuple(mparts[i:]), []).append(mid)
+        added = 0
+        for doc in sorted(docs, key=lambda e: e.id):
+            text = self._doc_text(doc)
+            if not text:
+                continue
+            # Per-doc dedupe via the endpoint index — O(degree) instead of an
+            # O(R) tuple set materialized over every relationship in the
+            # graph just to dedupe ≤5 edges per doc.
+            existing = {
+                (rel.source_id, rel.target_id, rel.type)
+                for rel in graph.get_rels_by_endpoint(doc.id)
+            }
+            targets: set[str] = set()
+            for token in token_pat.findall(text):
+                segs = [s for s in re.split(r"[./\\]", token) if s]
+                if segs and segs[-1].lower() in code_exts:
+                    segs = segs[:-1]
+                if len(segs) < 2:
+                    continue
+                hits = suffix_map.get(tuple(segs), ())
+                if len(set(hits)) == 1:
+                    targets.add(hits[0])
+            for target_id in sorted(targets)[:_DOC_LINK_MAX_TARGETS]:
+                key = (doc.id, target_id, RelationshipType.RATIONALE_FOR)
+                if key in existing:
+                    continue
+                existing.add(key)
+                graph.add_relationship(
+                    Relationship(
+                        source_id=doc.id,
+                        target_id=target_id,
+                        type=RelationshipType.RATIONALE_FOR,
+                        metadata={
+                            "derived": True,
+                            "reason": "doc_module_mention",
+                            "edge_class": "annotation",
+                            "semantic": True,
+                        },
+                        confidence=0.75,
+                    )
+                )
+                added += 1
+        return added
+
     def _derive_override_edges(self, graph: "GraphBackend") -> int:
-        """Derive OVERRIDES edges from CONTAINS + INHERITS relationships."""
+        """Derive OVERRIDES edges from CONTAINS + INHERITS relationships.
+
+        Build-time-only derivation (same scope as _derive_rationale_doc_links):
+        on the patch path the graph holds only the changed-file batch, so an
+        override whose base/parent lives in an unchanged file emits no edge —
+        full `batho build` re-derives over the complete entity set.
+        """
         if not graph.entities:
             return 0
 

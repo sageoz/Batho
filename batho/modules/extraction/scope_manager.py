@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set, Iterator
 
 from batho.core.config import get_active_root
+from batho.modules.extraction.package_roots import derived_module_variants
 
 # Pre-compiled regex for removing parameter hash suffixes from symbol names
 _PARAM_HASH_PATTERN = re.compile(r'_\[[a-fA-F0-9]+\]')
@@ -144,6 +145,11 @@ class ScopeManager:
         self._failed_lookups: Set[str] = set()
         self._failed_lock = threading.Lock()
 
+        # Lazily-built module-suffix index (T11 package-alias resolution).
+        # Populated by the graph builder; every symbol-table mutation must
+        # invalidate it via _invalidate_resolution_indexes().
+        self._batho_module_suffix_index = None
+
     @property
     def _scope_stack(self) -> List[str]:
         if not hasattr(self._local_data, "stack"):
@@ -203,8 +209,15 @@ class ScopeManager:
         stack = self._scope_stack
         return stack[-1] if stack else ""
 
+    def _invalidate_resolution_indexes(self) -> None:
+        """Clear lazily-built resolution indexes after a symbol-table
+        mutation. Only the module-suffix index today — the failed-lookup
+        sentinel cache is NOT cleared here (it would defeat the cache)."""
+        self._batho_module_suffix_index = None
+
     def define_symbol(self, name: str, symbol_id: str, symbol_type: str, is_global: bool = False) -> None:
         """Define a symbol in the current scope or the global table."""
+        self._invalidate_resolution_indexes()
         current_scope = self.get_current_scope()
         symbol_info = SymbolInfo(
             symbol_id=symbol_id,
@@ -275,10 +288,13 @@ class ScopeManager:
             module_parts = [p for p in module_parts if p]
             if module_parts:
                 variants = [module_parts]
-                # src/lib-layout: register the import-path variant too
-                # (stub FQNs use import paths, not file paths)
-                if module_parts[0] in ("src", "lib") and len(module_parts) > 1:
-                    variants.append(module_parts[1:])
+                # Register every evidence-derived import-path spelling too —
+                # stub FQNs use import paths, not file paths. Package-marker
+                # chains, manifest-declared roots, and configured roots are
+                # computed per file; nothing is guessed by directory name.
+                for dv in derived_module_variants(root, module_parts):
+                    if dv and dv != module_parts:
+                        variants.append(dv)
                 for parts in variants:
                     module_dot = ".".join(parts)
                     module_slash = "/".join(parts)
@@ -289,6 +305,7 @@ class ScopeManager:
 
     def add_external_symbol(self, name: str, symbol_id: str, symbol_type: str) -> None:
         """Add an external symbol (from another package) to global table."""
+        self._invalidate_resolution_indexes()
         symbol_info = SymbolInfo(
             symbol_id=symbol_id,
             symbol_type=symbol_type,
@@ -405,6 +422,7 @@ class ScopeManager:
         """
         with self._failed_lock:
             self._failed_lookups.clear()
+        self._invalidate_resolution_indexes()
 
     def resolve_symbol_dotpath(
         self, name: str, lang_hint: str | None = None
@@ -434,6 +452,40 @@ class ScopeManager:
                         symbol_type="external",
                         scope_path=prefix_info.scope_path,
                         is_external=True
+                    )
+
+        # 2b. Slash-subpath prefix match — npm `@scope/pkg/sub`, go `pkg/sub`,
+        # cargo module paths. Import specifiers address package *roots* plus a
+        # subpath, but dep introspection only registers the root module.
+        # `@scope` alone is never a package — scoped names need ≥2 segments.
+        if "/" in name:
+            parts = name.split("/")
+            min_prefix = 2 if name.startswith("@") else 1
+            for i in range(len(parts) - 1, min_prefix - 1, -1):
+                prefix = "/".join(parts[:i])
+                prefix_info = self.resolve_symbol(prefix, lang_hint)
+                if prefix_info and prefix_info.is_external:
+                    return SymbolInfo(
+                        symbol_id=f"{prefix_info.symbol_id}{'/'.join(parts[i:])}",
+                        symbol_type="external",
+                        scope_path=prefix_info.scope_path,
+                        is_external=True,
+                    )
+
+        # 2c. Hyphen/underscore first-segment variant — cargo manifests declare
+        # `tauri-plugin-shell` while Rust code writes `use tauri_plugin_shell`.
+        first, _sep, rest = name.partition(".")
+        if "_" in first or "-" in first:
+            for variant in (first.replace("_", "-"), first.replace("-", "_")):
+                if variant == first:
+                    continue
+                variant_info = self.resolve_symbol(variant, lang_hint)
+                if variant_info and variant_info.is_external:
+                    return SymbolInfo(
+                        symbol_id=f"{variant_info.symbol_id}{rest}" if rest else variant_info.symbol_id,
+                        symbol_type="external",
+                        scope_path=variant_info.scope_path,
+                        is_external=True,
                     )
 
         return None

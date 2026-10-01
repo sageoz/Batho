@@ -6,7 +6,6 @@ Uses existing BathoBundleReader methods to read changelog and run artifacts.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from batho.modules.storage.arrow_bundle.reader import BathoBundleReader

@@ -479,9 +479,32 @@ def run_build(options: BuildOptions) -> BuildResult:
                             t_comm_0 = time.monotonic()
                             communities = detect_communities(graph, community_cfg)
                             comm_rows = communities_to_rows(communities)
+
+                            # Fresh rows carry empty llm_* columns — carry
+                            # forward prior labels whose card input is
+                            # unchanged (keyed on card_input_hash) so a rebuild
+                            # can't erase paid labels or the incremental gate.
+                            final_comm_path = bundle_dir / "communities.ipc"
+                            try:
+                                from batho.modules.graph.community_labels import carry_forward_labels
+                                from batho.modules.storage.arrow_bundle.writer import read_ipc_table
+                                _prev_rows = (
+                                    read_ipc_table(final_comm_path).to_pylist()
+                                    if final_comm_path.exists() else []
+                                )
+                                _max_card = int(
+                                    (community_cfg.get("llm") or {}).get("max_card_tokens", 200)
+                                )
+                                _carried = carry_forward_labels(
+                                    comm_rows, _prev_rows, graph, _max_card
+                                )
+                                if _carried:
+                                    LOGGER.info("community_labels_carried", carried=_carried)
+                            except Exception as exc:
+                                LOGGER.warning("community_labels_carry_failed", error=str(exc))
+
                             comm_path = bundle_dir / "communities.tmp.ipc"
                             write_simple_ipc(comm_rows, COMMUNITIES_SCHEMA, comm_path)
-                            final_comm_path = bundle_dir / "communities.ipc"
                             comm_path.replace(final_comm_path)
                             db.register_simple_file("communities", final_comm_path.name)
                             comm_duration_ms = (time.monotonic() - t_comm_0) * 1000
@@ -518,7 +541,6 @@ def run_build(options: BuildOptions) -> BuildResult:
 
                     # --- Build BSG map ---
                     from batho.modules.compression.bsg_map import BSGMap
-                    from batho.modules.storage.arrow_bundle.helpers import _minify_graph_payload
 
                     ph_bsg = progress_engine.open_phase("bsg", unit="files")
                     bsg_map = BSGMap.build(graph, str(root), opaque_snapshots=opaque_snapshots)
@@ -846,6 +868,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                     store.finalize()
                     ph_persist.close()
                     metrics = _compute_run_metrics(store, db, root)
+                    bsg_build_stats = getattr(indexer, "build_stats", {})
                     telemetry = {
                         "duration_ms": elapsed_ms,
                         "batch_prep_ms": t_batch_prep_ms,
@@ -857,7 +880,6 @@ def run_build(options: BuildOptions) -> BuildResult:
                         "git_branch": git_branch,
                     }
                     security_audit_val = None
-                    bsg_build_stats = getattr(indexer, "build_stats", {})
                     if bsg_build_stats:
                         security_audit_val = bsg_build_stats.get("security_audit")
 
@@ -868,8 +890,38 @@ def run_build(options: BuildOptions) -> BuildResult:
                             "schema_version": "interception-stats.v1",
                             "plugins": {},
                         }
+                    # Whole-repo audit — mark scope so consumers can tell it
+                    # apart from patch runs' delta-scoped interception stats.
+                    security_audit_val = {
+                        **security_audit_val,
+                        "run_kind": "build",
+                        "scope": "repo",
+                    }
 
                     artifact_blobs_cfg = cfg.get("artifact_blobs", {})
+
+                    # T05: rule-stats.v1 payload — per-rule telemetry for
+                    # longitudinal fitness scoring; null when rules disabled.
+                    _rules_section = bsg_build_stats.get("rules") or {}
+                    _rule_stats_payload = _rules_section.get("rule_stats_payload")
+                    if _rule_stats_payload:
+                        _rule_stats_payload = {
+                            **_rule_stats_payload, "run_kind": "build"
+                        }
+
+                    # enrich_profile + enrich_score — gap report + rule fitness
+                    # written into the same run-artifacts row (best-effort).
+                    from batho.modules.enrich import (
+                        collect_enrich_artifacts,
+                        write_enrich_reports,
+                    )
+                    _enrich = collect_enrich_artifacts(
+                        db, run_internal_id, run_id, root,
+                        rule_stats_payload=_rule_stats_payload,
+                        entity_count=metrics["context_overview"].get(
+                            "total_entities"
+                        ),
+                    )
 
                     db.finalize_run_artifacts(
                         run_internal_id,
@@ -880,8 +932,16 @@ def run_build(options: BuildOptions) -> BuildResult:
                             "security_audit": security_audit_val,
                             "artifact_payload": metrics["artifact_payload"],
                             "delta_stats": None,
+                            "rule_stats": _rule_stats_payload,
+                            **_enrich,
                         },
                         blob_config=artifact_blobs_cfg,
+                    )
+                    write_enrich_reports(
+                        root,
+                        profile=_enrich.get("enrich_profile"),
+                        score=_enrich.get("enrich_score"),
+                        context_overview=metrics.get("context_overview"),
                     )
                     LOGGER.info(
                         "build_complete",
@@ -948,8 +1008,6 @@ def _compute_run_metrics(store: Any, db: Any, root: Path) -> dict:
 
 def _build_file_tracking(graph: Any, root: Path, indexer: Any = None, *, run_id: str = "") -> list[dict[str, Any]]:
     """Build file tracking records from the indexed graph."""
-    import os
-
     seen: set[str] = set()
     records: list[dict[str, Any]] = []
 

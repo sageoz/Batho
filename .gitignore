@@ -57,3 +57,6 @@ docs-local/
 gif.gif
 .devin/
 .specs/
+
+# Local scratch planning file (not tracked)
+task.md

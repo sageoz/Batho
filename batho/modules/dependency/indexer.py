@@ -356,18 +356,10 @@ class DependencyIndexer:
                     symbols_to_add.append((qualified_name, f"{lang}:{qualified_name}", symbol_id, "function"))
                     self.stats.symbols_indexed += 1
 
-        # Batch add all symbols at once (flat + namespaced keys share one id)
-        for name, ns_name, symbol_id, sym_type in symbols_to_add:
-            self.scope_manager.add_external_symbol(
-                name=name,
-                symbol_id=symbol_id,
-                symbol_type=sym_type
-            )
-            self.scope_manager.add_external_symbol(
-                name=ns_name,
-                symbol_id=symbol_id,
-                symbol_type=sym_type
-            )
+        # Batch add all symbols at once (flat + namespaced keys share one id).
+        # T12: refs arrive dot-normalized ('std.io.Read'), so '::'-style keys
+        # (rust/ruby paths) also register under the dotted alias.
+        self._register_external_symbols(symbols_to_add)
 
     def _index_dependencies_parallel(self, manifests: List[DependencySpec]) -> None:
         """Index dependencies in parallel using thread pool.
@@ -686,6 +678,37 @@ class DependencyIndexer:
             )
             return {}
 
+    def _register_external_symbols(self, symbols_to_add: List[tuple[str, str, str, str]]) -> None:
+        """Register (flat, namespaced) keys plus '::'→'.' dot aliases.
+
+        Shared by the stdlib and dependency branches — refs arrive
+        dot-normalized ('std.io.Read'), so '::'-style keys (rust/ruby/perl
+        paths) must register under the dotted alias on BOTH paths or
+        dep-only symbols silently fail to resolve.
+        """
+        for name, ns_name, symbol_id, sym_type in symbols_to_add:
+            self.scope_manager.add_external_symbol(
+                name=name,
+                symbol_id=symbol_id,
+                symbol_type=sym_type
+            )
+            self.scope_manager.add_external_symbol(
+                name=ns_name,
+                symbol_id=symbol_id,
+                symbol_type=sym_type
+            )
+            if "::" in name:
+                self.scope_manager.add_external_symbol(
+                    name=name.replace("::", "."),
+                    symbol_id=symbol_id,
+                    symbol_type=sym_type,
+                )
+                self.scope_manager.add_external_symbol(
+                    name=ns_name.replace("::", "."),
+                    symbol_id=symbol_id,
+                    symbol_type=sym_type,
+                )
+
     def _add_symbols_to_scope(self, dep: DependencySpec, symbols_map: Dict[str, List[str]]):
         """Add symbols from a package to the scope manager (batched for performance).
 
@@ -715,17 +738,7 @@ class DependencyIndexer:
                 self.stats.symbols_indexed += 1
 
         # Batch add all symbols (flat + namespaced keys share one SymbolInfo)
-        for name, ns_name, symbol_id, sym_type in symbols_to_add:
-            self.scope_manager.add_external_symbol(
-                name=name,
-                symbol_id=symbol_id,
-                symbol_type=sym_type
-            )
-            self.scope_manager.add_external_symbol(
-                name=ns_name,
-                symbol_id=symbol_id,
-                symbol_type=sym_type
-            )
+        self._register_external_symbols(symbols_to_add)
 
 def build_dependency_index(
     root: Path,

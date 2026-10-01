@@ -47,13 +47,12 @@ def _make_stub(
     target_name: str,
     caller_scope: str = "batho test pkg 1.0.0 /test/main.rs",
     receiver_var: str | None = None,
-    receiver_type: str | None = None,
     file: str = "/test/main.rs",
     line: int = 10,
 ) -> Entity:
     """Create a contextual stub with receiver_var metadata."""
     if receiver_var is None and "." in target_name:
-        receiver_var = target_name.split(".")[0]
+        receiver_var = ".".join(target_name.split(".")[:-1])
     stub_id = f"unresolved:{caller_scope}::{target_name}"
     meta = {
         "reference_type": "calls",
@@ -63,8 +62,6 @@ def _make_stub(
         "target_name": target_name,
         "receiver_var": receiver_var,
     }
-    if receiver_type:
-        meta["receiver_type"] = receiver_type
     return Entity(
         type=EntityType.EXTERNAL_SYMBOL,
         name=target_name,
@@ -88,25 +85,28 @@ def _make_indexer(tmp_dir: str) -> CodeGraphIndexer:
 class TestReceiverVarExtraction:
     """Verify receiver_var is correctly extracted from ref_text.
 
-    The extraction logic (in extractor.py _make_contextual_stub) is:
-        receiver_var = ref_text.split(".")[0] if "." in ref_text else None
+    The extraction logic (in extractor.py _make_contextual_stub) stores the
+    FULL receiver chain, not just the first segment — `self.db.execute`
+    needs `self.db` so the deep-receiver guard can fire:
+        receiver_var = ".".join(ref_text.split(".")[:-1]) if "." in ref_text
     """
 
     @pytest.mark.parametrize("ref_text,expected", [
         ("cursor.execute", "cursor"),
         ("self.method", "self"),
         ("this.prop", "this"),
-        ("obj.a.b.c", "obj"),
+        ("obj.a.b.c", "obj.a.b"),  # full chain, not just "obj"
+        ("self.db.execute", "self.db"),
         ("json.dumps", "json"),
         ("std::option::Option", None),  # Uses :: not ., so no receiver_var
         ("simple", None),  # No dot
         ("", None),  # Empty string, no dot
-        (".leading_dot", ""),  # Dot at start, first segment is empty
+        (".leading_dot", ""),  # Dot at start, receiver chain is empty
     ])
     def test_receiver_var_extraction(self, ref_text, expected):
         """Verify receiver_var is extracted correctly from ref_text."""
         if "." in ref_text:
-            receiver_var = ref_text.split(".")[0]
+            receiver_var = ".".join(ref_text.split(".")[:-1])
         else:
             receiver_var = None
         assert receiver_var == expected
@@ -150,8 +150,13 @@ class TestResolveMethodCall:
             sm.define_symbol("Cursor", class_entity.id, "STRUCT", is_global=True)
             sm.define_symbol("Cursor.execute", method_entity.id, "METHOD", is_global=True)
 
-            # Stub referencing cursor.execute with receiver_type hint
-            stub = _make_stub("cursor.execute", receiver_type="Cursor")
+            # Stub referencing cursor.execute — the caller's signature
+            # annotates `cursor: Cursor` (Source 4: parameter annotation).
+            caller = _make_entity(
+                "handler", EntityType.FUNCTION, signature="fn handler(cursor: Cursor)"
+            )
+            graph.add_entity(caller)
+            stub = _make_stub("cursor.execute", caller_scope=caller.id)
             graph.add_entity(stub)
 
             result = indexer._resolve_method_call(stub, graph, sm)
@@ -173,12 +178,45 @@ class TestResolveMethodCall:
                 symbol_type="module",
             )
 
-            # Stub referencing opt.unwrap with receiver_type=Option
-            stub = _make_stub("opt.unwrap", receiver_type="Option")
+            # Stub referencing opt.unwrap — the caller annotates `opt: Option`.
+            caller = _make_entity(
+                "handler", EntityType.FUNCTION, signature="fn handler(opt: Option)"
+            )
+            graph.add_entity(caller)
+            stub = _make_stub("opt.unwrap", caller_scope=caller.id)
             graph.add_entity(stub)
 
             result = indexer._resolve_method_call(stub, graph, sm)
             assert result is not None
+            indexer.close()
+
+    def test_stdlib_hit_via_receiver_stamps_stdlib_method(self):
+        """GRH-11: a stdlib-table hit reached through the receiver pipeline
+        stamps `stdlib_method` (0.90), not the weakest `receiver_type` tier —
+        provenance and confidence survive."""
+        with tempfile.TemporaryDirectory() as tmp:
+            indexer = _make_indexer(tmp)
+            graph = InMemoryGraph()
+            sm = ScopeManager()
+
+            sm.add_external_symbol(
+                name="std::option::Option",
+                symbol_id="batho stdb rust 1.70 std::option::Option/",
+                symbol_type="module",
+            )
+            caller = _make_entity(
+                "handler", EntityType.FUNCTION, signature="fn handler(opt: Option)"
+            )
+            graph.add_entity(caller)
+            stub = _make_stub("opt.unwrap", caller_scope=caller.id)
+            graph.add_entity(stub)
+
+            result = indexer._resolve_method_call_with_tier(
+                stub, graph, sm, "rust", None, None
+            )
+            assert result is not None
+            _, tier = result
+            assert tier == "stdlib_method"
             indexer.close()
 
     def test_no_receiver_var_returns_none(self):
@@ -216,7 +254,7 @@ class TestResolveMethodCall:
             graph = InMemoryGraph()
             sm = ScopeManager()
 
-            stub = _make_stub("unknown_var.method", receiver_type="UnknownType")
+            stub = _make_stub("unknown_var.method")
             graph.add_entity(stub)
 
             result = indexer._resolve_method_call(stub, graph, sm)
@@ -325,63 +363,22 @@ class TestInferVariableType:
             assert var_type is None
             indexer.close()
 
-    def test_receiver_type_metadata_hint(self):
-        """receiver_type in stub metadata is used as type hint."""
+    def test_param_annotation_types_receiver(self):
+        """A caller signature param annotation types the receiver var."""
         with tempfile.TemporaryDirectory() as tmp:
             indexer = _make_indexer(tmp)
             graph = InMemoryGraph()
             sm = ScopeManager()
 
-            stub = _make_stub("var.method", receiver_type="HashMap")
+            caller = _make_entity(
+                "handler", EntityType.FUNCTION, signature="fn handler(var: HashMap)"
+            )
+            graph.add_entity(caller)
+            stub = _make_stub("var.method", caller_scope=caller.id)
             graph.add_entity(stub)
 
             var_type = indexer._infer_variable_type("var", stub, graph, sm)
             assert var_type == "HashMap"
-            indexer.close()
-
-    def test_variable_declaration_in_same_file(self):
-        """A variable entity with declared_type in the same file is used."""
-        with tempfile.TemporaryDirectory() as tmp:
-            indexer = _make_indexer(tmp)
-            graph = InMemoryGraph()
-            sm = ScopeManager()
-
-            # Variable declaration with type annotation
-            var_entity = _make_entity(
-                "my_var", EntityType.FUNCTION,  # Using FUNCTION as a stand-in
-                file="/test/main.rs",
-                start_line=5,
-                metadata={"declared_type": "Vec<String>"},
-            )
-            graph.add_entity(var_entity)
-
-            stub = _make_stub("my_var.push", file="/test/main.rs", line=10)
-            graph.add_entity(stub)
-
-            var_type = indexer._infer_variable_type("my_var", stub, graph, sm)
-            assert var_type == "Vec<String>"
-            indexer.close()
-
-    def test_variable_declaration_in_different_file_not_used(self):
-        """A variable declaration in a different file is not used for inference."""
-        with tempfile.TemporaryDirectory() as tmp:
-            indexer = _make_indexer(tmp)
-            graph = InMemoryGraph()
-            sm = ScopeManager()
-
-            var_entity = _make_entity(
-                "my_var", EntityType.FUNCTION,
-                file="/test/other.rs",
-                start_line=5,
-                metadata={"declared_type": "Vec<String>"},
-            )
-            graph.add_entity(var_entity)
-
-            stub = _make_stub("my_var.push", file="/test/main.rs", line=10)
-            graph.add_entity(stub)
-
-            var_type = indexer._infer_variable_type("my_var", stub, graph, sm)
-            assert var_type is None
             indexer.close()
 
     def test_self_with_empty_scope_returns_none(self):
@@ -660,7 +657,7 @@ class TestReceiverTypeResolutionIntegration:
             indexer.close()
 
     def test_stdlib_method_on_option_resolves(self):
-        """opt.unwrap with receiver_type=Option resolves via stdlib."""
+        """opt.unwrap with caller annotating `opt: Option` resolves via stdlib."""
         with tempfile.TemporaryDirectory() as tmp:
             indexer = _make_indexer(tmp)
             graph = InMemoryGraph()
@@ -672,7 +669,11 @@ class TestReceiverTypeResolutionIntegration:
                 symbol_type="module",
             )
 
-            stub = _make_stub("opt.unwrap", receiver_type="Option")
+            caller = _make_entity(
+                "handler", EntityType.FUNCTION, signature="fn handler(opt: Option)"
+            )
+            graph.add_entity(caller)
+            stub = _make_stub("opt.unwrap", caller_scope=caller.id)
             graph.add_entity(stub)
 
             result = indexer._resolve_method_call(stub, graph, sm)
@@ -687,12 +688,129 @@ class TestReceiverTypeResolutionIntegration:
             graph = InMemoryGraph()
             sm = ScopeManager()
 
-            stub = _make_stub("obj.a.b.c", receiver_type="SomeType")
+            stub = _make_stub("obj.a.b.c")
             graph.add_entity(stub)
 
-            # _resolve_method_call should try "SomeType.a.b.c"
-            # which won't resolve, but the method_name extraction is correct
+            # The method_name extraction keeps the full chain after the
+            # first dot regardless of resolution.
             target_name = stub.metadata.get("target_name", "")
             method_name = target_name.split(".", 1)[1]
             assert method_name == "a.b.c"
+            indexer.close()
+
+
+# ---------------------------------------------------------------------------
+# GRH-13/14: id-grammar and signature-scan edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestExternalQualifiedNameSpaces:
+    """GRH-13: PEP 508 version specs may contain spaces — the tail field must
+    anchor on the LAST space, not a fixed split position."""
+
+    def test_spaced_version_spec_keeps_path(self):
+        from batho.modules.graph.builder.codegraph import _external_qualified_name
+
+        # `fastapi >= 0.100, < 1.0` — version spec with interior whitespace.
+        assert _external_qualified_name(
+            "batho pip fastapi >= 0.100, < 1.0 fastapi/FastAPI()."
+        ) == "fastapi.FastAPI"
+
+    def test_unspaced_spec_unchanged(self):
+        from batho.modules.graph.builder.codegraph import _external_qualified_name
+
+        assert _external_qualified_name(
+            "batho pip fastapi >=0.141.1 fastapi/FastAPI()."
+        ) == "fastapi.FastAPI"
+        assert _external_qualified_name(
+            "batho npm zod ^3 zod/"
+        ) == "zod"
+
+    def test_non_packaged_ids_still_none(self):
+        from batho.modules.graph.builder.codegraph import _external_qualified_name
+
+        assert _external_qualified_name("unresolved:x::y") is None
+        assert _external_qualified_name("ent|FUNCTION|f|1|2|1|1|g") is None
+
+
+class TestSignatureParamMapDefaults:
+    """GRH-14: `<`/`>` inside default values are comparisons/expressions,
+    not generic brackets — they must not truncate the parameter list."""
+
+    def test_comparison_in_default_keeps_later_params(self):
+        from batho.modules.graph.builder.codegraph import _signature_param_map
+
+        m = _signature_param_map("fn f(a: int = (x > y), b: Svc)")
+        assert set(m) == {"a", "b"}
+        assert m["b"][0] == "Svc"
+
+    def test_shift_operators_in_default(self):
+        from batho.modules.graph.builder.codegraph import _signature_param_map
+
+        m = _signature_param_map("fn f(a = (1 << 3) >> 1, b: str = 'x')")
+        assert set(m) == {"a", "b"}
+
+    def test_generics_in_annotation_still_counted(self):
+        from batho.modules.graph.builder.codegraph import _signature_param_map
+
+        m = _signature_param_map("fn f(v: Vec<T>, m: Map<K, V>)")
+        assert set(m) == {"v", "m"}
+        assert m["v"][0] == "Vec<T>"
+
+    def test_greater_equal_in_default(self):
+        from batho.modules.graph.builder.codegraph import _signature_param_map
+
+        m = _signature_param_map("fn f(a: int = (x >= y), b: Svc)")
+        assert set(m) == {"a", "b"}
+
+
+class TestLazyParityBindingMaps:
+    """GRH-16: resolve_stub_on_demand must build the same binding maps the
+    batch pass constructs — Source-5 assignment inference is otherwise dead
+    in lazy mode."""
+
+    def test_lazy_resolution_uses_assignment_binding(self):
+        import tempfile
+
+        from batho.core.schemas import Relationship, RelationshipType
+
+        with tempfile.TemporaryDirectory() as tmp:
+            indexer = _make_indexer(tmp)
+            graph = InMemoryGraph()
+            sm = ScopeManager()
+
+            svc = _make_entity("Svc", EntityType.STRUCT, start_line=1)
+            ping = _make_entity("Svc.ping", EntityType.METHOD, start_line=3)
+            factory = _make_entity(
+                "get_svc", EntityType.FUNCTION, start_line=6,
+                signature="fn get_svc() -> Svc",
+            )
+            caller = _make_entity(
+                "handler", EntityType.FUNCTION, start_line=8,
+                signature="fn handler()",
+            )
+            for e in (svc, ping, factory, caller):
+                graph.add_entity(e)
+            sm.define_symbol("Svc", svc.id, "STRUCT", is_global=True)
+            sm.define_symbol("Svc.ping", ping.id, "METHOD", is_global=True)
+            sm.define_symbol("get_svc", factory.id, "FUNCTION", is_global=True)
+
+            # `svc = get_svc()` at line 9 — the assigned_to edge metadata the
+            # batch pass reads into _assigned_by_scope_var.
+            graph.add_relationship(Relationship(
+                source_id=caller.id,
+                target_id=factory.id,
+                type=RelationshipType.USES,
+                metadata={"assigned_to": "svc", "line_number": 9},
+            ))
+
+            # `svc.ping()` at line 10 inside handler — unresolved stub.
+            stub = _make_stub("svc.ping", caller_scope=caller.id, line=10)
+            graph.add_entity(stub)
+
+            target = indexer.resolve_stub_on_demand(stub.id, graph, sm)
+            assert target == ping.id
+            updated = graph.get_entity(stub.id)
+            assert updated.metadata["stub_resolution_state"] == "resolved"
+            assert updated.metadata["resolution_strategy"] == "receiver_assignment"
             indexer.close()

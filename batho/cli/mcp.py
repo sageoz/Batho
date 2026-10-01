@@ -6,7 +6,6 @@ Thin argparse wrapper that starts the Batho MCP server.
 from __future__ import annotations
 
 import argparse
-import sys
 
 
 def register_mcp_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -17,7 +16,8 @@ def register_mcp_parser(subparsers: argparse._SubParsersAction) -> None:
         description=(
             "Start the Batho MCP server on stdio. AI agents connect via "
             "Model Context Protocol to query the code graph. Requires a "
-            "pre-built .batho artifact (run `batho build` first)."
+            "pre-built .batho artifact (run `batho build` first). Use "
+            "`batho install` to register the server with detected agents."
         ),
     )
     parser.add_argument(
@@ -68,6 +68,17 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     if disabled is not None:
         disabled -= set(args.enable_tool)
 
+    # Fail-open skill-pack sync: missing or version-drifted pack is
+    # installed/refreshed before the server starts. Any failure degrades to a
+    # single warning — sync must never prevent `batho mcp` from starting.
+    try:
+        from batho.install import auto_sync_if_needed
+
+        auto_sync_if_needed(root_cfg=cfg, project_root=root_resolved)
+    except Exception as exc:
+        from batho.utils.logging import get_logger
+
+        get_logger(__name__).warning("skill_pack_sync_failed", error=str(exc))
+
     run_server(root=root_resolved, watch=not args.no_watch, disabled_tools=disabled)
     return 0
-

@@ -1,4 +1,4 @@
-"""Unified cache service — disk-persistent AST cache (v3.0).
+"""Unified cache service — disk-persistent AST cache.
 
 AST caching delegates to AstCache (flat-file msgpack on disk).
 File tracking delegates to BathoBundle for persistence.
@@ -21,7 +21,7 @@ from batho.utils.logging import get_logger
 logger = get_logger(__name__, component="cache")
 
 
-CACHE_SCHEMA_VERSION = "v3"
+CACHE_SCHEMA_VERSION = "v4"
 
 
 def build_ast_cache_variant(
@@ -29,6 +29,7 @@ def build_ast_cache_variant(
     include_gaps: bool,
     parsing_config: dict[str, Any] | None = None,
     identity_fingerprint: str = "",
+    rules_fingerprint: str = "",
 ) -> str:
     """Return a stable variant key for AST cache entries.
 
@@ -36,12 +37,18 @@ def build_ast_cache_variant(
     part of the key: cached entities carry their stamped symbol IDs, so a
     changed workspace identity map must invalidate them or stale prefixes
     resurface from cache forever.
+
+    ``rules_fingerprint`` is equally mandatory: per-file BSG rules stamp
+    metadata onto entities before they are cached, so a changed rule set
+    (plugin files, disabled_rules, overrides, custom_rules_dir contents)
+    must invalidate the cache or pre-rule entities resurface.
     """
     payload = {
         "schema_version": CACHE_SCHEMA_VERSION,
         "include_gaps": bool(include_gaps),
         "parsing": parsing_config or {},
         "identity": identity_fingerprint,
+        "rules": rules_fingerprint or "",
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:12]

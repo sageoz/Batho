@@ -298,3 +298,65 @@ class TestBundleWriterAndOffsets:
         assert len(res3["agent_view"]) == 1
         assert res3["agent_view"][0]["entity_id"] == "ent3"
 
+
+
+class TestAgentMetadataProjection:
+    """CFG-03: agent_views.metadata_json persists the extraction keys rule
+    matchers read (decorators/docstring/invocation_snippet) plus bsg.* —
+    everything else is dropped to bound row size."""
+
+    def _meta_for(self, tmp_path, ent_meta):
+        import json
+        writer = BathoBundleWriter(tmp_path / "artifact", run_id=1)
+        writer.write_file_artifact(
+            file_id=1,
+            agent={"entities": [{
+                "id": "e1", "name": "foo", "type": "function",
+                "start_line": 1, "is_exported": True, "metadata": ent_meta,
+            }]},
+            storage={"entities": []},
+            rels=[],
+            content_hash="h",
+        )
+        raw = writer._agent_buf["metadata_json"][0]
+        return json.loads(raw) if raw else {}
+
+    def test_persists_rule_matchable_keys(self, tmp_path):
+        meta = self._meta_for(tmp_path, {
+            "bsg.noise": True,
+            "decorators": ["app.route"],
+            "docstring": "docs",
+            "invocation_snippet": "foo()",
+        })
+        assert meta == {
+            "bsg.noise": True,
+            "decorators": ["app.route"],
+            "docstring": "docs",
+            "invocation_snippet": "foo()",
+        }
+
+    def test_drops_unprojected_keys(self, tmp_path):
+        meta = self._meta_for(tmp_path, {
+            "bsg.rules": ["r1"],
+            "tree_sitter_node": "internal-state",
+            "caller_scope": "m.f",
+        })
+        assert meta == {"bsg.rules": ["r1"]}
+
+    def test_stub_rows_keep_full_metadata(self, tmp_path):
+        writer = BathoBundleWriter(tmp_path / "artifact", run_id=1)
+        writer.write_file_artifact(
+            file_id=1,
+            agent={"entities": [{
+                "id": "unresolved:m.f@3::x.y", "name": "x.y",
+                "type": "FUNCTION", "start_line": 3,
+                "metadata": {"caller_scope": "m.f", "target_name": "x.y"},
+            }]},
+            storage={"entities": []},
+            rels=[],
+            content_hash="h",
+        )
+        import json
+        meta = json.loads(writer._agent_buf["metadata_json"][0])
+        assert meta["caller_scope"] == "m.f"
+        assert meta["target_name"] == "x.y"

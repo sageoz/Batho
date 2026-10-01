@@ -189,7 +189,9 @@ class TestIndexFileCacheVariant:
 
         # Entry lives under the effective (flags-merged) variant
         effective_variant = build_ast_cache_variant(
-            include_gaps=False, parsing_config=indexer._effective_parsing_config()
+            include_gaps=False,
+            parsing_config=indexer._effective_parsing_config(),
+            rules_fingerprint=indexer._bsg_rules_fingerprint,
         )
         hit = indexer._cache.get_ast(str(py_file), file_hash, effective_variant)
         assert hit is not None, "index_file entry must be found under the effective variant"
@@ -201,7 +203,11 @@ class TestIndexFileCacheVariant:
         raw_parsing = dict(indexer._effective_parsing_config())
         raw_parsing.pop("extract_parameters", None)
         raw_parsing.pop("extract_type_parameters", None)
-        raw_variant = build_ast_cache_variant(include_gaps=False, parsing_config=raw_parsing)
+        raw_variant = build_ast_cache_variant(
+            include_gaps=False,
+            parsing_config=raw_parsing,
+            rules_fingerprint=indexer._bsg_rules_fingerprint,
+        )
         assert indexer._cache.get_ast(str(py_file), file_hash, raw_variant) is None, (
             "flags-ON entry must not be served to a flags-OFF build"
         )
@@ -242,7 +248,9 @@ class TestIndexFileCacheVariant:
             ast_cache_dir=str(ast_cache_dir),
         )
         off_variant = build_ast_cache_variant(
-            include_gaps=False, parsing_config=off_indexer._effective_parsing_config()
+            include_gaps=False,
+            parsing_config=off_indexer._effective_parsing_config(),
+            rules_fingerprint=indexer._bsg_rules_fingerprint,
         )
         content = py_file.read_bytes()
         file_hash = compute_bytes_hash(content)

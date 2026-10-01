@@ -54,6 +54,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from batho.modules.extraction.package_roots import derived_module_variants
+
 # ---------------------------------------------------------------------------
 # File-classification tables
 # ---------------------------------------------------------------------------
@@ -267,20 +269,26 @@ def read_source(fpath: str) -> str | None:
         return None
 
 
-def package_prefixes(parts: list[str], language: str) -> list[str]:
+def package_prefixes(
+    parts: list[str], language: str, variants: list[list[str]] | None = None
+) -> list[str]:
     """Dotted package names under which aliases must be registered.
 
-    src/lib-layout projects register symbols under the stripped path too, so
-    aliases must exist under both package spellings; Rust crates additionally
-    under ``crate.``.
+    Symbols register under the file path plus every evidence-derived import
+    spelling (package markers, manifest roots, configured roots — see
+    ``package_roots.py``), so aliases must exist under each of them; Rust
+    crates additionally under ``crate.`` (language keyword, not layout).
     """
-    pkg_dotted = ".".join(parts)
-    prefixes = [pkg_dotted]
-    if parts and parts[0] in ("src", "lib") and len(parts) > 1:
-        stripped = ".".join(parts[1:])
-        prefixes.append(stripped)
+    prefixes = [".".join(parts)]
+    for variant in variants or []:
+        if not variant or variant == parts:
+            continue
+        dv = ".".join(variant)
+        if dv in prefixes:
+            continue
+        prefixes.append(dv)
         if language == "rust":
-            prefixes.append(f"crate.{stripped}")
+            prefixes.append(f"crate.{dv}")
     return prefixes
 
 
@@ -393,26 +401,64 @@ def reexports_js(src, parts, prefixes, scope_manager) -> int:
     return aliased
 
 
-def _rust_base_candidates(path_parts: list[str], parts: list[str]) -> list[list[str]]:
+def _rust_base_candidates(
+    path_parts: list[str], parts: list[str], prefixes: list[str] | None = None
+) -> list[list[str]]:
     """Candidate module part-lists for a Rust `use` path.
 
-    ``crate::`` resolves relative to the crate root — approximated as
-    (a) this file's own package when it IS the crate root (lib.rs/main.rs/
-    mod.rs at top level), (b) the ``src`` dir for src-layout crates,
-    (c) the bare tail for stripped registrations.
+    ``self::``/``super::`` keep their explicit relative semantics.
+    ``crate::`` and bare ``use`` paths are crate-root-absolute (Rust 2018),
+    so root-anchored spellings are tried BEFORE the same-dir/shorter-prefix
+    fallbacks — otherwise a coincidental sibling module wins the first-hit
+    break over the correct crate-root spelling:
+
+    (b) manifest-derived crate roots encoded by each ``crate.<v>`` prefix —
+        ``v`` is this package's root-relative spelling, so the crate root
+        is ``parts`` minus ``v``'s segment count. Members are additionally
+        registered under the stripped root-relative spelling (the bare
+        ``tail``), which joins this group when root evidence exists. Tried
+        FIRST: in a multi-crate workspace the literal ``crate.`` alias space
+        is one global namespace — ``crate.<mod>`` rows collide
+        (last-write-wins), so the caller's own crate-root spelling must win
+        before the shared space is consulted;
+    (a) the literal ``crate.`` alias space — ``.rs`` module entities and
+        ``pub use`` aliases are registered under ``crate.<variant>``
+        (see ``package_prefixes`` / ``codegraph._register_module_entities``).
+        Kept as the fallback for single-crate/no-manifest-evidence cases;
+    (c) fallbacks: this file's own package, then progressively shorter
+        prefixes (the manifest root's file-path spelling is still among
+        them when no ``crate.`` evidence was available).
     """
     if path_parts[0] == "self":
         return [parts + path_parts[1:]]
     if path_parts[0] == "super":
         return [parts[:-1] + path_parts[1:]] if len(parts) > 1 else []
     tail = path_parts[1:] if path_parts[0] == "crate" else path_parts
-    cands: list[list[str]] = [parts + tail]          # (a) same package
-    if "src" in parts:
-        i = parts.index("src")
-        cands.append(parts[: i + 1] + tail)          # (b) src crate root
-        cands.append(parts[:i] + tail)               # (b') above src
-    cands.append(tail)                               # (c) stripped
-    return cands
+    cands: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+
+    def _add(cand: list[str]) -> None:
+        key = tuple(cand)
+        if cand and key not in seen:
+            seen.add(key)
+            cands.append(cand)
+
+    rooted = False
+    for p in (prefixes or [])[1:]:                   # (b) — prefixes[0] is
+        if not p.startswith("crate."):               #     the literal file
+            continue                                 #     path, skip it
+        root_len = len(parts) - p.count(".")
+        if root_len >= 0:
+            _add(parts[:root_len] + tail)
+            rooted = True
+    if rooted:
+        _add(tail)
+    _add(["crate"] + tail)                           # (a) — after (b): the
+    _add(parts + tail)                               # (c) fallbacks
+    for i in range(len(parts) - 1, -1, -1):          #     shared ``crate.``
+        _add(parts[:i] + tail)                       #     space must not
+    return cands                                     #     shadow the caller's
+                                                     #     own crate root
 
 
 def reexports_rust(src, parts, prefixes, scope_manager) -> int:
@@ -422,7 +468,7 @@ def reexports_rust(src, parts, prefixes, scope_manager) -> int:
         if not head:
             continue
         done = False
-        for base in _rust_base_candidates(head, parts):
+        for base in _rust_base_candidates(head, parts, prefixes):
             if done:
                 break
             target_module = ".".join(base)
@@ -444,7 +490,7 @@ def reexports_rust(src, parts, prefixes, scope_manager) -> int:
         if is_glob:
             # `pub use a::*;` / `pub use crate::a::*;` — star re-export.
             # `chain` already excludes the trailing `*` segment.
-            for cand in _rust_base_candidates(chain, parts):
+            for cand in _rust_base_candidates(chain, parts, prefixes):
                 n = alias_export(scope_manager, prefixes, ".".join(cand), "*", "*")
                 if n:
                     aliased += n
@@ -455,7 +501,7 @@ def reexports_rust(src, parts, prefixes, scope_manager) -> int:
         if len(chain) == 1:
             cands = [parts]  # `pub use Foo;` — same-package name
         else:
-            cands = _rust_base_candidates(chain[:-1], parts)
+            cands = _rust_base_candidates(chain[:-1], parts, prefixes)
         for base in cands:
             n = alias_export(scope_manager, prefixes, ".".join(base), orig, public)
             if n:
@@ -645,6 +691,7 @@ def register_package_reexports(
     scope_manager,
     file_parts: dict[str, list[str]] | None,
     logger=None,
+    root: "Path | None" = None,
 ) -> int:
     """Scan package/barrel entry files and register re-export aliases.
 
@@ -654,12 +701,17 @@ def register_package_reexports(
     """
     if not file_parts:
         return 0
+    if root is None:
+        from batho.core.config import get_active_root
+
+        root = get_active_root()
     aliased = 0
     for fpath, parts, language in iter_reexport_files(file_parts):
         src = read_source(fpath)
         if src is None:
             continue
-        prefixes = package_prefixes(parts, language)
+        variants = derived_module_variants(root, parts) if root else []
+        prefixes = package_prefixes(parts, language, variants)
         if language == "python":
             aliased += reexports_python(src, parts, prefixes, scope_manager)
         elif language == "js":
