@@ -5,6 +5,7 @@ __pycache__/
 *.egg
 *.egg-info/
 dist/
+!tests/fixtures/**/dist/
 build/
 wheels/
 .eggs/

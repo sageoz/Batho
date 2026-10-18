@@ -360,8 +360,9 @@ class TestIntrospectCabal:
         assert "Data.Text" in result["text"]
         assert "Data.Text.IO" in result["text"]
 
-    def test_missing_store_returns_empty(self, introspector):
-        assert introspector.introspect_cabal("text") == {}
+    def test_missing_store_returns_empty(self, tmp_path, introspector, monkeypatch):
+        monkeypatch.setenv("PATH", str(tmp_path))  # no ghc-pkg fallback
+        assert introspector.introspect_cabal("text", None, tmp_path) == {}
 
 
 class TestIntrospectSpm:
