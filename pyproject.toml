@@ -69,12 +69,9 @@ dependencies = [
     "watchdog==6.0.0",
     "tqdm==4.70.1",
     # Plugin seam (PLUGIN_ARCHITECTURE_SPEC §3.1): the engine depends only on
-    # the SDK surface, never on pack internals.
-    "batho-plugin-sdk==0.1.0",
+    # the SDK surface, never on pack internals. The SDK's own deps (pyyaml,
+    # jsonschema) are pinned above; `batho_plugin` ships inside this wheel.
 ]
-
-[tool.uv.sources]
-batho-plugin-sdk = { workspace = true }
 
 [project.optional-dependencies]
 test = [
@@ -90,7 +87,7 @@ test = [
 batho = "batho_cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["batho"]
+packages = ["batho", "sdk/batho_plugin"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "batho_cli.py" = "batho_cli.py"
@@ -110,7 +107,6 @@ exclude = [
     "batho.yaml.example",
     ".python-version",
     "uv.lock",
-    "sdk/",
     ".specs/",
 ]
 
