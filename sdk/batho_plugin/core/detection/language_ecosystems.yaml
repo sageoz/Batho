@@ -1,0 +1,30 @@
+# batho_plugin/core/detection/language_ecosystems.yaml — display names for
+# bsg.language stamping (T10). Maps the engine's tree-sitter language id to
+# the ecosystem display name the detection rules stamped (e.g. typescript →
+# "Node.js"). The stamp_language hook reads this via host.get_map and writes
+# bsg.language on every entity in a detected-language file — including stubs
+# (rule parity: per-extension rules matched entity.file, which stubs carry).
+plugin_id: language-ecosystems
+version: "1.0.0"
+class: core
+requires:
+  - batho_plugin.core
+data:
+  maps:
+    language_ecosystem:
+      python: Python
+      javascript: Node.js
+      typescript: Node.js
+      rust: Rust
+      go: Go
+      java: Java
+      kotlin: Kotlin
+      csharp: C#
+      cpp: C++
+      c: C++
+      dart: Dart
+      elixir: Elixir
+      php: PHP
+      ruby: Ruby
+      scala: Scala
+      swift: Swift

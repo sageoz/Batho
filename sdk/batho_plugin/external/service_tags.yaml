@@ -1,0 +1,106 @@
+schema_version: bsg-plugin.v2
+plugin_id: gen_service_tag
+name: Generated Service Tag — module derivation
+version: 1.0.0
+enabled: true
+description: >
+  Triggers derive_service_tag on entities under batho/modules/** and
+  tests/modules/** to close the service_tag coverage gap (0.0% before
+  generation). The derivation engine (_derive_service_tag in rules.py)
+  extracts the service name from the path part after the "modules" marker
+  — e.g. batho/modules/compression/foo.py -> "compression",
+  batho/modules/graph/bar.py -> "graph". Only paths containing a
+  modules/services/apps marker or starting with backend/frontend/api
+  yield a tag; batho/cli, batho/core, batho/mcp etc. have no marker and
+  are intentionally left untagged by the derivation logic. bsg.gen.reason
+  is omitted from metadata because these rules overlap with domain-taxonomy
+  plugins on the same entities — writing bsg.gen.reason would conflict with
+  the value already stamped by those plugins. The reason is recorded in
+  each rule's description field instead. bsg.generated: true is retained
+  (same value across all plugins, no conflict).
+rules:
+  - rule_id: service-tag-source-modules
+    name: service-tag-source-modules
+    description: Derive bsg.service_tag for entities under batho/modules/**
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - 'batho/modules/**'
+    actions:
+      derive_service_tag: true
+      metadata:
+        bsg.generated: true
+
+  - rule_id: service-tag-test-modules-compression
+    name: service-tag-test-modules-compression
+    description: Derive bsg.service_tag for tests/modules/compression/**
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - 'tests/modules/compression/**'
+    actions:
+      derive_service_tag: true
+      metadata:
+        bsg.generated: true
+
+  - rule_id: service-tag-test-modules-extraction
+    name: service-tag-test-modules-extraction
+    description: Derive bsg.service_tag for tests/modules/extraction/**
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - 'tests/modules/extraction/**'
+    actions:
+      derive_service_tag: true
+      metadata:
+        bsg.generated: true
+
+  - rule_id: service-tag-test-modules-graph
+    name: service-tag-test-modules-graph
+    description: Derive bsg.service_tag for tests/modules/graph/**
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - 'tests/modules/graph/**'
+    actions:
+      derive_service_tag: true
+      metadata:
+        bsg.generated: true
+
+  - rule_id: service-tag-test-modules-storage
+    name: service-tag-test-modules-storage
+    description: Derive bsg.service_tag for tests/modules/storage/**
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - 'tests/modules/storage/**'
+    actions:
+      derive_service_tag: true
+      metadata:
+        bsg.generated: true
+
+  - rule_id: service-tag-test-modules-other
+    name: service-tag-test-modules-other
+    description: Derive bsg.service_tag for tests/modules/{config,dependency,integrity}/**
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - 'tests/modules/config/**'
+        - 'tests/modules/dependency/**'
+        - 'tests/modules/integrity/**'
+    actions:
+      derive_service_tag: true
+      metadata:
+        bsg.generated: true

@@ -453,7 +453,7 @@ class TestPluginsApplyPhase2:
         metadata change."""
         from batho.core.config.loader import reload_config
         from batho.orchestrator import plugins_apply as pa
-        from batho.modules.compression import rules as rules_mod
+        from batho_plugin import rule_engine as rules_mod
 
         _seed_artifact(tmp_path)
         _write_plugin(tmp_path)
@@ -536,3 +536,40 @@ class TestPluginsApplyPhase2:
         assert result.success, result.message
         assert not result.warnings
         reload_config()
+
+
+def test_strip_preserves_hook_owned_and_engine_keys():
+    """T21: _strip_rule_owned_state removes rule-owned bsg.* stamps but keeps
+    the E2 hook keys (access_type, rationale_kind, marker_comment,
+    line_scan_fallback — never bsg-prefixed), the hook-stamped bsg.language,
+    and the bsg.index_id run nonce."""
+    from batho.core.schemas import Entity, EntityType
+    from batho.modules.graph.builder.codegraph import InMemoryGraph
+    from batho.orchestrator.plugins_apply import _strip_rule_owned_state
+
+    ent = Entity(
+        type=EntityType.FUNCTION,
+        name="f", file="src/a.py", start_line=1, end_line=2,
+        start_byte=0, end_byte=5, signature="def f()",
+        metadata={
+            "access_type": "read",          # E2 hook key — survives
+            "rationale_kind": "marker",     # E2 hook key — survives
+            "marker_comment": "NOTE",       # E2 hook key — survives
+            "line_scan_fallback": True,     # E2 hook key — survives
+            "language": "python",           # engine key — survives
+            "bsg.language": "Python",       # hook-stamped (T10) — survives
+            "bsg.index_id": "idx-1",        # run nonce — survives
+            "bsg.category": "SOURCE",       # rule-owned — stripped
+            "bsg.scope_tier": "module",     # rule-owned — stripped
+            "bsg.rules": ["category-source-extension"],  # stripped
+        },
+        id_override="src/a.py::f",
+    )
+    graph = InMemoryGraph(entities={ent.id: ent}, relationships=[])
+    _strip_rule_owned_state(graph)
+    meta = graph.entities[ent.id].metadata
+    for k in ("access_type", "rationale_kind", "marker_comment",
+              "line_scan_fallback", "language", "bsg.language", "bsg.index_id"):
+        assert k in meta, f"{k} should survive the strip"
+    for k in ("bsg.category", "bsg.scope_tier", "bsg.rules"):
+        assert k not in meta, f"{k} should be stripped"

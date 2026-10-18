@@ -33,6 +33,16 @@
       "type": "string",
       "minLength": 1
     },
+    "class": {
+      "type": "string",
+      "enum": [
+        "core",
+        "standard",
+        "experimental"
+      ],
+      "default": "standard",
+      "description": "Plugin class (spec \u00a74.5): core = load-bearing engine plugins (selectivity-cap exempt, require version pinning + golden tests); standard = validated with selectivity gate; experimental = opt-in."
+    },
     "enabled": {
       "type": "boolean"
     },
@@ -84,7 +94,11 @@
         },
         "severity": {
           "type": "string",
-          "enum": ["info", "warning", "block"]
+          "enum": [
+            "info",
+            "warning",
+            "block"
+          ]
         },
         "score": {
           "type": "integer",
@@ -99,7 +113,10 @@
         },
         "tags": {
           "type": "array",
-          "items": {"type": "string", "minLength": 1}
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "matchers": {
           "$ref": "#/$defs/matchers"
@@ -115,19 +132,27 @@
       "properties": {
         "entity_types": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
         "name_patterns": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
         "file_patterns": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
         "content_patterns": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
         "regex_patterns": {
           "type": "array",
@@ -137,7 +162,9 @@
         },
         "usn_tags_any": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
         "metadata_conditions": {
           "type": "array",
@@ -150,7 +177,9 @@
         },
         "gap_entity_types": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Match SYNTAX_GLUE, COMMENT_BLOCK, IMPORT_BLOCK, GLOBAL_STATEMENT entities for bidirectional gap validation"
         },
         "has_raw_content": {
@@ -187,7 +216,9 @@
         },
         "add_usn_tags": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
         "derive_scope_tier": {
           "type": "boolean"
@@ -247,14 +278,21 @@
     "regex_matcher": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["pattern"],
+      "required": [
+        "pattern"
+      ],
       "properties": {
         "pattern": {
           "type": "string"
         },
         "target": {
           "type": "string",
-          "enum": ["name", "file_path", "signature", "metadata"]
+          "enum": [
+            "name",
+            "file_path",
+            "signature",
+            "metadata"
+          ]
         },
         "metadata_key": {
           "type": "string"
@@ -267,7 +305,10 @@
     "metadata_condition": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["key", "operator"],
+      "required": [
+        "key",
+        "operator"
+      ],
       "properties": {
         "key": {
           "type": "string"
@@ -301,26 +342,38 @@
     "edge_matcher": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["edge"],
+      "required": [
+        "edge"
+      ],
       "properties": {
         "edge": {
           "type": "string"
         },
         "direction": {
           "type": "string",
-          "enum": ["inbound", "outbound", "either"]
+          "enum": [
+            "inbound",
+            "outbound",
+            "either"
+          ]
         },
         "target_entity_types": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
         "target_usn_tags_any": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
         "target_name_patterns": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
         "target_metadata_equals": {
           "type": "object"

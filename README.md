@@ -19,6 +19,7 @@ Code intelligence engine for AI agents<br>
 
 <p align="center">
 Graph grounded answers instead of grepping and guessing.<br>
+</p>
 
 ---
 
@@ -113,10 +114,27 @@ AI coding agents are powerful, but they burn tokens reading files and hallucinat
 - **Supply-chain safe** — deterministic, checksummed, SLSA-attested release artifacts
 
 ---
+## Why Graph over grep or embeddings?
 
+| Dimension | Graph | Grep | Embeddings |
+|---|---|---|---|
+| **What it finds** | Exact entities + relationships from ASTs | Substring/regex matches in text | Approximate semantic similarity |
+| **"Who calls X?"** | Resolved `CALLS` edges with `entity_id` + `file:line` | Lists lines containing `X(` — misses aliases, indirection, cross-file resolution | Returns similar-looking code, not actual callers |
+| **Cross-file resolution** | Stubs → FQNs → files; stdlib vs third-party vs internal | None — each file is independent | None — chunks are independent |
+| **Accuracy** | Deterministic, auditable — every claim citable | Exact for strings; blind to structure | Fuzzy nearest-neighbor — may hallucinate |
+| **Inheritance / overrides** | `INHERITS`, `IMPLEMENTS`, `OVERRIDES` edges | Cannot detect | Cannot detect |
+| **Impact / blast radius** | `trace_path` (BFS) + `file_connectivity` | Manual tracing across files | Not available |
+| **Token cost** | Low — ~10x compression, agent view is token-capped | High — agent reads raw files to understand context | Medium — embeddings + retrieval overhead |
+| **Freshness** | Hash-based `patch` re-parses only changed files | Always current (reads live files) | Requires re-embedding on change |
+| **Trust level** | Deterministic (AST-grounded facts) | Raw text (no semantic claims) | Probabilistic (similarity scores) |
+| **Best for** | Structural queries, impact analysis, grounded answers | Exact string search, find-and-replace | "Find code like this" exploration |
+
+- **Grep** answers: *"Where does this string appear?"*
+- **Embeddings** answers: *"What code looks similar?"*
+- **Graph** answers: *"How does this code actually connect?"* — the question agents need answered to make safe edits.
 ---
 
-### Core Capabilities
+## Core Capabilities
 
 | Capability | Description |
 |---|---|
@@ -124,12 +142,12 @@ AI coding agents are powerful, but they burn tokens reading files and hallucinat
 | [**Batho Structured Graph (BSG)**](#batho-structured-graph-bsg) | Tree-sitter-parsed semantic graph capturing functions, classes, modules, and their relationships — calls, imports, inheritance, and overrides |
 | [**MCP Server**](#mcp-server) | Exposes 20 tools for structural queries (`get_entity`, `trace_path`, `search_entities`, and more) with built-in file watcher for incremental patching |
 | [**Batho Skill Pack**](#batho-skill-pack) | 6 pre-configured skills for AI coding agents — one-command install across 22 agents, full spec→implement→review lifecycle |
-| **40+ Language Support** | Python, TypeScript, Rust, Go, Java, C/C++, and more via tree-sitter grammars |
-| **38 Built-in Analysis Plugins** | Security, quality, and optimization rules with custom rule support |
-| **Cross-File Symbol Resolution** | Resolves how functions, classes, and dependencies connect across files |
-| **Hash-Based Incremental Patching** | Fast change detection re-parses only modified files |
-| **Time-Machine** | Node-level diff history across every indexed run for tracking code evolution |
-| **CI/CD Integration** | GitHub Actions, GitLab CI, and reusable workflows for indexing and incremental patching |
+| [**Language Support**](#language-support) | 34 languages & config formats — 27 tree-sitter grammars (Python, TypeScript, Rust, Go, Java, C/C++, and more) + 7 native parsers |
+| [**51 Built-in Analysis Plugins**](#51-built-in-analysis-plugins) | 38 auto-loaded core plugins + 13 config-gated external plugins (9 security/quality/optimization interceptors) — with custom rule support |
+| [**Cross-File Symbol Resolution**](#cross-file-symbol-resolution) | Two-pass stub resolution with confidence-scored edges — stdlib vs third-party vs internal |
+| [**Hash-Based Incremental Patching**](#hash-based-incremental-patching) | mtime + SHA-256 change detection re-parses only modified files — atomic, rollback-safe |
+| [**Time-Machine**](#time-machine) | Node-level change history across every indexed run for tracking code evolution |
+| [**CI/CD Integration**](#cicd-integration) | GitHub Actions, GitLab CI, and reusable workflows for indexing and incremental patching |
 
 ---
 
@@ -137,13 +155,13 @@ AI coding agents are powerful, but they burn tokens reading files and hallucinat
 
 ### Batho CLI
 
-The command-line interface — the entry point for building, patching, and maintaining the code graph. Eleven subcommands cover the full lifecycle from first index to CI handoff.
+The command-line interface — the entry point for building, patching, and maintaining the code graph. Twelve subcommands cover the full lifecycle from first index to CI handoff.
 
 | Command | Purpose |
 |---|---|
 | `batho build` | Build the initial AST code graph (first-time setup or `--full` rebuild) |
 | `batho patch` | Incremental update — re-parses only changed files via hash detection |
-| `batho diff` | Node-level change history across runs, files, or specific symbols |
+| `batho history` | Recent runs and node-level change history across runs, files, or specific symbols |
 | `batho export` | Export JSON views (8 types) or a `.batho` transport pack for CI/CD |
 | `batho load` | Ingest a `.batho` transport ZIP — pair with `patch` for incremental CI |
 | `batho fix` | Multi-stage integrity check + repair (db, state, blobs, graph) |
@@ -152,6 +170,7 @@ The command-line interface — the entry point for building, patching, and maint
 | `batho install` | One-command setup — installs the skill pack + registers MCP across detected agents |
 | `batho plugins` | Validate, list, and apply `bsg-plugin.v2` custom rule plugins |
 | `batho communities` | Post-build community operations — list and (optional) LLM-label communities |
+| `batho doctor` | Report plugin-host status, worker preload health, and plugin-set drift vs the built artifact |
 
 **Most used:**
 
@@ -242,24 +261,6 @@ The semantic graph layer of Batho — entities and relationships parsed determin
 
 </details>
 
-#### Why BSG over grep and embeddings?
-
-| Dimension | Batho Structured Graph (BSG) | Grep | Embeddings |
-|---|---|---|---|
-| **What it finds** | Exact entities + relationships from ASTs | Substring/regex matches in text | Approximate semantic similarity |
-| **"Who calls X?"** | Resolved `CALLS` edges with `entity_id` + `file:line` | Lists lines containing `X(` — misses aliases, indirection, cross-file resolution | Returns similar-looking code, not actual callers |
-| **Cross-file resolution** | Stubs → FQNs → files; stdlib vs third-party vs internal | None — each file is independent | None — chunks are independent |
-| **Accuracy** | Deterministic, auditable — every claim citable | Exact for strings; blind to structure | Fuzzy nearest-neighbor — may hallucinate |
-| **Inheritance / overrides** | `INHERITS`, `IMPLEMENTS`, `OVERRIDES` edges | Cannot detect | Cannot detect |
-| **Impact / blast radius** | `trace_path` (BFS) + `file_connectivity` | Manual tracing across files | Not available |
-| **Token cost** | Low — ~10x compression, agent view is token-capped | High — agent reads raw files to understand context | Medium — embeddings + retrieval overhead |
-| **Freshness** | Hash-based `patch` re-parses only changed files | Always current (reads live files) | Requires re-embedding on change |
-| **Trust level** | Deterministic (AST-grounded facts) | Raw text (no semantic claims) | Probabilistic (similarity scores) |
-| **Best for** | Structural queries, impact analysis, grounded answers | Exact string search, find-and-replace | "Find code like this" exploration |
-
-- **Grep** answers: *"Where does this string appear?"*
-- **Embeddings** answers: *"What code looks similar?"*
-- **BSG** answers: *"How does this code actually connect?"* — the question agents need answered to make safe edits.
 
 Learn more: **[Whitepaper](https://batho.sageoz.org/docs/whitepaper)**
 
@@ -292,11 +293,11 @@ Admin tools are disabled by default because a full rebuild blocks the conversati
 
 ---
 
-## MCP Tools
+### MCP Tools
 
 Batho exposes **20 MCP tools** organized into three tiers. By default, **16 tools** are available to your AI agent — the 4 administrative tools are disabled to keep the agent's tool surface focused on retrieval and diagnostics (matching the Sourcegraph/Cursor/CodeGraph pattern where indexing is a background process and the agent is a pure consumer).
 
-### All 20 tools
+#### All 20 tools
 
 | Tool | Tier | Toolset | Default | Purpose |
 |---|---|---|---|---|
@@ -313,7 +314,7 @@ Batho exposes **20 MCP tools** organized into three tiers. By default, **16 tool
 | `get_delta` | Read-only | retrieval | Enabled | Incremental changes from the latest patch |
 | `batho_status` | Read-only | diagnostics | Enabled | Artifact status, generation, and run info for a repo |
 | `batho_list_runs` | Read-only | diagnostics | Enabled | List all build/patch runs with metadata |
-| `batho_diff` | Read-only | diagnostics | Enabled | Node-level changes across runs, entities, or files |
+| `batho_history` | Read-only | diagnostics | Enabled | Node-level changes across runs, entities, or files |
 | `batho_patch` | Destructive | admin | Enabled | Incremental update of an existing artifact after file edits |
 | `batho_fix` | Destructive | admin | Enabled | Verify and repair artifact database integrity |
 | `batho_build` | Administrative | admin | **Disabled** | Full index build (first-time setup or forced rebuild) |
@@ -357,7 +358,7 @@ The watcher (`--watch`, on by default) monitors watched repos for filesystem eve
 - **Catch-up**: on server start, patches any files that changed while the server was down
 - **Hash-diff source of truth**: filesystem events are only hints — `IncrementalEngine.scan_changes` hash comparison remains the source of truth, so lost events are recovered by the next patch
 
-### Enabling Tier 3 tools
+#### Enabling Tier 3 tools
 
 Three ways to opt in — pick whichever fits your workflow:
 
@@ -431,10 +432,10 @@ Six pre-configured skills that let any coding agent self-install Batho and drive
 |---|---|---|
 | `batho` | Router + artifact lifecycle — builds/refreshes the graph, routes questions to MCP tools, routes work to lifecycle skills | First in every session; the only skill that builds/patches |
 | `batho-setup` | Install the `batho` CLI, register the MCP server, install the skill pack | One-time setup; when MCP tools are missing |
+| `batho-calibrate` | Graph calibration via custom rule plugins — quarantine noise, classify entities, derive annotation edges | When the user asks to calibrate/enrich the graph or fix gaps |
 | `batho-specs` | Graph-grounded specifications — every claim cites entities (`entity_id` + `file:line`) | When the user describes something to build or change |
 | `batho-execute` | Spec-driven implementation — dependency-ordered tasks with pre-edit grounding + post-edit delta verification | When the user says "execute spec" or approves a spec |
 | `batho-review` | Graph-verified review — per-criterion PASS/FAIL with structural delta reports | After `batho-execute` finishes; before closing a task/PR |
-| `batho-calibrate` | Graph calibration via custom rule plugins — quarantine noise, classify entities, derive annotation edges | When the user asks to calibrate/enrich the graph or fix gaps |
 
 #### The SDLC loop
 
@@ -507,34 +508,187 @@ powershell -ExecutionPolicy Bypass -NoProfile -c "irm https://github.com/sageoz/
 
 ---
 
-## Features
+### Language Support
 
-- **40+ languages** — Python, TypeScript, Rust, Go, Java, C/C++ and more via tree-sitter
-- **10x token compression** — your agent uses a fraction of the context window
-- **Zero hallucinations** — deterministic AST-parsed relationships, not embeddings or guesses
-- **Fast incremental updates** — hash-based change detection re-parses only modified files
-- **Cross-file symbol resolution** — your agent sees how functions, classes, and dependencies connect
-- **38 built-in analysis plugins** — security, quality, and optimization rules with custom rule support
-- **Time-machine** — node-level diff history across every indexed run
-- **Zero code execution** — safe to run in CI or on untrusted repositories
-- **MCP-native** — works with 8 AI coding agents out of the box
+Multi-language extraction via tree-sitter grammars, plus native parsers that treat config and markup formats as first-class graph citizens. Extensions map to extractors through an auto-discovery registry with graceful degradation — an unavailable grammar skips files with a warning instead of aborting the scan.
+
+| Layer | Count | Coverage |
+|---|---|---|
+| **Tree-sitter grammars** | 27 | Python, TypeScript, JavaScript, Rust, Go, Java, C/C++, C#, PHP, Kotlin, Swift, Scala, Dart, Ruby, Bash, Lua, R, Perl, Julia, Haskell, Erlang, OCaml, Hack, Zig, Verilog, Objective-C |
+| **Native format parsers** | 7 | JSON, YAML, TOML, HTML, CSS, Markdown, HCL/Terraform — entities and relationships, not raw text |
+| **Deep language packs** | 5 | Python, TypeScript, JavaScript, Go, Rust — per-language builtins, comment syntax, pruning data |
+| **Stdlib symbol tables** | 28 | Standard-library symbol resolution per language |
+| **Dependency managers** | 20 | pip, npm, Cargo, Go modules, Maven, Gradle, RubyGems, Composer, NuGet, Dart pub, Julia, CRAN, cabal, Swift SPM, zigmod, rebar3, opam, LuaRocks, CPAN, Agda `.agda-lib` |
+
+<details>
+<summary>Multi-strategy detection (beyond file extensions)</summary>
+
+| Method | Example |
+|---|---|
+| Shebang line | `#!/usr/bin/env python` → Python |
+| Magic bytes | Binary-format sniffing for ambiguous files |
+| Special filenames | `Makefile`, `Dockerfile`, `Jenkinsfile` |
+| Content heuristics | Syntax fingerprints when the extension is missing or ambiguous |
+
+</details>
+
+**Adding a language:** map the extension to a tree-sitter grammar and provide the query — the registry auto-discovers extractors, no engine changes required.
+
+Learn more: **[Dependency subsystem](https://batho.sageoz.org/docs/whitepaper/dependency)** · **[Architecture](https://batho.sageoz.org/docs/whitepaper/architecture)**
 
 ---
 
-## CI/CD
+### 51 Built-in Analysis Plugins
 
-Batho's CI/CD strategy is **incremental**: download the previous artifact → `batho load` → `batho patch` → `batho export` → upload.
+Fifty-one declarative YAML plugins ship in two packs: the engine owns algorithms and identity; the plugin packs own the knowledge — detection rules, classification, language data, and enrichment. All matching is deterministic; no LLM calls at index time.
+
+| Pack | Count | Loading | Contents |
+|---|---|---|---|
+| **Core** | 38 | Mandatory, auto-loaded | 28 rule plugins (language/framework detection, classification, bidirectional integrity, token optimization) + 10 data packs (5 language packs, noise paths, pruning & resolution policy, ecosystems, manifests) |
+| **External** | 13 | Config-gated (`plugins.external.enabled`) | 9 security/quality/optimization interceptors + domain taxonomy, quarantine, service tags, reconstruction checks |
+| **Pipeline hooks** | 5 | Auto-loaded | `language_detect`, `stamp_language`, `comment_classify`, `property_classify`, `prune_stub` |
+| **Custom** | — | `.batho/plugins/` | Your `bsg-plugin.v2` YAML — validated, then applied without re-extraction |
+
+<details>
+<summary>The 9 external interceptors</summary>
+
+| Interceptor | Catches |
+|---|---|
+| **Hardcoded Secret Catcher** | Likely hardcoded secrets in code |
+| **Auth Boundary Shield** | Exposed API routes missing authentication wrapping |
+| **Silent Failure Catcher** | Exception handlers that swallow failures |
+| **N+1 Query Catcher** | Database execution patterns inside loops |
+| **Resource Leak Preventer** | Allocations without cleanup paths |
+| **Schema Migration Enforcer** | ORM/schema changes needing migration care |
+| **API Contract Guardian** | Backend API contract drift vs frontend consumers |
+| **Dependency Blast Radius** | High fan-in symbols prone to broad regressions |
+| **IaC Drift Sentinel** | App env references drifting from infrastructure definitions |
+
+</details>
+
+Custom rules pass a two-stage acceptance gate: schema validation, then a deterministic fixture gate on real sampled entities (default 2,000 entities, ≤10% hit selectivity). `batho plugins apply` re-enriches the built graph without re-extraction; `batho plugins fingerprint` and `batho doctor` detect plugin-set drift vs the built artifact.
+
+```bash
+batho plugins validate                 # gate every plugin in .batho/plugins/
+batho plugins apply --dry-run          # preview the enrichment delta
+```
+
+Learn more: **[`batho plugins` reference](https://batho.sageoz.org/docs/cli-reference/plugins-cmd)** · **[BSG compression whitepaper](https://batho.sageoz.org/docs/whitepaper/bsg-compression)**
+
+---
+
+### Cross-File Symbol Resolution
+
+Resolves how functions, classes, and dependencies connect across files — deterministically, with every edge carrying a confidence score. The `SymbolIndex` runs two passes: a **local pass** resolves symbols within each file's scope; a **global pass** matches unresolved imports against exported symbols across the repository. Call sites that survive both passes become contextual stubs (`unresolved:[<pkg> ]<caller_scope>::<dotted_target_fqn>`) and are settled by a multi-phase pipeline.
+
+| Confidence | Strategy | Meaning |
+|---|---|---|
+| 1.0 | directly extracted | Captured by tree-sitter — no resolution needed |
+| 0.95 | exact match | Direct dotpath lookup |
+| 0.90 | stdlib method | Stdlib method / module prefix match |
+| 0.85 | import map | Import-map cross-file resolution |
+| 0.75 | parent chain | Parent stub chain building |
+| 0.70 | scope qualified | Caller-scope qualified path |
+| 0.65 | receiver type | Receiver-type inference (rust-analyzer pattern) |
+| 0.50 | ambiguous | Multiple plausible candidates — kept for review, never pruned |
+| 0.0 | unresolved | No match found |
+
+- **Receiver-type inference** — method calls resolve via the receiver's declared type, inferred from local declarations, parameters, assignments, then extractor hints
+- **Lazy resolution** — stubs stay pending and resolve on demand, skipping work no query will ever reference
+- **Conservative pruning** — ubiquitous method names on unknown receivers (`unwrap`, `map`, `append`) are pruned instead of polluting the graph with false gaps
+- **Dependency classification** — 20 package managers plus an offline install store classify every symbol as stdlib, third-party, or internal
+- **Agent-side filtering** — MCP `confidence_threshold` and `symbol_roles` filters expose these tiers directly to queries and path traces
+
+Learn more: **[Code graph whitepaper](https://batho.sageoz.org/docs/whitepaper/code-graph)** · **[Dependency subsystem](https://batho.sageoz.org/docs/whitepaper/dependency)**
+
+---
+
+### Hash-Based Incremental Patching
+
+`batho patch` reads the `file_tracking` table — not git status — comparing each file's modification time and SHA-256 content hash against the last run. Unchanged files are skipped immediately; added/modified files are re-parsed and merged; deleted files are dropped from the index. No false positives from untracked or uncommitted files.
+
+Updates apply atomically:
+
+```
+Detected (hash scan) → Validated (change boundaries) → Applied (merge)
+  → Consistency check (graph + symbol index) → Completed (run audit log)
+  → Rolled back (on application failure)
+```
+
+- **Watcher integration** — `batho mcp --watch` auto-patches on edits (2s debounce, 60s max staleness, 300-file flush threshold) with a git sentinel that flushes at stage/commit/checkout boundaries
+- **Hash-diff is the source of truth** — filesystem events are hints; lost events are recovered by the next patch
+- **Persistent symbol cache** — indexed symbols survive across runs (90-day TTL)
+
+```bash
+batho patch          # incremental update after edits
+```
+
+Learn more: **[Time Machine & incremental patching](https://batho.sageoz.org/docs/whitepaper/time-machine)**
+
+---
+
+### Time-Machine
+
+Every `build` and `patch` records a run, and every change is recorded at node level — so you can ask how a symbol evolved across runs, not just what the latest snapshot says.
+
+| Surface | What it gives you |
+|---|---|
+| `batho history` | Recent runs (default 10) and node-level history — `--run UUID` (one run's changes), `--entity ID` (a symbol's evolution), `--file PATH` (a file's transitions) |
+| MCP `batho_history` | The same queries for agents: changes across runs, entities, or files |
+| `batho export` | Per-run `delta_stats` — churn and node diffs |
+| `batho gc` | Prune history: `gc run`, `gc runs --older-than`, `gc vacuum`, `gc status` |
+
+Each run stores `run_uuid`, timestamps, status, `git_commit`/`git_branch`, entity/relationship/file counts, and duration. `file_changelog` rows carry `base_run_uuid` lineage, so history reconstructs across patch chains.
+
+```bash
+batho history --last 5
+batho history --entity UserService.create --since build_1790915075_2c9dd23a
+```
+
+> Renamed: this command was previously `batho diff`.
+
+Learn more: **[`batho history` reference](https://batho.sageoz.org/docs/cli-reference/history-cmd)** · **[Time Machine whitepaper](https://batho.sageoz.org/docs/whitepaper/time-machine)**
+
+---
+
+### CI/CD Integration
+
+Index on every commit and hand agents a pre-built graph — no local parsing. The strategy is incremental: download the previous artifact → `batho load` → `batho patch` (changed files only) → `batho export` → upload.
+
+| Option | Best for | File |
+|---|---|---|
+| **GitHub Fleet Indexer** | Repositories you control | `github-batho.yaml` |
+| **GitLab CI Fleet Indexer** | GitLab-hosted repos | `gitlab-batho.yaml` |
+| **Composite action** | Reusable, configurable indexing | `action.yml` |
+| **Reusable workflow** | One-liner consumer integration | `batho-index.yml` |
+| **Starter template** | Quick copy-paste setup | `starter-batho.yml` |
 
 **GitHub Actions composite action:**
 
 ```yaml
-- uses: sageoz/batho@v1.4.3
+- uses: sageoz/batho@v2.0.0
   with:
     root: "."
     artifact-name: "batho-index"
 ```
 
-Full CI/CD guides (GitHub Actions, GitLab CI, reusable workflows): **[docs](https://batho.sageoz.org/docs/cicd)**
+Transport artifacts (`artifact_*.batho`) are ZIPs of zstd-compressed Arrow IPC — plain, memory-mappable files with zero decompression overhead.
+
+Learn more: **[CI/CD guides](https://batho.sageoz.org/docs/cicd)**
+
+---
+
+## Features
+
+- **34 languages & config formats** — 27 tree-sitter grammars (Python, TypeScript, Rust, Go, Java, C/C++ and more) + 7 native parsers
+- **10x token compression** — your agent uses a fraction of the context window
+- **Zero hallucinations** — deterministic AST-parsed relationships, not embeddings or guesses
+- **Fast incremental updates** — hash-based change detection re-parses only modified files
+- **Cross-file symbol resolution** — your agent sees how functions, classes, and dependencies connect
+- **51 built-in analysis plugins** — 38 core + 13 external (9 security/quality/optimization interceptors), custom rule support
+- **Time-machine** — node-level change history across every indexed run
+- **Zero code execution** — safe to run in CI or on untrusted repositories
+- **MCP-native** — works with 9 AI coding agents out of the box
 
 ---
 
@@ -641,11 +795,11 @@ uv run python batho_cli.py --help
 
 ## Acknowledgments
 
-Co-authored with [Devin](https://devin.ai) — autonomous AI software engineer by Cognition.
+Co-authored with [Devin](https://devin.ai)
 
 ---
 
-Citation
+## Citation
 
 If you use Batho in your research, please cite it as:
 
@@ -663,8 +817,6 @@ If you use Batho in your research, please cite it as:
 You can also find the citation metadata in [`CITATION.cff`](CITATION.cff) or use GitHub's **"Cite this repository"** button.
 
 ---
-
-##
 
 ## License
 

@@ -22,13 +22,13 @@ Batho is a multi-language source-code indexer that parses codebases via tree-sit
 | Orchestrator | `batho/orchestrator/` | `build.py`, `patch.py`, `load.py` |
 | Arrow IPC Storage | `batho/modules/storage/` | `arrow_bundle/` (`bundle.py`, `reader.py`, `writer.py`, `schemas.py`, `incremental.py`, `manager.py`, `helpers.py`), `arrow_store/`, `cache/unified_cache.py` (CACHE_SCHEMA_VERSION v4, `rules_fingerprint`) |
 | Extraction Pipeline | `batho/modules/extraction/` | `extractor.py`, `pipeline.py`, `scope_manager.py`, `ast_cache.py`, `fallback_parser.py`, `symbol_table.py`, `extraction_result.py`, `package_roots.py`, `submodules/parser_factory/`, `submodules/languages/` |
-| BSG Compression | `batho/modules/compression/` | `rules.py`, `bsg_map/`, `core_engine/`, `plugins/foundation/`, `plugins/interceptors/`, `schemas/` |
+| BSG Compression | `batho/modules/compression/` + `sdk/batho_plugin/` | `bsg_map/`, `schemas/`; rule engine + packs live in `batho_plugin.rule_engine`, `batho_plugin/core/`, `batho_plugin/external/` |
 | Enrich & Plugins | `batho/modules/enrich/`, `batho/orchestrator/plugins_apply.py`, `batho/cli/plugins.py` | `gap_report.py`, `scoring.py`, `report.py`, `fixture_gate.py` |
 | Integrity Chain | `batho/modules/integrity/` | `engine.py`, `checkers/`, `repairers/`, `report.py`, `models.py` |
 | Dependency Intelligence | `batho/modules/dependency/` | `indexer.py`, `manifest_parser.py`, `resolution_cache.py`, `stdlib_tables.py`, `introspector.py`, `popular_packages.py` |
 | Configuration | `batho/core/config/` + `batho.yaml` | `models.py`, `loader.py`, `batho.yaml.example`, `default-ignore-patterns.yaml` |
 | Shared Utilities | `batho/utils/` | `path_sanitizer.py`, `memory_monitor.py`, `file_io.py`, `ignore.py`, `logging.py`, `hash.py` |
-| CLI | `batho/cli/` + `batho_cli.py` | `build.py`, `patch.py`, `fix.py`, `export.py`, `diff.py`, `gc.py`, `load.py`, `mcp.py`, `skills.py`, `plugins.py`, `communities.py` |
+| CLI | `batho/cli/` + `batho_cli.py` | `build.py`, `patch.py`, `fix.py`, `export.py`, `history.py`, `gc.py`, `load.py`, `mcp.py`, `install.py`, `plugins.py`, `communities.py` |
 | Skills subsystem | `batho/skills/` | `fetch.py`, `receipt.py`, `install.py`, `detect.py`, `agent-paths.json` |
 | Core Schemas | `batho/core/` | `schemas.py`, `batho_data/` |
 | Tests | `tests/` | `mcp/`, `modules/`, `orchestrator/`, `cli/`, `core/`, `utils/`, `skills/`, `fixtures/` |
@@ -96,7 +96,7 @@ For every changed file, ask:
 
 ### 1. MCP Server & Tools (`batho/mcp/`)
 - **Dual-output correctness:** Every tool must return `ToolResult` with both `content` (`TextContent`) and `structured_content` (JSON dict). Verify no plain string or dict returns.
-- **Tool annotations:** `readOnlyHint`, `destructiveHint`, `openWorldHint` must match behavior across all 20 tools. Read-only/idempotent: `list_repos`, `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `file_connectivity`, `search_entities`, `get_delta`, `batho_status`, `batho_list_runs`. Destructive: `add_repo`, `remove_repo`, and the command tools `batho_build`, `batho_patch`, `batho_export`, `batho_diff`, `batho_gc`, `batho_fix`, `batho_load` (verify each against its `ToolAnnotations` in `tools.py`; several command tools are `openWorldHint=True`).
+- **Tool annotations:** `readOnlyHint`, `destructiveHint`, `openWorldHint` must match behavior across all 20 tools. Read-only/idempotent: `list_repos`, `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `file_connectivity`, `search_entities`, `get_delta`, `batho_status`, `batho_list_runs`, `batho_history`. Destructive: `add_repo`, `remove_repo`, and the command tools `batho_build`, `batho_patch`, `batho_export`, `batho_gc`, `batho_fix`, `batho_load` (verify each against its `ToolAnnotations` in `tools.py`; several command tools are `openWorldHint=True`).
 - **Quarantine filters:** `search_entities`, `graph_query`, and `graph_overview` exclude `unresolved:` reference stubs and `bsg.quarantined` entities by default, report suppressed counts ("… N unresolved reference(s) suppressed"), and restore full visibility via `include_unresolved` / `include_quarantined`. Exclusion is view-only; provenance is preserved in storage.
 - **Trace edge policy:** `TRACE_EDGE_PRIORITY` is default-deny — only whitelisted structural edge kinds traverse; equal-length paths prefer CALLS > INHERITS/IMPLEMENTS > IMPORTS > READS/WRITES > CONTAINS; `relation_types` can narrow but never widen; `meta.edge_priority` reports the effective policy. Annotation edges are unreachable even when shorter (verify against `tests/fixtures/` ground-truth manifest).
 - **Search ranking:** `search_entities`/`get_entity` results are ordered exact > prefix > substring > regex-only with kind/exported/fqn/path-segment boosts, a per-language separator hint, and a stable total order (recall unchanged — reorder only). `get_entity` bare-name fallback uses the same scorer (`entity_resolution.py`).
@@ -148,7 +148,7 @@ For every changed file, ask:
 - **Enrich telemetry chain:** `enrich_profile`/`enrich_score` artifacts are written on build+patch (best-effort, never fail the run); the `rule_perf` → `rule_stats` → `enrich_score` chain must be complete across build/patch/`plugins apply`.
 
 ### 5. Extraction Pipeline (`batho/modules/extraction/`)
-- **Tree-sitter AST parsing:** `extractor.py` handles 40+ languages via `tree-sitter-language-pack`. Verify language detection and parser selection.
+- **Tree-sitter AST parsing:** `extractor.py` handles 27 tree-sitter languages plus 7 native format parsers via `tree-sitter-language-pack`. Verify language detection and parser selection.
 - **Unicode identifiers (v1.4.1):** `fallback_parser.py` uses Unicode-aware regex (`[^\W0-9]\w*`) to match PEP 3131-style identifiers for Python and JavaScript. Verify extraction and symbol table do not mangle non-ASCII identifiers.
 - **Scope manager:** `scope_manager.py` tracks lexical scopes, nested scopes, and variable shadowing. Verify `global_symbol_count` is accurate.
 - **Fallback parser:** `fallback_parser.py` must not crash on syntax errors and must return partial results.
@@ -173,9 +173,9 @@ For every changed file, ask:
 - **New nullable columns:** `rule_stats_json`, `enrich_profile_json`, `enrich_score_json`, `heuristic_label`, `parent_id`, `level`, `llm_label`, `label_source`, `label_input_hash`, `label_model` must read as None/0 on old bundles (backward compat).
 - **`run_artifacts` column-merge:** `bundle.py` `_merge` — absent/None preserves existing columns; blob-config-disabled keys are cleared. Verify `plugins apply` subset updates can't clobber earlier telemetry.
 
-### 7. BSG Compression & Interceptors (`batho/modules/compression/`)
-- **38 YAML plugin rules:** `rules.py` and `plugins/` (28 foundation + 10 interceptor). Verify rule loading, schema validation (`bsg-plugin-schema-v2`), and plugin ordering.
-- **Built-in interceptors:** Config `rules.builtin_plugins` lists 10 built-in plugins — `bsg_core` plus 9 interceptors (`bsg_silent_failure_catcher`, `bsg_dependency_blast_radius`, `bsg_resource_leak_preventer`, `bsg_nplus1_query_catcher`, `bsg_iac_drift_sentinel`, `bsg_schema_migration_enforcer`, `bsg_api_contract_guardian`, `bsg_hardcoded_secret_catcher`, `bsg_auth_boundary_shield`). Verify they are non-blocking enrichers that tag risks and emit events.
+### 7. BSG Compression & Plugin Rules (`batho/modules/compression/` + `sdk/batho_plugin/`)
+- **51 YAML plugin rules:** `sdk/batho_plugin/rule_engine.py` with two packs — core (`sdk/batho_plugin/core/`, 38 files, auto-loaded, `plugins.core.required`) and external (`sdk/batho_plugin/external/`, 13 files, config-gated). Verify rule loading, schema validation (`bsg-plugin-schema-v2`), and plugin ordering.
+- **External interceptors:** The 9 security/quality/optimization interceptors (`bsg_silent_failure_catcher`, `bsg_dependency_blast_radius`, `bsg_resource_leak_preventer`, `bsg_nplus1_query_catcher`, `bsg_iac_drift_sentinel`, `bsg_schema_migration_enforcer`, `bsg_api_contract_guardian`, `bsg_hardcoded_secret_catcher`, `bsg_auth_boundary_shield`) live in the external pack — enabled via `plugins.external.enabled` or allowlisted via `plugins.external.select`. Verify they are non-blocking enrichers that tag risks and emit events.
 - **`security_audit` flag:** `artifact_blobs.run_artifacts.security_audit` is `false` by default; when enabled, interceptor hits are stored in run artifacts.
 - **BSGMap:** `bsg_map/` builds the flat symbol index, applies token budget, and renders `agent`/`storage` views. Verify token reduction claims and round-trip correctness.
 - **Bidirectional rules:** `bsg.bidirectional.enabled`, `include_gaps`, and `storage_view` control `SYNTAX_GLUE` emission and lossless reconstruction.
@@ -214,7 +214,7 @@ For every changed file, ask:
 - **Resource limits:** `trace_path` `max_depth` must be clamped to 20. `limit`/`offset` must paginate. `max_file_size_kb` defaults to 500. `max_indexed_files` defaults to 200,000.
 
 ### 12. CLI (`batho/cli/`, `batho_cli.py`)
-- **11 subcommands:** `build`, `patch`, `fix`, `export`, `diff`, `gc`, `load`, `mcp`, `skills`, `plugins`, `communities`.
+- **12 subcommands:** `build`, `patch`, `fix`, `export`, `history`, `gc`, `load`, `mcp`, `install`, `plugins`, `doctor`, `communities`.
 - **Argparse contracts:** Each subcommand registers via `register_*_parser()` and sets `func`. `batho_cli.py` imports and registers all 11.
 - **Root resolution:** `batho_cli.py` must handle `args.root` being `None` or a string and wrap it with `Path()` before `.resolve()`.
 - **`--graph-backend` option:** CLI `build` and `patch` accept `--graph-backend` and pass it to the orchestrator.
@@ -234,7 +234,7 @@ For every changed file, ask:
 - **Response formats:** Valid values are `summary` (default for `graph_overview`), `concise` (default for `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `search_entities`, `get_delta`), `detailed` (includes source code where applicable).
 - **`__version__` consistency:** `1.4.3` across `batho/__init__.py`, `pyproject.toml`, `batho/mcp/server.py` (`BATHO_MCP_VERSION` from `__version__`), `docs-site/docs/whitepaper/index.md`, `docs-site/docusaurus.config.ts` announcement bar, and `docs-site/docs/changelog.md`.
 - **Structlog logging:** All modules use `structlog.get_logger(__name__)`. Event names are snake_case (e.g., `community_detection_complete`).
-- **Quarantine & trace contracts:** `search_entities`/`graph_query`/`graph_overview` accept `include_unresolved`/`include_quarantined` and report suppressed counts; `trace_path` results carry `meta.edge_priority`; ranking guarantees a stable total order (recall unchanged). `file_connectivity` returns a documented response contract. Command tools (`batho_build`, `batho_patch`, `batho_export`, `batho_diff`, `batho_gc`, `batho_fix`, `batho_load`, `batho_status`, `batho_list_runs`) expose `run_uuid` surfaces. Tool-gating semantics (`mcp.tools`) are part of the contract.
+- **Quarantine & trace contracts:** `search_entities`/`graph_query`/`graph_overview` accept `include_unresolved`/`include_quarantined` and report suppressed counts; `trace_path` results carry `meta.edge_priority`; ranking guarantees a stable total order (recall unchanged). `file_connectivity` returns a documented response contract. Command tools (`batho_build`, `batho_patch`, `batho_export`, `batho_gc`, `batho_fix`, `batho_load`, `batho_status`, `batho_list_runs`, `batho_history`) expose `run_uuid` surfaces. Tool-gating semantics (`mcp.tools`) are part of the contract.
 
 ### 15. Tests & Benchmarks
 - **Test suite:** 150+ test files across the `tests/` tree — `tests/mcp/` (53), `tests/modules/` (69), `tests/orchestrator/` (9), `tests/cli/` (5), `tests/skills/` (6), `tests/core/` (2), `tests/utils/` (4), plus `tests/fixtures/` (ground-truth repos + manifest) and root-level suites. Re-verify the ~2166 total-test claim by running the suite before quoting it.
@@ -307,7 +307,7 @@ Before completing the review, verify:
 - [ ] `pa.memory_map` contexts use `with` statements.
 - [ ] AST cache keys include content hash (not just file path).
 - [ ] Unicode identifiers (PEP 3131) are preserved by fallback parser and extraction.
-- [ ] CLI registers all 11 subcommands in `batho_cli.py` and handles `args.root` safely.
+- [ ] CLI registers all 12 subcommands in `batho_cli.py` and handles `args.root` safely.
 - [ ] `__version__` is consistent across `__init__.py`, `pyproject.toml`, `server.py`, docs, and `docusaurus.config.ts`.
 - [ ] Structlog event names use snake_case and `component=` where appropriate.
 - [ ] BSG `rules.builtin_plugins` matches `DEFAULT_RULES_BUILTIN_PLUGINS` in `config/models.py`.

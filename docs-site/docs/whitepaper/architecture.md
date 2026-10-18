@@ -14,7 +14,7 @@ Batho's architecture follows a layered approach with clear separation between ex
 %%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart TB
     subgraph Sources["Source Inputs"]
-        Repo["Git Repository<br/>(40+ Languages)"]
+        Repo["Git Repository<br/>(34 Languages & Formats)"]
         Config["batho.yaml"]
     end
 
@@ -111,7 +111,7 @@ sequenceDiagram
 | Component | Purpose | Key Features |
 |-----------|---------|--------------|
 | **Orchestrator Layer** | High-level command implementations | Typed options/results, module delegation, error recovery |
-| **AST Extractor** | Multi-language parsing via tree-sitter | 40+ language support, parallel processing, mtime tracking |
+| **AST Extractor** | Multi-language parsing via tree-sitter | 27 tree-sitter grammars + 7 native format parsers, parallel processing, mtime tracking |
 | **InMemoryGraph** | Hypergraph storage | Lazy adjacency indexing, relationship deduplication, cross-file resolution |
 | **ArrowGraph** | Columnar graph storage | Memory-mapped IPC, CSR/CSC adjacency indexes, streaming compaction, auto-selection |
 | **AST Cache** | Persistent entity cache | msgpack-backed, SHA-256 validation, automatic invalidation |

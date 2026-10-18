@@ -1297,11 +1297,11 @@ class CodeGraphIndexer:
             self._bsg_rules_fingerprint = ""
             rules: list = []
             cfg = get_config_cached()
-            from batho.modules.compression.rules import effective_rules_config
+            from batho_plugin.rule_engine import effective_rules_config
             rules_cfg = effective_rules_config(cfg)
             if isinstance(rules_cfg, dict) and rules_cfg.get("enabled", False):
                 try:
-                    from batho.modules.compression.rules import (
+                    from batho_plugin.rule_engine import (
                         load_effective_rules,
                     )
 
@@ -2318,12 +2318,47 @@ class CodeGraphIndexer:
             else:
                 unresolved_count += 1
 
+        # Chain compression: resolution may (legitimately, via legacy or
+        # third-party paths) land on a target that is itself a pending
+        # stub. Follow stub_to_target to a fixpoint so a single rewrite
+        # hop in the writer lands on a real entity; cycles and chains
+        # that never terminate in a non-stub are dropped (counted as
+        # unresolved).
+        _MAX_CHAIN_HOPS = 8
+        compressed: dict[str, str] = {}
+        for stub_id in list(stub_to_target):
+            target_id = stub_to_target[stub_id]
+            hops = 0
+            seen_chain = {stub_id}
+            while target_id.startswith("unresolved:") and hops < _MAX_CHAIN_HOPS:
+                if target_id in seen_chain:
+                    target_id = ""
+                    break
+                seen_chain.add(target_id)
+                next_id = stub_to_target.get(target_id)
+                if next_id is None:
+                    break
+                target_id = next_id
+                hops += 1
+            if target_id and not target_id.startswith("unresolved:"):
+                compressed[stub_id] = target_id
+            else:
+                resolved_count -= 1
+                unresolved_count += 1
+        if len(compressed) != len(stub_to_target):
+            self.logger.info(
+                "stub_resolution_chains_compressed",
+                kept=len(compressed),
+                dropped=len(stub_to_target) - len(compressed),
+            )
+            stub_to_target = compressed
+
         # Phase 4: Set confidence on resolved relationships
         new_relationships = []
         for rel in graph.relationships:
             if rel.target_id in stub_to_target:
                 strategy = stub_to_strategy.get(rel.target_id, "exact_match")
-                confidence = _RESOLUTION_CONFIDENCE.get(strategy, 0.5)
+                confidence = self._resolution_confidence_map().get(strategy, 0.5)
                 # T08: Add ambiguous metadata to the relationship
                 amb_meta = stub_to_ambiguous.get(rel.target_id, {})
                 new_rel = rel._evolve(
@@ -2349,7 +2384,7 @@ class CodeGraphIndexer:
                 updated_meta["stub_resolution_state"] = "resolved"
                 updated_meta["resolved_target_id"] = target_id
                 updated_meta["resolution_strategy"] = strategy
-                updated_meta["resolution_confidence"] = _RESOLUTION_CONFIDENCE.get(strategy, 0.5)
+                updated_meta["resolution_confidence"] = self._resolution_confidence_map().get(strategy, 0.5)
                 # T08: Add ambiguous metadata to the stub
                 amb_meta = stub_to_ambiguous.get(stub_id)
                 if amb_meta:
@@ -2364,7 +2399,7 @@ class CodeGraphIndexer:
             strategy = stub_to_strategy.get(stub_id, "exact_match")
             meta: dict[str, Any] = dict(stub_to_ambiguous.get(stub_id) or {})
             meta["resolution_strategy"] = strategy
-            confidence = _RESOLUTION_CONFIDENCE.get(strategy, 0.5)
+            confidence = self._resolution_confidence_map().get(strategy, 0.5)
             self.stub_resolutions[stub_id] = (target_id, confidence, meta)
             # Entity-row half of the T5 contract: the same state the in-memory
             # stub entity was just tagged with, persisted into agent_views.
@@ -2447,7 +2482,16 @@ class CodeGraphIndexer:
         def _try(info, strat):
             """Record a candidate. Sets primary on first success."""
             nonlocal primary_info, primary_strategy
-            if info and info.symbol_id not in seen_ids:
+            if not info:
+                return
+            # A contextual stub is a reference-site record, never a
+            # resolution target: registering one as a candidate lets
+            # exact_match resolve stubs to stubs (or to themselves).
+            if info.symbol_id.startswith("unresolved:"):
+                return
+            if info.symbol_id == stub.id:
+                return
+            if info.symbol_id not in seen_ids:
                 seen_ids.add(info.symbol_id)
                 all_candidates.append((info, strat))
                 if primary_info is None:
@@ -2701,7 +2745,7 @@ class CodeGraphIndexer:
 
         if len(other_candidates) == 0:
             # Single candidate — not ambiguous
-            return _RESOLUTION_CONFIDENCE.get(strategy, 0.5), {}
+            return self._resolution_confidence_map().get(strategy, 0.5), {}
 
         # Multiple candidates — this is ambiguous
         all_candidate_ids = [resolved_info.symbol_id] + [info.symbol_id for info, _ in other_candidates]
@@ -2713,7 +2757,7 @@ class CodeGraphIndexer:
                 seen.add(cid)
                 unique_ids.append(cid)
 
-        return _RESOLUTION_CONFIDENCE["ambiguous"], {
+        return self._resolution_confidence_map()["ambiguous"], {
             "ambiguous": True,
             "ambiguous_candidates": unique_ids,
         }
@@ -2801,7 +2845,7 @@ class CodeGraphIndexer:
                 strategy = "ambiguous"
                 updated_meta.update(amb_meta)
             updated_meta["resolution_strategy"] = strategy
-            updated_meta["resolution_confidence"] = _RESOLUTION_CONFIDENCE.get(strategy, 0.5)
+            updated_meta["resolution_confidence"] = self._resolution_confidence_map().get(strategy, 0.5)
             graph.update_entity(stub.id, stub._evolve(metadata=updated_meta))
             return resolved_info.symbol_id
 
@@ -2816,6 +2860,42 @@ class CodeGraphIndexer:
             graph.update_entity(stub.id, stub._evolve(metadata=updated_meta))
 
         return None
+
+    def _resolution_confidence_map(self) -> dict[str, float]:
+        """T18: resolution confidence table — plugin policy data when a host
+        is active, else the engine constant (byte-identical mirror)."""
+        cached = getattr(self, "_cached_resolution_confidence", None)
+        if cached is not None:
+            return cached
+        host = getattr(self, "_plugin_host", None)
+        resolved = _RESOLUTION_CONFIDENCE
+        if host is not None:
+            try:
+                m = host.get_map("strategy_confidence")
+                if m:
+                    resolved = dict(m)
+            except Exception as exc:
+                self.logger.debug("pack_strategy_confidence_failed", error=str(exc))
+        self._cached_resolution_confidence = resolved
+        return resolved
+
+    def _prunable_methods_set(self) -> frozenset[str]:
+        """T18: prunable method names — plugin policy data when a host is
+        active, else the engine constant (byte-identical mirror)."""
+        cached = getattr(self, "_cached_prunable_methods", None)
+        if cached is not None:
+            return cached
+        host = getattr(self, "_plugin_host", None)
+        resolved = _PRUNABLE_METHOD_NAMES
+        if host is not None:
+            try:
+                s = host.get_set("prunable_methods")
+                if s:
+                    resolved = frozenset(s)
+            except Exception as exc:
+                self.logger.debug("pack_prunable_methods_failed", error=str(exc))
+        self._cached_prunable_methods = resolved
+        return resolved
 
     def _should_prune_stub(self, stub: Entity) -> bool:
         """Conservative pruning of common method names on unknown types.
@@ -2846,7 +2926,7 @@ class CodeGraphIndexer:
         else:
             method_name = target_name
 
-        if method_name in _PRUNABLE_METHOD_NAMES:
+        if method_name in self._prunable_methods_set():
             # Stdlib method on an unknown type — the stub's `receiver_type`
             # metadata key is never written by extraction, so the receiver
             # type is always unknown here. Safe to prune.
@@ -2874,6 +2954,7 @@ class CodeGraphIndexer:
         lazy_stub_resolution: bool = False,
         progress_callback: Callable[[int], None] | None = None,
         progress_discovered_callback: Callable[[int], None] | None = None,
+        plugin_host: Any = None,
     ) -> "InMemoryGraph | ArrowGraph":
         """
         Walk *root* recursively, index every matching source file, and return
@@ -2934,6 +3015,42 @@ class CodeGraphIndexer:
         root_path = Path(root).resolve()
         if not root_path.exists():
             raise OSError(f"Root directory does not exist: {root_path}")
+
+        # T22: PluginHost carried through extraction (dispatch wired in T11).
+        # An empty host (no registered plugins — the --no-plugins host) is
+        # normalized to None so engine call sites take their compiled-in
+        # fallbacks instead of dispatching against empty pack data. The
+        # runtime binding is refreshed every build_graph so a previous run's
+        # host cannot leak into this one in a long-lived process.
+        self._plugin_host = (
+            plugin_host
+            if plugin_host is not None and getattr(plugin_host, "plugin_ids", None)
+            else None
+        )
+        try:
+            from batho_plugin.runtime import set_active_plugin_host
+
+            set_active_plugin_host(self._plugin_host)
+        except Exception as exc:
+            self.logger.warning(
+                "plugin_host_bind_failed", error=str(exc)
+            )
+        # T15: cache-variant plugin component, computed once per build_graph
+        # (host is fixed for the run; gated by plugins.fingerprint_in_cache).
+        self._plugin_cache_fingerprint = ""
+        if self._plugin_host is not None:
+            try:
+                plugins_cfg = get_config_cached().get("plugins", {}) or {}
+                if plugins_cfg.get("fingerprint_in_cache", True):
+                    from batho_plugin.fingerprint import fingerprint_from_host
+
+                    self._plugin_cache_fingerprint = fingerprint_from_host(
+                        self._plugin_host
+                    )
+            except Exception as exc:
+                self.logger.warning(
+                    "plugin_fingerprint_failed", error=str(exc)
+                )
         if not root_path.is_dir():
             raise OSError(f"Root path is not a directory: {root_path}")
 
@@ -3375,7 +3492,7 @@ class CodeGraphIndexer:
             # Effective rules config incl. plugins.overrides -> plugins_overrides
             # so the worker rules load and rules_fingerprint match the serial
             # _bsg_rules path (previously the parallel path dropped overrides).
-            from batho.modules.compression.rules import effective_rules_config
+            from batho_plugin.rule_engine import effective_rules_config
             bsg_cfg_payload["rules"] = effective_rules_config(cfg)
 
             # Ensure cache path is present so workers can initialize BathoCache
@@ -3397,6 +3514,7 @@ class CodeGraphIndexer:
                 package_map=package_map,
                 index_id=index_id,
                 include_gaps=include_gaps_flag,
+                plugin_host=plugin_host,
                 result_callback=on_result_extracted,
                 ast_cache_dir=ast_cache_dir_str,
                 progress_callback=progress_callback,
@@ -3567,12 +3685,37 @@ class CodeGraphIndexer:
             derived_overrides_edges = self._derive_override_edges(graph)
             derived_rationale_doc_edges = self._derive_rationale_doc_links(graph)
 
+            # T35: ON_POST_RESOLVE — the engine-owned resolution pipeline is
+            # complete; hook plugins may observe the resolved graph (no AST —
+            # parent process, spec §4.1). Entities/relationships are shared
+            # references: hooks may mutate entity metadata, never rels.
+            # The ctx buffers are O(graph) to materialize — build them only
+            # when a hook actually registered for the stage.
+            if self._plugin_host is not None:
+                try:
+                    from batho_plugin import PluginContext, Stage
+
+                    if self._plugin_host.has_stage_hooks(Stage.ON_POST_RESOLVE):
+                        _graph_ctx = PluginContext(
+                            file_path="",
+                            root_path=root_path if root_path else Path("."),
+                            entities=list(graph.entities.values()),
+                            relationship_buffer=list(graph.relationships),
+                        )
+                        self._plugin_host.dispatch(
+                            Stage.ON_POST_RESOLVE, _graph_ctx
+                        )
+                except Exception as exc:
+                    self.logger.warning(
+                        "plugin_post_resolve_failed", error=str(exc)
+                    )
+
             semantic_stats: dict[str, int] = {
                 "semantic_tags_added": 0,
                 "semantic_edges_added": 0,
             }
             try:
-                from batho.modules.compression import apply_semantic_overlay
+                from batho_plugin.rule_engine import apply_semantic_overlay
 
                 semantic_stats = apply_semantic_overlay(
                     graph=graph,
@@ -3581,6 +3724,29 @@ class CodeGraphIndexer:
                 )
             except Exception as exc:
                 self.logger.warning("bsg_semantic_stage_failed", error=str(exc))
+
+            # T35: ON_POST_BUILD — semantic overlay applied; hooks observe the
+            # final graph state. The ctx is rebuilt (not the post-resolve
+            # one) so relationship_buffer reflects overlay output, and only
+            # when a hook registered for the stage.
+            if self._plugin_host is not None:
+                try:
+                    from batho_plugin import PluginContext, Stage
+
+                    if self._plugin_host.has_stage_hooks(Stage.ON_POST_BUILD):
+                        _graph_ctx = PluginContext(
+                            file_path="",
+                            root_path=root_path if root_path else Path("."),
+                            entities=list(graph.entities.values()),
+                            relationship_buffer=list(graph.relationships),
+                        )
+                        self._plugin_host.dispatch(
+                            Stage.ON_POST_BUILD, _graph_ctx
+                        )
+                except Exception as exc:
+                    self.logger.warning(
+                        "plugin_post_build_failed", error=str(exc)
+                    )
 
             # Load and apply BSG rules
             rules_cfg = effective_rules_config(cfg)
@@ -3620,7 +3786,7 @@ class CodeGraphIndexer:
             # script (T12). None when rules are disabled → column stays null.
             rules_payload: dict[str, Any] | None = None
             if rule_stats.get("enabled"):
-                from batho.modules.compression.rules import build_rule_telemetry
+                from batho_plugin.rule_engine import build_rule_telemetry
 
                 per_rule = build_rule_telemetry(
                     graph.entities.values(), self._bsg_rules() or []
@@ -3853,7 +4019,7 @@ class CodeGraphIndexer:
         bsg_rules = self._bsg_rules()
         if bsg_rules:
             try:
-                from batho.modules.compression.rules import (
+                from batho_plugin.rule_engine import (
                     apply_bsg_rules_to_entities,
                 )
 
@@ -3894,6 +4060,9 @@ class CodeGraphIndexer:
                         include_gaps=include_gaps,
                         parsing_config=self._effective_parsing_config(),
                         rules_fingerprint=self._bsg_rules_fingerprint,
+                        plugin_fingerprint=getattr(
+                            self, "_plugin_cache_fingerprint", ""
+                        ),
                     ),
                 )
             except OSError:

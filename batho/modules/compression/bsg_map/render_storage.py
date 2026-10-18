@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from pathlib import Path
 
 from batho.core.config import SCHEMA_VERSIONS
-from batho.core.schemas import EntityType, BSGViewType, build_relationship_id
+from batho.core.schemas import BSGViewType, build_relationship_id
 from .relativizer import PathRelativizer
 
 BSG_SCHEMA_VERSION = SCHEMA_VERSIONS["bsg"]
@@ -28,12 +28,6 @@ def _json_dumps(payload: dict[str, Any]) -> str:
 def _sorted_index(index: dict[str, list[str]]) -> dict[str, list[str]]:
     """Sort the lists inside an index for determinism."""
     return {key: sorted(value) for key, value in sorted(index.items())}
-
-
-def _derive_scope_tier(entity: Any) -> str:
-    if entity.type in (EntityType.CLASS, EntityType.INTERFACE, EntityType.MODULE):
-        return "public"
-    return "internal"
 
 
 def _derive_category(file_path: str) -> str:
@@ -57,19 +51,6 @@ def _normalize_category(cat: str) -> str:
     if c == "SRC":
         return "SOURCE"
     return c
-
-
-def _derive_language(entity: Any, file_path: str) -> str:
-    from .constants import EXT_TO_LANGUAGE_ID
-    ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
-    return EXT_TO_LANGUAGE_ID.get(f".{ext}", "unknown")
-
-
-def _derive_service_tag(file_path: str) -> str | None:
-    parts = [p for p in file_path.replace("\\", "/").split("/") if p and p != "."]
-    if len(parts) > 1:
-        return parts[0]
-    return None
 
 
 def _build_render_components(
@@ -108,9 +89,7 @@ def _build_render_components(
         entities = bsg._by_file[file_path]
         for entity in sorted(entities, key=lambda item: (item.start_line, item.id)):
             metadata = dict(entity.metadata or {})
-            scope_tier = str(
-                metadata.get("bsg.scope_tier") or _derive_scope_tier(entity)
-            )
+            scope_tier = str(metadata.get("bsg.scope_tier") or "MODULE")
             raw_category = str(
                 metadata.get("bsg.category") or _derive_category(file_path)
             )
@@ -121,15 +100,13 @@ def _build_render_components(
             raw_service_tag = metadata.get("bsg.service_tag")
             service_tag = str(raw_service_tag or "").strip()
             if not service_tag:
-                service_tag = str(
-                    _derive_service_tag(file_path) or resolved_default_service
-                ).strip()
+                service_tag = str(resolved_default_service or "").strip()
                 if service_tag:
                     autofilled_service_tags += 1
             if not service_tag:
                 missing_service_tags += 1
 
-            language = _derive_language(entity, file_path)
+            language = str(metadata.get("language") or "unknown")
             raw_index_id = metadata.get("bsg.index_id")
             index_id_text = (
                 str(raw_index_id).strip() if raw_index_id is not None else ""

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from batho.modules.graph import InMemoryGraph
 from batho.modules.graph.community import _CLUSTERING_RELATIONS
-from batho.modules.compression.rules import _derive_semantic_relations
+from batho_plugin.rule_engine import _derive_semantic_relations
 from batho.core.schemas import (
     ANNOTATION_RELATIONS,
     Entity,

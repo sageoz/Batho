@@ -18,7 +18,7 @@ Yes. Batho is open-source under the Apache 2.0 license.
 
 ### What languages does Batho support?
 
-40+ languages via tree-sitter, including Python, TypeScript, JavaScript, Go, Java, Rust, C, C++, Ruby, PHP, Swift, Kotlin, and many more.
+27 languages via tree-sitter grammars — including Python, TypeScript, JavaScript, Go, Java, Rust, C, C++, Ruby, PHP, Swift, Kotlin, and more — plus 7 native format parsers for JSON, YAML, TOML, HTML, CSS, Markdown, and HCL (34 languages & formats in total).
 
 ## Installation & Setup
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 SCHEMA_VERSIONS: dict[str, str] = {
@@ -18,17 +18,16 @@ DEFAULT_MAX_FILE_SIZE_KB = 500
 DEFAULT_MAX_INDEXED_FILES = 200_000
 DEFAULT_INDEX_WORKERS = 0
 
+# Canonical §16.3 catalog stems (SDK core pack). The pre-relocation bsg_*
+# names still resolve via _PLUGIN_ALIASES with a DeprecationWarning (F5).
 DEFAULT_RULES_BUILTIN_PLUGINS = (
-    "bsg_core",
-    "bsg_silent_failure_catcher",
-    "bsg_dependency_blast_radius",
-    "bsg_resource_leak_preventer",
-    "bsg_nplus1_query_catcher",
-    "bsg_iac_drift_sentinel",
-    "bsg_schema_migration_enforcer",
-    "bsg_api_contract_guardian",
-    "bsg_hardcoded_secret_catcher",
-    "bsg_auth_boundary_shield",
+    "graph_foundation",
+    "classification",
+    "manifests",
+    "cicd",
+    "cloud_providers",
+    "test_frameworks",
+    "token_optimization",
 )
 
 
@@ -85,6 +84,11 @@ class PathsConfig(BaseModel):
 
 class IndexerConfig(BaseModel):
     max_file_size_kb: int = Field(default=DEFAULT_MAX_FILE_SIZE_KB, ge=1)
+    # Oversize files: "skip" (legacy, drop from the graph) or "outline"
+    # (default, index files between max_file_size_kb and
+    # oversize_outline_max_kb so their definitions stay visible).
+    oversize_mode: Literal["skip", "outline"] = Field(default="outline")
+    oversize_outline_max_kb: int = Field(default=4096, ge=1)
     max_indexed_files: int = Field(default=DEFAULT_MAX_INDEXED_FILES, ge=1)
     max_workers: int = Field(default=DEFAULT_INDEX_WORKERS, ge=0)
     ignore_patterns: list[str] = Field(default_factory=list)
@@ -261,8 +265,76 @@ class RulesConfig(BaseModel):
     fail_on_rule_error: bool = Field(default=False)
 
 
+class PluginCoreConfig(BaseModel):
+    """Foundation-pack policy (``plugins.core``, spec §8.2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    required: bool = Field(
+        default=True,
+        description="Build fails (with guidance) if the core pack is missing/invalid.",
+    )
+
+
+class PluginExternalConfig(BaseModel):
+    """External-pack gating (``plugins.external``, spec §8.2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description="Master switch for the optional external pack (opt-in).",
+    )
+    select: list[str] = Field(
+        default_factory=list,
+        description="Per-plugin allowlist; empty = load every external plugin.",
+    )
+
+
+class PluginTelemetryConfig(BaseModel):
+    """Plugin telemetry policy (``plugins.telemetry``, spec §8.2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hooks_metadata: bool = Field(
+        default=False,
+        description="When true, stamp bsg.hooks provenance on entities (debug).",
+    )
+
+
+class PluginHostConfig(BaseModel):
+    """PluginHost dispatch policy (``plugins.host``, spec §8.2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dispatch_order: Literal["priority_then_id"] = Field(
+        default="priority_then_id",
+        description=(
+            "Reserved. Hooks always dispatch priority-desc then plugin_id-asc; "
+            "the key exists to reject alternative orderings up front (extra='forbid')."
+        ),
+    )
+
+
 class PluginsConfig(BaseModel):
+    """Plugin-host configuration (``plugins.*``, spec §8.2) plus the legacy
+    rule-engine ``overrides`` fold (read by ``effective_rules_config``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
     overrides: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
+    core: PluginCoreConfig = Field(default_factory=PluginCoreConfig)
+    external: PluginExternalConfig = Field(default_factory=PluginExternalConfig)
+    fingerprint_in_cache: bool = Field(
+        default=True,
+        description="Include the plugin fingerprint in the AST cache key (§9).",
+    )
+    reextract_on_drift: bool = Field(
+        default=True,
+        description="Escalate patch to full-repo re-extraction when the plugin fingerprint drifts from the last run (§9).",
+    )
+    telemetry: PluginTelemetryConfig = Field(default_factory=PluginTelemetryConfig)
+    host: PluginHostConfig = Field(default_factory=PluginHostConfig)
 
 
 class FileArtifactBlobsConfig(BaseModel):

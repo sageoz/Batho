@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -26,7 +27,7 @@ def register_plugins_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Manage BSG rule plugins (validate/list/apply)",
         description=(
             "Work with BSG rule plugins (schema: bsg-plugin.v2 — see "
-            "batho/modules/compression/rules.py _validate_plugin_document). "
+            "batho_plugin/rule_engine.py _validate_plugin_document). "
             "`validate` schema-checks plugin files and gates them against "
             "a deterministic entity sample from the built artifact; "
             "`apply` re-enriches an existing artifact's graph without "
@@ -87,6 +88,18 @@ def register_plugins_parser(subparsers: argparse._SubParsersAction) -> None:
         parents=[create_base_parser()],
     )
 
+    plugins_sub.add_parser(
+        "fingerprint",
+        help="Print the current plugin-set fingerprint (host data + hooks + rules)",
+        parents=[create_base_parser()],
+    )
+
+    plugins_sub.add_parser(
+        "doctor",
+        help="Report plugin-host status, worker preload health, and drift vs the artifact",
+        parents=[create_base_parser()],
+    )
+
     apply = plugins_sub.add_parser(
         "apply",
         help="Re-enrich the built artifact's graph with rules (no re-extraction)",
@@ -128,6 +141,17 @@ def register_plugins_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.set_defaults(func=cmd_plugins)
 
 
+def register_doctor_parser(subparsers) -> None:
+    """Top-level ``batho doctor`` mount (spec §8.1 names it at the root).
+    ``batho plugins doctor`` remains; both run the same check."""
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Report plugin-host status, worker preload health, and drift vs the artifact",
+        parents=[create_base_parser()],
+    )
+    doctor.set_defaults(func=_cmd_doctor)
+
+
 def cmd_plugins(args: argparse.Namespace) -> int:
     """Dispatch plugins subcommands."""
     cmd = args.plugins_command
@@ -137,13 +161,118 @@ def cmd_plugins(args: argparse.Namespace) -> int:
         return _cmd_list(args)
     if cmd == "apply":
         return _cmd_apply(args)
+    if cmd == "fingerprint":
+        return _cmd_fingerprint(args)
+    if cmd == "doctor":
+        return _cmd_doctor(args)
     return 1
+
+
+def _cmd_fingerprint(args: argparse.Namespace) -> int:
+    """Print the current plugin-set fingerprint (T25)."""
+    from batho_plugin import load_host
+    from batho_plugin.fingerprint import fingerprint_from_host
+
+    root = getattr(args, "root", None) or Path(".")
+    from batho.core.config.loader import get_config_cached, set_active_root
+
+    set_active_root(root)
+    cfg = get_config_cached()
+    plugins_cfg = cfg.get("plugins", {}) or {}
+    try:
+        host = load_host(config={"plugins": plugins_cfg})
+    except Exception as exc:
+        print(f"error: plugin host failed to load: {exc}")
+        return 1
+    fp = fingerprint_from_host(host)
+    print(fp or "(empty plugin set)")
+    print(f"plugins: {len(host.plugin_ids)} loaded")
+    return 0
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Report plugin-host health: pack status, counts, artifact drift (T25)."""
+    import json as _json
+
+    from batho_plugin import load_host
+    from batho_plugin.fingerprint import fingerprint_from_host
+
+    root = getattr(args, "root", None) or Path(".")
+    from batho.core.config.loader import get_config_cached, set_active_root
+
+    set_active_root(root)
+    cfg = get_config_cached()
+    plugins_cfg = cfg.get("plugins", {}) or {}
+
+    report: dict = {"root": str(Path(root).resolve())}
+    try:
+        host = load_host(config={"plugins": plugins_cfg})
+        report["host"] = "ok"
+        report["plugins_loaded"] = len(host.plugin_ids)
+        report["plugin_ids"] = sorted(host.plugin_ids)
+        report["fingerprint"] = fingerprint_from_host(host)
+    except Exception as exc:
+        report["host"] = f"failed: {exc}"
+        print(_json.dumps(report, indent=2, default=str))
+        return 1
+
+    report["external_enabled"] = bool(
+        (plugins_cfg.get("external") or {}).get("enabled", False)
+    )
+    report["fingerprint_in_cache"] = bool(
+        plugins_cfg.get("fingerprint_in_cache", True)
+    )
+
+    # Drift vs the last recorded fingerprint (T23 contract): scan runs
+    # newest→oldest — patch runs may lack a fingerprint; use the most recent
+    # that has one. Integer ids resolve positionally oldest-first through
+    # _resolve_run_uuid, so iterate the run table by started_at instead.
+    artifact_fp = None
+    try:
+        from batho.modules.storage.arrow_bundle.bundle import BathoBundle
+
+        db = BathoBundle(Path(root))
+        runs = db._reader.get_all_runs()
+        runs.sort(key=lambda r: str(r.get("started_at") or ""), reverse=True)
+        for run in runs[:16]:
+            try:
+                artifacts = db.get_run_artifacts(run.get("run_uuid")) or {}
+            except Exception as exc:
+                LOGGER.debug(
+                    "doctor_run_artifacts_failed",
+                    run=run.get("run_uuid"),
+                    error=str(exc),
+                )
+                continue
+            fp = (artifacts.get("telemetry_metrics") or {}).get(
+                "plugin_fingerprint"
+            )
+            if fp:
+                artifact_fp = fp
+                report["artifact_run"] = run.get("run_uuid")
+                break
+    except Exception as exc:
+        LOGGER.debug("doctor_artifact_scan_failed", error=str(exc))
+    report["artifact_fingerprint"] = artifact_fp
+    current = report["fingerprint"]
+    if artifact_fp is None:
+        report["drift"] = "unknown (no artifact fingerprint recorded)"
+    elif artifact_fp != current:
+        report["drift"] = (
+            f"drift: artifact={artifact_fp} current={current} — "
+            "AST cache entries keyed by the old fingerprint will miss"
+        )
+    else:
+        report["drift"] = "none"
+
+    print(_json.dumps(report, indent=2, default=str))
+    return 0
 
 
 def _default_plugins_dir(root: Path) -> Path:
     """Configured plugins dir (rules.custom_rules_dir; default .batho/plugins)."""
     from batho.core.config.loader import get_config_cached, set_active_root
-    from batho.modules.compression.rules import _resolve_custom_rules_path
+    from batho_plugin.rule_engine import _resolve_custom_rules_path
 
     set_active_root(root)
     cfg = get_config_cached()
@@ -177,7 +306,7 @@ def _validate_schema(path: Path) -> tuple[dict, bool]:
     hints) shouldn't block fixture testing; the gate's own checks decide
     acceptance. Re-validate non-strictly only when strict already failed.
     """
-    from batho.modules.compression.rules import validate_plugin_file
+    from batho_plugin.rule_engine import validate_plugin_file
 
     result = validate_plugin_file(path, strict=True)
     lenient = (
@@ -217,7 +346,7 @@ def _run_fixture_gates(
     sibling_rules: dict[Path, list] = {}
     if len(pending) > 1 and load_err is None:
         from batho.modules.enrich.fixture_gate import _candidate_rules_config
-        from batho.modules.compression.rules import load_effective_rules
+        from batho_plugin.rule_engine import load_effective_rules
 
         for path, _result in pending:
             try:
@@ -369,10 +498,26 @@ def _print_gate(gate: dict) -> None:
         print(f"  error: {e}")
 
 
+def _yaml_head_meta(path: Path) -> dict[str, str]:
+    """Cheap header scan of a rule YAML for list display (no full parse)."""
+    meta: dict[str, str] = {}
+    try:
+        head = path.read_text(encoding="utf-8", errors="ignore")[:2048]
+    except OSError:
+        return meta
+    for key in ("plugin_id", "version", "class"):
+        m = re.search(rf"^{key}:\s*([^\s#]+)", head, re.MULTILINE)
+        if m:
+            meta[key] = m.group(1).strip().strip("'\"")
+    return meta
+
+
 def _cmd_list(args: argparse.Namespace) -> int:
+    """§8.1: show plugin class, type, stages, and version."""
     from batho.core.config.loader import get_config_cached, set_active_root
-    from batho.modules.compression.rules import (
+    from batho_plugin.rule_engine import (
         _discover_packaged_plugins,
+        _plugin_alias,
         _resolve_custom_rules_path,
     )
 
@@ -380,13 +525,55 @@ def _cmd_list(args: argparse.Namespace) -> int:
     set_active_root(root)
     cfg = get_config_cached()
     rules_cfg = cfg.get("rules", {}) or {}
+    plugins_cfg = cfg.get("plugins", {}) or {}
+    external_cfg = rules_cfg.get("plugins_external") or plugins_cfg.get(
+        "external"
+    ) or {}
     auto = rules_cfg.get("auto_load_all_plugins", True)
-    builtins_cfg = rules_cfg.get("builtin_plugins", []) or []
+    builtins_cfg = {
+        _plugin_alias(str(n).strip())
+        for n in (rules_cfg.get("builtin_plugins", []) or [])
+        if str(n).strip()
+    }
+
+    # Host-registered plugins (data + hooks + enabled external rule packs).
+    print("host plugins:")
+    try:
+        from batho_plugin import load_host
+
+        host = load_host(config=cfg)
+        for reg in host.data_registrations():
+            print(
+                f"  {reg.plugin_id:<32} class={reg.plugin_class:<12} "
+                f"type=data  stages=-  version={reg.version}"
+            )
+        for reg in host.hook_registrations():
+            stages = ",".join(s.value for s in reg.plugin.stages)
+            print(
+                f"  {reg.plugin.plugin_id:<32} class={reg.plugin_class:<12} "
+                f"type=hook  stages={stages}  version={reg.plugin.version}"
+            )
+        for reg in host.rule_registrations():
+            print(
+                f"  {reg.plugin_id:<32} class={reg.plugin_class:<12} "
+                f"type=rule  stages=-  version={reg.version}"
+            )
+    except Exception as exc:
+        print(f"  [host load failed: {exc}]")
 
     print("builtin plugins:")
-    for plugin_name, path in sorted(_discover_packaged_plugins().items()):
+    for plugin_name, path in sorted(
+        _discover_packaged_plugins(external_cfg).items()
+    ):
         loaded = auto or plugin_name in builtins_cfg
-        print(f"  {plugin_name:<24} {path.as_posix()}  [{'loaded' if loaded else 'off'}]")
+        meta = _yaml_head_meta(path)
+        cls = meta.get("class", "standard")
+        ver = meta.get("version", "?")
+        print(
+            f"  {plugin_name:<28} class={cls:<12} type=rule  "
+            f"version={ver:<8} {path.as_posix()}  "
+            f"[{'loaded' if loaded else 'off'}]"
+        )
 
     print("custom plugins:")
     custom_path_value = rules_cfg.get("custom_rules_path")

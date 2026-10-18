@@ -247,10 +247,16 @@ class BathoBundleReader:
         import pyarrow.compute as pc
 
         if rel_path is not None:
-            file_id = self.file_id_for_path(rel_path)
-            if file_id is None:
-                return []
-            mask = pc.equal(table.column("file_id"), file_id)
+            # Prefer the denormalized file_path column — it resolves history
+            # even for files deleted since (they leave file_tracking, so a
+            # file_id lookup would miss). Legacy tables lack the column.
+            if "file_path" in table.schema.names:
+                mask = pc.equal(table.column("file_path"), rel_path)
+            else:
+                file_id = self.file_id_for_path(rel_path)
+                if file_id is None:
+                    return []
+                mask = pc.equal(table.column("file_id"), file_id)
             table = table.filter(mask)
 
         if since_run_uuid is not None:

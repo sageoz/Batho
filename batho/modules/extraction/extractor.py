@@ -236,6 +236,78 @@ _BUILTINS_BY_LANG: dict[str, set[str]] = {
 }
 
 
+def _prune_unresolved(
+    ref_text: str,
+    rel_type: RelationshipType,
+    file_imports: list,
+    language: str,
+    filepath: str,
+    prune_enabled: bool = True,
+    imported_names: "set[str] | None" = None,
+) -> bool:
+    """T14: prune decision via the plugin hook when a host is active.
+
+    Byte-identical to :func:`_should_prune_unresolved` (parity-proven in
+    tests): the hook's pure decision function receives the pack-derived
+    builtin/noise sets; without an active host the engine implementation is
+    the fallback (--no-plugins path).
+    """
+    try:
+        from batho_plugin.runtime import get_active_plugin_host
+
+        host = get_active_plugin_host()
+    except Exception:
+        host = None
+    if host is None:
+        return _should_prune_unresolved(
+            ref_text, rel_type, file_imports, language, filepath,
+            prune_enabled, imported_names,
+        )
+    # Pack sets are process-stable: cache per language (the delegate runs
+    # ~100K+ times per build — C4 forbids per-call set merges).
+    cached = _PRUNE_PACK_SETS_CACHE.get(language)
+    if cached is None:
+        builtins = host.get_set("builtins", language=language)
+        noise = host.get_set("noise_symbols", language=language)
+        cached = (builtins or None, noise or None)
+        _PRUNE_PACK_SETS_CACHE[language] = cached
+    hook_builtins, hook_noise = cached
+    from batho_plugin.hooks.prune_stub import should_prune as _hook_should_prune
+
+    decision = _hook_should_prune(
+        ref_text,
+        rel_type.name,
+        language,
+        filepath,
+        prune_enabled,
+        frozenset(imported_names) if imported_names is not None else None,
+        builtins=hook_builtins,
+        noise_symbols=hook_noise,
+    )
+    return decision.prune
+
+
+_PRUNE_PACK_SETS_CACHE: dict[str, tuple[frozenset[str], frozenset[str]] | None] = {}
+
+
+def _stamp_fallback_language(entities: list, language_name: str | None) -> None:
+    """F8: stamp the engine-owned ``language`` key on fallback-parser entities.
+
+    The fallback parser is language-agnostic (regex heuristics only), so its
+    entities carry empty metadata — AST entities get the stamp in
+    ``_collect_metadata_with_source``. Storage-view rendering reads
+    ``metadata["language"]`` and the per-extension derivation was deleted, so
+    the stamp must come from the engine, never from plugin dispatch (it would
+    be absent under ``--no-plugins``).
+    """
+    if language_name is None:
+        return
+    for entity in entities:
+        meta = getattr(entity, "metadata", None)
+        if isinstance(meta, dict):
+            meta.setdefault("language", language_name)
+
+
 def _should_prune_unresolved(ref_text: str, rel_type: RelationshipType, file_imports: list, language: str, filepath: str, prune_enabled: bool = True, imported_names: "set[str] | None" = None) -> bool:
     """Check if an unresolved reference should be pruned.
 
@@ -774,10 +846,52 @@ class ASTExtractor(abc.ABC):
         logged, and an empty result is returned so the caller can continue
         processing other files.
         """
+        # Hook-provenance marks recorded by the per-file AST-alive stage
+        # dispatch inside _build_relationships (T11/T16/T17). Reset per file —
+        # id() keys are only valid for this parse's entity objects, and a
+        # cache-hit path never calls parse_file, so a stale map must never
+        # survive from the previous file this extractor instance saw.
+        self._last_hook_marks: dict[int, set[str]] = {}
+
         t0 = time.perf_counter()
 
         # Check if error recovery is enabled
         error_recovery = self._parsing_config.get("error_recovery", True)
+
+        # T34: ON_PRE_PARSE / ON_POST_PARSE stage dispatch — hooks observe the
+        # file before parsing and the live tree after parsing (spec §4.1).
+        # No-op unless a plugin registers for these stages; the shipped core
+        # hooks do not.
+        _plugin_host = None
+        _parse_ctx = None
+        try:
+            from batho_plugin.runtime import get_active_plugin_host
+
+            _plugin_host = get_active_plugin_host()
+        except Exception:
+            _plugin_host = None
+        if _plugin_host is not None:
+            try:
+                from batho_plugin import PluginContext, Stage
+
+                try:
+                    from batho.core.config.loader import get_active_root
+
+                    _root = get_active_root()
+                except Exception:
+                    _root = Path(filepath).parent
+                _parse_ctx = PluginContext(
+                    file_path=filepath,
+                    root_path=_root,
+                    language=self._language_name,
+                    source_bytes=content,
+                )
+                _plugin_host.dispatch(Stage.ON_PRE_PARSE, _parse_ctx)
+            except Exception as exc:
+                self.logger.debug(
+                    "plugin_pre_parse_failed", filepath=filepath, error=str(exc)
+                )
+                _parse_ctx = None
 
         try:
             tree = self._ts_parser.parse(content)
@@ -791,7 +905,23 @@ class ASTExtractor(abc.ABC):
             from batho.modules.extraction.fallback_parser import FallbackParser
             fallback_parser = FallbackParser()
             fallback_result = fallback_parser.parse_file(Path(filepath), content)
+            _stamp_fallback_language(fallback_result.entities, self._language_name)
             return fallback_result.entities, fallback_result.relationships
+
+        # T34: the tree is alive — AST-stage plugins may inspect it now
+        # (frozen ctx + live tree_root; process-local, never serialized).
+        if _plugin_host is not None and _parse_ctx is not None:
+            try:
+                from dataclasses import replace as _dc_replace
+
+                _plugin_host.dispatch(
+                    Stage.ON_POST_PARSE,
+                    _dc_replace(_parse_ctx, tree_root=tree.root_node),
+                )
+            except Exception as exc:
+                self.logger.debug(
+                    "plugin_post_parse_failed", filepath=filepath, error=str(exc)
+                )
 
         # Check if we should skip comment nodes
         skip_comments = self._parsing_config.get("skip_comments", False)
@@ -825,6 +955,7 @@ class ASTExtractor(abc.ABC):
             from batho.modules.extraction.fallback_parser import FallbackParser
             fallback_parser = FallbackParser()
             fallback_result = fallback_parser.parse_file(Path(filepath), content)
+            _stamp_fallback_language(fallback_result.entities, self._language_name)
             return fallback_result.entities, fallback_result.relationships
 
         if include_gaps:
@@ -978,8 +1109,21 @@ class ASTExtractor(abc.ABC):
             if dedup_key in definition_nodes:
                 for node in definition_nodes[dedup_key]:
                     higher_priority_name_bytes.add(node.start_byte)
+        # Methods also match the block-anchored def.function catch-all (a class
+        # body is a block); suppress the def.function duplicate when the same
+        # name node was captured by any class-scoped def.* capture.
+        method_scoped_name_bytes: set[int] = set(higher_priority_name_bytes)
+        for dedup_key in ("def.method",):
+            if dedup_key in definition_nodes:
+                for node in definition_nodes[dedup_key]:
+                    method_scoped_name_bytes.add(node.start_byte)
 
         flat_definitions = []
+        # Same definition node captured by two query patterns (overlap
+        # between anchored shapes) would mint duplicate entities; dedupe
+        # per (base_key, name-node offset). Cross-key overlaps are handled
+        # by the higher-priority filter above.
+        seen_def_captures: set[tuple[str, int]] = set()
         for base_key, name_nodes in definition_nodes.items():
             entity_type = _CAPTURE_ENTITY_MAP.get(base_key)
             if entity_type is None:
@@ -1000,6 +1144,17 @@ class ASTExtractor(abc.ABC):
                     and name_node.start_byte in higher_priority_name_bytes
                 ):
                     continue
+                # Skip def.function captures of class members — the
+                # class-scoped def.method/def.constructor/def.property
+                # capture already claims this node.
+                if (
+                    base_key == "def.function"
+                    and name_node.start_byte in method_scoped_name_bytes
+                ):
+                    continue
+                if (base_key, name_node.start_byte) in seen_def_captures:
+                    continue
+                seen_def_captures.add((base_key, name_node.start_byte))
                 _def_name_bytes.add(name_node.start_byte)
                 decl_node = name_node.parent if name_node.parent is not None else name_node
                 # T-fix (5c2e9b74): Kotlin classes, interfaces, and enum classes
@@ -1082,10 +1237,15 @@ class ASTExtractor(abc.ABC):
             # (e.g. Class, Module, Namespace, Struct, Enum, Interface, Trait).
             # T02 fix (b2e4d8f1): ENUM/INTERFACE/TRAIT must be pushed so members
             # get qualified FQNs (e.g. Color.Red) and unique entity IDs.
+            # Functions/methods are pushed too: nested defs (closures like
+            # `register_tools`' MCP tool closures) get parent-qualified FQNs,
+            # which keeps same-named closures in one file from colliding on
+            # one entity id.
             if entity_type in (
                 EntityType.CLASS, EntityType.MODULE, EntityType.NAMESPACE,
                 EntityType.STRUCT, EntityType.ENUM, EntityType.INTERFACE,
-                EntityType.TRAIT,
+                EntityType.TRAIT, EntityType.FUNCTION, EntityType.METHOD,
+                EntityType.CONSTRUCTOR,
             ):
                 scope_stack.append((end_byte, fqn_name, descriptors))
 
@@ -1099,46 +1259,79 @@ class ASTExtractor(abc.ABC):
             # T03: Detect property setter (decorator with .setter attribute)
             # and mark with access_type="write". Default for @property is "read".
             if entity_type == EntityType.PROPERTY:
-                parent = decl_node.parent
-                if parent is not None and parent.type == "decorated_definition":
-                    for child in parent.children:
-                        if child.type == "decorator":
-                            decorator_text = _node_text(child, source)
-                            if ".setter" in decorator_text:
-                                metadata["access_type"] = "write"
-                                break
-                if "access_type" not in metadata:
-                    # T03 fix (c3f5a7b9): TS get/set accessors — the captured
-                    # "get"/"set" keyword is in auxiliary_nodes as "accessor".
-                    accessor_nodes = auxiliary_nodes.get((base_key, "accessor"), [])
-                    accessor_node = self._nearest_ancestor(accessor_nodes, decl_node)
-                    if accessor_node is not None:
-                        accessor_text = _node_text(accessor_node, source).strip()
-                        if accessor_text == "set":
-                            metadata["access_type"] = "write"
-                if "access_type" not in metadata:
-                    # C# fix (c3f5a7b9): inspect accessor_list for a "set" accessor.
-                    if self._language_name == "csharp" and decl_node.parent is not None:
-                        for child in decl_node.parent.children:
-                            if child.type == "accessor_list":
-                                for acc in child.children:
-                                    if acc.type == "accessor_declaration":
-                                        acc_text = _node_text(acc, source)
-                                        if acc_text.startswith("set"):
-                                            metadata["access_type"] = "write"
-                                            break
-                                break
-                if "access_type" not in metadata:
-                    # T03 (Kotlin): property_declaration's binding_pattern_kind
-                    # holds the val/var keyword — var is mutable (write).
-                    if self._language_name == "kotlin" and decl_node.parent is not None:
-                        for child in decl_node.parent.children:
-                            if child.type == "binding_pattern_kind":
-                                if _node_text(child, source).strip() == "var":
+                # T17: access_type via the plugin hook when a host is active
+                # (byte-identical to the inline fallback below — parity in
+                # tests/sdk/test_hooks.py, incl. real tree-sitter trees).
+                try:
+                    from batho_plugin.runtime import get_active_plugin_host
+
+                    _host = get_active_plugin_host()
+                except Exception:
+                    _host = None
+                if _host is not None:
+                    from batho_plugin.hooks import infer_access_type
+
+                    _accessor_nodes = auxiliary_nodes.get((base_key, "accessor"), [])
+                    _acc_node = self._nearest_ancestor(_accessor_nodes, decl_node)
+                    _accessor_text = (
+                        _node_text(_acc_node, source).strip()
+                        if _acc_node is not None
+                        else None
+                    )
+                    metadata["access_type"] = infer_access_type(
+                        decl_node,
+                        source,
+                        self._language_name,
+                        accessor_text=_accessor_text,
+                    )
+                    # T17: transient hints consumed by the dispatched
+                    # ON_PROPERTY_CLASSIFY hook in _build_relationships (writes
+                    # the identical value + records the bsg.hooks mark).
+                    # Stripped there whether or not dispatch ran.
+                    metadata["_decl_node"] = decl_node
+                    if _accessor_text is not None:
+                        metadata["_accessor_text"] = _accessor_text
+                else:
+                    parent = decl_node.parent
+                    if parent is not None and parent.type == "decorated_definition":
+                        for child in parent.children:
+                            if child.type == "decorator":
+                                decorator_text = _node_text(child, source)
+                                if ".setter" in decorator_text:
                                     metadata["access_type"] = "write"
-                                break
-                if "access_type" not in metadata:
-                    metadata["access_type"] = "read"
+                                    break
+                    if "access_type" not in metadata:
+                        # T03 fix (c3f5a7b9): TS get/set accessors — the captured
+                        # "get"/"set" keyword is in auxiliary_nodes as "accessor".
+                        accessor_nodes = auxiliary_nodes.get((base_key, "accessor"), [])
+                        accessor_node = self._nearest_ancestor(accessor_nodes, decl_node)
+                        if accessor_node is not None:
+                            accessor_text = _node_text(accessor_node, source).strip()
+                            if accessor_text == "set":
+                                metadata["access_type"] = "write"
+                    if "access_type" not in metadata:
+                        # C# fix (c3f5a7b9): inspect accessor_list for a "set" accessor.
+                        if self._language_name == "csharp" and decl_node.parent is not None:
+                            for child in decl_node.parent.children:
+                                if child.type == "accessor_list":
+                                    for acc in child.children:
+                                        if acc.type == "accessor_declaration":
+                                            acc_text = _node_text(acc, source)
+                                            if acc_text.startswith("set"):
+                                                metadata["access_type"] = "write"
+                                                break
+                                    break
+                    if "access_type" not in metadata:
+                        # T03 (Kotlin): property_declaration's binding_pattern_kind
+                        # holds the val/var keyword — var is mutable (write).
+                        if self._language_name == "kotlin" and decl_node.parent is not None:
+                            for child in decl_node.parent.children:
+                                if child.type == "binding_pattern_kind":
+                                    if _node_text(child, source).strip() == "var":
+                                        metadata["access_type"] = "write"
+                                    break
+                    if "access_type" not in metadata:
+                        metadata["access_type"] = "read"
 
             metadata["is_exported"] = True
             if index_id:
@@ -1388,6 +1581,55 @@ class ASTExtractor(abc.ABC):
         if marker_entities:
             entities.extend(marker_entities)
             entities.sort(key=lambda e: e.start_byte)
+
+        # T11/T16/T17: per-file AST-alive stage dispatch — ON_COMMENT_CLASSIFY
+        # then ON_PROPERTY_CLASSIFY in canonical order. This runs here (not in
+        # the worker loop) because the tree is only alive on this stack: the
+        # hooks consume transient hints (_marker_text / _decl_node /
+        # _accessor_text) that carry live Node objects. The final inline
+        # values are already written at the production sites, so a skipped or
+        # failed dispatch degrades to correct metadata minus provenance marks;
+        # the finally strip guarantees the hints never reach serialization.
+        try:
+            from batho_plugin import PluginContext, Stage
+            from batho_plugin.runtime import get_active_plugin_host
+
+            _stage_host = get_active_plugin_host()
+            _stage_needed = _stage_host is not None and (
+                _stage_host.has_stage_hooks(Stage.ON_COMMENT_CLASSIFY)
+                or _stage_host.has_stage_hooks(Stage.ON_PROPERTY_CLASSIFY)
+            )
+        except Exception:
+            _stage_host = None
+            _stage_needed = False
+        if _stage_host is not None:
+            try:
+                if _stage_needed:
+                    from batho.core.config.loader import get_active_root
+
+                    _file_ctx = PluginContext(
+                        file_path=filepath,
+                        root_path=get_active_root(),
+                        language=self._language_name,
+                        source_bytes=source,
+                        tree_root=root_node,
+                        entities=entities,
+                    )
+                    _stage_host.dispatch(Stage.ON_COMMENT_CLASSIFY, _file_ctx)
+                    _stage_host.dispatch(Stage.ON_PROPERTY_CLASSIFY, _file_ctx)
+                    self._last_hook_marks = _file_ctx.hook_marks
+            except Exception as exc:
+                self.logger.warning(
+                    "plugin_file_classify_failed", filepath=filepath, error=str(exc)
+                )
+            finally:
+                # Runs for ANY active host — the production sites attach hints
+                # whenever a host exists, independent of which hooks it holds.
+                for _ent in entities:
+                    _meta = getattr(_ent, "metadata", None)
+                    if isinstance(_meta, dict):
+                        for _hint in ("_marker_text", "_decl_node", "_accessor_text"):
+                            _meta.pop(_hint, None)
 
         # Extract file imports for local resolution support
         file_imports = []
@@ -1829,7 +2071,7 @@ class ASTExtractor(abc.ABC):
                             confidence=edge_confidence,
                         )
                     elif target_id is None:
-                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath, prune_enabled, imported_names):
+                        if not _prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath, prune_enabled, imported_names):
                             unres = _make_contextual_stub(ref_to_use, line_no, rel_type, caller_scope=source_id)
                             if unres.id not in unresolved_emitted:
                                 unresolved_emitted.add(unres.id)
@@ -1892,7 +2134,7 @@ class ASTExtractor(abc.ABC):
                                 confidence=1.0,
                             )
                         elif target_id is None:
-                            if not _should_prune_unresolved(target_ref, rel_type, file_imports, self._language_name, filepath, prune_enabled, imported_names):
+                            if not _prune_unresolved(target_ref, rel_type, file_imports, self._language_name, filepath, prune_enabled, imported_names):
                                 unres = _make_contextual_stub(target_ref, line_no, rel_type, caller_scope=source_id)
                                 if unres.id not in unresolved_emitted:
                                     unresolved_emitted.add(unres.id)
@@ -1958,7 +2200,7 @@ class ASTExtractor(abc.ABC):
                             confidence=1.0,
                         )
                     else:
-                        if not _should_prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath, prune_enabled, imported_names):
+                        if not _prune_unresolved(ref_to_use, rel_type, file_imports, self._language_name, filepath, prune_enabled, imported_names):
                             unres = _make_contextual_stub(ref_to_use, line_no, rel_type, caller_scope=source_ent.id)
                             if unres.id not in unresolved_emitted:
                                 unresolved_emitted.add(unres.id)
@@ -2170,13 +2412,34 @@ class ASTExtractor(abc.ABC):
                     start_line = lineno
                     end_byte = offset + len(raw_line)
                     end_line = lineno
-                metadata: dict[str, Any] = {
-                    "rationale_kind": kind,
-                    "marker_comment": True,
-                    "language": self._language_name,
-                }
-                if root_node is None:
-                    metadata["line_scan_fallback"] = True
+                # T16: classification via the plugin hook when a host is
+                # active (byte-identical to the inline fallback below —
+                # parity in tests/sdk/test_hooks.py).
+                try:
+                    from batho_plugin.runtime import get_active_plugin_host
+
+                    _host = get_active_plugin_host()
+                except Exception:
+                    _host = None
+                if _host is not None:
+                    from batho_plugin.hooks import classify_marker
+
+                    metadata = classify_marker(
+                        marker_text, self._language_name, root_node is not None
+                    )
+                    # T16: transient hint consumed by the dispatched
+                    # ON_COMMENT_CLASSIFY hook in _build_relationships (produces
+                    # the identical metadata + records the bsg.hooks mark).
+                    # Stripped there whether or not dispatch ran.
+                    metadata["_marker_text"] = marker_text
+                else:
+                    metadata: dict[str, Any] = {
+                        "rationale_kind": kind,
+                        "marker_comment": True,
+                        "language": self._language_name,
+                    }
+                    if root_node is None:
+                        metadata["line_scan_fallback"] = True
                 # Content/hash must cover the comment itself, not the whole
                 # code line — a trailing `x = f()  # WHY:` hit must not bake
                 # the code prefix into the entity's identity.

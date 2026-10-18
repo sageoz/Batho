@@ -43,7 +43,7 @@ stateDiagram-v2
 **Figure 8: Incremental Patch Lifecycle** - State diagram showing the atomic update process using content-hash comparisons.
 
 ### Native Change Detection
-Unlike legacy versions of Batho, which delegated change detection to Git status, Batho v1.4.2 reads the `file_tracking` table in the Arrow database. It compares the current filesystem modification time (`mtime`) and SHA-256 hash of each file:
+Unlike legacy versions of Batho, which delegated change detection to Git status, Batho v2.0.0 reads the `file_tracking` table in the Arrow database. It compares the current filesystem modification time (`mtime`) and SHA-256 hash of each file:
 1. **Unchanged files**: Skipped immediately (saving tree-sitter parsing cycles).
 2. **Added/Modified files**: Parsed and merged into the hypergraph.
 3. **Deleted files**: Removed from the active nodes and relations index.
@@ -52,7 +52,7 @@ This native tracking eliminates false positives caused by untracked or uncommitt
 
 ## 7.3 CLI Commands
 
-Under the v1.4.2 command taxonomy, the Time Machine is controlled by the following commands:
+Under the v2.0.0 command taxonomy, the Time Machine is controlled by the following commands:
 
 ### `batho build`
 Performs the initial baseline build. If the database already exists, it prompts the developer to run `batho patch`. Use the `--full` option to wipe the database and perform a clean baseline build.
@@ -60,8 +60,8 @@ Performs the initial baseline build. If the database already exists, it prompts 
 ### `batho patch`
 Triggers the native content-hash scan. It compares files on disk with the `file_tracking` table, parses only the modifications, and commits the incremental changes as a new run in the database.
 
-### `batho diff`
-Queries node-level changes. Developers can inspect what specific classes, functions, or variables changed in a given run, across file revisions, or throughout an entity's history.
+### `batho history`
+Lists recent runs (default last 10, `--last N` to adjust) and queries node-level changes. Developers can inspect what specific classes, functions, or variables changed in a given run, across file revisions, or throughout an entity's history.
 
 ### `batho gc`
 Cleans up the database. Includes subcommands to delete specific runs (`gc run`), delete runs older than N days (`gc runs --older-than`), sweep orphaned files (`gc vacuum`), or view storage metrics (`gc status`).

@@ -2,9 +2,14 @@
 requires = ["hatchling==1.32.3"]
 build-backend = "hatchling.build"
 
+# uv workspace: the root is the `batho` engine project; `sdk/` builds the
+# `batho-plugin-sdk` distribution (PLUGIN_ARCHITECTURE_SPEC §16.1).
+[tool.uv.workspace]
+members = ["sdk"]
+
 [project]
 name = "batho"
-version = "1.4.3"
+version = "2.0.0"
 description = "Enterprise-grade multi-language source code indexer and semantic code intelligence engine powered by tree-sitter AST parsing, BSG compression, and relational code graph snapshots."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -63,7 +68,13 @@ dependencies = [
     "networkx==3.6.1",
     "watchdog==6.0.0",
     "tqdm==4.70.1",
+    # Plugin seam (PLUGIN_ARCHITECTURE_SPEC §3.1): the engine depends only on
+    # the SDK surface, never on pack internals.
+    "batho-plugin-sdk==0.1.0",
 ]
+
+[tool.uv.sources]
+batho-plugin-sdk = { workspace = true }
 
 [project.optional-dependencies]
 test = [
@@ -97,9 +108,10 @@ exclude = [
     ".windsurf/",
     "batho.yaml",
     "batho.yaml.example",
-    "SKILL.md",
     ".python-version",
     "uv.lock",
+    "sdk/",
+    ".specs/",
 ]
 
 [tool.pytest.ini_options]

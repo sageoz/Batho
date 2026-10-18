@@ -16,7 +16,8 @@
     "batho-setup",
     "batho-specs",
     "batho-execute",
-    "batho-review"
+    "batho-review",
+    "batho-calibrate"
   ],
   "canonical": {
     "project": ".agents/skills",

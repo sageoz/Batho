@@ -10,7 +10,14 @@ from batho.install import install_pack, pack_status, remove_pack
 from batho.install.detect import InstallTarget
 from batho.install.install import remove_one, write_pack
 
-PACK = ["batho", "batho-setup", "batho-specs", "batho-execute", "batho-review"]
+PACK = [
+    "batho",
+    "batho-setup",
+    "batho-specs",
+    "batho-execute",
+    "batho-review",
+    "batho-calibrate",
+]
 
 
 def _skills_src(tmp_path: Path) -> Path:

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from batho.modules.compression.rules import (
+from batho_plugin.rule_engine import (
     load_effective_rules,
     rules_fingerprint_for_config,
 )
@@ -143,7 +143,7 @@ class TestEffectiveRulesConfigMerge:
     effective config as the serial path."""
 
     def test_overrides_fold_into_plugins_overrides(self):
-        from batho.modules.compression.rules import effective_rules_config
+        from batho_plugin.rule_engine import effective_rules_config
 
         cfg = {
             "rules": {"enabled": True, "builtin_plugins": ["python"]},
@@ -158,7 +158,7 @@ class TestEffectiveRulesConfigMerge:
         assert merged["builtin_plugins"] == ["python"]
 
     def test_overrides_change_fingerprint(self, tmp_path: Path):
-        from batho.modules.compression.rules import effective_rules_config
+        from batho_plugin.rule_engine import effective_rules_config
 
         base = {
             "rules": {
@@ -182,7 +182,7 @@ class TestEffectiveRulesConfigMerge:
         assert fp1 != fp2, "plugins.overrides must reach the fingerprint"
 
     def test_no_overrides_leaves_config_unchanged(self):
-        from batho.modules.compression.rules import effective_rules_config
+        from batho_plugin.rule_engine import effective_rules_config
 
         cfg = {"rules": {"enabled": True}}
         merged = effective_rules_config(cfg)

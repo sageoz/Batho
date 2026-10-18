@@ -77,22 +77,22 @@ LANGUAGE_SEPARATORS: dict[str, tuple[str, ...]] = {
     "verilog": (".",),
 }
 
-_EXT_TO_LANG_CACHE: dict[str, str] | None = None
+_EXT_TO_LANG_LOOKUP = None  # callable: extension (with dot) -> language | None
 
 
 def language_for_path(file_path: str) -> str:
     """Map a repo-relative file path to its parser language ("" if unknown)."""
-    global _EXT_TO_LANG_CACHE
-    if _EXT_TO_LANG_CACHE is None:
+    global _EXT_TO_LANG_LOOKUP
+    if _EXT_TO_LANG_LOOKUP is None:
         # Lazy import: keeps this module dependency-free for unit tests and
         # avoids the parser_factory import chain during tools.py import.
         from batho.modules.extraction.submodules.parser_factory.registry import (
-            _EXT_TO_LANG,
+            get_language_for_extension,
         )
 
-        _EXT_TO_LANG_CACHE = _EXT_TO_LANG
+        _EXT_TO_LANG_LOOKUP = get_language_for_extension
     suffix = PurePosixPath(file_path).suffix
-    return _EXT_TO_LANG_CACHE.get(suffix) or _EXT_TO_LANG_CACHE.get(suffix.lower(), "")
+    return _EXT_TO_LANG_LOOKUP(suffix) or ""
 
 
 def _match_score(name: str, query: str) -> int:

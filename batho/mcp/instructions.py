@@ -30,7 +30,7 @@ Pack missing → ask the user to run `batho install`.
 - "Find functions named X" → search_entities
 - "What does file F depend on?" → file_connectivity
 - Filtered graph query → graph_query
-- "What changed since last build/patch?" → get_delta / batho_diff
+- "What changed since last build/patch?" → get_delta / batho_history
 - Artifact/run status → batho_status, batho_list_runs
 
 ## Repo management

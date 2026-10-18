@@ -170,7 +170,7 @@ flowchart TB
 
     subgraph Governance["Governance & Downstream"]
         EXPORT["batho export"]
-        DIFF["batho diff"]
+        HISTORY["batho history"]
     end
 
     subgraph Maintenance["Maintenance"]

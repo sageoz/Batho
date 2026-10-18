@@ -35,7 +35,7 @@ ALL_TOOLS = [
     "graph_overview", "graph_query", "get_entity",
     "trace_path", "get_file_graph", "search_entities", "get_delta",
     "batho_status", "batho_list_runs", "batho_build", "batho_patch",
-    "batho_export", "batho_diff", "batho_gc", "batho_fix", "batho_load",
+    "batho_export", "batho_history", "batho_gc", "batho_fix", "batho_load",
 ]
 
 

@@ -16,10 +16,63 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from batho.modules.extraction.extractor import MarkupConfigExtractor
 from batho.core.schemas import Entity, EntityMetadata, EntityType, Relationship, RelationshipType
+
+# JSONC tolerance: strip `//` and `/* */` comments and trailing commas with a
+# string-aware scanner (a naive regex would eat "//" inside string literals).
+# Compiled once at module load; the scanner itself is pure-Python because the
+# state machine must skip escaped quotes and block comments.
+_JSONC_STRING_ESCAPES = re.compile(r'\\.')
+
+
+def _strip_jsonc(content: str) -> str:
+    """Best-effort conversion of JSONC (JSON with comments) to strict JSON.
+
+    Removes ``//`` and ``/* */`` comments and trailing commas. String literals
+    are respected: comment markers inside them are preserved. Anything the
+    scanner cannot confidently strip stays untouched — the caller falls back
+    to strict parsing behavior on failure.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(content)
+    in_string = False
+    while i < n:
+        ch = content[i]
+        if in_string:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(content[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n and content[i + 1] == "/":
+            i += 2
+            while i < n and content[i] != "\n":
+                i += 1
+            continue
+        if ch == "/" and i + 1 < n and content[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (content[i] == "*" and content[i + 1] == "/"):
+                i += 1
+            i = min(i + 2, n)
+            continue
+        out.append(ch)
+        i += 1
+    stripped = "".join(out)
+    return re.sub(r",(\s*[}\]])", r"\1", stripped)
 
 
 class JSONExtractor(MarkupConfigExtractor):
@@ -40,7 +93,17 @@ class JSONExtractor(MarkupConfigExtractor):
             # Try to decode as JSON
             content = source.decode("utf-8")
             lines = content.split("\n")
-            data = json.loads(content)
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError:
+                # JSONC tolerance: config files with `//` comments and
+                # trailing commas (tsconfig/jsconfig/jsonc) fail strict
+                # parsing; retry with comments stripped.
+                data = json.loads(_strip_jsonc(content))
+                self.logger.info(
+                    "jsonc_comments_stripped",
+                    filepath=filepath,
+                )
 
             # Process the JSON structure
             self._process_value(
@@ -75,7 +138,9 @@ class JSONExtractor(MarkupConfigExtractor):
                 )
                 entities.insert(0, doc_entity)
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            self.logger.debug(
+            # A config file yielding zero entities is a real coverage gap —
+            # warn so it surfaces instead of silently dropping the file.
+            self.logger.warning(
                 "json_parse_error",
                 filepath=filepath,
                 error=str(e),

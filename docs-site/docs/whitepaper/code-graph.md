@@ -47,7 +47,7 @@ The `InMemoryGraph` ensures deterministic processing through lazy indexing and a
 
 ### Arrow Graph Backend
 
-Batho v1.4.2 introduces `ArrowGraph`, a columnar, memory-mapped graph backend that serves as a drop-in alternative to `InMemoryGraph` for large codebases. It uses a three-phase lifecycle:
+Batho v2.0.0 introduces `ArrowGraph`, a columnar, memory-mapped graph backend that serves as a drop-in alternative to `InMemoryGraph` for large codebases. It uses a three-phase lifecycle:
 
 1. **Stream**: Extracted rows are flushed to Arrow IPC stream files, keeping only entity/relationship ID sets in memory for dedup.
 2. **Dicts**: Stream files are read back into dictionaries with secondary indexes, mirroring `InMemoryGraph` semantics.
@@ -118,9 +118,9 @@ unresolved:[<pkg> ]<caller_scope>::<dotted_target_fqn>
 
 The ref key is **dot-normalized** at extraction time (`::` → `.`), so `::` occurs exactly once — at the scope/ref boundary. This keeps the separator unambiguous for languages whose reference text contains `::` (Rust paths like `std::io::Write`, Ruby constant paths like `Foo::Bar`); display names and metadata keep the caller-written spelling. Legacy artifacts may embed `::` inside the ref key (e.g. `unresolved:scope::std::io::Write`) — those keep their previous last-segment behavior until a rebuild.
 
-## 4.4 Stub Resolution Phases (v1.4.2)
+## 4.4 Stub Resolution Phases (v2.0.0)
 
-Contextual stubs — call sites whose target is not yet resolved — are settled in a multi-phase pipeline. Phases 1–3 (exact match, stdlib method, import-map) run during the initial cross-file resolution pass. Phases 4 and 5 were introduced in v1.4.2 to improve graph quality and reduce unnecessary work.
+Contextual stubs — call sites whose target is not yet resolved — are settled in a multi-phase pipeline. Phases 1–3 (exact match, stdlib method, import-map) run during the initial cross-file resolution pass. Phases 4 and 5 were introduced in v2.0.0 to improve graph quality and reduce unnecessary work.
 
 ### Phase 4: Confidence Scoring & Conservative Pruning
 
@@ -139,7 +139,7 @@ Every resolved stub is tagged with a `resolution_confidence` score and a `resolu
 
 Additionally, directly extracted relationships (captured by tree-sitter with no resolution needed) have `confidence=1.0`.
 
-**Ambiguous resolution** (v1.4.2): When the resolution pipeline finds multiple equally-plausible target candidates (e.g., two imports with the same name from different modules), the edge is emitted with `confidence=0.5`, `metadata.ambiguous=True`, and `metadata.ambiguous_candidates=[list of candidate entity IDs]`. The primary target is kept as the resolved target (deterministic tie-break by strategy priority order), but the edge is honestly marked as uncertain. Ambiguous edges are **never pruned** — they are preserved for manual review and can be queried via the `confidence_threshold` MCP filter or counted in `graph_overview`'s `ambiguous_edge_count` stat.
+**Ambiguous resolution** (v2.0.0): When the resolution pipeline finds multiple equally-plausible target candidates (e.g., two imports with the same name from different modules), the edge is emitted with `confidence=0.5`, `metadata.ambiguous=True`, and `metadata.ambiguous_candidates=[list of candidate entity IDs]`. The primary target is kept as the resolved target (deterministic tie-break by strategy priority order), but the edge is honestly marked as uncertain. Ambiguous edges are **never pruned** — they are preserved for manual review and can be queried via the `confidence_threshold` MCP filter or counted in `graph_overview`'s `ambiguous_edge_count` stat.
 
 Unresolved stubs whose target is a common stdlib method name on an unknown receiver type (e.g. `unwrap`, `map`, `then`, `append`) are conservatively **pruned** — marked `stub_resolution_state: "pruned"` with `prune_reason: "common_method_unknown_receiver"` — instead of being left as pending gaps. This prevents the graph from being cluttered with false "gaps" for ubiquitous methods that appear on many types.
 
@@ -189,7 +189,7 @@ def create_user(name: str) -> User:
 
 ## 4.6 Bidirectional Traversal & Lossless Reconstruction
 
-Batho v1.4.2 supports lossless, bidirectional graph-to-code reconstruction, allowing a developer or LLM agent to rebuild the exact source file from the graph.
+Batho v2.0.0 supports lossless, bidirectional graph-to-code reconstruction, allowing a developer or LLM agent to rebuild the exact source file from the graph.
 
 ### The Role of `SYNTAX_GLUE`
 When `bsg.bidirectional.enabled` is `true`, the parser identifies not only AST elements (e.g. classes, functions) but also all intervening segments, such as whitespace, braces, skipped comments, and other non-semantic structures. These are emitted as `SYNTAX_GLUE` entities.

@@ -84,7 +84,12 @@ def _load_graph_from_artifact(
                 e["trailing_whitespace"] = ""
             try:
                 ent = Entity.from_dict(e)
-            except Exception:
+            except Exception as exc:
+                LOGGER.debug(
+                    "plugins_apply_entity_restore_skipped",
+                    file=abs_fp,
+                    error=str(exc),
+                )
                 continue
             entities_by_id[ent.id] = ent
             eid_to_relfile[ent.id] = file_path
@@ -95,7 +100,12 @@ def _load_graph_from_artifact(
             file_rels.append(r)
             try:
                 all_rels.append(Relationship.from_dict(r))
-            except Exception:
+            except Exception as exc:
+                LOGGER.debug(
+                    "plugins_apply_relationship_restore_skipped",
+                    file=abs_fp,
+                    error=str(exc),
+                )
                 continue
 
         file_views[file_path] = {"entities": ents, "rels": file_rels}
@@ -114,7 +124,15 @@ _PERSISTED_MATCHER_META_KEYS = frozenset(
 # Rule-owned metadata is re-derived wholesale on every apply; stripping it
 # first keeps `plugins apply` subtractive — removing/renaming a rule removes
 # its stamps. `bsg.index_id` is the extraction run nonce, not rule-owned.
-_RULE_OWNED_META_KEEP = frozenset({"bsg.index_id"})
+# T21: `bsg.language` is hook-stamped at the AST stage (E2, spec §6.2) —
+# `plugins apply` cannot re-derive it without an AST, so it is preserved
+# alongside the nonce. `bsg.hooks` is hook-owned provenance for the same
+# reason: apply never re-runs hooks, so stripping it would lose the record
+# while the hook-derived bare keys it describes (access_type, rationale_kind,
+# marker_comment, line_scan_fallback) survive untouched by this strip.
+_RULE_OWNED_META_KEEP = frozenset(
+    {"bsg.index_id", "bsg.language", "bsg.hooks"}
+)
 
 
 def _strip_rule_owned_state(graph: Any) -> None:
@@ -186,7 +204,7 @@ def _unpersisted_metadata_keys(rules: list[Any]) -> dict[str, list[str]]:
 
 def _rules_config_for_apply(cfg: dict[str, Any], options: PluginsApplyOptions) -> dict[str, Any]:
     """Effective rules config for apply — possibly narrowed to custom sources."""
-    from batho.modules.compression.rules import effective_rules_config
+    from batho_plugin.rule_engine import effective_rules_config
     rules_cfg = dict(effective_rules_config(cfg))
     if options.plugins_only or options.plugin is not None:
         rules_cfg["auto_load_all_plugins"] = False
@@ -211,7 +229,7 @@ def run_plugins_apply(options: PluginsApplyOptions) -> PluginsApplyResult:
     set_active_root(root)
 
     from batho.core.config.loader import get_config_cached
-    from batho.modules.compression.rules import (
+    from batho_plugin.rule_engine import (
         apply_rule_plugins,
         build_rule_telemetry,
         load_effective_rules,

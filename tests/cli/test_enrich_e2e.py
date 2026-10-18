@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from batho.core.schemas import entity_is_quarantined
-from batho.modules.compression.rules import validate_plugin_file
+from batho_plugin.rule_engine import validate_plugin_file
 from batho.modules.enrich import (
     build_gap_report,
     build_score_report,
@@ -169,7 +169,7 @@ async def test_enrich_e2e_build_profile_validate_apply_score(repo, tmp_path):
 
 @pytest.mark.asyncio
 async def test_bad_plugin_fails_validation(repo, tmp_path):
-    from batho.modules.compression.rules import validate_plugin_file
+    from batho_plugin.rule_engine import validate_plugin_file
 
     await _build(repo, tmp_path)
     out = validate_plugin_file(_FIXTURE_PLUGINS / "bad_plugin.yaml", strict=True)

@@ -28,7 +28,7 @@ const AGENTS: AgentConfig[] = [
     benefits: [
       '1M context window + Batho graph = near-zero hallucination on structural queries',
       'Hook system can trigger batho patch automatically after edits',
-      '10 MCP tools available as mcp__batho__* in every session',
+      '16 MCP tools enabled out of the box (20 total) as mcp__batho__*',
     ],
     setupLink: '/docs/mcp/setup#claude-desktop',
   },

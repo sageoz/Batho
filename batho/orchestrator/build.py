@@ -64,6 +64,36 @@ def _decode_precompiled_batch(batch: list[dict]) -> list[dict]:
     return result
 
 
+def _plugin_report_payload(plugin_host: Any, telemetry: dict) -> dict:
+    """Assemble the §6.5 report payload: registered packs + hook telemetry.
+
+    Used by build and patch report writers — additive markdown sections,
+    never persisted as a schema.
+    """
+    packs: list[dict[str, str]] = []
+    for reg in plugin_host.data_registrations():
+        packs.append(
+            {"id": reg.plugin_id, "class": reg.plugin_class, "version": reg.version}
+        )
+    for reg in plugin_host.hook_registrations():
+        packs.append(
+            {
+                "id": reg.plugin.plugin_id,
+                "class": reg.plugin_class,
+                "version": reg.plugin.version,
+            }
+        )
+    for reg in plugin_host.rule_registrations():
+        packs.append(
+            {"id": reg.plugin_id, "class": reg.plugin_class, "version": reg.version}
+        )
+    return {
+        "fingerprint": telemetry.get("plugin_fingerprint"),
+        "packs": packs,
+        "hook_telemetry": telemetry.get("hook_telemetry"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public data types
 # ---------------------------------------------------------------------------
@@ -80,6 +110,7 @@ class BuildOptions:
     max_file_size_kb: int | None = None
     graph_backend: str | None = None  # "auto" | "in-memory" | "arrow"; None = config
     no_progress: bool | None = None  # None = resolve from env/config; True/False = explicit
+    no_plugins: bool = False  # T22: run with compiled-in fallbacks + loud warning
 
 
 @dataclass
@@ -204,6 +235,39 @@ def run_build(options: BuildOptions) -> BuildResult:
                 memory_cfg = cfg.get("memory", {})
                 community_cfg = cfg.get("community_detection", {})
                 rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 1000.0))
+
+                # --- Plugin host (T22, PLUGIN_ARCHITECTURE_SPEC §4.4) ---
+                # Initialized once per build; injected into workers via the
+                # indexer (T11 wires per-worker dispatch). Missing/invalid
+                # core pack fails the build with guidance unless --no-plugins.
+                plugins_cfg = cfg.get("plugins", {})
+                if isinstance(plugins_cfg, BaseModel):
+                    plugins_cfg = plugins_cfg.model_dump()
+                try:
+                    from batho_plugin import PluginLoadError, load_host
+                    from batho_plugin.fingerprint import fingerprint_from_host
+
+                    plugin_host = load_host(
+                        config={"plugins": plugins_cfg},
+                        no_plugins=options.no_plugins,
+                    )
+                except PluginLoadError as exc:
+                    guidance = (
+                        f"Plugin host failed to load: {exc}\n"
+                        "Fix the core pack (sdk/batho_plugin/core/) or run "
+                        "with --no-plugins to build with compiled-in fallbacks."
+                    )
+                    LOGGER.error("build_plugin_host_failed", error=str(exc))
+                    return BuildResult(
+                        success=False,
+                        warnings=["plugin_host_failed", guidance],
+                    )
+                if options.no_plugins:
+                    LOGGER.warning(
+                        "build_no_plugins_fallback",
+                        detail="running with compiled-in fallbacks; "
+                        "plugin-derived metadata will be absent",
+                    )
 
                 LOGGER.info(
                     "effective_memory_config",
@@ -444,6 +508,7 @@ def run_build(options: BuildOptions) -> BuildResult:
                         graph_backend=options.graph_backend,
                         progress_callback=ph_extract.update,
                         progress_discovered_callback=ph_extract.set_total,
+                        plugin_host=plugin_host,
                     )
                     entity_count = len(graph.entities)
                     rel_count = len(graph.relationships)
@@ -628,16 +693,45 @@ def run_build(options: BuildOptions) -> BuildResult:
                         for entity in graph.entities.values():
                             filepath = entity.file
                             rel = filepath[len(root_str)+1:] if filepath.startswith(root_str) else filepath
+                            # Externals riding the '.' / '__external_symbols__'
+                            # pseudo-files are persisted once, via the
+                            # __external_symbols__ block below — the generic
+                            # per-file path must not emit a second copy.
+                            # Contextual stubs under real referencing files
+                            # are unaffected (their rel is a real path).
+                            if (
+                                entity.type == EntityType.EXTERNAL_SYMBOL
+                                and rel in (".", "__external_symbols__")
+                            ):
+                                continue
                             if rel in store_files:
                                 entities_by_file[rel].append(entity.to_dict())
 
-                        # Collect EXTERNAL_SYMBOL entities (already written above
-                        # via the direct DB insert, but also add to entities_by_file
-                        # so the legacy write path and store_files include them).
-                        external_entities = [
-                            e for e in graph.entities.values()
-                            if e.type == EntityType.EXTERNAL_SYMBOL
-                        ]
+                        # Collect EXTERNAL_SYMBOL entities for the synthetic
+                        # __external_symbols__ file. Only "homeless" externals
+                        # belong here: an external attributed to a real file
+                        # was already persisted under that file's artifact
+                        # (precompiled blob or entities_by_file), so re-writing
+                        # it here duplicates the entity_id in agent_views.
+                        # Contextual stubs are excluded — they persist under
+                        # their referencing file only; a second state-less copy
+                        # under __external_symbols__ duplicates entity ids.
+                        external_entities = []
+                        for e in graph.entities.values():
+                            if (
+                                e.type != EntityType.EXTERNAL_SYMBOL
+                                or e.is_contextual_stub
+                            ):
+                                continue
+                            _efp = e.file or ""
+                            _erel = (
+                                _efp[len(root_str) + 1:]
+                                if _efp.startswith(root_str)
+                                else _efp
+                            )
+                            if _erel and _erel in all_file_paths:
+                                continue
+                            external_entities.append(e)
                         if external_entities:
                             external_file_rel = "__external_symbols__"
                             store_files.add(external_file_rel)
@@ -691,7 +785,19 @@ def run_build(options: BuildOptions) -> BuildResult:
 
                         legacy_write_batch = []
                         legacy_current_batch_bytes = 0
-                        for file_rel in legacy_files:
+                        # Deterministic order; __external_symbols__ last so the
+                        # writer's covered-externals set is complete before the
+                        # synthetic file's rows are deduplicated.
+                        for file_rel in sorted(
+                            legacy_files,
+                            key=lambda r: (r == "__external_symbols__", r),
+                        ):
+                            # '.' is the PathRelativizer bucket for file-less
+                            # EXTERNAL_SYMBOL entities — they persist under
+                            # __external_symbols__ (written from
+                            # entities_by_file), never under '.'.
+                            if file_rel == ".":
+                                continue
                             t_prep_0 = time.monotonic()
                             # Fallback: build from graph entities (legacy path)
                             file_entities = bsg_map._by_file.get(file_rel)
@@ -878,6 +984,22 @@ def run_build(options: BuildOptions) -> BuildResult:
                         "rel_count": rel_count,
                         "git_commit": git_commit,
                         "git_branch": git_branch,
+                        # T22: plugin-host provenance (spec §6.5) — additive
+                        # keys inside the telemetry blob (no schema change).
+                        # --no-plugins (empty host) records None, not the
+                        # empty-set fingerprint, so consumers can distinguish
+                        # "plugins disabled" from "plugins loaded but empty".
+                        "plugin_fingerprint": (
+                            fingerprint_from_host(plugin_host)
+                            if plugin_host is not None and plugin_host.plugin_ids
+                            else None
+                        ),
+                        "metadata_schema": "batho-meta.v2",
+                        "hook_telemetry": (
+                            plugin_host.telemetry.snapshot()
+                            if plugin_host is not None and plugin_host.plugin_ids
+                            else None
+                        ),
                     }
                     security_audit_val = None
                     if bsg_build_stats:
@@ -942,6 +1064,11 @@ def run_build(options: BuildOptions) -> BuildResult:
                         profile=_enrich.get("enrich_profile"),
                         score=_enrich.get("enrich_score"),
                         context_overview=metrics.get("context_overview"),
+                        plugin_report=(
+                            _plugin_report_payload(plugin_host, telemetry)
+                            if plugin_host is not None
+                            else None
+                        ),
                     )
                     LOGGER.info(
                         "build_complete",

@@ -94,10 +94,23 @@ class TestDiffFileNodesModified:
         assert len(result) == 1
         assert result[0].change_kind == "modified"
 
-    def test_no_tracked_field_change_no_diff(self):
-        """Verify that differing content hashes without tracked field changes produce no diff."""
+    def test_body_only_edit_recorded_as_modified(self):
+        """A content-hash change with no tracked-field drift is a body-only
+        edit — recorded as modified[content_hash] so the changelog reflects
+        real edits instead of staying silent."""
         old = _make_entity("e1", "func", content_hash="aaa")
         new = _make_entity("e1", "func", content_hash="bbb")
+        result = diff_file_nodes([old], [new], FILE_PATH)
+        assert len(result) == 1
+        d = result[0]
+        assert d.change_kind == "modified"
+        assert d.changed_fields == {"content_hash": ["aaa"[:8], "bbb"[:8]]}
+
+    def test_missing_hash_no_diff(self):
+        """When one side lacks a content hash and tracked fields match, no
+        diff is emitted (can't distinguish edit from absent data)."""
+        old = _make_entity("e1", "func", content_hash="aaa")
+        new = _make_entity("e1", "func", content_hash="")
         result = diff_file_nodes([old], [new], FILE_PATH)
         assert result == []
 

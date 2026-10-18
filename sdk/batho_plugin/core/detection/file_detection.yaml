@@ -1,0 +1,113 @@
+# T12: language-detection data pack — mirrors the engine's
+# _EXT_TO_LANG (registry.py) and _SPECIAL_FILENAME_MAP (detector.py) so the
+# ON_FILE_DETECTED hook produces identical decisions with method="plugin".
+# Sub-1.0-confidence specials (PKGBUILD 0.8, build/install/configure 0.7) are
+# intentionally omitted: the hook always decides at confidence 1.0, and
+# mirroring them would raise confidence beyond the engine's — those fall
+# through to the engine's special_filename strategy instead.
+plugin_id: batho_plugin.core.file_detection
+version: "1.0.0"
+class: core
+requires: [batho_plugin.core]
+data:
+  maps:
+    ext_to_language:
+      ".py": python
+      ".pyi": python
+      ".ts": typescript
+      ".tsx": typescript
+      ".js": javascript
+      ".jsx": javascript
+      ".mjs": javascript
+      ".cjs": javascript
+      ".rs": rust
+      ".go": go
+      ".java": java
+      ".rb": ruby
+      ".c": c
+      ".h": c
+      ".cpp": cpp
+      ".cc": cpp
+      ".cxx": cpp
+      ".hpp": cpp
+      ".hxx": cpp
+      ".php": php
+      ".cs": csharp
+      ".kt": kotlin
+      ".kts": kotlin
+      ".swift": swift
+      ".scala": scala
+      ".sc": scala
+      ".dart": dart
+      ".hs": haskell
+      ".lhs": haskell
+      ".jl": julia
+      ".erl": erlang
+      ".hrl": erlang
+      ".ml": ocaml
+      ".mli": ocaml
+      ".fml": ocaml
+      ".fsi": ocaml
+      ".lua": lua
+      ".r": r
+      ".R": r
+      ".rdata": r
+      ".rds": r
+      ".pl": perl
+      ".pm": perl
+      ".v": verilog
+      ".sv": verilog
+      ".vh": verilog
+      ".zig": zig
+      ".sh": bash
+      ".bash": bash
+      ".zsh": bash
+      ".fish": bash
+      ".ksh": bash
+      ".dash": bash
+      ".m": objectivec
+      ".mm": objectivec
+      ".agda": agda
+      ".hack": hack
+      ".json": json
+      ".yaml": yaml
+      ".yml": yaml
+      ".toml": toml
+      ".html": html
+      ".htm": html
+      ".css": css
+      ".scss": css
+      ".sass": css
+      ".less": css
+      ".md": markdown
+      ".markdown": markdown
+      ".mdown": markdown
+      ".mkd": markdown
+      ".mkdn": markdown
+      ".hcl": hcl
+      ".tf": hcl
+      ".tfvars": hcl
+    special_filenames:
+      ".python-version": python
+      Dockerfile: docker
+      Dockerfile.dev: docker
+      Dockerfile.prod: docker
+      Dockerfile.test: docker
+      docker-compose.yml: docker
+      docker-compose.yaml: docker
+      docker-compose.dev.yml: docker
+      docker-compose.prod.yml: docker
+      Makefile: make
+      GNUmakefile: make
+      makefile: make
+      ".env": dotenv
+      ".env.local": dotenv
+      ".env.dev": dotenv
+      ".env.development": dotenv
+      ".env.test": dotenv
+      ".env.production": dotenv
+      ".env.prod": dotenv
+      ".env.example": dotenv
+      ".env.template": dotenv
+      ".gitignore": gitignore
+      ".dockerignore": gitignore

@@ -1,0 +1,50 @@
+{
+  "access_type": {},
+  "bsg.category": {
+    "CONFIG": 3,
+    "DOC": 2,
+    "INFRA": 2,
+    "SOURCE": 3,
+    "TEST": 1
+  },
+  "bsg.language": {
+    "Node.js": 2,
+    "Python": 2
+  },
+  "bsg.usn": {
+    "Configuration": 3,
+    "Documentation": 2,
+    "InfrastructureConfig": 2,
+    "TestArtifact": 1
+  },
+  "entity_count": 6041,
+  "language": {},
+  "metadata_keys": {
+    "bsg.category": 11,
+    "bsg.index_id": 10,
+    "bsg.language": 4,
+    "bsg.rules": 11,
+    "bsg.scope_tier": 11,
+    "bsg.usn": 8,
+    "caller_scope": 1,
+    "created_at": 1,
+    "is_visible": 1,
+    "receiver_var": 1,
+    "reference_type": 1,
+    "resolution_confidence": 1,
+    "resolution_reason": 1,
+    "resolution_strategy": 1,
+    "resolved_target_id": 1,
+    "stub_resolution_state": 1,
+    "target_name": 1
+  },
+  "per_file_entities": {
+    "__external_symbols__": 6027,
+    "config/settings.yaml": 3,
+    "docs/README.md": 2,
+    "main.tf": 2,
+    "src/app.py": 2,
+    "src/index.ts": 3,
+    "tests/test_app.py": 2
+  }
+}

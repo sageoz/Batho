@@ -99,6 +99,10 @@ FILE_CHANGELOG_SCHEMA: pa.Schema = pa.schema([
     pa.field("run_uuid", pa.utf8(), nullable=False),
     pa.field("base_run_uuid", pa.utf8(), nullable=True),
     pa.field("file_id", pa.int64(), nullable=False),
+    # Denormalized path — changelog rows are an append-only audit trail and
+    # must survive the file's removal from file_tracking. Nullable: rows
+    # written before this column existed read back as null.
+    pa.field("file_path", pa.large_utf8(), nullable=True),
     pa.field("entity_id", pa.utf8(), nullable=False),
     pa.field("entity_name", pa.utf8(), nullable=False),
     pa.field("entity_type", pa.utf8(), nullable=False),

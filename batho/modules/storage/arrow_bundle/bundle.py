@@ -1,7 +1,7 @@
 """BathoBundle — Arrow Bundle façade replacing BathoDatabase.
 
 Public API mirrors BathoDatabase exactly so callers in build.py, patch.py,
-export.py, gc.py, diff.py, fix.py, and unified_cache.py need only update
+export.py, gc.py, history.py, fix.py, and unified_cache.py need only update
 their import paths and the constructor call.
 
 Storage layout:
@@ -39,6 +39,11 @@ from .helpers import (
 )
 
 LOGGER = get_logger(__name__, component="arrow_bundle")
+
+# Post-GC tmp sweep: minimum age before a stray *.tmp.ipc is considered
+# abandoned — closes the window where another process has opened writer
+# streams but not yet committed its "running" run row.
+_TMP_SWEEP_MIN_AGE_S: float = 300.0
 
 _BUNDLE_CACHE: weakref.WeakValueDictionary[str, "BathoBundle"] = weakref.WeakValueDictionary()
 _BUNDLE_CACHE_LOCK = threading.RLock()
@@ -120,6 +125,10 @@ class BathoBundle:
         self._load_file_id_cache_into_fields()
 
         self._writers: dict[int, BathoBundleWriter] = {}
+        # Non-stub EXTERNAL_SYMBOL ids already persisted under a real file in
+        # each run — lets the __external_symbols__ write skip them instead of
+        # duplicating the entity_id in agent_views.
+        self._externals_written: dict[int, set[str]] = {}
         self._current_run_internal_id: int = 0
 
     @property
@@ -354,6 +363,8 @@ class BathoBundle:
             if run_internal_id is not None and run_internal_id in self._writers:
                 writer = self._writers.pop(run_internal_id)
                 streams = writer.finalize()
+            if run_internal_id is not None:
+                self._externals_written.pop(run_internal_id, None)
 
             self._flush_file_tracking(run_uuid)
 
@@ -404,6 +415,7 @@ class BathoBundle:
 
             if run_internal_id is not None:
                 self._writers.pop(run_internal_id, None)
+                self._externals_written.pop(run_internal_id, None)
             self._flush_file_tracking(run_uuid)
             self._flush_runs(run_uuid)
 
@@ -613,7 +625,7 @@ class BathoBundle:
             if base_path is None or not base_path.exists():
                 continue
 
-            merged[logical_name] = self._merge_view_table(
+            out = self._merge_view_table(
                 logical_name,
                 base_path,
                 new_path,
@@ -622,6 +634,19 @@ class BathoBundle:
                 replaced_file_ids,
                 entity_id_remap if logical_name == "rels_views" else None,
             )
+            merged[logical_name] = out
+            # The run-scoped writer tmp is fully consumed by the merge — the
+            # merged output is what commit_patch stamps into .vN. Dropping the
+            # input here avoids leaking <name>.tmp.ipc debris per patch.
+            if out != new_path:
+                try:
+                    new_path.unlink(missing_ok=True)
+                except OSError as exc:
+                    LOGGER.debug(
+                        "patch_tmp_cleanup_failed",
+                        path=str(new_path),
+                        error=str(exc),
+                    )
 
         LOGGER.info(
             "patch_view_merge_complete",
@@ -672,6 +697,34 @@ class BathoBundle:
                 storage_view = item.get("storage_delta_data") or {}
                 rels = item.get("relationships_data") or []
                 file_id = self._get_or_create_file_id(file_path)
+
+                if file_path == "__external_symbols__":
+                    # The synthetic file is the catalog of externals that are
+                    # not already persisted under a referencing file — skip
+                    # covered ids or the entity_id appears twice in agent_views.
+                    covered = self._externals_written.get(run_internal_id)
+                    if covered:
+                        agent_view = {
+                            **agent_view,
+                            "entities": [
+                                e
+                                for e in agent_view.get("entities", [])
+                                if e.get("id") not in covered
+                            ],
+                        }
+                elif file_path not in ("", "."):
+                    covered = self._externals_written.setdefault(
+                        run_internal_id, set()
+                    )
+                    for _e in agent_view.get("entities", []):
+                        _eid = str(_e.get("id") or "")
+                        if (
+                            (_e.get("entity_type") or _e.get("type"))
+                            == "EXTERNAL_SYMBOL"
+                            and _eid
+                            and not _eid.startswith("unresolved:")
+                        ):
+                            covered.add(_eid)
 
                 writer.write_file_artifact(
                     file_id=file_id,
@@ -750,7 +803,26 @@ class BathoBundle:
         include_storage: bool = False,
         include_relationships: bool = True,
     ) -> list[dict[str, Any]]:
-        """Retrieve all file artifacts for a run as expanded dicts."""
+        """Retrieve all file artifacts for a run as expanded dicts.
+
+        file_tracking is generation-scoped, not run-scoped: this always reads
+        the active generation. Warn loudly when the caller asked for a
+        superseded run so `export --run` doesn't silently serve stale-vs-active
+        mismatches.
+        """
+        requested_uuid = self._resolve_run_uuid(run_internal_id)
+        latest_uuid = self._reader.get_latest_run_id()
+        if (
+            requested_uuid
+            and latest_uuid
+            and requested_uuid != latest_uuid
+        ):
+            LOGGER.warning(
+                "file_artifacts_non_active_run",
+                requested_run=requested_uuid,
+                serving_run=latest_uuid,
+                hint="file_tracking is generation-scoped; artifacts are the active generation",
+            )
         tracking_table = read_ipc_table(self._active_or_empty("file_tracking"))
         if tracking_table.num_rows == 0:
             return []
@@ -1013,6 +1085,7 @@ class BathoBundle:
                     "run_uuid": run_uuid or str(run_id),
                     "base_run_uuid": base_run_uuid or str(base_run_id) or None,
                     "file_id": file_id,
+                    "file_path": file_path,
                     "entity_id": _gv(d, "entity_id", ""),
                     "entity_name": _gv(d, "entity_name", ""),
                     "entity_type": _gv(d, "entity_type", ""),
@@ -1030,22 +1103,41 @@ class BathoBundle:
         since_completed_at: str | None = None,
         since_run_uuid: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._reader.get_file_node_history(
+        return self._changelog_with_paths(self._reader.get_file_node_history(
             entity_id,
             since_run_uuid=since_run_uuid,
             since_completed_at=since_completed_at,
-        )[:limit]
+        )[:limit])
 
+    def _changelog_with_paths(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Ensure ``file_path`` on changelog rows — stored on new rows,
+        joined from file_tracking for legacy rows (pre-file_path schema).
+        """
+        if not rows:
+            return rows
+        needs_join = [r for r in rows if not r.get("file_path")]
+        if not needs_join:
+            return rows
+        path_by_id: dict[int, str] = {
+            row.get("file_id"): path
+            for path, row in self._reader.get_all_file_tracking().items()
+            if row.get("file_id") is not None
+        }
+        for r in needs_join:
+            r["file_path"] = path_by_id.get(r.get("file_id"), "")
+        return rows
 
     def get_run_file_changelog(self, run_uuid: str) -> list[dict[str, Any]]:
-        return self._reader.get_file_changelog_raw(since_run_uuid=run_uuid)
+        return self._changelog_with_paths(
+            self._reader.get_file_changelog_raw(since_run_uuid=run_uuid)
+        )
 
     def get_file_changelog_raw(
         self,
         rel_path: str,
         since: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._reader.get_file_changelog_raw(rel_path=str(rel_path).replace("\\", "/"), since_run_uuid=since)
+        return self._changelog_with_paths(self._reader.get_file_changelog_raw(rel_path=str(rel_path).replace("\\", "/"), since_run_uuid=since))
 
     def prune_file_changelog(self, max_runs: int) -> None:
         """Cap per-file changelog history at the newest ``max_runs`` runs.
@@ -1239,7 +1331,41 @@ class BathoBundle:
     # ------------------------------------------------------------------
 
     def garbage_collect(self) -> int:
-        return self._manager.garbage_collect()
+        cleaned = self._manager.garbage_collect()
+        # Sweep abandoned run-scoped tmp files — writer streams
+        # (<name>.tmp.ipc) leaked by patch merges and merge intermediates
+        # (<name>.{merged,empty}.<run_uuid>.tmp.ipc) left by crashed runs.
+        # A run still marked "running" (or a live writer in this process)
+        # may own tmp files, so the sweep only fires when nothing is in flight.
+        # The age guard closes the residual window where another process has
+        # opened writer streams but not yet committed its "running" run row —
+        # a tmp file fresher than _TMP_SWEEP_MIN_AGE_S is left for a later GC.
+        running = {
+            r.get("run_uuid")
+            for r in self._reader.get_all_runs()
+            if r.get("status") == "running"
+        }
+        if not running and not self._writers:
+            cutoff = datetime.now(timezone.utc).timestamp() - _TMP_SWEEP_MIN_AGE_S
+            swept = failed = skipped_fresh = 0
+            for tmp in self._artifact_dir.glob("*.tmp.ipc"):
+                try:
+                    if tmp.stat().st_mtime > cutoff:
+                        skipped_fresh += 1
+                        continue
+                    tmp.unlink()
+                    swept += 1
+                except OSError:
+                    failed += 1
+            if swept or failed or skipped_fresh:
+                LOGGER.info(
+                    "gc_tmp_sweep",
+                    swept=swept,
+                    failed=failed,
+                    skipped_fresh=skipped_fresh,
+                )
+            cleaned += swept
+        return cleaned
 
     def register_simple_file(self, logical_name: str, filename: str) -> None:
         """Register a non-versioned file (e.g. communities.ipc) in the manifest."""

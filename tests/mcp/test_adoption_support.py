@@ -39,7 +39,7 @@ ALL_TOOLS = [
     "list_repos", "add_repo", "remove_repo",
     "graph_overview", "graph_query", "get_entity",
     "trace_path", "get_file_graph", "file_connectivity", "search_entities",
-    "get_delta", "batho_status", "batho_list_runs", "batho_diff",
+    "get_delta", "batho_status", "batho_list_runs", "batho_history",
     "batho_build", "batho_patch", "batho_export",
     "batho_gc", "batho_fix", "batho_load",
 ]
@@ -52,7 +52,7 @@ DUAL_OUTPUT_TOOLS = {
 QUERY_TOOLS = [
     "list_repos", "graph_overview", "graph_query", "get_entity",
     "trace_path", "get_file_graph", "file_connectivity", "search_entities",
-    "get_delta", "batho_status", "batho_list_runs", "batho_diff",
+    "get_delta", "batho_status", "batho_list_runs", "batho_history",
 ]
 
 

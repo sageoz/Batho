@@ -9,7 +9,7 @@ Unit tests for T05 rule telemetry (batho-calibrate):
 
 from __future__ import annotations
 
-from batho.modules.compression.rules import (
+from batho_plugin.rule_engine import (
     RuleActions,
     RuleDefinition,
     RuleMatch,
@@ -142,7 +142,7 @@ class TestPluginFilesAttribution:
 
     def test_plugin_files_populated(self, tmp_path):
         from pathlib import Path as P
-        from batho.modules.compression.rules import load_effective_rules
+        from batho_plugin.rule_engine import load_effective_rules
 
         plugin_dir = P(tmp_path) / "plugins"
         plugin_dir.mkdir()

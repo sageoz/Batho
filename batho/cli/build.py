@@ -58,6 +58,15 @@ def register_build_parser(subparsers: argparse._SubParsersAction) -> None:
         default=False,
         help="Disable progress bars (also: BATHO_NO_PROGRESS=1)",
     )
+    parser.add_argument(
+        "--no-plugins",
+        action="store_true",
+        default=False,
+        help=(
+            "Run with compiled-in fallbacks instead of the plugin host "
+            "(loud warning; plugin-derived metadata will be absent)."
+        ),
+    )
     parser.set_defaults(func=cmd_build)
 
 
@@ -73,6 +82,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         max_file_size_kb=args.max_file_size_kb,
         graph_backend=args.graph_backend,
         no_progress=args.no_progress,
+        no_plugins=args.no_plugins,
     )
 
     result = run_build(options)

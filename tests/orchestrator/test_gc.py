@@ -1,10 +1,17 @@
 """Tests for batho gc orchestrator against the Arrow Bundle."""
 from __future__ import annotations
 
+import os
+import time
+
 import pytest
 from pathlib import Path
 
-from batho.modules.storage.arrow_bundle.bundle import BathoBundle, resolve_bundle_dir
+from batho.modules.storage.arrow_bundle.bundle import (
+    _TMP_SWEEP_MIN_AGE_S,
+    BathoBundle,
+    resolve_bundle_dir,
+)
 from batho.orchestrator.gc import GCOptions, run_gc
 
 
@@ -182,6 +189,53 @@ class TestGCVacuum:
         result = run_gc(opts)
         assert result["success"]
         assert "stale IPC file" in result["message"]
+
+
+class TestGCTmpSweep:
+    def test_vacuum_sweeps_stale_tmp_ipc(self, tmp_path):
+        """Writer-stream and merge-intermediate *.tmp.ipc files abandoned by
+        finished runs are swept once no run is in flight — provided they are
+        older than the sweep's minimum age."""
+        _make_bundle_with_run(tmp_path)
+        bundle_dir = resolve_bundle_dir(tmp_path)
+        stray_writer = bundle_dir / "agent_views.tmp.ipc"
+        stray_merge = bundle_dir / "rels_views.merged.patch_dead0.tmp.ipc"
+        stray_writer.write_bytes(b"leaked writer tmp")
+        stray_merge.write_bytes(b"leaked merge tmp")
+        old = time.time() - _TMP_SWEEP_MIN_AGE_S - 60
+        os.utime(stray_writer, (old, old))
+        os.utime(stray_merge, (old, old))
+
+        result = run_gc(GCOptions(root=tmp_path, command="vacuum"))
+        assert result["success"]
+        assert not stray_writer.exists()
+        assert not stray_merge.exists()
+
+    def test_vacuum_preserves_fresh_tmp_ipc(self, tmp_path):
+        """A fresh *.tmp.ipc may belong to a writer that has opened streams
+        but not yet committed its 'running' row — the sweep must leave it."""
+        _make_bundle_with_run(tmp_path)
+        bundle_dir = resolve_bundle_dir(tmp_path)
+
+        fresh = bundle_dir / "entities.tmp.ipc"
+        fresh.write_bytes(b"fake")
+
+        result = run_gc(GCOptions(root=tmp_path, command="vacuum"))
+        assert result["success"]
+        assert fresh.exists()
+
+    def test_vacuum_preserves_tmp_while_run_in_flight(self, tmp_path):
+        """A run still marked 'running' may own live tmp files — the sweep
+        must not touch them."""
+        db = BathoBundle(tmp_path)
+        db.create_run("patch_live_run_0001", root_path=str(tmp_path))
+        bundle_dir = resolve_bundle_dir(tmp_path)
+        live_tmp = bundle_dir / "agent_views.tmp.ipc"
+        live_tmp.write_bytes(b"in-flight writer stream")
+
+        db.garbage_collect()
+        assert live_tmp.exists()
+        db.close()
 
 
 class TestGCPruneOldRuns:

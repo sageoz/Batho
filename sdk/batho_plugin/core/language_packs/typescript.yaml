@@ -1,0 +1,52 @@
+# Language pack: TypeScript (class: core)
+# builtins from extractor.py:233 (javascript set + TS primitives).
+# Comment syntax from extractor.py:171,196 (_LINE_COMMENT_PREFIXES /
+# _BLOCK_COMMENT_PAIRS). lang_to_manager from pipeline.py:41-48.
+plugin_id: lang-typescript
+version: "1.0.0"
+class: core
+language: typescript
+requires:
+  - batho_plugin.core
+data:
+  sets:
+    builtins:
+      - "console"
+      - "log"
+      - "Object"
+      - "Array"
+      - "String"
+      - "Number"
+      - "Boolean"
+      - "null"
+      - "undefined"
+      - "true"
+      - "false"
+      - "window"
+      - "document"
+      - "process"
+      - "require"
+      - "module"
+      - "exports"
+      - "Error"
+      - "Promise"
+      - "JSON"
+      - "Math"
+      - "setTimeout"
+      - "clearTimeout"
+      - "setInterval"
+      - "clearInterval"
+      - "any"
+      - "string"
+      - "number"
+      - "boolean"
+      - "void"
+      - "never"
+      - "unknown"
+    noise_symbols: []
+  maps:
+    comment_syntax:
+      line: ["//"]
+      block: [["/*", "*/"]]
+    lang_to_manager:
+      manager: npm

@@ -1,0 +1,21 @@
+{
+  "schema_version": "batho-golden-manifest.v1",
+  "description": "T20/T30: golden-test registration for class:core plugins (spec §4.5). Every core-class plugin_id must appear here AND have a golden test in tests/sdk/test_core_pack_golden.py asserting its expected counts on the fixture corpus.",
+  "plugins": {
+    "bsg_file_categorization": {"golden_test": "test_category_distribution", "fixture": "tests/fixtures/language_packs"},
+    "bsg_graph_foundation": {"golden_test": "test_foundation_writes", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_foundation": {"golden_test": "test_language_stamp_coverage", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_cicd": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_cloud_providers": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_cpp": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_csharp": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_dart": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_elixir": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_kotlin": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_php": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_ruby": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_scala": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_swift": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"},
+    "bsg_detection_test_frameworks": {"golden_test": "test_detection_plugins_load", "fixture": "tests/fixtures/language_packs"}
+  }
+}

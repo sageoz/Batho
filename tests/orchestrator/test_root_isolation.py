@@ -14,7 +14,7 @@ from batho.orchestrator.build import BuildOptions, run_build
 from batho.orchestrator.patch import PatchOptions, run_patch
 from batho.orchestrator.export import ExportOptions, run_export
 from batho.modules.storage.arrow_bundle import get_bundle, resolve_bundle_dir
-from batho.cli.diff import cmd_diff
+from batho.cli.history import cmd_history
 from batho.cli.fix import cmd_fix
 
 
@@ -459,17 +459,17 @@ def test_patch_on_nonexistent_artifact_clean_error(temp_project):
     assert any("no artifact" in w.lower() or "bundle" in w.lower() for w in res.warnings)
 
 
-def test_diff_from_different_cwd(temp_project, monkeypatch, capsys):
-    """Verify that the diff command works correctly when invoked from a different working directory.
+def test_history_from_different_cwd(temp_project, monkeypatch, capsys):
+    """Verify that the history command works correctly when invoked from a different working directory.
 
     Scenario:
-        After building, the CWD is changed to a subdirectory, and diff is run targeting the project root.
+        After building, the CWD is changed to a subdirectory, and history is run targeting the project root.
         The command must still operate on the project's artifact data.
 
     Execution Flow:
         1. Run a full build on the temp project.
         2. Create and chdir into a subdirectory "other".
-        3. Invoke cmd_diff with the project root and a non-existent run UUID.
+        3. Invoke cmd_history with the project root and a non-existent run UUID.
         4. Assert the command returns 1 and stderr contains "not found".
 
     Expectations:
@@ -489,11 +489,12 @@ def test_diff_from_different_cwd(temp_project, monkeypatch, capsys):
         run="non-existent-run-uuid-123",
         entity=None,
         file=None,
+        last=10,
         since=None,
         json=True
     )
-    
-    ret = cmd_diff(args)
+
+    ret = cmd_history(args)
     captured = capsys.readouterr()
     assert ret == 1
     assert "not found" in captured.err.lower()

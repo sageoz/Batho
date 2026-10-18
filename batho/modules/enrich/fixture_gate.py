@@ -31,6 +31,77 @@ def _candidate_rules_config(plugin_path: Path) -> dict:
     }
 
 
+_PINNED_VERSION_RE = None  # lazily compiled
+
+
+def _candidate_plugin_meta(plugin_path: Path) -> dict:
+    """Top-level plugin metadata the gate needs before rule evaluation.
+
+    Reads only the header fields (``plugin_id``, ``version``, ``class``) —
+    cheap yaml load; the full rule compile happens later via
+    ``load_effective_rules``.
+    """
+    import yaml
+
+    try:
+        doc = yaml.safe_load(plugin_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    return doc
+
+
+def _pinned_version_ok(version: Any) -> bool:
+    """``class: core`` requires a pinned semver (no latest/*/empty)."""
+    global _PINNED_VERSION_RE
+    if _PINNED_VERSION_RE is None:
+        import re
+
+        _PINNED_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+    return bool(_PINNED_VERSION_RE.match(str(version or "")))
+
+
+def _golden_registry() -> dict:
+    """Load the core-pack golden manifest (plugin_id → golden test entry)."""
+    import json
+
+    try:
+        import batho_plugin.core as _core
+
+        manifest = Path(_core.__file__).resolve().parent / "golden_manifest.json"
+        if manifest.exists():
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            return data.get("plugins", {}) or {}
+    except Exception:
+        pass
+    return {}
+
+
+def _core_class_errors(plugin_meta: dict) -> list:
+    """``class: core`` gate (spec §4.5): pinned version + golden registration.
+
+    Returns a list of error strings (empty when the plugin is not core-class
+    or all requirements pass). Core plugins are selectivity-cap exempt but
+    not verification-exempt.
+    """
+    if str(plugin_meta.get("class") or "standard") != "core":
+        return []
+    errors = []
+    plugin_id = str(plugin_meta.get("plugin_id") or "")
+    version = plugin_meta.get("version")
+    if not _pinned_version_ok(version):
+        errors.append(
+            f"class:core requires a pinned semver version, got {version!r}"
+        )
+    if plugin_id not in _golden_registry():
+        errors.append(
+            f"class:core plugin '{plugin_id}' is not registered in the "
+            "golden manifest (sdk/batho_plugin/core/golden_manifest.json)"
+        )
+    return errors
+
+
 def load_gate_sample_graph(root: Path, sample_size: int = 2000):
     """Load the deterministic entity sample the fixture gate runs against.
 
@@ -106,7 +177,7 @@ def _rule_writes_satisfied(rule, hit_eids: list[str], before_meta: dict) -> bool
 
 def load_gate_builtins(root: Path) -> list:
     """Load the effective builtin rule set for the candidate conflict check."""
-    from batho.modules.compression.rules import load_effective_rules
+    from batho_plugin.rule_engine import load_effective_rules
 
     builtin_cfg = {
         "enabled": True,
@@ -139,7 +210,7 @@ def fixture_gate(
     rules in directory mode so the conflict stage also checks cross-file
     overlaps (ENR-06), not just builtin-vs-candidate.
     """
-    from batho.modules.compression.rules import (
+    from batho_plugin.rule_engine import (
         _detect_rule_conflicts,
         apply_rule_plugins,
         load_effective_rules,
@@ -150,6 +221,15 @@ def fixture_gate(
         sample_graph, load_err = load_gate_sample_graph(root, sample_size)
         if load_err is not None:
             return {"passed": False, "errors": [load_err]}
+
+    # T20: plugin class gate (spec §4.5). class:core skips the selectivity
+    # cap (load-bearing rules are intentionally broad) but must be version-
+    # pinned and golden-test registered.
+    plugin_meta = _candidate_plugin_meta(plugin_path)
+    plugin_class = str(plugin_meta.get("class") or "standard")
+    core_errors = _core_class_errors(plugin_meta)
+    if core_errors:
+        return {"passed": False, "errors": core_errors}
 
     # Work on a private copy — apply_rule_plugins mutates entity metadata
     # (and may append derived relationships) in place. Callers sharing one
@@ -225,10 +305,20 @@ def fixture_gate(
 
         reasons = []
         verdict = "pass"
+        # class:core plugins are load-bearing engine rules: the artifact
+        # sample is not their fixture corpus, so sample-based verdicts
+        # (zero hits / selectivity / no-op idempotency) don't apply —
+        # golden tests carry the behavioral gate (T30).
+        core_class = plugin_class == "core"
         if hits == 0:
-            verdict = "fail"
-            reasons.append("zero hits on sampled entities")
-        elif hit_pct >= selectivity_pct:
+            if core_class:
+                reasons.append(
+                    "zero hits on sampled entities (core class — covered by golden tests)"
+                )
+            else:
+                verdict = "fail"
+                reasons.append("zero hits on sampled entities")
+        elif hit_pct >= selectivity_pct and not core_class:
             verdict = "fail"
             reasons.append(
                 f"selectivity breach: {hit_pct}% ≥ {selectivity_pct}% of sample"
@@ -239,7 +329,7 @@ def fixture_gate(
                     "idempotent: writes already present on sampled entities "
                     "(plugin previously applied)"
                 )
-            else:
+            elif not core_class:
                 verdict = "fail"
                 reasons.append("no-op: hits produced no metadata/tag delta")
         if candidate_conflicts:
@@ -264,6 +354,7 @@ def fixture_gate(
 
     return {
         "passed": gate_pass,
+        "plugin_class": plugin_class,
         "sample_size": total_sampled,
         "selectivity_pct": selectivity_pct,
         "rules": rule_verdicts,

@@ -187,6 +187,85 @@ class TestFixtureGate:
         assert a["passed"] == b["passed"]
         assert [r["hits"] for r in a["rules"]] == [r["hits"] for r in b["rules"]]
 
+    def _core_plugin(self, root: Path, plugin_id: str, version: str, rules_yaml: str) -> Path:
+        pdir = root / "staging"
+        pdir.mkdir(exist_ok=True)
+        p = pdir / f"{plugin_id}.yaml"
+        p.write_text(
+            f"schema_version: bsg-plugin.v2\nplugin_id: {plugin_id}\n"
+            f"name: Core\nversion: {version}\nclass: core\nenabled: true\n"
+            "rules:\n" + rules_yaml,
+            encoding="utf-8",
+        )
+        return p
+
+    def test_core_class_skips_selectivity(self, artifact_root):
+        # Registered golden core plugin hitting >10% of sample: selectivity
+        # exempt (spec §4.5), but the write must still produce a delta.
+        plugin = self._core_plugin(
+            artifact_root, "bsg_file_categorization", "1.0.0",
+            """  - rule_id: core-broad
+    name: core-broad
+    description: hits everything
+    severity: info
+    priority: 10
+    enabled: true
+    matchers:
+      name_patterns: ["*"]
+    actions:
+      metadata:
+        bsg.core_probe: probe
+""",
+        )
+        out = fixture_gate(plugin, artifact_root, selectivity_pct=10.0)
+        assert out["plugin_class"] == "core"
+        assert out["passed"], out
+        assert out["rules"][0]["hit_pct"] >= 10.0
+
+    def test_core_class_requires_pinned_version(self, artifact_root):
+        plugin = self._core_plugin(
+            artifact_root, "bsg_file_categorization", "latest",
+            """  - rule_id: r1
+    name: r1
+    description: x
+    severity: info
+    priority: 10
+    enabled: true
+    matchers: {}
+    actions:
+      metadata:
+        bsg.x: 1
+""",
+        )
+        out = fixture_gate(plugin, artifact_root)
+        assert not out["passed"]
+        assert any("pinned" in e for e in out["errors"])
+
+    def test_core_class_requires_golden_registration(self, artifact_root):
+        plugin = self._core_plugin(
+            artifact_root, "unregistered_core", "1.0.0",
+            """  - rule_id: r1
+    name: r1
+    description: x
+    severity: info
+    priority: 10
+    enabled: true
+    matchers: {}
+    actions:
+      metadata:
+        bsg.x: 1
+""",
+        )
+        out = fixture_gate(plugin, artifact_root)
+        assert not out["passed"]
+        assert any("golden manifest" in e for e in out["errors"])
+
+    def test_standard_class_still_capped(self, artifact_root):
+        plugin = self._plugin(artifact_root, self.BROAD_RULE)
+        out = fixture_gate(plugin, artifact_root, selectivity_pct=10.0)
+        assert not out["passed"]
+        assert out["plugin_class"] == "standard"
+
 
 class TestScore:
     def _emit_telemetry(self, root: Path, run_uuid: str, rule_stats: dict):

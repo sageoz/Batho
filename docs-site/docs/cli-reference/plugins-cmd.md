@@ -40,6 +40,14 @@ Re-enrich the built artifact's graph with rules (no re-extraction).
 - `--dry-run` — Report the delta without writing blobs.
 - `--json` — Emit machine-readable JSON result.
 
+### `fingerprint`
+
+Print the current plugin-set fingerprint and the number of loaded plugins — the same fingerprint stored in run artifacts and used to detect plugin drift.
+
+### `doctor`
+
+Report plugin-host status, worker preload health, and drift of the active plugin set vs the built artifact. Also available as top-level `batho doctor` — both invocations run the same check.
+
 ## Examples
 
 ```bash

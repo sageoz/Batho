@@ -23,6 +23,7 @@ def test_vendored_table_loads() -> None:
         "batho-specs",
         "batho-execute",
         "batho-review",
+        "batho-calibrate",
     ]
 
 

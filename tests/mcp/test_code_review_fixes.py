@@ -31,7 +31,7 @@ def test_manifest_gen_returns_positive_generation(repo_dir: Path):
 
 
 @pytest.mark.asyncio
-async def test_batho_diff_since_filters_history(repo_dir: Path, tmp_path: Path):
+async def test_batho_history_since_filters_history(repo_dir: Path, tmp_path: Path):
     repo_dir = repo_dir.resolve()
     py_file = repo_dir / "main.py"
 

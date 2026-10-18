@@ -11,6 +11,8 @@ Detect changes natively and apply incremental updates to an existing Batho artif
 
 Unlike legacy versions of Batho, `batho patch` detects changes natively using content hashing (SHA-256) of files against the Arrow `file_tracking` table, eliminating false positives from uncommitted files. It only parses modified or added files and removes references to deleted files, keeping the hypergraph up to date with minimal processing time.
 
+When the plugin fingerprint differs from the previous run (a plugin was added, removed, or reconfigured), the change set escalates to every tracked file — a full-repo re-extraction so entities on unchanged files are re-stamped under the current plugin set. Controlled by `plugins.reextract_on_drift` (default `true`; set `false` for warn-only). Escalated runs log a `patch_drift_escalation` warning with tracked/scanned/synthesized counts and scale extraction workers up to `bsg.parallel.max_workers` (a single worker when `bsg.parallel.enabled` is `false`). Synthesized entries respect the patch ignore spec and repository containment, and the AST cache is cleared wholesale so no stale entries survive the plugin change.
+
 ## Usage
 
 ```bash

@@ -61,7 +61,7 @@ flowchart TB
 
 ### Bundle Façade
 
-The Arrow Bundle exposes a unified public API that replaces the legacy database interface. All Batho commands — build, patch, export, gc, diff, and fix — interact exclusively through this façade. A single shared instance is maintained per repository, ensuring consistent state across all operations.
+The Arrow Bundle exposes a unified public API that replaces the legacy database interface. All Batho commands — build, patch, export, gc, history, and fix — interact exclusively through this façade. A single shared instance is maintained per repository, ensuring consistent state across all operations.
 
 ### MVCC Generation Lifecycle
 

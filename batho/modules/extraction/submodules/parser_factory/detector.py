@@ -41,7 +41,7 @@ class DetectionResult:
     Attributes:
         language: Detected language identifier (e.g., "python", "php", "json")
         confidence: Confidence level from 0.0 to 1.0
-        method: Detection method used ("extension", "shebang", "magic_bytes", "heuristics")
+        method: Detection method used ("plugin", "extension", "special_filename", "shebang", "magic_bytes", "heuristics")
         details: Additional details about the detection (optional)
     """
 
@@ -62,6 +62,37 @@ class DetectionResult:
 # ---------------------------------------------------------------------------
 # Detection strategies
 # ---------------------------------------------------------------------------
+
+
+def _detect_via_plugin(filepath: Path) -> DetectionResult | None:
+    """T12: consult the language-detect hook (pack data) when a host is active.
+
+    Returns None when no host is active or the packs cannot decide — the
+    engine strategy chain then applies (byte-identical fallback). Packs
+    extend, never replace, the engine registry (spec §5).
+    """
+    try:
+        from batho_plugin.hooks import detect_language
+        from batho_plugin.runtime import get_active_plugin_host
+
+        host = get_active_plugin_host()
+        if host is None:
+            return None
+        language = detect_language(
+            str(filepath),
+            host.get_map("ext_to_language") or None,
+            host.get_map("special_filenames") or None,
+        )
+        if language:
+            return DetectionResult(
+                language=language,
+                confidence=1.0,
+                method="plugin",
+                details="language pack",
+            )
+    except Exception as exc:  # noqa: BLE001 — detection must never crash
+        _logger.debug("plugin_language_detect_failed", error=str(exc))
+    return None
 
 
 def detect_by_extension(filepath: Path, content: bytes) -> DetectionResult | None:
@@ -410,9 +441,6 @@ class LanguageDetector:
         """
         Detect language using multiple strategies.
 
-        Strategies are tried in order until one succeeds with sufficient
-        confidence. The first successful detection is returned.
-
         Args:
             filepath: Path to the file (used for extension detection)
             content: File content (used for shebang, magic bytes, heuristics)
@@ -421,6 +449,13 @@ class LanguageDetector:
             DetectionResult with confidence >= min_confidence, or None if
             no language could be detected with sufficient confidence.
         """
+        # T12: plugin language pack decides first when a host is active
+        # (ON_FILE_DETECTED hook, pack data); None → engine strategy chain
+        # (packs extend, never replace, the engine registry — spec §5).
+        plugin_result = _detect_via_plugin(filepath)
+        if plugin_result is not None:
+            return plugin_result
+
         # Try each strategy in order of priority
         for strategy_name, strategy_fn in self.STRATEGIES:
             # Extension and special_filename detection need filepath, others use content

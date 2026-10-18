@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from batho.modules.compression.rules import (
+from batho_plugin.rule_engine import (
     _compute_source_hashes,
     _rules_config_fingerprint,
     load_effective_rules,

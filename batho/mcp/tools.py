@@ -8,6 +8,7 @@ from collections.abc import Iterator
 import dataclasses
 import datetime
 import json
+import re
 
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -27,6 +28,7 @@ from batho.mcp.entity_resolution import (
     external_ref_root,
     get_resolver,
     is_unresolved,
+    redirect_endpoint,
 )
 from batho.mcp.graph_builder import (
     build_dual_output, build_meta, format_file_connectivity, format_summary,
@@ -272,7 +274,7 @@ TOOLSETS: dict[str, set[str]] = {
         "graph_overview", "graph_query", "get_entity", "trace_path",
         "get_file_graph", "file_connectivity", "search_entities", "get_delta",
     },
-    "diagnostics": {"batho_status", "batho_list_runs", "batho_diff"},
+    "diagnostics": {"batho_status", "batho_list_runs", "batho_history"},
     "registry": {"list_repos", "add_repo", "remove_repo"},
     "admin": {
         "batho_build", "batho_patch", "batho_export",
@@ -692,7 +694,10 @@ def _manifest_gen(reader: BathoBundleReader) -> int:
 def _resolve_entity_id(name_or_id: str, reader: BathoBundleReader) -> str | list[dict]:
     """Resolve an entity query to a concrete entity_id.
 
-    Tries exact entity_id match first, then falls back to exact name match.
+    Tries exact entity_id match first, then a dotted-path→module lookup,
+    then exact name match. Contextual stubs are excluded from the name
+    fallback unless nothing else matches — stub display names repeat the
+    dotted reference and drown the real definition.
     Returns the entity_id string if uniquely resolved, or a list of candidate
     dicts (with entity_id, name, type, file) for disambiguation if multiple
     name matches exist. Returns an empty list if no match.
@@ -707,11 +712,40 @@ def _resolve_entity_id(name_or_id: str, reader: BathoBundleReader) -> str | list
     if matched.num_rows > 0:
         return name_or_id
 
-    # Fall back to exact name match
-    name_mask = pc.equal(agent_table.column("name"), name_or_id)
+    # Dotted-path lookup: `pkg.mod.Name` → module index → name in that file.
+    # Runs before the flat-name fallback so FQN-shaped queries never land on
+    # stub display names.
+    if "." in name_or_id:
+        resolver = get_resolver(reader)
+        dotted_id = resolver.resolve_dotted(name_or_id)
+        if dotted_id:
+            return dotted_id
+
+    name_col = agent_table.column("name")
+    eid_col = agent_table.column("entity_id")
+    not_stub = pc.invert(pc.starts_with(eid_col, "unresolved:"))
+    name_mask = pc.and_(pc.equal(name_col, name_or_id), not_stub)
     name_matched = agent_table.filter(name_mask)
     if name_matched.num_rows == 0:
-        return []
+        # Parameter-hash alias: `rank_hits` should find `rank_hits_[01f6f3]`.
+        alias_pattern = "^" + re.escape(name_or_id) + r"_\[[a-fA-F0-9]+\]$"
+        alias_matched = agent_table.filter(
+            pc.and_(pc.match_substring_regex(name_col, alias_pattern), not_stub)
+        )
+        if alias_matched.num_rows > 0:
+            name_matched = alias_matched
+    if name_matched.num_rows == 0:
+        # Last resort: stub-only matches (provenance surfaces), ranked the
+        # same way but never mixed with real definitions.
+        stub_matched = agent_table.filter(
+            pc.and_(
+                pc.equal(name_col, name_or_id),
+                pc.starts_with(eid_col, "unresolved:"),
+            )
+        )
+        if stub_matched.num_rows == 0:
+            return []
+        name_matched = stub_matched
     if name_matched.num_rows == 1:
         return name_matched.to_pylist()[0].get("entity_id", "")
 
@@ -781,7 +815,7 @@ def register_tools(
         "list_repos", "add_repo", "remove_repo",
         "graph_overview", "graph_query", "get_entity", "trace_path",
         "get_file_graph", "file_connectivity", "search_entities", "get_delta",
-        "batho_status", "batho_list_runs", "batho_diff",
+        "batho_status", "batho_list_runs", "batho_history",
         "batho_build", "batho_patch", "batho_export",
         "batho_gc", "batho_fix", "batho_load",
     }
@@ -1085,6 +1119,52 @@ def register_tools(
             files_list.append({"path": fp, "entities": entity_counts_by_file.get(fp, 0), "indexed": tr.get("is_indexed", False)})
         files_list.sort(key=lambda x: x["path"])
 
+        # Resolution-quality stats: stub states (T5 persistence), dangling
+        # edges, duplicate entity rows, and unindexed files with reasons.
+        stub_states: dict[str, int] = {}
+        if agent_table.num_rows > 0 and "metadata_json" in agent_table.schema.names:
+            stub_tbl = agent_table.filter(
+                pc.starts_with(agent_table.column("entity_id"), "unresolved:")
+            )
+            if stub_tbl.num_rows > 0:
+                _meta_col = stub_tbl.column("metadata_json")
+                _cand = stub_tbl.filter(
+                    pc.and_(
+                        pc.is_valid(_meta_col),
+                        pc.match_substring_regex(_meta_col, '"stub_resolution_state"'),
+                    )
+                )
+                for _ms in _cand.column("metadata_json").to_pylist():
+                    try:
+                        _m = json.loads(_ms)
+                    except (ValueError, TypeError):
+                        continue
+                    _s = str(_m.get("stub_resolution_state", "pending"))
+                    stub_states[_s] = stub_states.get(_s, 0) + 1
+                _no_state = stub_tbl.num_rows - _cand.num_rows
+                if _no_state:
+                    stub_states["unknown"] = stub_states.get("unknown", 0) + _no_state
+
+        dangling_edges = 0
+        if rels_table.num_rows > 0:
+            dangling_edges = pc.sum(pc.cast(
+                pc.starts_with(rels_table.column("target_id"), "unresolved:"),
+                pa.int64(),
+            )).as_py() or 0
+
+        duplicate_entity_rows = 0
+        if agent_table.num_rows > 0:
+            _counts = pc.value_counts(agent_table.column("entity_id"))
+            duplicate_entity_rows = sum(
+                c - 1 for c in _counts.field("counts").to_pylist() if c > 1
+            )
+
+        files_skipped = [
+            {"path": fp, "reason": "not_indexed"}
+            for fp, tr in sorted(tracking.items())
+            if not tr.get("is_indexed", False)
+        ]
+
         stats = {
             "total_entities": first_party_table.num_rows,
             "total_relationships": rels_table.num_rows,
@@ -1092,10 +1172,14 @@ def register_tools(
             "entity_breakdown": entity_type_counts,
             "stub_entity_count": stub_entity_count,
             "unresolved_refs": stub_entity_count,
+            "stub_states": stub_states,
+            "dangling_edges": dangling_edges,
+            "duplicate_entity_rows": duplicate_entity_rows,
             "quarantined_entities": quarantined_count,
             "relationship_breakdown": rel_type_counts,
             "ambiguous_edge_count": ambiguous_edge_count,
             "files": files_list,
+            "files_skipped": files_skipped,
             "run_id": latest.get("run_uuid"),
             "git_commit": latest.get("git_commit"),
             "artifact_generation": _manifest_gen(reader),
@@ -1334,6 +1418,24 @@ def register_tools(
             # artifacts behave identically.
             rels_rows = normalize_legacy_rel_rows(rels_rows)
 
+            # T20-display: rewrite stub endpoints to their resolved
+            # definitions so edges read as real entities (matching trace_path
+            # semantics). The raw stub id is preserved in metadata.stub_id.
+            display_resolver = get_resolver(reader)
+            display_cache: dict[str, str] = {}
+            for r in rels_rows:
+                tid = r.get("target_id", "")
+                if is_unresolved(tid):
+                    new_tid = redirect_endpoint(display_resolver, tid, display_cache)
+                    if new_tid != tid:
+                        r["target_id"] = new_tid
+                        try:
+                            dmeta = json.loads(r.get("metadata_json") or "{}")
+                        except (ValueError, TypeError):
+                            dmeta = {}
+                        dmeta["stub_id"] = tid
+                        r["metadata_json"] = json.dumps(dmeta)
+
             if relation_types:
                 rels_rows = [r for r in rels_rows if r.get("relation_type") in relation_types]
 
@@ -1494,13 +1596,37 @@ def register_tools(
 
         rels_table = reader._get_table("rels_views")
         rels_rows: list[dict] = []
+        stub_refs_merged = 0
         if rels_table.num_rows > 0:
             src_mask = pc.equal(rels_table.column("source_id"), entity_id)
             tgt_mask = pc.equal(rels_table.column("target_id"), entity_id)
+            # P0/T5: edges whose target is a stub that build-time resolution
+            # pointed at this entity are merged in (rewritten to it), so
+            # "who uses X" reflects reference sites recorded before the
+            # rewrite landed in rels_views.
+            resolver = get_resolver(reader)
+            stub_refs = resolver.stub_refs_for(entity_id)
             combined = pc.or_(src_mask, tgt_mask)
+            if stub_refs:
+                combined = pc.or_(
+                    combined,
+                    pc.is_in(rels_table.column("target_id"), value_set=pa.array(stub_refs)),
+                )
             # T15: re-classify legacy inverse types (swaps endpoints, so match
             # on both source and target before normalization).
             rels_rows = normalize_legacy_rel_rows(rels_table.filter(combined).to_pylist())
+            if stub_refs:
+                stub_set = set(stub_refs)
+                for row in rels_rows:
+                    if row.get("target_id") in stub_set:
+                        row["target_id"] = entity_id
+                        try:
+                            meta = json.loads(row.get("metadata_json") or "{}")
+                        except (ValueError, TypeError):
+                            meta = {}
+                        meta["via_stub"] = True
+                        row["metadata_json"] = json.dumps(meta)
+                        stub_refs_merged += 1
 
         storage_rows = None
         if include_source:
@@ -1519,6 +1645,8 @@ def register_tools(
             artifact_generation=gen,
             resolver=get_resolver(reader),
         )
+        if stub_refs_merged:
+            structured.setdefault("meta", {})["stub_refs_merged"] = stub_refs_merged
         res = ToolResult(content=[TextContent(type="text", text=markdown)], structured_content=structured)
         entity_fp = file_paths.get(entity_row.get("file_id", -1))
         return _inject_banner(res, repo_name, file_path=entity_fp)
@@ -1716,18 +1844,13 @@ def register_tools(
         # T20: rewire stub endpoints to their resolved definitions so BFS can
         # hop across files. A stub target like `unresolved:...::pkg.mod.symbol`
         # becomes the defining entity in pkg/module, turning cross-file refs
-        # into traversable edges.
+        # into traversable edges. Shared implementation with the display-side
+        # tools (entity_resolution.redirect_endpoint).
         resolver = get_resolver(reader)
         redirect_cache: dict[str, str] = {}
 
         def _redirect(eid: str) -> str:
-            if not is_unresolved(eid):
-                return eid
-            hit = redirect_cache.get(eid)
-            if hit is None:
-                hit = resolver.resolve_symbol(eid) or eid
-                redirect_cache[eid] = hit
-            return hit
+            return redirect_endpoint(resolver, eid, redirect_cache)
 
         # Normalize endpoint args through the same stub rewiring used for edge
         # endpoints: a caller may pass an `unresolved:` stub id (stub entities
@@ -1902,6 +2025,25 @@ def register_tools(
         storage_rows = file_artifacts.get("storage_view", []) if file_artifacts else []
         # T15: re-classify legacy inverse types so output matches fresh artifacts.
         rels_rows = normalize_legacy_rel_rows(rels_rows)
+
+        # T20-display: rewrite stub endpoints to their resolved definitions
+        # for display (raw stub id preserved in metadata.stub_id), matching
+        # trace_path / graph_query semantics.
+        if rels_rows:
+            fg_resolver = get_resolver(reader)
+            fg_cache: dict[str, str] = {}
+            for r in rels_rows:
+                tid = r.get("target_id", "")
+                if is_unresolved(tid):
+                    new_tid = redirect_endpoint(fg_resolver, tid, fg_cache)
+                    if new_tid != tid:
+                        r["target_id"] = new_tid
+                        try:
+                            dmeta = json.loads(r.get("metadata_json") or "{}")
+                        except (ValueError, TypeError):
+                            dmeta = {}
+                        dmeta["stub_id"] = tid
+                        r["metadata_json"] = json.dumps(dmeta)
 
         if include_cross_file_refs and rels_rows:
             agent_table = reader._get_table("agent_views")
@@ -2417,6 +2559,8 @@ def register_tools(
             has_art = RepoRegistry.has_artifact(entry)
             run_count = 0
             latest_run_uuid = None
+            unindexed_count = 0
+            dangling_edges = None
             if has_art:
                 try:
                     r = _pool.get_by_repo(entry.name) if registry and registry.get(entry.name) else _pool.get_by_root(entry.path)
@@ -2424,6 +2568,23 @@ def register_tools(
                     run_count = len(runs)
                     if runs:
                         latest_run_uuid = runs[-1].get("run_uuid")
+                    # Coverage + resolution-quality surface: unindexed files
+                    # (oversize/binary skips) and the dangling-edge ratio.
+                    tracking = r.get_all_file_tracking()
+                    unindexed_count = sum(
+                        1 for tr in tracking.values()
+                        if not tr.get("is_indexed", False)
+                    )
+                    rels = r._get_table("rels_views")
+                    if rels.num_rows > 0:
+                        dangling = pc.sum(pc.cast(
+                            pc.starts_with(rels.column("target_id"), "unresolved:"),
+                            pa.int64(),
+                        )).as_py() or 0
+                        dangling_edges = {
+                            "count": dangling,
+                            "pct": round(100 * dangling / rels.num_rows, 1),
+                        }
                 except Exception:
                     pass
 
@@ -2441,6 +2602,10 @@ def register_tools(
             lines.append(f"### {entry.name} ({status_icon} {sync_state})")
             lines.append(f"- Path: `{entry.path}`")
             lines.append(f"- Artifact: {'✓ present' if has_art else '✗ missing'} ({run_count} runs, latest: `{latest_run_uuid or 'N/A'}`)")
+            if unindexed_count:
+                lines.append(f"- Unindexed files: {unindexed_count}")
+            if dangling_edges is not None:
+                lines.append(f"- Dangling edges: {dangling_edges['count']} ({dangling_edges['pct']}%)")
             lines.append(f"- Watcher: {'✓ active' if is_watching else '✗ inactive'} (mode: {watch_mode}, debounce: {entry.debounce_ms}ms)")
             if pending_files:
                 age_str = f", oldest {oldest_age}s ago" if oldest_age else ""
@@ -2459,6 +2624,8 @@ def register_tools(
                 "has_artifact": has_art,
                 "run_count": run_count,
                 "latest_run_uuid": latest_run_uuid,
+                "unindexed_files": unindexed_count,
+                "dangling_edges": dangling_edges,
                 "watching": is_watching,
                 "watch_mode": watch_mode,
                 "sync_state": sync_state,
@@ -2480,7 +2647,7 @@ def register_tools(
     ) -> ToolResult:
         """List patch/build run IDs for a repo.
 
-        USE to discover run history before get_delta / batho_diff (pick a
+        USE to discover run history before get_delta / batho_history (pick a
         run_id) or to confirm a patch advanced the artifact generation.
         DO NOT USE for change contents (use get_delta) or artifact freshness
         (use batho_status). Returns run UUIDs, types, timestamps, and git
@@ -2504,14 +2671,19 @@ def register_tools(
         structured_runs = []
         for r in recent_runs:
             ruid = r.get("run_uuid", "")
-            rtype = r.get("run_type", "unknown")
-            cat = r.get("created_at", "")
+            # No run_type column in RUNS_SCHEMA — derive from the run_uuid
+            # prefix (patch_*, build_*, plugins_apply_*).
+            if ruid.startswith("plugins_apply_"):
+                rtype = "plugins_apply"
+            else:
+                rtype = ruid.split("_", 1)[0] if "_" in ruid else "unknown"
+            started = r.get("started_at", "")
             commit = r.get("git_commit", "")
-            lines.append(f"- `{ruid}` [{rtype}] {cat} (commit: {commit or 'N/A'})")
+            lines.append(f"- `{ruid}` [{rtype}] {started} (commit: {commit or 'N/A'})")
             structured_runs.append({
                 "run_uuid": ruid,
                 "run_type": rtype,
-                "created_at": cat,
+                "started_at": started,
                 "completed_at": r.get("completed_at"),
                 "git_commit": commit,
             })
@@ -2792,16 +2964,16 @@ def register_tools(
             return _err(f"Export failed: {exc}", error_type=EXTERNAL_ERROR, hint="Check logs for details and retry.")
 
     @app.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False, destructiveHint=False, idempotentHint=True))
-    def batho_diff(
+    def batho_history(
         repo: str | None = None,
         run_id: str | None = None,
         entity_id: str | None = None,
         file_path: str | None = None,
         since: str | None = None,
     ) -> ToolResult:
-        """Query node-level changes across runs, entities, or files.
+        """Query node-level change history across runs, entities, or files.
 
-        USE instead of git diff for structural history — per-run change lists,
+        USE instead of git history for structural history — per-run change lists,
         single-entity history across runs, or per-file change history. Must
         provide exactly ONE of run_id, entity_id, or file_path. DO NOT USE for
         the latest patch delta (use get_delta) or line-level diffs (use git).

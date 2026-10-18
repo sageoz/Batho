@@ -13,37 +13,50 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-_NOISE_FILE_PATTERNS = (
+from batho.utils.logging import get_logger
+
+LOGGER = get_logger(__name__, component="enrich_gap_report")
+
+# Noise-path markers — compiled-in fallback for the --no-plugins path. The
+# canonical source is the ``noise-paths`` core pack (spec §5 row 6); when a
+# plugin host is active the pack data is consulted instead.
+_NOISE_PATH_MARKERS_FALLBACK = (
     ".batho/", "graphify-out/", "node_modules/", "dist/", "build/",
     "vendor/", ".venv/", "venv/", "__pycache__/", ".tox/",
     "package-lock.json", "yarn.lock", "pipfile.lock", "poetry.lock",
     "cargo.lock", "go.sum", "gemfile.lock", ".tsbuildinfo",
 )
-_MANIFEST_NAMES = {
-    "package.json": "npm/nodejs",
-    "requirements.txt": "pip",
-    "pyproject.toml": "python",
-    "setup.py": "python-setuptools",
-    "pom.xml": "maven",
-    "build.gradle": "gradle",
-    "build.gradle.kts": "gradle-kotlin",
-    "cargo.toml": "cargo",
-    "go.mod": "go-modules",
-    "gemfile": "bundler",
-    "composer.json": "composer",
-    "pubspec.yaml": "dart-pub",
-    "dockerfile": "docker",
-    "docker-compose.yml": "docker-compose",
-    ".github/workflows/": "github-actions",
-}
+_NOISE_SUFFIXES_FALLBACK = (".lock", ".tsbuildinfo", ".min.js", ".map")
 _RATIONALE_PREFIXES = ("WHY:", "NOTE:", "FIXME:", "TODO:", "HACK:", "XXX:")
+
+
+def _noise_sets() -> tuple[frozenset[str], frozenset[str]]:
+    """T33: noise markers from the ``noise-paths`` pack when a host is active."""
+    try:
+        from batho_plugin.runtime import get_active_plugin_host
+
+        host = get_active_plugin_host()
+    except Exception:
+        host = None
+    if host is not None:
+        try:
+            markers = host.get_set("noise_path_markers")
+            suffixes = host.get_set("noise_suffixes")
+            if markers or suffixes:
+                return markers, suffixes
+        except Exception as exc:
+            LOGGER.debug("noise_pack_lookup_failed", error=str(exc))
+    return frozenset(_NOISE_PATH_MARKERS_FALLBACK), frozenset(
+        _NOISE_SUFFIXES_FALLBACK
+    )
 
 
 def _is_noise_path(rel_path: str) -> bool:
     p = rel_path.lower().replace("\\", "/")
-    if p.endswith((".lock", ".tsbuildinfo", ".min.js", ".map")):
+    markers, suffixes = _noise_sets()
+    if suffixes and p.endswith(tuple(suffixes)):
         return True
-    return any(marker in p for marker in _NOISE_FILE_PATTERNS)
+    return any(marker in p for marker in markers)
 
 
 def _pctiles(sorted_vals: list[int], pcts=(50, 95, 99)) -> dict[str, int]:
@@ -105,6 +118,31 @@ def build_gap_report(
     unresolved = [e for e in entities if _is_stub(e)]
     unresolved_names = Counter(e.name for e in unresolved)
     external = [e for e in entities if "external" in str(getattr(e, "type", "")).lower()]
+
+    # Resolution-quality metrics (T5 persistence): stub states, dangling
+    # edges, and stub→stub/self pollution — the write-side health numbers.
+    stub_states: Counter = Counter()
+    for e in entities:
+        if str(e.id).startswith("unresolved:"):
+            md = getattr(e, "metadata", None) or {}
+            stub_states[str(md.get("stub_resolution_state", "unknown"))] += 1
+    stub_to_stub = 0
+    stub_self = 0
+    for e in entities:
+        if not str(e.id).startswith("unresolved:"):
+            continue
+        md = getattr(e, "metadata", None) or {}
+        target = md.get("resolved_target_id")
+        if not target:
+            continue
+        if target == e.id:
+            stub_self += 1
+        elif str(target).startswith("unresolved:"):
+            stub_to_stub += 1
+    dangling_edges = sum(
+        1 for r in graph.relationships
+        if str(getattr(r, "target_id", "")).startswith("unresolved:")
+    )
 
     # --- noise-path entities ---
     noise_ents = [
@@ -168,12 +206,46 @@ def build_gap_report(
                 rationale[prefix.rstrip(":")] += 1
 
     # --- manifest fingerprints ---
+    # Ecosystem identity comes from the detection plugins' stamps
+    # (bsg.package_manager on manifest-file entities); only ecosystems the
+    # plugins cannot stamp (docker, github-actions) fall back to local
+    # filename matching.
     tracked_paths = list(tracking.keys())
-    manifests_found = {}
+    manifests_found: dict[str, str] = {}
+    _PKG_MANAGER_TO_ECO = {
+        "npm": "npm/nodejs",
+        "yarn": "npm/nodejs",
+        "pnpm": "npm/nodejs",
+        "pip": "pip",
+        "poetry": "python",
+        "setuptools": "python-setuptools",
+        "cargo": "cargo",
+        "go modules": "go-modules",
+        "maven": "maven",
+        "gradle": "gradle",
+        "composer": "composer",
+        "bundler": "bundler",
+        "dart-pub": "dart-pub",
+        "gradle-kotlin": "gradle-kotlin",
+    }
+    for e in entities:
+        pm = _meta(e, "bsg.package_manager")
+        if not pm:
+            continue
+        eco = _PKG_MANAGER_TO_ECO.get(str(pm).strip().lower())
+        fp = str(getattr(e, "file", "") or "")
+        if eco and fp:
+            manifests_found[fp] = eco
+    _UNSTAMPABLE_MARKERS = {
+        "dockerfile": "docker",
+        "docker-compose.yml": "docker-compose",
+        "docker-compose.yaml": "docker-compose",
+        ".github/workflows/": "github-actions",
+    }
     for fp in tracked_paths:
         lp = fp.lower()
         base = lp.split("/")[-1]
-        for marker, eco in _MANIFEST_NAMES.items():
+        for marker, eco in _UNSTAMPABLE_MARKERS.items():
             if marker.endswith("/"):
                 # Directory marker (e.g. ".github/workflows/") — match any
                 # file living under that directory, at any depth.
@@ -237,7 +309,7 @@ def build_gap_report(
             "gap": "low_category_coverage",
             "count": uncategorized,
             "uncategorized_pct": round(100 * uncategorized / total, 1),
-            "suggested_rule_shape": "file_patterns -> assign_category (TEST/DOCS/CONFIG/GENERATED/VENDOR)",
+            "suggested_rule_shape": "file_patterns -> assign_category (TEST/DOC/CONFIG/GENERATED/VENDOR)",
         })
     if miscat_samples:
         gaps.append({
@@ -267,6 +339,15 @@ def build_gap_report(
             "external_symbols": len(external),
             "quarantined": quarantined,
             "rule_tagged_entities": tagged_rules,
+        },
+        "resolution_quality": {
+            "stub_states": dict(stub_states),
+            "stub_to_stub": stub_to_stub,
+            "stub_self": stub_self,
+            "dangling_edges": dangling_edges,
+            "dangling_edge_pct": round(
+                100 * dangling_edges / max(len(graph.relationships), 1), 1
+            ),
         },
         "entity_type_distribution": dict(type_dist.most_common()),
         "noise": {
@@ -363,6 +444,7 @@ def render_overview_md(report: dict, context_overview: dict | None = None) -> st
     ]
 
     noise = report["noise"]
+    rq = report.get("resolution_quality", {})
     lines += [
         "## Noise & Ghosts",
         "",
@@ -372,6 +454,15 @@ def render_overview_md(report: dict, context_overview: dict | None = None) -> st
         f"({round(100 * t['unresolved_stubs'] / max(t['entities'], 1), 1)}%)",
         "",
     ]
+    if rq:
+        lines += [
+            "## Resolution Quality",
+            "",
+            f"- stub states: {rq.get('stub_states', {})}",
+            f"- stub→stub / self resolutions: {rq.get('stub_to_stub', 0)} / {rq.get('stub_self', 0)}",
+            f"- dangling edges: {rq.get('dangling_edges', 0)} ({rq.get('dangling_edge_pct', 0)}%)",
+            "",
+        ]
 
     lines.append("## Gaps")
     lines.append("")

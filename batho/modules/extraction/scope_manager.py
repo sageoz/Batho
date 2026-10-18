@@ -9,6 +9,9 @@ from typing import Dict, List, Optional, Tuple, Set, Iterator
 
 from batho.core.config import get_active_root
 from batho.modules.extraction.package_roots import derived_module_variants
+from batho.utils.logging import get_logger
+
+logger = get_logger(__name__, component="scope_manager")
 
 # Pre-compiled regex for removing parameter hash suffixes from symbol names
 _PARAM_HASH_PATTERN = re.compile(r'_\[[a-fA-F0-9]+\]')
@@ -150,6 +153,13 @@ class ScopeManager:
         # invalidate it via _invalidate_resolution_indexes().
         self._batho_module_suffix_index = None
 
+        # Stdlib flat-key precedence: a third-party flat registration must
+        # never overwrite (or pre-empt) a stdlib flat key — e.g. `black`
+        # re-exports `Enum`, and without this guard `enum.Enum` resolves to
+        # black's copy. Stdlib registrations always win.
+        self._stdlib_flat_keys: Set[str] = set()
+        self._stdlib_lock = threading.Lock()
+
     @property
     def _scope_stack(self) -> List[str]:
         if not hasattr(self._local_data, "stack"):
@@ -217,6 +227,15 @@ class ScopeManager:
 
     def define_symbol(self, name: str, symbol_id: str, symbol_type: str, is_global: bool = False) -> None:
         """Define a symbol in the current scope or the global table."""
+        if symbol_id.startswith("unresolved:"):
+            # Contract guard: a contextual stub is a reference-site record,
+            # never a resolution target. Registering one lets exact_match
+            # resolve stubs to stubs (or to themselves).
+            logger.warning(
+                "stub_symbol_registration_rejected",
+                name=name, symbol_id=symbol_id,
+            )
+            return
         self._invalidate_resolution_indexes()
         current_scope = self.get_current_scope()
         symbol_info = SymbolInfo(
@@ -303,9 +322,27 @@ class ScopeManager:
                     self.define_symbol(f"{module_dot}.{name}", symbol_id, symbol_type, is_global=is_global)
                     self.define_symbol(f"{module_slash}/{name}", symbol_id, symbol_type, is_global=is_global)
 
-    def add_external_symbol(self, name: str, symbol_id: str, symbol_type: str) -> None:
-        """Add an external symbol (from another package) to global table."""
+    def add_external_symbol(self, name: str, symbol_id: str, symbol_type: str, *, stdlib: bool = False) -> None:
+        """Add an external symbol (from another package) to global table.
+
+        ``stdlib=True`` marks the registration as language-stdlib: it always
+        lands (overwriting any earlier same-name flat hit) and claims the
+        flat key so later third-party registrations of the same bare name
+        (common for re-exports) are rejected instead of shadowing the
+        stdlib symbol.
+        """
         self._invalidate_resolution_indexes()
+        if not stdlib:
+            with self._stdlib_lock:
+                if name in self._stdlib_flat_keys:
+                    logger.debug(
+                        "external_shadow_rejected",
+                        name=name, symbol_id=symbol_id,
+                    )
+                    return
+        else:
+            with self._stdlib_lock:
+                self._stdlib_flat_keys.add(name)
         symbol_info = SymbolInfo(
             symbol_id=symbol_id,
             symbol_type=symbol_type,

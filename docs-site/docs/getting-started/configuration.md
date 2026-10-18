@@ -20,7 +20,7 @@ Batho works out of the box with zero config. For production use, configure with 
 The `batho.yaml` config is structured into the following sections:
 
 ### 1. `schema_version`
-String identifier for configuration schema compatibility. As of v1.4.3, this is `"batho-config.v1"`.
+String identifier for configuration schema compatibility. As of v2.0.0, this is `"batho-config.v1"`.
 
 ### 2. `logging`
 Controls process-wide logging and CLI verbosity behavior.
@@ -119,7 +119,15 @@ Configures the BSG rule plugins engine.
 - `fail_on_rule_error`: Fail build on rule execution error.
 
 ### 10. `plugins`
-Overrides for individual plugin rules (e.g., setting a rule severity to `warning` or `error`).
+Plugin-host configuration plus per-rule overrides (e.g., setting a rule severity to `warning` or `error`).
+- `core.required` (default `true`): the mandatory core pack (`batho_plugin.core`) failing to load fails the build with guidance. Set `false` to degrade gracefully.
+- `external.enabled` (default `false`): opt-in gate for the external pack — the 9 security/quality interceptor plugins (`silent_failure_catcher`, `dependency_blast_radius`, `resource_leak_preventer`, `nplus1_query_catcher`, `iac_drift_sentinel`, `schema_migration_enforcer`, `api_contract_guardian`, `hardcoded_secret_catcher`, `auth_boundary_shield`) that tag risks during BSG compression. **Interceptors do not run unless this is `true`.**
+- `external.select` (default `[]`): per-plugin allowlist of external plugin stems; empty loads every external plugin.
+- `fingerprint_in_cache` (default `true`): the plugin-set fingerprint participates in the AST cache variant, so a changed plugin set invalidates stale hook-derived cache entries.
+- `reextract_on_drift` (default `true`): when the plugin fingerprint differs from the previous run, `batho patch` escalates to a full-repo re-extraction so every file's entities are re-stamped under the current plugin set. Set to `false` for warn-only legacy behavior.
+- `telemetry.hooks_metadata` (default `false`): debug flag — stamp `bsg.hooks` (the list of plugin ids that mutated each entity) onto entity metadata.
+- `host.dispatch_order` (default `priority_then_id`): canonical hook dispatch order — priority descending, then `plugin_id` ascending (the only supported value).
+- `overrides`: per-plugin, per-rule field overrides keyed by plugin stem then `rule_id`.
 
 ### 11. `bsg`
 Configures the Batho Structured Graph engine.
@@ -184,7 +192,7 @@ Configures the MCP server tool registration and gating.
 - `tools`:
   - `disabled`: Blocklist of tool names NOT to register. When unset, defaults to the secure-by-default set: `["batho_build", "batho_export", "batho_load", "batho_gc"]`. Set to `[]` to enable all tools.
   - `enabled`: Optional allowlist. If set, ONLY these tools register (overrides `disabled`). Example: `["graph_overview", "graph_query", "batho_build"]`.
-- `toolsets`: Named tool groups resolved to a disabled set, consulted only when `tools.disabled`/`tools.enabled` are both unset (`null` = secure defaults). `true` enables a group, `false` disables it. Groups: `retrieval` (`graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `file_connectivity`, `search_entities`, `get_delta`), `diagnostics` (`batho_status`, `batho_list_runs`, `batho_diff`), `registry` (`list_repos`, `add_repo`, `remove_repo`), `admin` (`batho_build`, `batho_patch`, `batho_export`, `batho_gc`, `batho_fix`, `batho_load`). Examples: `{admin: true}` exposes everything including Tier-3 admin tools; `{retrieval: true, diagnostics: false, registry: false, admin: false}` is a minimal retrieval-only surface.
+- `toolsets`: Named tool groups resolved to a disabled set, consulted only when `tools.disabled`/`tools.enabled` are both unset (`null` = secure defaults). `true` enables a group, `false` disables it. Groups: `retrieval` (`graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `file_connectivity`, `search_entities`, `get_delta`), `diagnostics` (`batho_status`, `batho_list_runs`, `batho_history`), `registry` (`list_repos`, `add_repo`, `remove_repo`), `admin` (`batho_build`, `batho_patch`, `batho_export`, `batho_gc`, `batho_fix`, `batho_load`). Examples: `{admin: true}` exposes everything including Tier-3 admin tools; `{retrieval: true, diagnostics: false, registry: false, admin: false}` is a minimal retrieval-only surface.
 
 See [MCP Tool Gating](/docs/mcp#tool-gating) for details.
 

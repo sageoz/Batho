@@ -18,7 +18,7 @@ All graph tools accept `repo` as an optional parameter. If omitted, the first re
 |------|-------|---------|
 | Registry | `list_repos`, `add_repo`, `remove_repo` | enabled |
 | Retrieval | `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `file_connectivity`, `search_entities`, `get_delta` | enabled |
-| Diagnostics | `batho_status`, `batho_list_runs`, `batho_diff` | enabled |
+| Diagnostics | `batho_status`, `batho_list_runs`, `batho_history` | enabled |
 | Admin (Tier-3) | `batho_patch`, `batho_fix` | enabled |
 | Admin (Tier-3) | `batho_build`, `batho_export`, `batho_load`, `batho_gc` | **disabled** (CLI-first) |
 
@@ -42,7 +42,7 @@ calls and gate destructive ones:
 | `get_delta` | true | false | true | false |
 | `batho_status` | true | false | true | false |
 | `batho_list_runs` | true | false | true | false |
-| `batho_diff` | true | false | true | false |
+| `batho_history` | true | false | true | false |
 | `batho_build` | false | true | — | true |
 | `batho_patch` | false | true | true | true |
 | `batho_export` | false | true | — | true |
@@ -615,29 +615,29 @@ Returns a list of runs with UUID, timestamp, status, git commit, branch, entity/
 
 ---
 
-## `batho_diff`
+## `batho_history`
 
-Query node-level changes across runs, entities, or files. Read-only.
+Query node-level change history across runs, entities, or files. Read-only. (Formerly `batho_diff`.)
 
 ### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `repo` | string | No | Registry default | Repo name from registry |
-| `run_id` | string | No | Latest patch | Specific run UUID to diff |
-| `entity_id` | string | No | — | Filter changes to a specific entity |
-| `file_path` | string | No | — | Filter changes by file path |
-| `since` | string | No | — | Run UUID to diff from (defaults to previous run) |
+| `run_id` | string | No | — | Specific run UUID to inspect (exactly one of `run_id`/`entity_id`/`file_path` required) |
+| `entity_id` | string | No | — | Full evolution history for a specific entity |
+| `file_path` | string | No | — | Node changes for a file across runs |
+| `since` | string | No | — | Run UUID lower bound (only with `entity_id`) |
 
 ### Example
 
 ```
-batho_diff(repo="myapp", file_path="src/auth/manager.py")
+batho_history(repo="myapp", file_path="src/auth/manager.py")
 ```
 
 ### Output
 
-Returns added, removed, modified, and renamed nodes with before/after metadata for each change.
+Returns added, removed, modified, and renamed nodes with file paths, entity IDs, and changed-field names for each change.
 
 ---
 

@@ -64,7 +64,7 @@ flowchart LR
 | [`get_delta`](/docs/mcp/tools-reference#get_delta) | Incremental changes from the latest patch run | `repo`, `run_id`, `change_kind`, `file_path` |
 | [`batho_status`](/docs/mcp/tools-reference#batho_status) | Artifact and watcher status for one or all repos (read-only) | `repo` |
 | [`batho_list_runs`](/docs/mcp/tools-reference#batho_list_runs) | List patch/build run IDs for a repo (read-only) | `repo`, `limit` |
-| [`batho_diff`](/docs/mcp/tools-reference#batho_diff) | Query node-level changes across runs, entities, or files (read-only) | `repo`, `run_id`, `entity_id`, `file_path`, `since` |
+| [`batho_history`](/docs/mcp/tools-reference#batho_history) | Query node-level changes across runs, entities, or files (read-only) | `repo`, `run_id`, `entity_id`, `file_path`, `since` |
 | [`batho_patch`](/docs/mcp/tools-reference#batho_patch) | Run an incremental patch on an existing artifact (destructive) | `repo`, `max_file_size_kb`, `graph_backend` |
 | [`batho_fix`](/docs/mcp/tools-reference#batho_fix) | Run integrity verification and repair (destructive) | `repo`, `deep`, `dry_run`, `target`, `phase`, `parallel` |
 

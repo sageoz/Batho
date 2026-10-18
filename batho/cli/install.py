@@ -25,7 +25,7 @@ def register_install_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Install the skill pack and register the MCP server with detected agents",
         description=(
             "Download the published batho-skills release (checksum-verified), "
-            "install the 5 pack skills to ~/.agents/skills plus mirrors for "
+            "install the 6 pack skills to ~/.agents/skills plus mirrors for "
             "detected agents, and register the Batho MCP server in every "
             "detected coding-agent client's config (claude-desktop, "
             "claude-code, cursor, windsurf, vscode, codex, gemini, opencode, "

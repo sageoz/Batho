@@ -1,0 +1,65 @@
+# batho_plugin/core/language_packs/python.yaml — Python language pack (class: core)
+# Migrated from extractor.py:230-236 (_BUILTINS_BY_LANG["python"]), the
+# cross-language noise floor stays in the prune hook (engine parity); this
+# pack's noise_symbols is the per-language EXTENSION point (empty = parity).
+# Comment syntax from extractor.py:163-194 (_LINE_COMMENT_PREFIXES) and
+# extractor.py:196-227 (_BLOCK_COMMENT_PAIRS — python has no block pairs).
+# lang_to_manager from pipeline.py:41-48 (_LANG_TO_MANAGER).
+plugin_id: lang-python
+version: "1.0.0"
+class: core
+language: python
+requires:
+  - batho_plugin.core
+data:
+  sets:
+    builtins:
+      - "int"
+      - "str"
+      - "float"
+      - "bool"
+      - "dict"
+      - "list"
+      - "set"
+      - "tuple"
+      - "len"
+      - "range"
+      - "print"
+      - "self"
+      - "cls"
+      - "None"
+      - "True"
+      - "False"
+      - "object"
+      - "type"
+      - "open"
+      - "Exception"
+      - "ValueError"
+      - "TypeError"
+      - "KeyError"
+      - "IndexError"
+      - "any"
+      - "all"
+      - "sum"
+      - "min"
+      - "max"
+      - "zip"
+      - "enumerate"
+      - "map"
+      - "filter"
+      - "isinstance"
+      - "id"
+      - "hash"
+      - "super"
+      - "getattr"
+      - "setattr"
+      - "hasattr"
+      - "iter"
+      - "next"
+    noise_symbols: []          # per-language extension point (floor lives in the hook)
+  maps:
+    comment_syntax:
+      line: ["#"]
+      block: []
+    lang_to_manager:
+      manager: pip
