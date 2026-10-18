@@ -58,15 +58,43 @@ PYTHON_QUERY = r"""
       body: (block
         (string)? @def.function.docstring))))
 
-; Nested functions inside other functions
-(function_definition
-  body: (block
-    (function_definition
+; ── Nested functions — any function_definition inside a block ─────────────────
+; `async def` parses as function_definition with an `async` keyword child, so
+; a single shape covers sync/async parents and children uniformly. Anchoring
+; on `block` (rather than a specific parent) captures closures at any depth —
+; inside functions, control-flow bodies, etc. A direct child of a class body
+; block is also matched here; the extractor's method-priority filter keeps the
+; def.method capture and suppresses this def.function duplicate.
+(block
+  (function_definition
+    name: (identifier) @def.function.name
+    parameters: (parameters) @def.function.params
+    return_type: (type)? @def.function.return_type
+    body: (block
+      (string)? @def.function.docstring)))
+
+; Decorated nested functions (e.g. @mcp.tool() closures)
+(block
+  (decorated_definition
+    definition: (function_definition
       name: (identifier) @def.function.name
       parameters: (parameters) @def.function.params
       return_type: (type)? @def.function.return_type
       body: (block
         (string)? @def.function.docstring))))
+
+; Decorated methods inside a class body — non-property decorators
+; (@staticmethod/@classmethod/custom). @property forms are captured as
+; def.property below and win the extractor's priority filter.
+(class_definition
+  body: (block
+    (decorated_definition
+      definition: (function_definition
+        name: (identifier) @def.method.name
+        parameters: (parameters) @def.method.params
+        return_type: (type)? @def.method.return_type
+        body: (block
+          (string)? @def.method.docstring)))))
 
 ; ── Imports ───────────────────────────────────────────────────────────────────
 (import_statement
@@ -1491,3 +1519,27 @@ def get_query(language: str) -> str | None:
 def list_supported_languages() -> list[str]:
     """Return a sorted list of supported language identifiers."""
     return sorted(TREE_SITTER_QUERIES.keys())
+
+
+_QUERIES_FINGERPRINT: str | None = None
+
+
+def queries_fingerprint() -> str:
+    """sha256 fingerprint of the bundled tree-sitter queries.
+
+    Part of the AST cache variant: a query edit changes extraction shape, so
+    cached entities produced by an older query must be invalidated — content
+    hashing alone cannot see that the extractor itself changed.
+    """
+    global _QUERIES_FINGERPRINT
+    if _QUERIES_FINGERPRINT is None:
+        import hashlib
+
+        h = hashlib.sha256()
+        for lang in sorted(TREE_SITTER_QUERIES):
+            h.update(lang.encode())
+            h.update(b"\0")
+            h.update(TREE_SITTER_QUERIES[lang].encode())
+            h.update(b"\0")
+        _QUERIES_FINGERPRINT = h.hexdigest()[:12]
+    return _QUERIES_FINGERPRINT

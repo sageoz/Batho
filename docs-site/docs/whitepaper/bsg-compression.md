@@ -69,7 +69,13 @@ Both `storage` and `agent` views are serialized and stored inside the `.batho` d
 
 ## 5.4 BSG Plugin Catalog
 
-Batho ships with 38 declarative YAML plugin files. Plugins are divided into two categories: **foundation plugins** (detection, categorization, and tagging) and **interceptor plugins** (security, reliability, and architectural risk detection).
+Batho ships **51 declarative YAML plugins** in two packs, plus 5 built-in pipeline hooks. The engine owns algorithms and identity; the plugin SDK (`batho_plugin`) owns the knowledge — detection rules, classification, language data, and enrichment. All matching is deterministic; no LLM calls at index time.
+
+| Pack | Count | Loading | Contents |
+|------|-------|---------|----------|
+| **Core pack** | 38 | Mandatory, auto-loaded (`plugins.core.required`) | Detection, classification, bidirectional integrity, token optimization, language packs, policies |
+| **External pack** | 13 | Config-gated (`plugins.external.enabled`, default off; allowlist via `plugins.external.select`) | 9 security/quality/optimization interceptors + reconstruction integrity, domain taxonomy, quarantine, service tags |
+| **Pipeline hooks** | 5 | Auto-loaded | `language_detect`, `stamp_language`, `comment_classify`, `property_classify`, `prune_stub` |
 
 ### Plugin Schema Versions
 
@@ -78,24 +84,26 @@ Batho ships with 38 declarative YAML plugin files. Plugins are divided into two 
 | `bsg-plugin-schema-v1` | Legacy (backward compatible) |
 | `bsg-plugin-schema-v2` | Current (supports `bidirectional`, `ast_edges`, `depends_on`) |
 
-### Foundation Plugins (28 files)
+### Core Pack — Detection & Categorization
 
-Foundation plugins run during graph construction to detect languages, frameworks, and file categories, and to apply baseline semantic tags.
-
-#### Core Detection & Categorization
+Core plugins run during graph construction to detect languages, frameworks, and file categories, and to apply baseline semantic tags.
 
 | Plugin ID | Name | Description |
 |-----------|------|-------------|
-| `bsg_detection_foundation` | BSG Detection Foundation | Language, framework, package manager, and infrastructure detection |
-| `bsg_file_categorization` | BSG File Categorization | Categorize files into TEST, DOCS, CONFIG, SOURCE by path patterns and extensions |
-| `bsg_graph_foundation` | BSG Graph Foundation | Baseline deterministic node tagging for category, scope, and service metadata |
-| `bsg_token_optimization` | BSG Token Optimization | Docstring truncation, test fixture detection, entry point normalization, metadata cleanup (60–80% token reduction) |
+| `batho_plugin.core.file_detection` | File Detection | Extension-to-language detection data with multi-strategy fallbacks |
+| `bsg_detection_foundation` | Detection Foundation | Package-manager, manifest, and infrastructure detection |
+| `bsg_file_categorization` | File Categorization | Categorize files into TEST, DOCS, CONFIG, SOURCE by path patterns and extensions |
+| `bsg_graph_foundation` | Graph Foundation | Baseline deterministic node tagging for category, scope, and service metadata |
+| `bsg_token_optimization` | Token Optimization | Docstring truncation, test fixture detection, entry point normalization, metadata cleanup (60–80% token reduction) |
 | `bsg_bidirectional_foundation` | Bidirectional Foundation | Gap coverage validation, file integrity verification, reconstruction flagging |
+| `bsg_detection_cicd` | CI/CD Detection | Detect CI/CD pipeline configurations (GitHub Actions, GitLab CI, Jenkins) |
+| `bsg_detection_cloud_providers` | Cloud Provider Detection | Detect cloud provider SDKs (AWS, GCP, Azure) |
+| `bsg_detection_test_frameworks` | Test Framework Detection | Detect test frameworks (pytest, Jest, JUnit, Go testing) |
 
-#### Language-Specific Detection
+### Core Pack — Language & Framework Detection
 
-| Plugin ID | Language | Description |
-|-----------|----------|-------------|
+| Plugin ID | Scope | Description |
+|-----------|-------|-------------|
 | `bsg_detection_cpp` | C/C++ | Detect C/C++ projects from source files and build configs |
 | `bsg_detection_csharp` | C# | Detect C#/.NET projects from `.csproj`, `.sln` files |
 | `bsg_detection_dart` | Dart | Detect Dart/Flutter projects from `pubspec.yaml` |
@@ -105,11 +113,6 @@ Foundation plugins run during graph construction to detect languages, frameworks
 | `bsg_detection_ruby` | Ruby | Detect Ruby projects from `Gemfile` |
 | `bsg_detection_scala` | Scala | Detect Scala projects from `build.sbt` |
 | `bsg_detection_swift` | Swift | Detect Swift/iOS projects from `Package.swift` |
-
-#### Framework Detection
-
-| Plugin ID | Framework | Description |
-|-----------|-----------|-------------|
 | `bsg_framework_angular` | Angular | Detect Angular components, services, and modules |
 | `bsg_framework_django` | Django | Detect Django views, models, and middleware |
 | `bsg_framework_flask` | Flask | Detect Flask routes, blueprints, and decorators |
@@ -119,38 +122,37 @@ Foundation plugins run during graph construction to detect languages, frameworks
 | `bsg_framework_vue` | Vue | Detect Vue components, composables, and stores |
 | `bsg_framework_other` | Other | Detect patterns for Spring, Rails, Laravel, Gin, and more |
 
-#### Specialized Detection
+### Core Pack — Data Packs & Bidirectional Tests
 
 | Plugin ID | Description |
 |-----------|-------------|
-| `bsg_detection_cicd` | Detect CI/CD pipeline configurations (GitHub Actions, GitLab CI, Jenkins) |
-| `bsg_detection_cloud_providers` | Detect cloud provider SDKs (AWS, GCP, Azure) |
-| `bsg_detection_test_frameworks` | Detect test frameworks (pytest, Jest, JUnit, Go testing) |
-
-#### Test Plugins (Bidirectional)
-
-| Plugin ID | Description |
-|-----------|-------------|
-| `test_bidirectional_gap_coverage` | Validate gap entity coverage for bidirectional reconstruction |
+| `language-ecosystems` | Per-language package-manager ecosystem knowledge |
+| `noise-paths` | Generated/vendored path data for quarantine rules |
+| `pruning-policy` | Which entity kinds to prune per language |
+| `resolution-policy` | Cross-file resolution strategy data |
+| `lang-python` / `lang-typescript` / `lang-javascript` / `lang-go` / `lang-rust` | Per-language data packs: builtins, comment syntax |
+| `test_bidirectional_gap` | Validate gap entity coverage for bidirectional reconstruction |
 | `test_bidirectional_integrity` | Verify content hash consistency for bidirectional mode |
 | `test_bidirectional_reconstruction` | End-to-end reconstruction verification tests |
 
-### Interceptor Plugins (10 files)
+### External Pack — Interceptors (config-gated)
 
-Interceptor plugins run as a non-blocking enricher pipeline during graph construction. Detections are tagged, not blocked, allowing the build to continue while surfacing issues.
+Interceptor plugins run as a non-blocking enricher pipeline during graph construction. Detections are tagged, not blocked, allowing the build to continue while surfacing issues. Enable the pack via `plugins.external.enabled: true`, or allowlist specific plugins with `plugins.external.select`.
 
 | Plugin ID | Name | Severity | Detects |
 |-----------|------|----------|---------|
-| `bsg_hardcoded_secret_catcher` | Hardcoded Secret Catcher | **High** | API keys, tokens in string literals |
-| `bsg_auth_boundary_shield` | Auth Boundary Shield | **High** | Missing auth decorators on API route handlers |
-| `bsg_silent_failure_catcher` | Silent Failure Catcher | Medium | Bare `except:`, swallowed exceptions |
-| `bsg_dependency_blast_radius` | Dependency Blast Radius | Low | High fan-out modules (>N dependents) |
-| `bsg_api_contract_guardian` | API Contract Guardian | **Block** | Backend API contract changes with downstream dependents |
-| `bsg_iac_drift_sentinel` | IaC Drift Sentinel | Warning | Config drift between app env references and IaC definitions |
-| `bsg_nplus1_query_catcher` | N+1 Query Catcher | Warning | Database execution patterns inside loop structures |
-| `bsg_resource_leak_preventer` | Resource Leak Preventer | Warning | Resource allocations without cleanup paths |
-| `bsg_schema_migration_enforcer` | Schema Migration Enforcer | **Block** | ORM/schema changes requiring migration companions |
-| `bsg_reconstruction_interceptors` | Reconstruction Interceptors | Warning/Block | Coverage gap detection and reconstruction integrity verification |
+| `bsg_hardcoded_secret_catcher` | Hardcoded Secret Catcher | block | API keys, tokens in string literals |
+| `bsg_auth_boundary_shield` | Auth Boundary Shield | block | Missing auth decorators on API route handlers |
+| `bsg_api_contract_guardian` | API Contract Guardian | block | Backend API contract changes with downstream dependents |
+| `bsg_schema_migration_enforcer` | Schema Migration Enforcer | block | ORM/schema changes requiring migration companions |
+| `bsg_silent_failure_catcher` | Silent Failure Catcher | warning | Bare `except:`, swallowed exceptions |
+| `bsg_dependency_blast_radius` | Dependency Blast Radius | warning | High fan-out modules (>N dependents) |
+| `bsg_iac_drift_sentinel` | IaC Drift Sentinel | warning | Config drift between app env references and IaC definitions |
+| `bsg_nplus1_query_catcher` | N+1 Query Catcher | warning | Database execution patterns inside loop structures |
+| `bsg_resource_leak_preventer` | Resource Leak Preventer | warning | Resource allocations without cleanup paths |
+| `bsg_reconstruction_interceptors` | Reconstruction Interceptors | block/warning | Coverage gap detection and reconstruction integrity verification |
+
+Plus three enrichment plugins: `gen_domain_taxonomy` (domain tier derivation), `gen_quarantine_unresolved` (quarantine unresolved stubs), and `gen_service_tag` (service attribution).
 
 ### Plugin Dependency Graph
 

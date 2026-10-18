@@ -18,7 +18,7 @@ All graph tools accept `repo` as an optional parameter. If omitted, the first re
 |------|-------|---------|
 | Registry | `list_repos`, `add_repo`, `remove_repo` | enabled |
 | Retrieval | `graph_overview`, `graph_query`, `get_entity`, `trace_path`, `get_file_graph`, `file_connectivity`, `search_entities`, `get_delta` | enabled |
-| Diagnostics | `batho_status`, `batho_list_runs`, `batho_diff` | enabled |
+| Diagnostics | `batho_status`, `batho_list_runs`, `batho_history` | enabled |
 | Admin (Tier-3) | `batho_patch`, `batho_fix` | enabled |
 | Admin (Tier-3) | `batho_build`, `batho_export`, `batho_load`, `batho_gc` | **disabled** (CLI-first) |
 
@@ -42,7 +42,7 @@ calls and gate destructive ones:
 | `get_delta` | true | false | true | false |
 | `batho_status` | true | false | true | false |
 | `batho_list_runs` | true | false | true | false |
-| `batho_diff` | true | false | true | false |
+| `batho_history` | true | false | true | false |
 | `batho_build` | false | true | — | true |
 | `batho_patch` | false | true | true | true |
 | `batho_export` | false | true | — | true |
@@ -225,12 +225,24 @@ graph_overview(repo="myapp", response_format="summary")
       "total_relationships": 4823,
       "total_files": 312,
       "entity_breakdown": {"function": 892, "class": 124},
+      "unresolved_refs": 87,
       "relationship_breakdown": {"calls": 2100, "imports": 1800},
       "ambiguous_edge_count": 0,
       "run_id": "abc-123",
       "git_commit": "a1b2c3d"
     },
-    "communities": [...]
+    "communities": [
+      {
+        "id": 0,
+        "name": "UserService",
+        "entity_count": 45,
+        "file_count": 8,
+        "top_entities": ["AuthManager", "UserRepo"],
+        "description": "src/auth · key: AuthManager, UserRepo",
+        "file_paths": ["src/auth/manager.py", "..."]
+      },
+      {"id": -1, "name": "… 6 smaller communities", "entity_count": 58, "file_count": 0, "top_entities": [], "description": "", "file_paths": [], "is_aggregate": true}
+    ]
   },
   "meta": {
     "artifact_generation": 3,
@@ -240,6 +252,8 @@ graph_overview(repo="myapp", response_format="summary")
   }
 }
 ```
+
+`stats.unresolved_refs` counts quarantined `unresolved:` reference stubs (cross-file references that did not resolve to a concrete entity); entity-type counts and `total_entities` cover resolved entities only. `overview.communities` lists the top-N communities by entity count (N = `community_detection.overview_top_n`, default `12`), each labeled by a heuristic name with a one-line `description`; singleton communities are hidden, and any communities beyond the top-N collapse into a single trailing aggregate entry (`id: -1`, `is_aggregate: true`).
 
 ---
 
@@ -259,10 +273,13 @@ Query the code graph with optional filters. Returns paginated nodes and edges.
 | `confidence_threshold` | float | No | — | Only return relationships with `confidence >= threshold` (0.0–1.0). See [Confidence Tiers](#confidence-tiers) |
 | `relation_direction` | string | No | `"both"` | Filter by edge direction: `outgoing` (entity is source), `incoming` (entity is target), `both` |
 | `name_pattern` | string | No | — | Regex pattern to match entity names |
+| `entity_categories` | list[string] | No | — | Filter by entity category (expands to member types). Valid: `code`, `external`, `infrastructure`, `markup`, `structural` (case-insensitive). Combines with `entity_types` using OR semantics |
 | `response_format` | string | No | `"concise"` | Output format: `concise`, `detailed` |
 | `limit` | int | No | `50` | Max entities to return |
 | `offset` | int | No | `0` | Pagination offset |
 | `max_tokens` | int | No | `25000` | Token budget |
+| `include_unresolved` | bool | No | `false` | Include `unresolved:` reference stubs in node results. Default `false`: stubs are quarantined so node lists show resolved entities only (edges referencing them are unaffected) |
+| `include_quarantined` | bool | No | `false` | Include entities quarantined by rules (`bsg.noise`/`bsg.quarantined` metadata). Default `false`: quarantined entities are hidden; the suppressed count is reported in `meta.quarantined_suppressed` and a markdown footer line |
 
 ### Example
 
@@ -307,6 +324,8 @@ Returns the entity's metadata (name, type, file, line range), all relationships 
 
 Find the shortest path between two entities in the code graph using BFS traversal.
 
+Traversal is **default-deny**: only whitelisted structural edge kinds are expanded — `CALLS` > `INHERITS`/`IMPLEMENTS` > `IMPORTS` > `READS`/`WRITES` > `CONTAINS` > other structural relations (`USES`, `DEFINES`, `OVERRIDES`, `STACK_BOUNDARY`, `WRAPPED_BY`, `DEPENDS_ON_API`, `CLEANED_BY`, `HAS_ATTRIBUTE`, `LINKS_TO`, `IMPORTS_STYLE`, `REFERENCES`). Non-structural kinds (`RATIONALE_FOR`, or any future annotation/inferred relation) are never traversed, even when they would produce a shorter path. An explicit `relation_types` filter can only **narrow** this whitelist, never widen it — requesting only non-structural kinds returns a `CLIENT_ERROR`. Among equal-length paths, the one whose earliest hops use higher-priority edge kinds wins; remaining ties resolve deterministically by `entity_id` ordering.
+
 ### Parameters
 
 | Parameter | Type | Required | Default | Description |
@@ -314,8 +333,8 @@ Find the shortest path between two entities in the code graph using BFS traversa
 | `source_entity_id` | string | Yes | — | Starting entity ID |
 | `target_entity_id` | string | Yes | — | Target entity ID |
 | `repo` | string | No | Registry default | Repo name from registry |
-| `max_depth` | int | No | `5` | Maximum BFS depth (hops) |
-| `relation_types` | list[string] | No | — | Only traverse these relationship types |
+| `max_depth` | int | No | `5` | Maximum BFS depth (hops; clamped to 1–20) |
+| `relation_types` | list[string] | No | — | Only traverse these relationship types. Can only narrow the structural whitelist — non-structural kinds are dropped (reported in `meta.edge_priority.non_traversable_requested`); if none remain, returns `CLIENT_ERROR` |
 | `symbol_roles` | list[string] | No | — | Only traverse edges matching the specified roles (OR semantics). Valid: `Definition`, `Import`, `WriteAccess`, `ReadAccess`, `Generated`, `Declaration`, `Dynamic`, `Heuristic` |
 | `confidence_threshold` | float | No | — | Only traverse edges with `confidence >= threshold` (0.0–1.0). See [Confidence Tiers](#confidence-tiers) |
 | `relation_direction` | string | No | `"outgoing"` | Direction of edges to traverse: `outgoing` (source→target), `incoming` (target→source, reverse BFS), `both` |
@@ -359,13 +378,30 @@ Depth: 3 hops
 {
   "path": [
     {"entity_id": "api.routes.login.handle_login", "relation_type": "", "name": "handle_login"},
-    {"entity_id": "auth.AuthManager.validate_token", "relation_type": "CALLS", "name": "validate_token"},
-    {"entity_id": "auth.SessionHandler.create", "relation_type": "CALLS", "name": "create"}
+    {"entity_id": "auth.AuthManager.validate_token", "relation_type": "CALLS", "name": "validate_token", "direction": "forward"},
+    {"entity_id": "auth.SessionHandler.create", "relation_type": "CALLS", "name": "create", "direction": "forward"}
   ],
   "depth": 2,
-  "meta": {"artifact_generation": 3}
+  "meta": {
+    "artifact_generation": 3,
+    "edge_priority": {
+      "preference": ["CALLS", "IMPLEMENTS", "INHERITS", "IMPORTS", "READS", "WRITES", "CONTAINS", "..."],
+      "path_edge_kinds": ["CALLS", "CALLS"],
+      "excluded_edge_kinds": {"RATIONALE_FOR": 4},
+      "non_traversable_requested": ["RATIONALE_FOR"]
+    },
+    "applied_filters": {"relation_types": ["CALLS"]}
+  }
 }
 ```
+
+Each `path` entry after the first carries an optional `direction` field: `"forward"` (source→target edge) or `"reverse"` (target→source edge, only when `relation_direction` is `incoming` or `both`); rendered as `→`/`←` in the markdown.
+
+`meta.edge_priority` reports the traversal policy applied:
+- `preference` — all traversable edge kinds in tie-break preference order.
+- `path_edge_kinds` — the edge kinds used at each hop of the returned path.
+- `excluded_edge_kinds` — non-structural kinds present in the filtered edge set that were excluded from traversal, with counts (only present when non-empty).
+- `non_traversable_requested` — requested `relation_types` dropped because they are not traversable structural edges (only present when non-empty).
 
 ---
 
@@ -451,9 +487,12 @@ Search for entities by name using substring or regex matching.
 | `query` | string | Yes | — | Search query (substring or regex) |
 | `repo` | string | No | Registry default | Repo name from registry |
 | `entity_types` | list[string] | No | — | Filter by entity type |
+| `entity_categories` | list[string] | No | — | Filter by entity category (expands to member types). Valid: `code`, `external`, `infrastructure`, `markup`, `structural` (case-insensitive). Combines with `entity_types` using OR semantics |
 | `symbol_roles` | list[string] | No | — | Filter to entities that participate in relationships with the specified roles. Valid: `Definition`, `Import`, `WriteAccess`, `ReadAccess`, `Generated`, `Declaration`, `Dynamic`, `Heuristic` |
 | `limit` | int | No | `25` | Max results to return |
 | `response_format` | string | No | `"concise"` | Output format |
+| `include_unresolved` | bool | No | `false` | Also return `unresolved:` reference stubs (failed cross-file resolutions). Default `false`: stubs are quarantined so real definitions rank first; the suppressed count is reported in `meta.unresolved_suppressed` |
+| `include_quarantined` | bool | No | `false` | Also return entities quarantined by rules (`bsg.noise`/`bsg.quarantined` metadata). Default `false`: quarantined entities are hidden; the suppressed count is reported in `meta.quarantined_suppressed` and a markdown footer line |
 
 ### Example
 
@@ -464,14 +503,42 @@ search_entities(query="config", repo="myapp", symbol_roles=["WriteAccess"])
 
 ### Output
 
+Results are ranked by a deterministic scorer: exact > prefix > substring (regex-only name matches score at substring strength), with kind boosts (CLASS/METHOD/FUNCTION/INTERFACE > MODULE > others; COMMENT_BLOCK and EXTERNAL_SYMBOL penalized), exported-entity and fqn/file-path match bonuses, and ties broken by start_line, file, entity_id — identical queries always return identical order. Ranking reorders only; recall is unchanged.
+
 **Markdown:**
 ```markdown
 ## Search Results (8 matches, showing 8)
-- validate_token [function] src/auth/manager.py:L45-62
-- validate_session [function] src/auth/session.py:L12-28
-- validate_input [function] src/api/middleware.py:L8-20
-...
+- validate_token [FUNCTION] src/auth/manager.py:L45-62 — `src/auth/manager.py:AuthManager.validate_token`
+- validate_session [FUNCTION] src/auth/session.py:L12-28 — `src/auth/session.py:validate_session`
+- validate_input [FUNCTION] src/api/middleware.py:L8-20 — `src/api/middleware.py:validate_input`
+- … 2 unresolved reference(s) suppressed (include_unresolved=true to show)
 ```
+
+**JSON (`structuredContent`):**
+```json
+{
+  "results": [
+    {
+      "id": "src/auth/manager.py:AuthManager.validate_token",
+      "name": "validate_token",
+      "type": "FUNCTION",
+      "file": "src/auth/manager.py",
+      "start_line": 45,
+      "end_line": 62,
+      "score": 155
+    }
+  ],
+  "meta": {
+    "total_matches": 8,
+    "returned": 8,
+    "artifact_generation": 3,
+    "unresolved_suppressed": 2,
+    "applied_filters": {"entity_types": ["FUNCTION"]}
+  }
+}
+```
+
+Each result carries a `score` — the deterministic ranking score described above. `meta.unresolved_suppressed` (only present when non-zero) counts `unresolved:` stubs hidden by the default quarantine; `meta.applied_filters` echoes active filters (including `include_unresolved` when set).
 
 ---
 
@@ -548,29 +615,29 @@ Returns a list of runs with UUID, timestamp, status, git commit, branch, entity/
 
 ---
 
-## `batho_diff`
+## `batho_history`
 
-Query node-level changes across runs, entities, or files. Read-only.
+Query node-level change history across runs, entities, or files. Read-only. (Formerly `batho_diff`.)
 
 ### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `repo` | string | No | Registry default | Repo name from registry |
-| `run_id` | string | No | Latest patch | Specific run UUID to diff |
-| `entity_id` | string | No | — | Filter changes to a specific entity |
-| `file_path` | string | No | — | Filter changes by file path |
-| `since` | string | No | — | Run UUID to diff from (defaults to previous run) |
+| `run_id` | string | No | — | Specific run UUID to inspect (exactly one of `run_id`/`entity_id`/`file_path` required) |
+| `entity_id` | string | No | — | Full evolution history for a specific entity |
+| `file_path` | string | No | — | Node changes for a file across runs |
+| `since` | string | No | — | Run UUID lower bound (only with `entity_id`) |
 
 ### Example
 
 ```
-batho_diff(repo="myapp", file_path="src/auth/manager.py")
+batho_history(repo="myapp", file_path="src/auth/manager.py")
 ```
 
 ### Output
 
-Returns added, removed, modified, and renamed nodes with before/after metadata for each change.
+Returns added, removed, modified, and renamed nodes with file paths, entity IDs, and changed-field names for each change.
 
 ---
 

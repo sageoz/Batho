@@ -25,7 +25,6 @@ progress:
 # where isatty() lies — prefer an explicit --no-progress or BATHO_NO_PROGRESS=1.
 
 paths:
-  db_path: .batho           # Base SQLite artifact name prefix
   cache_dir: .batho/cache   # Shared cache directory for rules, deps, and AST
 
 indexer:
@@ -35,10 +34,35 @@ indexer:
   ignore_patterns: []       # Extra gitignore-style patterns
   ignore_files: null        # null = use built-in defaults
   default_patterns_file: null  # Path to custom patterns YAML (null = built-in)
+  ignore_defaults: true     # false = opt out of built-in ignore patterns
+                            # (lockfiles, node_modules/, build artifacts,
+                            # sourcemaps/minified bundles, agent-tool output
+                            # dirs); ignore_patterns + .gitignore still apply
+  package_roots: []         # Extra import-root dirs for layouts with no
+                            # manifest/__init__.py evidence (e.g. runtime
+                            # sys.path tweaks): ["backend"] = backend/ root
   fail_on_warning: false
   strict: false             # Treat parse warnings as errors
   strict_hashing: false     # true = force SHA-256 content hash on every tracked file
                             # false (default) = skip hashing when mtime+inode+size match
+  file_changelog_max_runs: 100  # Per-file entity-changelog retention: keep rows
+                            # from the newest N distinct runs per file (>=1)
+
+# MCP watcher engine — auto-patch triggers for watched repos (per-repo
+# overrides live in ~/.batho/mcp-repos.json via add_repo).
+watch:
+  mode: auto                # auto = git-sentinel boundary triggers in git repos
+                            # (falls back to file events otherwise);
+                            # fs = file events only; off = track staleness but
+                            # never auto-patch
+  max_staleness_ms: 60000   # Hard bound: pending changes flush within this
+                            # window even under continuous edits (5000-600000)
+  flush_threshold: 300      # Flush immediately when this many files are
+                            # pending (10-100000)
+  git_settle_ms: 300        # Settle delay after a git boundary event (50-5000)
+  vcs_op_hold_ms: 30000     # Max time to hold a flush while a git operation
+                            # is in progress (index.lock / rebase-merge/);
+                            # stale-lock safety cap (1000-300000)
 
 graph:
   cycle_detection:
@@ -76,7 +100,7 @@ mcp:
   # Groups:
   #   retrieval:    graph_overview, graph_query, get_entity, trace_path,
   #                 get_file_graph, file_connectivity, search_entities, get_delta
-  #   diagnostics:  batho_status, batho_list_runs, batho_diff
+  #   diagnostics:  batho_status, batho_list_runs, batho_history
   #   registry:     list_repos, add_repo, remove_repo
   #   admin:        batho_build, batho_patch, batho_export, batho_gc,
   #                 batho_fix, batho_load
@@ -162,23 +186,31 @@ artifact_blobs:
     security_audit: false   # BSG interceptor hits (opt-in, off by default)
     artifact_payload: true  # Pre-minified entity+rel summary for LLM injection
     delta_stats: true       # Churn / node diffs (null for initial build runs)
+    rule_stats: true        # Per-run rule/plugin hit + perf aggregates (rule-stats.v1)
+    enrich_profile: true    # Gap report (enrich-profile.v1) + .batho/report/overview.md
+    enrich_score: true      # Rule-fitness verdicts (enrich-score.v1) + .batho/report/score.md
 
 rules:
   enabled: true             # Enable BSG rule plugins during indexing
   auto_load_all_plugins: true
+  # Only core-pack plugins resolve here. The 9 external interceptor plugins
+  # (silent_failure_catcher, dependency_blast_radius, resource_leak_preventer,
+  # nplus1_query_catcher, iac_drift_sentinel, schema_migration_enforcer,
+  # api_contract_guardian, hardcoded_secret_catcher, auth_boundary_shield)
+  # moved to the external pack — enable them via plugins.external.enabled.
   builtin_plugins:
-    - bsg_core
-    - bsg_silent_failure_catcher
-    - bsg_dependency_blast_radius
-    - bsg_resource_leak_preventer
-    - bsg_nplus1_query_catcher
-    - bsg_iac_drift_sentinel
-    - bsg_schema_migration_enforcer
-    - bsg_api_contract_guardian
-    - bsg_hardcoded_secret_catcher
-    - bsg_auth_boundary_shield
+    - graph_foundation
+    - classification
+    - manifests
+    - cicd
+    - cloud_providers
+    - test_frameworks
+    - token_optimization
   disabled_rules: []
   custom_rules_path: null   # Path to YAML file with custom rules
+  # Directory of *.yaml/*.yml plugin files. null (unset) keeps the schema
+  # default .batho/plugins — set to "" to disable directory scanning entirely.
+  custom_rules_dir: null
   custom_rules_inline: []   # Inline rules (same schema as file-based)
   strict_validation: false  # Fail on invalid plugin/custom rules
   cache_ttl: 3600           # Rule cache TTL in seconds
@@ -197,11 +229,29 @@ rules:
   #       bsg.cluster_hint: billing
 
 plugins:
+  core:
+    required: true          # build fails (with guidance) if the mandatory core pack can't load
+  external:
+    # Opt-in external pack: the 9 security/quality interceptor plugins
+    # (silent_failure_catcher, dependency_blast_radius, resource_leak_preventer,
+    # nplus1_query_catcher, iac_drift_sentinel, schema_migration_enforcer,
+    # api_contract_guardian, hardcoded_secret_catcher, auth_boundary_shield).
+    enabled: false
+    select: []              # empty = load every external plugin; or allowlist by
+                            # stem or plugin_id (e.g. silent_failure_catcher or
+                            # bsg_silent_failure_catcher)
+  fingerprint_in_cache: true  # plugin set participates in the AST cache variant key
+  reextract_on_drift: true  # patch: full re-extract when plugin fingerprint drifts (set false to warn-only)
+  telemetry:
+    hooks_metadata: false   # debug: stamp bsg.hooks provenance (plugin ids) on entities
+  host:
+    dispatch_order: priority_then_id  # reserved: only valid value; hooks dispatch
+                                      # priority-desc then plugin_id-asc (config lock)
   overrides: {}
   # Example override:
   # overrides:
-  #   bsg_graph_foundation:
-  #     bsg-category-tests:
+  #   graph_foundation:
+  #     bsg-derive-scope-tier:
   #       severity: warning
 
 bsg:
@@ -217,7 +267,7 @@ bsg:
 
   symbol_resolution:
     enabled: true
-    cache_symbols: true
+    prune_unresolved: true  # Drop unresolved stub entities after resolution
 
   parsing:
     error_recovery: true    # Continue past parse errors
@@ -238,9 +288,32 @@ extraction:
   # Opt-in entity extraction flags (default: false to avoid entity-count inflation)
   extract_parameters: false       # Extract function/method parameters as PARAMETER entities
   extract_type_parameters: false  # Extract generic type parameters (T, K, V) as TYPE_PARAMETER entities
+  # Rationale layer: standalone comments starting with one of these markers
+  # are promoted to first-class COMMENT_BLOCK entities with a RATIONALE_FOR
+  # edge to the entity they annotate
+  rationale_markers: ["WHY:", "NOTE:"]   # Comment prefixes treated as rationale
+  rationale_markers_case_sensitive: true # false = marker matching ignores case
 
-# Community detection via Leiden clustering
+# Community detection via greedy modularity clustering
 community_detection:
-  enabled: true             # Disable to skip Leiden entirely
+  enabled: true             # Disable to skip clustering entirely
   skip_threshold: 200000   # Skip community detection above this entity count
-  sample_threshold: 100000  # Sample whole files down to this count before Leiden
+  sample_threshold: 100000  # Sample whole files down to this count before clustering
+  # edge_weights: per-kind weight in the clustering input; 0 excludes the kind
+  #   CALLS/INHERITS/IMPLEMENTS: 3, IMPORTS: 2, READS/WRITES: 1, CONTAINS: 0
+  # min_community_entities: 3      # smaller communities merge into strongest neighbor
+  # max_community_fraction: 0.25   # larger communities get a recursive re-cluster
+  # superhub_degree_percentile: 99 # god-nodes dropped pre-detection, reattached after
+  # generic_dir_blocklist: [src, lib, app, core, utils, common, shared, helpers, test, tests]
+  # overview_top_n: 12             # communities shown in graph_overview
+  # domain_grouping: false         # L0 tier: pre-group by bsg.domain/service_tag/category before clustering
+  # llm:                           # `batho communities label` — post-build LLM labels (off by default)
+  #   enabled: false               #   requires BATHO_LLM_API_KEY; never runs in the query path
+  #   provider: anthropic
+  #   model: claude-haiku-4-5-20251001
+  #   max_card_tokens: 200         #   per-community card budget for the label prompt
+
+# Agent skill-pack management (`batho skills` + auto-sync on `batho mcp` start)
+skills:
+  auto_install: true   # false = never fetch/refresh the skill pack automatically
+                       # (BATHO_NO_SKILL_SYNC=1 env var also disables)

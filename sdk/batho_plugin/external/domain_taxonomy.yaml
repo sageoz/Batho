@@ -1,0 +1,241 @@
+schema_version: bsg-plugin.v2
+plugin_id: gen_domain_taxonomy
+name: Generated Domain Taxonomy — top-level dirs
+version: 1.0.0
+enabled: true
+description: >
+  Assigns bsg.domain by top-level directory (0% domain coverage before
+  generation) to feed the L0 domain tier of hierarchical communities.
+  Broad directories (batho/modules/**, tests/**) are split into per-subdir
+  rules so each rule stays under the default 10% selectivity cap — the
+  domain value is still uniform per top-level dir. Entities under new or
+  unmapped subdirs (e.g. files at a directory root) are picked up on the
+  next enrich pass.
+rules:
+  - rule_id: domain-cli
+    name: domain-cli
+    description: batho/cli/ — CLI command surface
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns: ['batho/cli/**']
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: cli
+
+  - rule_id: domain-core
+    name: domain-core
+    description: batho/core/ — config + schemas
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns: ['batho/core/**']
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: core
+
+  - rule_id: domain-modules-comp-extract
+    name: domain-modules-comp-extract
+    description: batho/modules/compression + extraction — rule engine and AST extraction
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - 'batho/modules/compression/**'
+        - 'batho/modules/extraction/**'
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: engine-modules
+
+  - rule_id: domain-modules-graph-storage
+    name: domain-modules-graph-storage
+    description: batho/modules/graph + storage — graph builder and Arrow bundle
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - 'batho/modules/graph/**'
+        - 'batho/modules/storage/**'
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: engine-modules
+
+  - rule_id: domain-modules-other
+    name: domain-modules-other
+    description: batho/modules/dependency + integrity + enrich
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - 'batho/modules/dependency/**'
+        - 'batho/modules/integrity/**'
+        - 'batho/modules/enrich/**'
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: engine-modules
+
+  - rule_id: domain-orchestrator
+    name: domain-orchestrator
+    description: batho/orchestrator/ — build/patch/apply orchestration
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns: ['batho/orchestrator/**']
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: orchestrator
+
+  - rule_id: domain-mcp
+    name: domain-mcp
+    description: batho/mcp/ — MCP server + tools
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns: ['batho/mcp/**']
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: mcp-server
+
+  - rule_id: domain-utils
+    name: domain-utils
+    description: batho/utils/ — shared utilities
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns: ['batho/utils/**']
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: utils
+
+  - rule_id: domain-tests-mcp
+    name: domain-tests-mcp
+    description: tests/mcp/ — MCP tool tests
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns: ['tests/mcp/**']
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: tests
+
+  - rule_id: domain-tests-modules-graph
+    name: domain-tests-modules-graph
+    description: tests/modules/graph/ — graph-builder tests
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns: ['tests/modules/graph/**']
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: tests
+
+  - rule_id: domain-tests-modules-extraction
+    name: domain-tests-modules-extraction
+    description: tests/modules/extraction/ — extractor tests
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns: ['tests/modules/extraction/**']
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: tests
+
+  - rule_id: domain-tests-modules
+    name: domain-tests-modules
+    description: tests/modules/ rest — dependency, storage, compression, config, integrity tests
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - 'tests/modules/dependency/**'
+        - 'tests/modules/storage/**'
+        - 'tests/modules/compression/**'
+        - 'tests/modules/config/**'
+        - 'tests/modules/integrity/**'
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: tests
+
+  - rule_id: domain-tests-other
+    name: domain-tests-other
+    description: tests/ rest — orchestrator, utils, skills, cli, fixtures, core tests
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns:
+        - 'tests/orchestrator/**'
+        - 'tests/utils/**'
+        - 'tests/skills/**'
+        - 'tests/cli/**'
+        - 'tests/fixtures/**'
+        - 'tests/core/**'
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: tests
+
+  - rule_id: domain-docs
+    name: domain-docs
+    description: docs-site/ + docs-local/ — documentation
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns: ['docs-site/**', 'docs-local/**']
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: docs
+
+  - rule_id: domain-tooling
+    name: domain-tooling
+    description: benchmarks/, scripts/, cicd/ — dev tooling
+    severity: info
+    priority: 100
+    enabled: true
+    matchers:
+      file_patterns: ['benchmarks/**', 'scripts/**', 'cicd/**']
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "L0 domain-tier community feed"
+        bsg.domain: tooling

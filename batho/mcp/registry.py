@@ -34,6 +34,10 @@ class RepoEntry:
     watch: bool = False
     debounce_ms: int = 2000
     max_file_size_kb: int | None = None
+    # Watcher-v2 knobs — None means "inherit from batho.yaml watch: section".
+    watch_mode: str = "auto"  # auto | fs | off
+    max_staleness_ms: int | None = None
+    flush_threshold: int | None = None
     last_synced: str | None = None  # ISO 8601 timestamp
     sync_state: str = "idle"  # idle | pending | patching | error
     # Dashboard additions (v3 schema)
@@ -55,6 +59,7 @@ class RepoRegistry:
     VALID_SYNC_STATES = {"idle", "pending", "patching", "error"}
     VALID_STATUSES = {"not_indexed", "indexing", "ready", "stale", "error"}
     VALID_MODES = {"local", "github"}
+    VALID_WATCH_MODES = {"auto", "fs", "off"}
 
     def __init__(self, config_path: Path | None = None) -> None:
         self.config_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
@@ -67,6 +72,16 @@ class RepoRegistry:
             return max(100, min(60000, val_int))
         except (ValueError, TypeError):
             return 2000
+
+    @staticmethod
+    def _clamp_optional_ms(val: Any, lo: int, hi: int) -> int | None:
+        """Clamp an optional millisecond knob; None/invalid stays None (inherit)."""
+        if val is None:
+            return None
+        try:
+            return max(lo, min(hi, int(val)))
+        except (ValueError, TypeError):
+            return None
 
     def load(self) -> list[RepoEntry]:
         """Load entries from the JSON config file. Returns empty list if file doesn't exist."""
@@ -99,6 +114,12 @@ class RepoRegistry:
             if sync_state not in self.VALID_SYNC_STATES:
                 sync_state = "idle"
 
+            watch_mode = str(r.get("watch_mode", "auto"))
+            if watch_mode not in self.VALID_WATCH_MODES:
+                watch_mode = "auto"
+            max_staleness_ms = self._clamp_optional_ms(r.get("max_staleness_ms"), 5_000, 600_000)
+            flush_threshold = self._clamp_optional_ms(r.get("flush_threshold"), 10, 100_000)
+
             # v3 fields — v2 entries are genuinely migrated, not just defaulted:
             # the dashboard keys/routes by `id`, so it must exist and persist.
             is_legacy = "id" not in r
@@ -122,6 +143,9 @@ class RepoRegistry:
                 watch=watch,
                 debounce_ms=debounce_ms,
                 max_file_size_kb=max_file_size_kb,
+                watch_mode=watch_mode,
+                max_staleness_ms=max_staleness_ms,
+                flush_threshold=flush_threshold,
                 last_synced=last_synced,
                 sync_state=sync_state,
                 id=entry_id,
@@ -183,18 +207,26 @@ class RepoRegistry:
         watch: bool = False,
         debounce_ms: int = 2000,
         max_file_size_kb: int | None = None,
+        watch_mode: str = "auto",
+        max_staleness_ms: int | None = None,
+        flush_threshold: int | None = None,
     ) -> RepoEntry:
         """Add or update a repo entry. Returns the entry."""
         with self._lock:
             entries = self.load()
             resolved = str(Path(path).resolve())
             clamped_debounce = self._clamp_debounce_ms(debounce_ms)
+            if watch_mode not in self.VALID_WATCH_MODES:
+                watch_mode = "auto"
             entry = RepoEntry(
                 name=name,
                 path=resolved,
                 watch=watch,
                 debounce_ms=clamped_debounce,
                 max_file_size_kb=max_file_size_kb,
+                watch_mode=watch_mode,
+                max_staleness_ms=self._clamp_optional_ms(max_staleness_ms, 5_000, 600_000),
+                flush_threshold=self._clamp_optional_ms(flush_threshold, 10, 100_000),
                 id=uuid.uuid4().hex,
                 created_at=datetime.now(timezone.utc).isoformat(),
             )

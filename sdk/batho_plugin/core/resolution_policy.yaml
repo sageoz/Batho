@@ -1,0 +1,26 @@
+# Resolution policy (class: core) — strategy → confidence map.
+# Migrated verbatim from codegraph.py:844-858 (_RESOLUTION_CONFIDENCE).
+# Consumers: the resolution pass (T18) applies these values to resolved stubs
+# and edges; unknown strategies fall back to 0.5 (documented engine default,
+# codegraph.py:852/2326 `.get(strategy, 0.5)`).
+plugin_id: resolution-policy
+version: "1.0.0"
+class: core
+requires:
+  - batho_plugin.core
+data:
+  maps:
+    strategy_confidence:
+      exact_match: 0.95          # Tier 1: Direct dotpath lookup
+      stdlib_method: 0.90        # Tier 2: Stdlib method / module prefix match
+      package_alias: 0.85        # Tier 3b: Derived import-namespace alignment (T11)
+      external_prefix: 0.85      # Tier 3c: External module-prefix member synthesis
+      parent_chain: 0.75         # Tier 4: Parent stub chain building
+      sibling_module: 0.75       # Tier 4b: Sibling-stub module join
+      relative_path: 0.85        # T12: importer-relative file specifier
+      scope_qualified: 0.70      # Tier 5: Caller-scope qualified path
+      receiver_param: 0.90       # T1: receiver type from annotated parameter
+      receiver_assignment: 0.75  # T1: receiver type from assignment/DI flow
+      receiver_type: 0.65        # Tier 6: Receiver-type inference
+      ambiguous: 0.50            # Tier 6.5: Multiple equally-plausible candidates
+      unresolved: 0.0            # Tier 7: No match

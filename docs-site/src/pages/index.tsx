@@ -646,8 +646,8 @@ function BenefitsSection() {
   const metrics = [
     { value: '10x', label: 'Less Tokens', desc: 'vs. raw file injection' },
     { value: '0', label: 'Hallucinations', desc: 'deterministic, not guessed' },
-    { value: '40+', label: 'Languages', desc: 'tree-sitter powered' },
-    { value: '8', label: 'AI Agents', desc: 'MCP-compatible out of the box' },
+    { value: '34', label: 'Languages', desc: '27 tree-sitter + 7 native' },
+    { value: '9', label: 'AI Agents', desc: 'MCP-compatible out of the box' },
     { value: '>95%', label: 'Cache Hit', desc: 'typical PR changes' },
   ];
   const benefits = [

@@ -468,7 +468,7 @@ def test_no_private_access_regression():
     # 1. Consumers: zero private access.
     consumer_files = [
         repo_root / "batho/modules/graph/community.py",
-        repo_root / "batho/modules/compression/rules.py",
+        repo_root / "sdk/batho_plugin/rule_engine.py",
         repo_root / "batho/modules/compression/bsg_map/__init__.py",
     ]
     for path in consumer_files:

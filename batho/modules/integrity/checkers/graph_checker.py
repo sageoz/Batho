@@ -61,10 +61,125 @@ class GraphSyncChecker:
                 ))
         return issues
 
+    def _check_duplicate_entity_ids(self) -> list[Issue]:
+        """Detect entity_id rows duplicated in agent_views (one id, many rows)."""
+        issues: list[Issue] = []
+        try:
+            agent = self.db._reader._get_table("agent_views")
+            if (
+                not isinstance(getattr(agent, "num_rows", None), int)
+                or agent.num_rows == 0
+            ):
+                return issues
+            import pyarrow.compute as pc
+
+            counts = pc.value_counts(agent.column("entity_id"))
+            values = counts.field("values").to_pylist()
+            n = counts.field("counts").to_pylist()
+            dups = [(v, c) for v, c in zip(values, n) if c > 1]
+            if dups:
+                issues.append(
+                    Issue(
+                        type="DUP_ENTITY_ID",
+                        severity=Severity.ERROR,
+                        table="agent_views",
+                        identifier={
+                            "duplicate_ids": len(dups),
+                            "worst": max(c for _, c in dups),
+                        },
+                        description=(
+                            f"{len(dups)} entity_id values appear more than once "
+                            f"in agent_views ({sum(c - 1 for _, c in dups)} surplus rows)."
+                        ),
+                        repair_strategy=None,
+                    )
+                )
+        except Exception as e:
+            issues.append(
+                Issue(
+                    type="graph_check_error",
+                    severity=Severity.ERROR,
+                    table="agent_views",
+                    identifier={},
+                    description=f"Error checking duplicate entity ids: {e}",
+                )
+            )
+        return issues
+
+    def _check_stub_target_stub(self) -> list[Issue]:
+        """Detect stubs whose persisted resolved_target_id is a stub or itself."""
+        issues: list[Issue] = []
+        try:
+            agent = self.db._reader._get_table("agent_views")
+            if (
+                not isinstance(getattr(agent, "num_rows", None), int)
+                or agent.num_rows == 0
+                or "metadata_json" not in agent.schema.names
+            ):
+                return issues
+            import json
+            import pyarrow.compute as pc
+
+            meta_col = agent.column("metadata_json")
+            candidates = agent.filter(
+                pc.and_(
+                    pc.is_valid(meta_col),
+                    pc.starts_with(agent.column("entity_id"), "unresolved:"),
+                    pc.match_substring_regex(meta_col, '"resolved_target_id"'),
+                )
+            )
+            stub_self = 0
+            stub_stub = 0
+            for eid, meta_str in zip(
+                candidates.column("entity_id").to_pylist(),
+                candidates.column("metadata_json").to_pylist(),
+            ):
+                try:
+                    meta = json.loads(meta_str)
+                except (ValueError, TypeError):
+                    continue
+                target = meta.get("resolved_target_id")
+                if not target:
+                    continue
+                if target == eid:
+                    stub_self += 1
+                elif target.startswith("unresolved:"):
+                    stub_stub += 1
+            if stub_self or stub_stub:
+                issues.append(
+                    Issue(
+                        type="STUB_TARGET_STUB",
+                        severity=Severity.ERROR,
+                        table="agent_views",
+                        identifier={"self": stub_self, "stub": stub_stub},
+                        description=(
+                            f"{stub_stub} stubs resolve to another stub and "
+                            f"{stub_self} resolve to themselves — the symbol "
+                            f"table accepted contextual stubs as targets."
+                        ),
+                        repair_strategy=None,
+                    )
+                )
+        except Exception as e:
+            issues.append(
+                Issue(
+                    type="graph_check_error",
+                    severity=Severity.ERROR,
+                    table="agent_views",
+                    identifier={},
+                    description=f"Error checking stub resolution targets: {e}",
+                )
+            )
+        return issues
+
     def run(self) -> CheckReport:
         """Run all Phase 4 checks against the Arrow current/ store."""
         start_time = time.time()
         issues = []
+
+        # Bundle-level resolution-quality checks (independent of BSG store)
+        issues.extend(self._check_duplicate_entity_ids())
+        issues.extend(self._check_stub_target_stub())
 
         try:
             from batho.modules.storage.arrow_store.store import BsgScratchStore

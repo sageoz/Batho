@@ -146,7 +146,8 @@ def foo(a, b):
 """
         entities, _ = extractor.parse_file("test.py", content)
         parameters = [e for e in entities if e.type == EntityType.PARAMETER]
-        param_names = {e.name for e in parameters}
+        # Names are scope-qualified under the parent function; compare leaves.
+        param_names = {e.name.rsplit(".", 1)[-1] for e in parameters}
         assert "a" in param_names
         assert "b" in param_names
 

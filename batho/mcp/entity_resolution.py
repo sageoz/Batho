@@ -22,18 +22,23 @@ Resolution order (order matters — stubs are also materialized in ``agent_views
 under the *referencing* file, so the stub check must precede the entity-index
 lookup or every cross-file edge collapses to intra-file):
 
+0. persisted build-time resolution (``stub_resolution_state=resolved`` with a
+   valid ``resolved_target_id``) → the concrete defining entity
+   (``kind="persisted"``)
 1. ``unresolved:`` stub → dotted FQN → longest-prefix match against indexed
    module paths (``kind="module"``)
 2. ``unresolved:`` whose first FQN segment is a known stdlib/external module
    (``kind="external_stdlib"``, no path)
 3. ``ent|`` markup ID → embedded path (``kind="embedded"``)
 4. plain entity_id present in ``agent_views`` (``kind="direct"``)
-5. last-resort symbol-name match among defined entities (``kind="name"``)
+5. last-resort symbol-name match among defined entities (``kind="name"``) —
+   bare single-segment names only when globally unique
 6. otherwise ``kind="external_unresolved"``
 """
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 import weakref
@@ -53,6 +58,7 @@ KIND_DIRECT = "direct"
 KIND_EMBEDDED = "embedded"
 KIND_MODULE = "module"
 KIND_NAME = "name"
+KIND_PERSISTED = "persisted"
 KIND_EXTERNAL_STDLIB = "external_stdlib"
 KIND_EXTERNAL_UNRESOLVED = "external_unresolved"
 KIND_EXTERNAL_PACKAGE = "external_package"
@@ -67,12 +73,31 @@ _EXTERNAL_PACKAGE_PREFIXES = tuple(
     f"batho {m.value} " for m in PackageManager
 )
 _EXTERNAL_STDLIB_PREFIX = "batho stdlib "
+# DependencyIndexer's stdlib branch also mints ids through the pip-style
+# namespace for the language runtime itself ("batho pip python 3.x <mod>/…").
+# Checked BEFORE the package prefixes so stdlib classifies as stdlib.
+_EXTERNAL_STDLIB_PREFIXES: tuple[str, ...] = (
+    _EXTERNAL_STDLIB_PREFIX,
+    "batho pip python ",
+)
+# Synthetic file paths — never valid resolution targets for file-level tools.
+_PSEUDO_FILE_PATHS = frozenset({"", ".", "__external_symbols__"})
 
 
 # Entity display names carry a parameter-hash suffix: ``helper_[ef2e96]``.
 # Stub FQNs reference the base name, so the name index needs the stripped
 # form as an alias (same pattern as scope_manager._PARAM_HASH_PATTERN).
 _ENTITY_NAME_HASH = re.compile(r"_\[[a-fA-F0-9]+\]")
+
+
+def is_unresolved(entity_id: str) -> bool:
+    """True for quarantined `unresolved:` reference stubs (T2).
+
+    These entities stay in storage for provenance but are excluded from
+    default query surfaces (search_entities, graph_query, graph_overview)
+    unless the caller passes ``include_unresolved=true``.
+    """
+    return entity_id.startswith("unresolved:")
 
 
 def external_ref_root(entity_id: str) -> str:
@@ -82,12 +107,13 @@ def external_ref_root(entity_id: str) -> str:
     segment) and resolved external ids (``batho stdlib <lang> <ns> <mod>``
     or ``batho <ns> <dep> <spec> <mod>``, root = module/dep name).
     """
-    if entity_id.startswith("unresolved:"):
+    if is_unresolved(entity_id):
         return stub_fqn(entity_id).split(".")[0]
-    if entity_id.startswith(_EXTERNAL_STDLIB_PREFIX):
-        toks = entity_id.split()
-        if len(toks) > 4:
-            return toks[4].split("/")[0].rstrip("/")
+    for stdlib_prefix in _EXTERNAL_STDLIB_PREFIXES:
+        if entity_id.startswith(stdlib_prefix):
+            toks = entity_id.split()
+            if len(toks) > 4:
+                return toks[4].split("/")[0].rstrip("/")
     else:
         for prefix in _EXTERNAL_PACKAGE_PREFIXES:
             if entity_id.startswith(prefix):
@@ -140,6 +166,29 @@ def _module_for_path(file_path: str) -> str | None:
     return ".".join([*p.parent.parts, p.stem])
 
 
+def _persisted_stub_target(stub_id: str, metadata_json: str | None) -> str | None:
+    """Concrete target recorded at build time, if valid.
+
+    Reads the T5 persistence contract off a stub's metadata:
+    ``stub_resolution_state=resolved`` plus a ``resolved_target_id`` that is
+    neither the stub itself nor another stub. Polluted artifacts (stub→stub /
+    self-resolutions) are treated as absent — the read-time heuristics then
+    apply.
+    """
+    if not metadata_json:
+        return None
+    try:
+        meta = json.loads(metadata_json)
+    except (ValueError, TypeError):
+        return None
+    if meta.get("stub_resolution_state") != "resolved":
+        return None
+    target = meta.get("resolved_target_id")
+    if not target or target == stub_id or target.startswith("unresolved:"):
+        return None
+    return target
+
+
 def stub_fqn(eid: str) -> str:
     """Dotted FQN carried by an ``unresolved:`` stub ID.
 
@@ -190,6 +239,12 @@ class EndpointResolver:
         self._repo_root = ""
         self._own_packages: set[tuple[str, str]] = set()
         self._cross_file_edges: list[tuple[dict, int, int]] | None = None
+        # Persisted build-time resolution (T5 contract): stub_id ->
+        # resolved_target_id, for stubs whose metadata carries
+        # stub_resolution_state=resolved and a non-stub target.
+        self._stub_target: dict[str, str] = {}
+        # Reverse map: concrete target_id -> [stub_id, ...] (artifact order).
+        self._refs_by_target: dict[str, list[str]] = {}
 
     # ------------------------------------------------------------------
     # Index management
@@ -207,30 +262,9 @@ class EndpointResolver:
             if self._generation == gen and self._entity_file:
                 return
 
-            entity_file: dict[str, int] = {}
-            name_by_id: dict[str, str] = {}
-            name_index: dict[str, list[tuple[str, int]]] = {}
-            agent = self._reader._get_table("agent_views")
-            if agent.num_rows > 0:
-                # Project only the columns the indexes need — a full
-                # to_pylist() materializes every column of agent_views
-                # (raw_content, ast_node_type, ...) on large repos (2a4c6e8b).
-                names = agent.schema.names
-                ids = agent.column("entity_id").to_pylist() if "entity_id" in names else []
-                fids = agent.column("file_id").to_pylist() if "file_id" in names else []
-                nms = agent.column("name").to_pylist() if "name" in names else []
-                for eid, fid, nm in zip(ids, fids, nms):
-                    if eid:
-                        entity_file[eid] = fid
-                        name_by_id[eid] = nm
-                        # Stubs are materialized under the referencing file;
-                        # they must never serve as resolution targets.
-                        if nm and not eid.startswith("unresolved:"):
-                            name_index.setdefault(nm, []).append((eid, fid))
-                            base_nm = _ENTITY_NAME_HASH.sub("", nm)
-                            if base_nm != nm:
-                                name_index.setdefault(base_nm, []).append((eid, fid))
-
+            # File tracking first — the agent pass needs pseudo-file
+            # classification (`.`, `__external_symbols__`) to keep
+            # externals out of the name index.
             file_paths: dict[int, str] = {}
             path_to_fid: dict[str, int] = {}
             module_index: dict[str, int] = {}
@@ -244,6 +278,58 @@ class EndpointResolver:
                 mod = _module_for_path(fp)
                 if mod:
                     module_index.setdefault(mod, fid)
+
+            entity_file: dict[str, int] = {}
+            name_by_id: dict[str, str] = {}
+            name_index: dict[str, list[tuple[str, int]]] = {}
+            stub_target: dict[str, str] = {}
+            refs_by_target: dict[str, list[str]] = {}
+            pending_stub_targets: list[tuple[str, str]] = []
+            agent = self._reader._get_table("agent_views")
+            if agent.num_rows > 0:
+                # Project only the columns the indexes need — a full
+                # to_pylist() materializes every column of agent_views
+                # (raw_content, ast_node_type, ...) on large repos (2a4c6e8b).
+                names = agent.schema.names
+                ids = agent.column("entity_id").to_pylist() if "entity_id" in names else []
+                fids = agent.column("file_id").to_pylist() if "file_id" in names else []
+                nms = agent.column("name").to_pylist() if "name" in names else []
+                etypes = agent.column("entity_type").to_pylist() if "entity_type" in names else []
+                metas = (
+                    agent.column("metadata_json").to_pylist()
+                    if "metadata_json" in names
+                    else [None] * agent.num_rows
+                )
+                for eid, fid, nm, etype, meta_str in zip(ids, fids, nms, etypes, metas):
+                    if not eid:
+                        continue
+                    entity_file[eid] = fid
+                    name_by_id[eid] = nm
+                    if not eid.startswith("unresolved:"):
+                        fpath = file_paths.get(fid, "")
+                        # Externals (pseudo-files / EXTERNAL_SYMBOL rows) must
+                        # never serve as name-match targets — the KIND_NAME
+                        # fallback would link bare names like `config` to
+                        # unrelated files.
+                        if nm and etype != "EXTERNAL_SYMBOL" and fpath not in _PSEUDO_FILE_PATHS:
+                            name_index.setdefault(nm, []).append((eid, fid))
+                            base_nm = _ENTITY_NAME_HASH.sub("", nm)
+                            if base_nm != nm:
+                                name_index.setdefault(base_nm, []).append((eid, fid))
+                    elif nm:
+                        # Persisted build-time resolution wins over the
+                        # read-time heuristics below (T5 contract). Deferred:
+                        # the target's row may appear later in the table, so
+                        # membership is checked in a second pass below.
+                        resolved = _persisted_stub_target(eid, meta_str)
+                        if resolved:
+                            pending_stub_targets.append((eid, resolved))
+
+            for eid, resolved in pending_stub_targets:
+                if resolved in entity_file:
+                    stub_target[eid] = resolved
+                    refs_by_target.setdefault(resolved, []).append(eid)
+
             # __init__/index/mod files define their package module; let them
             # win over same-named module files so `pkg.symbol` resolves into
             # the package even when the symbol itself has no entity.
@@ -257,6 +343,8 @@ class EndpointResolver:
             self._entity_file = entity_file
             self._name_by_id = name_by_id
             self._name_index = name_index
+            self._stub_target = stub_target
+            self._refs_by_target = refs_by_target
             self._file_paths = file_paths
             self._path_to_fid = path_to_fid
             self._module_index = module_index
@@ -308,8 +396,12 @@ class EndpointResolver:
         # Resolved external symbols materialize under the synthetic
         # "__external_symbols__" file — classify them as external so
         # file-level tools don't report a bogus intra-repo dependency.
-        if entity_id.startswith(_EXTERNAL_STDLIB_PREFIX):
-            return ResolvedTarget(entity_id, None, None, KIND_EXTERNAL_STDLIB)
+        # Stdlib prefixes are checked BEFORE the package prefixes: the
+        # pip-style runtime namespace ("batho pip python 3.x …") is
+        # otherwise classified as a third-party package.
+        for stdlib_prefix in _EXTERNAL_STDLIB_PREFIXES:
+            if entity_id.startswith(stdlib_prefix):
+                return ResolvedTarget(entity_id, None, None, KIND_EXTERNAL_STDLIB)
         if entity_id.startswith(_EXTERNAL_PACKAGE_PREFIXES):
             # T2: own-workspace packages classify DIRECT by own-set
             # membership — an entity id whose package triple belongs to a
@@ -356,6 +448,16 @@ class EndpointResolver:
         return (toks[1], toks[2]) in self._own_packages
 
     def _resolve_stub(self, eid: str) -> ResolvedTarget:
+        # 0. Persisted build-time resolution wins — richer strategies ran at
+        # build with the full graph in hand (receiver typing, reexports,
+        # package aliases). Polluted entries are filtered at index time.
+        persisted = self._stub_target.get(eid)
+        if persisted is not None:
+            fid = self._entity_file.get(persisted)
+            return ResolvedTarget(
+                persisted, fid, self._file_paths.get(fid) if fid is not None else None,
+                KIND_PERSISTED,
+            )
         fqn = stub_fqn(eid)
         if not fqn:
             return ResolvedTarget(eid, None, None, KIND_EXTERNAL_UNRESOLVED)
@@ -368,6 +470,11 @@ class EndpointResolver:
             return ResolvedTarget(eid, None, None, KIND_EXTERNAL_STDLIB)
         candidates = self._name_index.get(parts[-1], [])
         if candidates:
+            # Bare single-segment names (`config`, `build`, `sorted`) are too
+            # ambiguous for a name match across files — accept only a unique
+            # global candidate; multi-segment FQNs keep the scoped ranking.
+            if len(parts) == 1 and len(candidates) > 1:
+                return ResolvedTarget(eid, None, None, KIND_EXTERNAL_UNRESOLVED)
             # 7e9a1c3b: multiple files may define the same symbol name. Prefer
             # the candidate whose module path longest-prefix-matches the
             # stub's FQN scope (stub `pkg.mod.symbol` prefers `pkg/mod.py`
@@ -393,6 +500,8 @@ class EndpointResolver:
     def resolve_symbol(self, entity_id: str) -> str | None:
         """Best-effort mapping of a stub ID to a concrete defined entity_id."""
         target = self.resolve(entity_id)
+        if target.kind == KIND_PERSISTED:
+            return target.entity_id
         if target.kind not in (KIND_MODULE, KIND_NAME) or target.file_id is None:
             return None
         fqn = stub_fqn(entity_id)
@@ -401,6 +510,40 @@ class EndpointResolver:
             if cfid == target.file_id:
                 return ceid
         return None
+
+    def stub_refs_for(self, entity_id: str) -> list[str]:
+        """Stub ids whose build-time resolution points at ``entity_id``."""
+        self._ensure_indexes()
+        return self._refs_by_target.get(entity_id, [])
+
+    def resolve_dotted(self, dotted: str) -> str | None:
+        """Concrete entity_id for a dotted path like ``pkg.mod.Name``.
+
+        Longest-prefix match against indexed module paths, then an exact
+        name (or parameter-hash alias) match within that module's file.
+        Returns None for bare names, unknown modules, or missing symbols.
+        """
+        self._ensure_indexes()
+        if "." not in dotted:
+            return None
+        parts = dotted.split(".")
+        for i in range(len(parts) - 1, 0, -1):
+            fid = self._module_index.get(".".join(parts[:i]))
+            if fid is None:
+                continue
+            # Everything after the module prefix is the entity's dotted
+            # (possibly parent-qualified nested) name.
+            leaf = ".".join(parts[i:])
+            for ceid, cfid in self._name_index.get(leaf, []):
+                if cfid == fid:
+                    return ceid
+            return None
+        return None
+
+    def persisted_target(self, stub_id: str) -> str | None:
+        """Build-time resolved target for a stub, if recorded and valid."""
+        self._ensure_indexes()
+        return self._stub_target.get(stub_id)
 
     # ------------------------------------------------------------------
     # Lookups over built indexes
@@ -475,3 +618,22 @@ def get_resolver(reader: Any) -> EndpointResolver:
             resolver = EndpointResolver(reader)
             _resolvers[reader] = resolver
         return resolver
+
+
+def redirect_endpoint(
+    resolver: EndpointResolver, entity_id: str, cache: dict[str, str]
+) -> str:
+    """Rewire one stub endpoint to its resolved definition (T20, shared).
+
+    Used by every graph tool so a stub target like
+    ``unresolved:…::pkg.mod.symbol`` becomes the defining entity, turning
+    cross-file refs into traversable/reportable edges. Non-stub ids pass
+    through untouched. ``cache`` memoizes per call site (caller-owned).
+    """
+    if not is_unresolved(entity_id):
+        return entity_id
+    hit = cache.get(entity_id)
+    if hit is None:
+        hit = resolver.resolve_symbol(entity_id) or entity_id
+        cache[entity_id] = hit
+    return hit

@@ -827,3 +827,70 @@ class TestBundleFacadeAdvanced:
         assert entities[0]["content_hash"] == "hash_ent1"
 
 
+
+
+class TestFileChangelogPrune:
+    """CFG-04: `indexer.file_changelog_max_runs` must actually cap per-file
+    changelog history — previously the value was passed but ignored."""
+
+    def _seed_runs(self, db, n_runs: int) -> list[str]:
+        run_uuids = []
+        for i in range(n_runs):
+            ruuid = f"run-{i}"
+            run_uuids.append(ruuid)
+            db.create_run(ruuid, root_path="/r")
+            db.record_file_changelog(ruuid, None, [{
+                "file_path": "app/x.py",
+                "entity_id": f"e{i}",
+                "entity_name": "foo",
+                "entity_type": "FUNCTION",
+                "change_kind": "modified",
+                "changed_fields": ["name"],
+            }])
+            db.complete_run(ruuid, entity_count=1, file_count=1)
+        return run_uuids
+
+    def test_prune_caps_per_file_history(self, tmp_path):
+        db = BathoBundle(tmp_path)
+        self._seed_runs(db, 5)
+        assert len(db.get_file_changelog_raw("app/x.py")) == 5
+        db.prune_file_changelog(max_runs=2)
+        rows = db.get_file_changelog_raw("app/x.py")
+        assert len(rows) == 2
+        assert {r["run_uuid"] for r in rows} == {"run-3", "run-4"}
+
+    def test_prune_noop_within_cap(self, tmp_path):
+        db = BathoBundle(tmp_path)
+        self._seed_runs(db, 3)
+        db.prune_file_changelog(max_runs=5)
+        assert len(db.get_file_changelog_raw("app/x.py")) == 3
+
+
+class TestRunArtifactsMerge:
+    """CFG-10: finalize_run_artifacts column-merge — a partial update must
+    preserve columns written by an earlier call, while a key explicitly
+    disabled via blob_config is cleared rather than preserved."""
+
+    def test_partial_update_preserves_prior_columns(self, tmp_path):
+        db = BathoBundle(tmp_path)
+        rid = db.create_run("run-merge", root_path="/r")
+        db.complete_run("run-merge")
+        db.finalize_run_artifacts(rid, {"rule_stats": {"rules_loaded": 3}})
+        db.finalize_run_artifacts(rid, {"enrich_score": {"score": 0.9}})
+        arts = db.get_run_artifacts(rid)
+        assert arts["rule_stats"] == {"rules_loaded": 3}
+        assert arts["enrich_score"] == {"score": 0.9}
+
+    def test_blob_config_disabled_clears_prior_value(self, tmp_path):
+        db = BathoBundle(tmp_path)
+        rid = db.create_run("run-clear", root_path="/r")
+        db.complete_run("run-clear")
+        db.finalize_run_artifacts(rid, {"rule_stats": {"rules_loaded": 3}})
+        db.finalize_run_artifacts(
+            rid,
+            {"enrich_score": {"score": 0.5}},
+            blob_config={"run_artifacts": {"rule_stats": False}},
+        )
+        arts = db.get_run_artifacts(rid)
+        assert arts["rule_stats"] is None
+        assert arts["enrich_score"] == {"score": 0.5}

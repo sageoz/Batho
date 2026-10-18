@@ -91,12 +91,14 @@ def load_ignore_spec(
     extra_patterns: list[str] | None = None,
     ignore_files: list[str] | None = None,
     default_patterns_file: Path | str | None = None,
+    use_defaults: bool = True,
 ) -> Any:
     """
     Load combined ignore patterns using pathspec.
 
-    Always includes default exclusions for common directories like .venv,
-    node_modules, __pycache__, etc. to prevent indexing dependencies.
+    Includes default exclusions for common directories like .venv,
+    node_modules, __pycache__, etc. to prevent indexing dependencies,
+    unless ``use_defaults`` is False (opt-out via indexer.ignore_defaults).
 
     Only loads .gitignore patterns (no backward compatibility for .bathoignore).
 
@@ -107,6 +109,8 @@ def load_ignore_spec(
                       Defaults to [".gitignore"].
         default_patterns_file: Optional path (str or Path) to custom default patterns YAML.
                                If None, uses built-in defaults.
+        use_defaults: If False, skip built-in default patterns (user patterns and
+                      .gitignore still apply).
 
     Returns:
         A pathspec PathSpec object, or a list of patterns as fallback.
@@ -115,7 +119,9 @@ def load_ignore_spec(
     if default_patterns_file:
         patterns_file_path = Path(default_patterns_file) if isinstance(default_patterns_file, str) else default_patterns_file
 
-    patterns: list[str] = load_default_patterns_from_yaml(patterns_file_path)
+    patterns: list[str] = []
+    if use_defaults:
+        patterns.extend(load_default_patterns_from_yaml(patterns_file_path))
 
     if extra_patterns:
         patterns.extend(extra_patterns)
@@ -247,6 +253,7 @@ def walk_ignored_filtered(
     root: Path,
     spec: Any | None = None,
     skip_hidden: bool = True,
+    skipped_paths: list[Path] | None = None,
 ):
     """
     Yield (dirpath, dirnames, filenames) tuples like os.walk(),
@@ -256,6 +263,9 @@ def walk_ignored_filtered(
         root: The root directory to walk.
         spec: Optional pre-loaded ignore spec.
         skip_hidden: If True, also skip hidden directories.
+        skipped_paths: Optional list that receives every skipped (ignored)
+            path — files and directories — so callers can report what the
+            ignore spec filtered out.
 
     Yields:
         Tuples of (current_path, dirnames, filenames) with ignored dirs filtered.
@@ -267,22 +277,25 @@ def walk_ignored_filtered(
     for dirpath_str, dirnames, filenames in os.walk(str(root)):
         current_path = Path(dirpath_str)
         # Filter out ignored directories to prevent descending into them
-        dirnames[:] = [
-            d
-            for d in dirnames
-            if not should_ignore_path(
-                current_path / d, root, spec, include_hidden=skip_hidden
-            )
-        ]
+        kept_dirs = []
+        for d in dirnames:
+            dpath = current_path / d
+            if should_ignore_path(dpath, root, spec, include_hidden=skip_hidden):
+                if skipped_paths is not None:
+                    skipped_paths.append(dpath)
+            else:
+                kept_dirs.append(d)
+        dirnames[:] = kept_dirs
 
         # Filter out ignored files
-        filtered_files = [
-            f
-            for f in filenames
-            if not should_ignore_path(
-                current_path / f, root, spec, include_hidden=skip_hidden
-            )
-        ]
+        filtered_files = []
+        for f in filenames:
+            fpath = current_path / f
+            if should_ignore_path(fpath, root, spec, include_hidden=skip_hidden):
+                if skipped_paths is not None:
+                    skipped_paths.append(fpath)
+            else:
+                filtered_files.append(f)
 
         yield current_path, dirnames, filtered_files
 

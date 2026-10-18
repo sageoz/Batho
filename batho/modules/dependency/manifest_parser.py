@@ -6,7 +6,7 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Any, Callable
+from typing import List, Optional, Callable
 
 from batho.core.schemas import PackageManager, PackageMetadata
 
@@ -187,6 +187,13 @@ class DependencySpec:
     language: str              # "python", "javascript", "rust", "go", "java"
     source_file: str           # relative path to the manifest file
     kind: str = "runtime"      # "runtime" | "dev" | "test" | "optional"
+
+    def __post_init__(self) -> None:
+        # PEP 508 extras — 'uvicorn[standard]' declares the distribution
+        # 'uvicorn'; introspection and code-side imports only ever name the
+        # base package, so the bracket suffix must not survive parsing.
+        if "[" in self.name:
+            object.__setattr__(self, "name", re.split(r"\[", self.name, 1)[0])
 
 class ManifestParser:
     """

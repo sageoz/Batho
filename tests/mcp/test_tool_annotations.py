@@ -45,7 +45,7 @@ READ_ONLY_TOOLS = [
     "get_delta",
     "batho_status",
     "batho_list_runs",
-    "batho_diff",
+    "batho_history",
 ]
 
 MUTATING_TOOLS = [

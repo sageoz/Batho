@@ -18,17 +18,21 @@ grounded in the structured graph.
 ## Install
 
 ```bash
-# from the Batho repo (or after `uv tool install batho`, fetch the pack)
-python skills/batho-setup/scripts/install_pack.py --agent cursor   # one agent
-python install_pack.py --all                                       # every known agent
-python install_pack.py --all --global                              # ~/. agents' global paths
-python install_pack.py --all --remove                              # uninstall
+batho install                          # skills + MCP for every detected client
+batho install --agent cursor           # force a specific agent's dirs + MCP config (repeatable)
+batho install --all                    # every known agent's dirs + every supported client's config
+batho install --project                # ./.agents/skills instead of the global dir (MCP stays global)
+batho install --version 1.2.0          # pin a release (or set BATHO_VERSION)
+batho install                          # re-run: updates the pack when upstream differs
+batho install --no-mcp                 # skill pack only
 ```
 
-Per-agent discovery paths: see `skills/batho-setup/references/agent-matrix.md`.
 The vendor-neutral `.agents/skills/` path covers Cursor, Copilot, Codex, Gemini
-CLI, OpenCode, and Devin; Claude Code and Windsurf need their native mirrors
-(installed automatically).
+CLI, OpenCode, and Devin; Claude Code and Windsurf get their native mirrors
+(installed automatically). `batho mcp` start auto-syncs the pack when the
+installed version drifts from upstream — opt out via `skills.auto_install: false`
+in `batho.yaml`. See [`cli-reference/install-cmd`](../cli-reference/install-cmd.md)
+for the full flag reference.
 
 Claude Code users can install everything (MCP server + skills) in one step via
 the plugin bundle in `.claude-plugin/`.

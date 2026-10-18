@@ -23,9 +23,13 @@ batho <command> --help
 | [`export`](/docs/cli-reference/export-cmd) | Export BSG artifacts as JSON views or package them into a transport ZIP bundle. |
 | [`load`](/docs/cli-reference/load-cmd) | Unpack a transport ZIP bundle (`.batho` file) into the target repository's artifact directory. |
 | [`fix`](/docs/cli-reference/fix-cmd) | Verify structural consistency and automatically repair database integrity issues. |
-| [`diff`](/docs/cli-reference/diff-cmd) | Track granular node evolution and print node-level diff history across runs, files, or entities. |
+| [`history`](/docs/cli-reference/history-cmd) | List recent runs and track node-level change history across runs, files, or entities. |
 | [`gc`](/docs/cli-reference/gc-cmd) | Clean up old runs, sweep orphaned files, and vacuum the Arrow IPC database. |
 | [`mcp`](/docs/cli-reference/mcp-cmd) | Start the Batho MCP server for AI agent integration. |
+| [`install`](/docs/cli-reference/install-cmd) | One-command agent setup — install the skill pack and register the MCP server with every detected coding-agent client. |
+| [`plugins`](/docs/cli-reference/plugins-cmd) | Validate, list, fingerprint, and retro-apply `bsg-plugin.v2` custom rule plugins. |
+| [`communities`](/docs/cli-reference/communities-cmd) | Post-build community operations — list the hierarchy and optionally LLM-label communities. |
+| `doctor` | Report plugin-host status, worker preload health, and plugin-set drift vs the built artifact. |
 
 ## Global CLI Flags
 

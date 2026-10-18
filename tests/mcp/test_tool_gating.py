@@ -34,7 +34,7 @@ DEFAULT_EXPECTED_TOOLS = {
     "list_repos", "add_repo", "remove_repo",
     "graph_overview", "graph_query", "get_entity", "trace_path",
     "get_file_graph", "file_connectivity", "search_entities", "get_delta",
-    "batho_status", "batho_list_runs", "batho_diff",
+    "batho_status", "batho_list_runs", "batho_history",
     # Tier 2 — destructive but enabled (2)
     "batho_patch", "batho_fix",
 }

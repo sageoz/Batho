@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 from batho.core.schemas import Entity, EntityType, Relationship, RelationshipType
-from batho.modules.compression.rules import (
+from batho_plugin.rule_engine import (
     RuleActions,
     RuleDefinition,
     RuleMatch,

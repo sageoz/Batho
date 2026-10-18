@@ -269,22 +269,18 @@ def run():
             resolved_class_calls = [r for r in calls_rels if r.target_id == db_class.id]
             assert len(resolved_class_calls) >= 1
 
-            # Find the CALLS relationship pointing to the unresolved connect symbol
-            # In the single-pass architecture, cross-file references emit contextual stubs
-            # with format: "unresolved:<caller_scope>::<target_name>"
-            resolved_connect_calls = [r for r in calls_rels if "connect" in r.target_id]
+            # Find the CALLS relationship pointing to the connect method.
+            # `db = Database()` types `db` via the constructor (GRH-07), so
+            # `db.connect()` resolves to the real METHOD entity.
+            resolved_connect_calls = [
+                r for r in calls_rels if "connect" in r.target_id
+            ]
             assert len(resolved_connect_calls) >= 1
-            ext_target_id = resolved_connect_calls[0].target_id
-
-            # Verify that the target entity was generated as an EXTERNAL_SYMBOL
-            # contextual stub (T13: UNRESOLVED is deprecated)
-            assert ext_target_id in graph.entities
-            ext_entity = graph.entities[ext_target_id]
-            assert ext_entity.type == EntityType.EXTERNAL_SYMBOL
-            assert ext_entity.is_contextual_stub
-            # Stub ID format: "unresolved:<caller_scope>::<target_name>"
-            assert ext_entity.id.startswith("unresolved:")
-            assert "connect" in ext_entity.id
+            connect_target_id = resolved_connect_calls[0].target_id
+            assert connect_target_id == connect_method.id, (
+                f"db.connect() did not resolve to the project method: "
+                f"{connect_target_id}"
+            )
 
 
 def test_scope_manager_strict_resolution():

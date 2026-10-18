@@ -26,19 +26,26 @@ def _build_parser() -> argparse.ArgumentParser:
     from batho.cli.patch import register_patch_parser
     from batho.cli.fix import register_fix_parser
     from batho.cli.export import register_export_parser
-    from batho.cli.diff import register_diff_parser
+    from batho.cli.history import register_history_parser
     from batho.cli.gc import register_gc_parser
     from batho.cli.load import register_load_parser
     from batho.cli.mcp import register_mcp_parser
+    from batho.cli.install import register_install_parser
+    from batho.cli.plugins import register_doctor_parser, register_plugins_parser
+    from batho.cli.communities import register_communities_parser
 
     register_build_parser(subparsers)
     register_patch_parser(subparsers)
     register_export_parser(subparsers)
     register_fix_parser(subparsers)
-    register_diff_parser(subparsers)
+    register_history_parser(subparsers)
     register_gc_parser(subparsers)
     register_load_parser(subparsers)
     register_mcp_parser(subparsers)
+    register_install_parser(subparsers)
+    register_plugins_parser(subparsers)
+    register_doctor_parser(subparsers)
+    register_communities_parser(subparsers)
 
     return parser
 

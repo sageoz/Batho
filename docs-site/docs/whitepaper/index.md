@@ -1,14 +1,14 @@
 ---
 sidebar_position: 1
 title: "Whitepaper Overview"
-description: "Batho v1.4.2 Technical Whitepaper — Bidirectional AST Traversal & Hypergraph Orchestrator"
+description: "Batho v2.0.0 Technical Whitepaper — Bidirectional AST Traversal & Hypergraph Orchestrator"
 ---
 
-# Batho v1.4.2 Technical Whitepaper
+# Batho v2.0.0 Technical Whitepaper
 
 ## Bidirectional AST Traversal & Hypergraph Orchestrator
 
-**Document Version:** 1.4.2  
+**Document Version:** 2.0.0  
 **Date:** July 2026  
 **Classification:** Public — Enterprise Technical Reference  
 **Author:** Batho Core Team  
@@ -18,16 +18,16 @@ description: "Batho v1.4.2 Technical Whitepaper — Bidirectional AST Traversal 
 
 ## Executive Summary
 
-Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic, production-grade code intelligence engine that transforms raw codebases into queryable, time-aware structured hypergraphs. Version 1.4.2 delivers a unified configuration schema (`batho.yaml`), a high-performance Arrow IPC Bundle storage format, lossless bidirectional traversal support, a streamlined 8-command CLI interface, and an Arrow-backed columnar graph backend with auto-selection for memory-efficient large-codebase indexing. Batho is designed for polyglot enterprises managing millions of lines of code across hundreds of repositories.
+Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic, production-grade code intelligence engine that transforms raw codebases into queryable, time-aware structured hypergraphs. Version 2.0.0 delivers a unified configuration schema (`batho.yaml`), a high-performance Arrow IPC Bundle storage format, lossless bidirectional traversal support, a streamlined 12-command CLI interface, and an Arrow-backed columnar graph backend with auto-selection for memory-efficient large-codebase indexing. Batho is designed for polyglot enterprises managing millions of lines of code across hundreds of repositories.
 
 **Key Value Propositions**
 
 | Metric | Value |
 |--------|-------|
-| Supported Languages | 40+ via tree-sitter |
+| Supported Languages | 34 (27 tree-sitter grammars + 7 native parsers) |
 | Context Compression | Up to 10x for LLM injection |
 | Incremental Patch Speed | 10–100x faster than full re-index |
-| Test Coverage | 1603 automated tests |
+| Test Coverage | 2320 automated tests |
 | Cache Hit Rate | >95% on typical PR-sized changes |
 | Snapshot Retention | 90 days default, configurable |
 | Max Indexed Files | 200,000 per repository |
@@ -40,7 +40,7 @@ Batho (Bidirectional AST Traversal & Hypergraph Orchestrator) is a deterministic
 %%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1565c0', 'primaryBorderColor': '#1976d2', 'lineColor': '#42a5f5', 'secondaryColor': '#f3e5f5', 'tertiaryColor': '#e8f5e9'}}}%%
 flowchart TB
     subgraph Input["Source Inputs"]
-        REPO["Git Repository<br/>(40+ Languages)"]
+        REPO["Git Repository<br/>(34 Languages & Formats)"]
         CFG["batho.yaml Configuration"]
     end
 
@@ -70,7 +70,7 @@ flowchart TB
     style Output fill:#fff3e0,stroke:#f57c00,stroke-width:2px
 ```
 
-**Figure 1: Batho v1.4.2 System Architecture Overview** - High-level data flow from source inputs through the core engine to consumption interfaces.
+**Figure 1: Batho v2.0.0 System Architecture Overview** - High-level data flow from source inputs through the core engine to consumption interfaces.
 
 ---
 
@@ -78,7 +78,7 @@ flowchart TB
 
 | Figure | Title | Section |
 |--------|-------|---------|
-| Figure 1 | Batho v1.4.2 System Architecture Overview | Overview |
+| Figure 1 | Batho v2.0.0 System Architecture Overview | Overview |
 | Figure 2 | High-Level System Architecture | Architecture Overview |
 | Figure 3 | Data Flow Pipeline | Architecture Overview |
 | Figure 4 | Subsystem Interactions | Core Subsystems |
@@ -135,6 +135,7 @@ flowchart TB
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 2.0.0 | 2026-10-08 | Batho Core Team | Receiver-type method resolution, unresolved-ref quarantine, labeled communities with hierarchy, kind-aware search ranking, package-root aliasing, trace_path whitelisting, rationale edges, `batho install`/`plugins`/`communities`/`doctor` CLI, watcher v2 git-sentinel, and the batho-plugin-sdk workspace migration |
 | 1.4.2 | 2026-09-08 | Batho Core Team | MCP relationship filtering, entity categories, file_connectivity tool, and round-4 stub-ID hardening |
 | 1.4.1 | 2026-08-26 | Batho Core Team | Review hardening, thread safety, path sanitization, atomic writes, and documentation updates |
 | 1.4.0 | 2026-08-04 | Batho Core Team | Stdlib expansion to 27 languages, graph builder phases 4-5, BSG interceptors, and security/performance hardening |

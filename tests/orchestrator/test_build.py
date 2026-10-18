@@ -153,11 +153,15 @@ def test_oversized_file_opaque_tracking(tmp_path: Path):
     """
     # Write a small file to make sure build succeeds
     (tmp_path / "small_file.py").write_text("x = 1")
-    
+
+    # Legacy skip mode: files over max_file_size_kb are dropped (the default
+    # "outline" mode would still index a 5 KB file below the outline cap).
+    (tmp_path / "batho.yaml").write_text("indexer:\n  oversize_mode: skip\n")
+
     # Write a file that is large (e.g. ~5 KB, exceeding 1 KB limit)
     large_file = tmp_path / "large_file.py"
     large_file.write_text("class BigClass:\n" + "\n".join(f"    def method_{i}(self): pass" for i in range(150)))
-    
+
     # Run build with max_file_size_kb=1 (meaning 1 KB limit)
     options = BuildOptions(root=tmp_path, force_full=True, verbose=False, max_file_size_kb=1)
     with patch("batho.modules.extraction.pipeline.logger.warning") as mock_warning:
@@ -174,3 +178,32 @@ def test_oversized_file_opaque_tracking(tmp_path: Path):
     tracking = db.get_file_tracking(large_file.name)
     assert tracking is not None
     assert not tracking["is_indexed"]
+
+
+def test_oversized_file_outline_indexing(tmp_path: Path):
+    """Default oversize_mode="outline" indexes files between max_file_size_kb
+    and oversize_outline_max_kb instead of dropping them from the graph.
+
+    Scenario:
+        Same ~5 KB file with max_file_size_kb=1, but no batho.yaml override —
+        the default outline mode keeps the file indexed (is_indexed=True) and
+        its definitions are present in the graph.
+    """
+    (tmp_path / "small_file.py").write_text("x = 1")
+
+    large_file = tmp_path / "large_file.py"
+    large_file.write_text(
+        "class BigClass:\n"
+        + "\n".join(f"    def method_{i}(self): pass" for i in range(150))
+    )
+
+    options = BuildOptions(
+        root=tmp_path, force_full=True, verbose=False, max_file_size_kb=1
+    )
+    res = run_build(options)
+    assert res.success
+
+    db = BathoBundle(tmp_path)
+    tracking = db.get_file_tracking(large_file.name)
+    assert tracking is not None
+    assert tracking["is_indexed"]

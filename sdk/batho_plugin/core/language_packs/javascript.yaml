@@ -1,0 +1,44 @@
+# Language pack: JavaScript (class: core)
+# builtins from extractor.py:232 (_BUILTINS_BY_LANG["javascript"]);
+# comment syntax from extractor.py:171,197; lang_to_manager from pipeline.py:44.
+plugin_id: lang-javascript
+version: "1.0.0"
+class: core
+language: javascript
+requires:
+  - batho_plugin.core
+data:
+  sets:
+    builtins:
+      - "console"
+      - "log"
+      - "Object"
+      - "Array"
+      - "String"
+      - "Number"
+      - "Boolean"
+      - "null"
+      - "undefined"
+      - "true"
+      - "false"
+      - "window"
+      - "document"
+      - "process"
+      - "require"
+      - "module"
+      - "exports"
+      - "Error"
+      - "Promise"
+      - "JSON"
+      - "Math"
+      - "setTimeout"
+      - "clearTimeout"
+      - "setInterval"
+      - "clearInterval"
+    noise_symbols: []
+  maps:
+    comment_syntax:
+      line: ["//"]
+      block: [["/*", "*/"]]
+    lang_to_manager:
+      manager: npm

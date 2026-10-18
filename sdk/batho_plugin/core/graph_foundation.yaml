@@ -1,0 +1,42 @@
+schema_version: bsg-plugin.v2
+plugin_id: bsg_graph_foundation
+name: BSG Graph Foundation
+version: 1.0.0
+class: core
+enabled: true
+description: Baseline deterministic node tagging for scope and service metadata.
+# T09 (PLUGIN_ARCHITECTURE_SPEC): bsg-category-config + bsg-category-infra
+# moved into classification.yaml (single categorization source).
+# T32: file stem renamed bsg_graph_foundation -> graph_foundation (spec
+# §16.3); the plugin_id stays bsg_graph_foundation and legacy stems resolve
+# via _PLUGIN_ALIASES (F5 deprecation cycle).
+
+rules:
+  # NOTE: TEST/DOC categorization lives in bsg_file_categorization.yaml
+  # (strict superset of the former bsg-category-tests/docs rules here —
+  # removed as redundant same-value duplicates).
+
+  - rule_id: bsg-derive-service-tag
+    name: bsg-derive-service-tag
+    description: Derive service tag from common multi-service directory layouts.
+    severity: info
+    priority: 120
+    enabled: true
+    matchers:
+      file_patterns:
+        - services/*/**
+        - apps/*/**
+        - backend/*/**
+        - frontend/*/**
+    actions:
+      derive_service_tag: true
+
+  - rule_id: bsg-derive-scope-tier
+    name: bsg-derive-scope-tier
+    description: Derive structural scope tier from entity kind and nesting.
+    severity: info
+    priority: 100
+    enabled: true
+    matchers: {}
+    actions:
+      derive_scope_tier: true

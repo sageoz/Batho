@@ -2139,20 +2139,20 @@ flowchart TD
 
 </details>
 
-##### `test_diff_from_different_cwd`
-*Verify that the diff command works correctly when invoked from a different working directory.*
+##### `test_history_from_different_cwd`
+*Verify that the history command works correctly when invoked from a different working directory.*
 
 <details>
 <summary>View Test Details</summary>
 
 **Scenario:**
-After building, the CWD is changed to a subdirectory, and diff is run targeting the project root.
+After building, the CWD is changed to a subdirectory, and history is run targeting the project root.
     The command must still operate on the project's artifact data.
 
 **Execution Flow:**
 1. Run a full build on the temp project.
     2. Create and chdir into a subdirectory "other".
-    3. Invoke cmd_diff with the project root and a non-existent run UUID.
+    3. Invoke cmd_history with the project root and a non-existent run UUID.
     4. Assert the command returns 1 and stderr contains "not found".
 
 **Flowchart:**
@@ -2162,7 +2162,7 @@ flowchart TD
     S0["Run a full build on the temp project."]
     S1["Create and chdir into a subdirectory 'other'."]
     S0 --> S1
-    S2["Invoke cmd_diff with the project root and a non-existent run"]
+    S2["Invoke cmd_history with the project root and a non-existent run"]
     S1 --> S2
     S3["Assert the command returns 1 and stderr contains 'not found'"]
     S2 --> S3

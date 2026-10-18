@@ -1,0 +1,47 @@
+# Language pack: Go (class: core)
+# builtins from extractor.py:234 (_BUILTINS_BY_LANG["go"]);
+# comment syntax from extractor.py:173,199; lang_to_manager from pipeline.py:46.
+plugin_id: lang-go
+version: "1.0.0"
+class: core
+language: go
+requires:
+  - batho_plugin.core
+data:
+  sets:
+    builtins:
+      - "int"
+      - "int32"
+      - "int64"
+      - "uint"
+      - "uint32"
+      - "uint64"
+      - "float32"
+      - "float64"
+      - "string"
+      - "bool"
+      - "byte"
+      - "rune"
+      - "error"
+      - "nil"
+      - "true"
+      - "false"
+      - "len"
+      - "cap"
+      - "make"
+      - "new"
+      - "append"
+      - "copy"
+      - "close"
+      - "delete"
+      - "panic"
+      - "recover"
+      - "print"
+      - "println"
+    noise_symbols: []
+  maps:
+    comment_syntax:
+      line: ["//"]
+      block: [["/*", "*/"]]
+    lang_to_manager:
+      manager: go

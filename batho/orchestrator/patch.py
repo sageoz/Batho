@@ -53,6 +53,9 @@ class PatchOptions:
     # graph backend internally; a warning is logged when set to anything else.
     graph_backend: str | None = None
     no_progress: bool | None = None  # None = resolve from env/config; True/False = explicit
+    # T23: API symmetry with build — run with compiled-in fallbacks, no
+    # plugin fingerprint recorded.
+    no_plugins: bool = False
 
 
 @dataclass
@@ -169,9 +172,11 @@ def _load_project_scope_from_store(
 ) -> Any:
     """Load project symbols from the base run's artifact store into a ScopeManager.
 
-    Excludes UNRESOLVED entities and entities from files being patched
-    (those will be re-extracted from the changed files and would otherwise
-    shadow the freshly-parsed symbols).
+    Excludes unresolved/stub entities (legacy ``UNRESOLVED`` rows and
+    ``unresolved:``-prefixed contextual stubs), external symbols (registered
+    via the external path), and entities from files being patched (those will
+    be re-extracted from the changed files and would otherwise shadow the
+    freshly-parsed symbols).
 
     Args:
         db: Open ArrowBundle instance for the base run.
@@ -212,31 +217,53 @@ def _load_project_scope_from_store(
     # Filter the table in Arrow before converting to Python rows. This avoids
     # materializing the full agent table when only unchanged project symbols
     # are needed for stub resolution.
+    #
+    # Excludes, in order: legacy UNRESOLVED rows; contextual stubs (T13+ store
+    # them as EXTERNAL_SYMBOL with an `unresolved:` entity_id prefix — they
+    # must never enter the symbol table or exact_match resolves stubs to
+    # stubs); and rows from files being patched (stale symbols).
     import pyarrow as pa
     import pyarrow.compute as pc
 
     not_unresolved = pc.invert(pc.equal(agent_table["entity_type"], "UNRESOLVED"))
+    not_stub = pc.invert(
+        pc.starts_with(agent_table["entity_id"], "unresolved:")
+    )
+    base_mask = pc.and_(not_unresolved, not_stub)
     if changed_file_ids:
         file_id_type = agent_table.schema.field("file_id").type
         changed_array = pa.array(list(changed_file_ids), type=file_id_type)
         not_changed = pc.invert(pc.is_in(agent_table["file_id"], changed_array))
-        mask = pc.and_(not_unresolved, not_changed)
+        mask = pc.and_(base_mask, not_changed)
     else:
-        mask = not_unresolved
+        mask = base_mask
 
     filtered = agent_table.filter(mask)
     for row in filtered.to_pylist():
         entity_name = row.get("name", "")
         entity_id = row.get("entity_id", "")
         file_path = file_id_to_path.get(row.get("file_id"), "")
+        entity_type = row.get("entity_type", "")
 
         if not entity_name or not entity_id:
+            continue
+
+        # Externals (stdlib / resolved third-party symbols) materialize under
+        # the synthetic `__external_symbols__` / `.` pseudo-files. Registering
+        # them as project symbols breaks the "project beats external" rule in
+        # ScopeManager.resolve_symbol, so they ride the external path instead.
+        if file_path in ("", ".", "__external_symbols__") or entity_type == "EXTERNAL_SYMBOL":
+            scope.add_external_symbol(
+                name=entity_name,
+                symbol_id=entity_id,
+                symbol_type=entity_type,
+            )
             continue
 
         scope.define_global_symbol_qualified(
             name=entity_name,
             symbol_id=entity_id,
-            symbol_type=row.get("entity_type", ""),
+            symbol_type=entity_type,
             filepath=file_path,
             is_global=True,
         )
@@ -273,7 +300,7 @@ def _estimate_batch_size_bytes(batch_item: dict) -> int:
 def run_patch(options: PatchOptions) -> PatchResult:
     """Incremental patch of an existing .batho artifact bundle."""
     from batho.modules.storage.arrow_bundle import resolve_bundle_dir, get_bundle
-    from batho.modules.storage.arrow_bundle.incremental import IncrementalEngine, FileChangeType, FileChange
+    from batho.modules.storage.arrow_bundle.incremental import IncrementalEngine, FileChangeType
 
     t0 = time.monotonic()
     root = options.root.resolve()
@@ -297,6 +324,13 @@ def run_patch(options: PatchOptions) -> PatchResult:
         )
 
     set_active_root(root)
+    # Package boundaries can move between runs (new/removed __init__.py,
+    # manifest edits) — reset process-global extraction caches up front so
+    # no consumer can be skipped by a scope-load failure downstream.
+    from batho.modules.extraction.package_roots import (
+        reset_caches as _reset_package_roots,
+    )
+    _reset_package_roots()
     bundle_dir = resolve_bundle_dir(root)
     meta_path = bundle_dir / "meta.json"
 
@@ -330,6 +364,55 @@ def run_patch(options: PatchOptions) -> PatchResult:
         community_cfg = cfg.get("community_detection", {})
         rss_flush_threshold_mb = float(memory_cfg.get("rss_flush_threshold_mb", 1000.0))
 
+        # --- Plugin host + fingerprint drift (T22/T23, spec §4.4/§9) ---
+        # Patch extraction must use the same plugin path as build, and the
+        # plugin-set fingerprint feeds the AST cache variant (T15) so a
+        # changed plugin set invalidates stale hook-derived entries.
+        plugins_cfg = cfg.get("plugins", {})
+        if isinstance(plugins_cfg, BaseModel):
+            plugins_cfg = plugins_cfg.model_dump()
+        plugin_host = None
+        current_plugin_fingerprint: str | None = None
+        plugin_fingerprint_drift = False
+        prev_plugin_fingerprint: str | None = None
+        try:
+            from batho_plugin import PluginLoadError, load_host
+            from batho_plugin.fingerprint import fingerprint_from_host
+
+            plugin_host = load_host(
+                config={"plugins": plugins_cfg},
+                no_plugins=getattr(options, "no_plugins", False),
+            )
+            if plugin_host is not None and plugin_host.plugin_ids:
+                current_plugin_fingerprint = fingerprint_from_host(plugin_host)
+        except PluginLoadError as exc:
+            guidance = (
+                f"Plugin host failed to load: {exc}\n"
+                "Fix the core pack (sdk/batho_plugin/core/) — patch requires "
+                "the same plugin environment as build."
+            )
+            LOGGER.error("patch_plugin_host_failed", error=str(exc))
+            return PatchResult(success=False, warnings=["plugin_host_failed", guidance])
+        try:
+            base_artifacts = db.get_run_artifacts(base_run_internal_id)
+            if base_artifacts:
+                prev_plugin_fingerprint = (base_artifacts.get("telemetry_metrics") or {}).get(
+                    "plugin_fingerprint"
+                )
+        except Exception as exc:
+            LOGGER.warning("patch_plugin_fingerprint_read_failed", error=str(exc))
+        plugin_fingerprint_drift = bool(
+            current_plugin_fingerprint != prev_plugin_fingerprint
+            and (current_plugin_fingerprint or prev_plugin_fingerprint)
+        )
+        reextract_on_drift = bool(plugins_cfg.get("reextract_on_drift", True))
+        if plugin_fingerprint_drift:
+            LOGGER.warning(
+                "patch_plugin_fingerprint_drift",
+                artifact=prev_plugin_fingerprint,
+                current=current_plugin_fingerprint,
+            )
+
         from batho.utils.progress import ProgressEngine, ProgressGate
 
         progress_engine = ProgressEngine(
@@ -357,7 +440,20 @@ def run_patch(options: PatchOptions) -> PatchResult:
         max_file_size_kb = options.max_file_size_kb or cfg.get("indexer", {}).get("max_file_size_kb", 500)
 
         # --- Detect changes natively (Batho's Local Git Model) ---
-        strict_hashing = bool(cfg.get("indexer", {}).get("strict_hashing", True))
+        strict_hashing = bool(cfg.get("indexer", {}).get("strict_hashing", False))
+
+        # Change detection must see the same files the build indexes: honor
+        # indexer.ignore_defaults / ignore_patterns / ignore_files /
+        # default_patterns_file, mirroring the build's load_ignore_spec call.
+        from batho.utils.ignore import load_ignore_spec
+        indexer_cfg = cfg.get("indexer", {})
+        patch_ignore_spec = load_ignore_spec(
+            root,
+            extra_patterns=indexer_cfg.get("ignore_patterns"),
+            ignore_files=indexer_cfg.get("ignore_files"),
+            default_patterns_file=indexer_cfg.get("default_patterns_file"),
+            use_defaults=indexer_cfg.get("ignore_defaults", True),
+        )
 
         incremental_engine = IncrementalEngine(db, base_run_uuid)
         ph_detect = progress_engine.open_phase("detect", unit="changes")
@@ -365,15 +461,99 @@ def run_patch(options: PatchOptions) -> PatchResult:
             root=root,
             max_file_size_kb=max_file_size_kb,
             strict_hashing=strict_hashing,
+            ignore_spec=patch_ignore_spec,
         )
         ph_detect.close()
 
+        # --- Plugin-fingerprint drift escalation ---
+        drift_escalated = False
+        if plugin_fingerprint_drift:
+            tracked_rows: dict[str, Any] = {}
+            tracking_read_failed = False
+            if reextract_on_drift:
+                try:
+                    tracked_rows = db.get_all_file_tracking()
+                except Exception as exc:
+                    tracking_read_failed = True
+                    LOGGER.warning(
+                        "patch_drift_tracking_read_failed", error=str(exc)
+                    )
+            drift_escalated = bool(tracked_rows)
+            drift_msg = (
+                "plugin_fingerprint_drift: artifact="
+                f"{prev_plugin_fingerprint or 'none'} current="
+                f"{current_plugin_fingerprint or 'none'}"
+            )
+            if drift_escalated:
+                from batho.utils.ignore import should_ignore_path
+
+                scanned_paths = {c.path for c in changes}
+                known_hashes = db.get_all_file_hashes()
+                synthesized = 0
+                for p in sorted(tracked_rows):
+                    if p in scanned_paths:
+                        continue
+                    # Containment: reject absolute paths and any relative path
+                    # that resolves outside the repository root.
+                    if Path(p).is_absolute():
+                        LOGGER.warning(
+                            "patch_drift_path_skipped", path=p, reason="absolute"
+                        )
+                        continue
+                    try:
+                        resolved = (root / p).resolve()
+                        resolved.relative_to(root)
+                    except (OSError, RuntimeError, ValueError) as exc:
+                        LOGGER.warning(
+                            "patch_drift_path_skipped", path=p, reason=str(exc)
+                        )
+                        continue
+                    if not resolved.is_file():
+                        continue
+                    if should_ignore_path(
+                        resolved, root, patch_ignore_spec, include_hidden=True
+                    ):
+                        continue
+                    ctype = (
+                        FileChangeType.MODIFIED
+                        if known_hashes.get(p)
+                        else FileChangeType.ADDED
+                    )
+                    changes.append(FileChange(path=p, change_type=ctype))
+                    synthesized += 1
+                LOGGER.warning(
+                    "patch_drift_escalation",
+                    tracked=len(tracked_rows),
+                    scanned=len(scanned_paths),
+                    synthesized=synthesized,
+                )
+                drift_msg += (
+                    "; escalating to full re-extraction "
+                    f"({len(changes)} files queued: {synthesized} escalated + "
+                    f"{len(scanned_paths)} scanned)"
+                )
+            elif tracking_read_failed:
+                drift_msg += (
+                    "; tracked-file list unavailable — only scanned changes "
+                    "are re-extracted"
+                )
+            else:
+                drift_msg += (
+                    "; AST cache entries keyed by the old fingerprint miss — "
+                    "affected files are re-extracted"
+                )
+                if not reextract_on_drift:
+                    drift_msg += " (plugins.reextract_on_drift disabled)"
+
         if not changes:
             LOGGER.info("patch_no_changes", root=str(root))
+            _warnings = ["No changes detected since last build/patch"]
+            if plugin_fingerprint_drift:
+                _warnings.append(drift_msg)
             return PatchResult(
                 success=True,
                 base_snapshot_id=base_run_uuid,
-                warnings=["No changes detected since last build/patch"],
+                warnings=_warnings,
             )
 
         # --- Create new run ---
@@ -564,18 +744,28 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 LOGGER.warning("project_scope_load_failed", error=str(exc))
 
             from batho.modules.graph.builder.codegraph import CodeGraphIndexer
-            from batho.modules.storage.arrow_bundle.helpers import _minify_graph_payload
             from collections import defaultdict
 
             with CodeGraphIndexer(
                 cache_path=str(root), root=str(root), ast_cache_dir=ast_cache_dir
             ) as indexer:
-                # Invalidate AST cache for changed/deleted files in unified cache
-                for change in changes:
+                # Invalidate AST cache for changed/deleted files in unified cache.
+                # Drift escalation re-extracts every tracked file — a wholesale
+                # clear is cheaper than N per-path deletions and also drops
+                # entries keyed under the old plugin fingerprint.
+                if drift_escalated:
                     try:
-                        indexer._cache.delete_ast_by_path(change.path)
+                        indexer._cache.clear_ast_cache()
                     except Exception:
                         pass
+                else:
+                    for change in changes:
+                        try:
+                            indexer._cache.delete_ast_by_path(
+                                str(root / change.path)
+                            )
+                        except Exception:
+                            pass
                 write_batch = []
                 current_batch_bytes = 0
                 unindexed_paths = set()
@@ -592,7 +782,18 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     pass
                 else:
                     all_paths = [str(root / c.path) for c in valid_changes]
-                    max_workers = min(4, len(all_paths)) if len(all_paths) > 1 else 1
+                    if drift_escalated:
+                        parallel_cfg = bsg_cfg.get("parallel", {}) or {}
+                        max_workers = (
+                            min(
+                                int(parallel_cfg.get("max_workers", 16)),
+                                len(all_paths),
+                            )
+                            if parallel_cfg.get("enabled", True)
+                            else 1
+                        )
+                    else:
+                        max_workers = min(4, len(all_paths)) if len(all_paths) > 1 else 1
 
                     # Precompiled blob collection — preserves all entities (including
                     # duplicate-named ones that would collide in InMemoryGraph's dict).
@@ -621,6 +822,7 @@ def run_patch(options: PatchOptions) -> PatchResult:
                             root=str(root),
                             file_list=all_paths,
                             max_workers=max_workers,
+                            plugin_host=plugin_host,
                             max_file_size_kb=max_file_size_kb,
                             verbose=options.verbose,
                             index_id=run_uuid,
@@ -682,6 +884,18 @@ def run_patch(options: PatchOptions) -> PatchResult:
                                 relationships_data = decoded["relationships_data"]
                                 content_hash = decoded.get("content_hash", "") or change.new_hash or compute_file_hash(root / file_rel) or ""
                                 agent_entities = agent_view_data.get("entities", [])
+                                # The agent view intentionally omits
+                                # content_hash — the node diff needs it to
+                                # detect body-only edits, so backfill from the
+                                # storage view by entity id.
+                                _hash_by_id = {
+                                    e.get("id"): e.get("content_hash")
+                                    for e in storage_delta_data.get("entities", [])
+                                    if e.get("id") and e.get("content_hash")
+                                }
+                                for _e in agent_entities:
+                                    if not _e.get("content_hash"):
+                                        _e["content_hash"] = _hash_by_id.get(_e.get("id"), "")
                                 entities_list = agent_entities
                             else:
                                 # Fallback: file wasn't precompiled (e.g. extraction error)
@@ -852,10 +1066,10 @@ def run_patch(options: PatchOptions) -> PatchResult:
                     entity_meta=getattr(indexer, "stub_entity_meta", None),
                 )
 
-        # --- Update file tracking ---
-        deleted_paths = {change.path for change in deleted}
-        incremental_engine.handle_deleted_files(deleted_paths)
-        
+        # --- Record removed entities BEFORE tracking rows are deleted ---
+        # get_agent_entities_for_file resolves path → file_id via file_tracking;
+        # once handle_deleted_files drops the row the lookup returns [] and the
+        # removal is never recorded in file_changelog.
         for change in deleted:
             # Fetch base-run entities for this deleted file and record their removal
             if base_run_internal_id is not None:
@@ -868,6 +1082,10 @@ def run_patch(options: PatchOptions) -> PatchResult:
                         for diff in node_diffs:
                             if diff.change_kind == "removed":
                                 nodes_removed += 1
+
+        # --- Update file tracking ---
+        deleted_paths = {change.path for change in deleted}
+        incremental_engine.handle_deleted_files(deleted_paths)
 
         fingerprints = []
         for change in added_or_modified:
@@ -930,7 +1148,10 @@ def run_patch(options: PatchOptions) -> PatchResult:
             ph_persist.close()
 
         # --- Finalize Run Artifacts ---
-        from batho.orchestrator.build import _compute_run_metrics
+        from batho.orchestrator.build import (
+            _compute_run_metrics,
+            _plugin_report_payload,
+        )
         metrics = _compute_run_metrics(store, db, root)
         
         telemetry = {
@@ -942,6 +1163,16 @@ def run_patch(options: PatchOptions) -> PatchResult:
             "rel_count": metrics["context_overview"]["total_relationships"],
             "git_commit": git_commit,
             "git_branch": git_branch,
+            # T22/T23: plugin provenance + drift (spec §6.5). None when the
+            # host carries no plugins (--no-plugins).
+            "plugin_fingerprint": current_plugin_fingerprint,
+            "plugin_fingerprint_drift": plugin_fingerprint_drift,
+            "metadata_schema": "batho-meta.v2",
+            "hook_telemetry": (
+                plugin_host.telemetry.snapshot()
+                if plugin_host is not None and plugin_host.plugin_ids
+                else None
+            ),
         }
         
         total_base_files = len(db.get_all_file_tracking())
@@ -960,29 +1191,13 @@ def run_patch(options: PatchOptions) -> PatchResult:
             "churn_pct": churn_pct,
             "base_run_uuid": base_run_uuid or None,
         }
-        
-        artifact_blobs_cfg = cfg.get("artifact_blobs", {})
-
-        db.finalize_run_artifacts(
-            run_internal_id,
-            artifacts={
-                "context_overview": metrics["context_overview"],
-                "telemetry_metrics": telemetry,
-                "structural_metrics": metrics["structural_metrics"],
-                "security_audit": {
-                    "schema_version": "interception-stats.v1",
-                    "plugins": {},
-                },
-                "artifact_payload": metrics["artifact_payload"],
-                "delta_stats": delta_stats,
-            },
-            blob_config=artifact_blobs_cfg
-        )
 
         store.cleanup_streams()
         delta_store.cleanup_streams()
 
         # --- Rebuild communities from updated graph ---
+        # Runs BEFORE the enrich collect so the gap profile's community
+        # stats reflect this run, not the previous one.
         community_cfg = cfg.get("community_detection", {})
         if community_cfg.get("enabled", True):
             try:
@@ -1013,11 +1228,30 @@ def run_patch(options: PatchOptions) -> PatchResult:
                             # T13: unknown types fall back to EXTERNAL_SYMBOL
                             # (UNRESOLVED is deprecated).
                             etype = EntityType.EXTERNAL_SYMBOL
+                        # Rehydrate the persisted metadata projection (bsg.*
+                        # keys: quarantine flags, domain/service_tag/category)
+                        # plus signature — without it the quarantine filter,
+                        # domain_grouping tier, and label-card hashes silently
+                        # degrade on the patch path.
+                        try:
+                            _meta = json.loads(row.get("metadata_json") or "") or {}
+                        except (TypeError, ValueError):
+                            _meta = {}
+                        _rel = file_id_to_path.get(row.get("file_id", -1), "")
                         entities[eid] = SimpleNamespace(
                             id=eid,
                             name=row.get("name", ""),
-                            file=file_id_to_path.get(row.get("file_id", -1), ""),
+                            # Absolute path — matches _load_graph_from_artifact
+                            # (root / rel).resolve() and the extractor's entity
+                            # file field. Community cards derive file_paths and
+                            # dominant_dirs from ent.file; a relative path would
+                            # change both and break label carry-forward digests.
+                            file=str((root / _rel).resolve()) if _rel else "",
                             type=etype,
+                            signature=row.get("signature"),
+                            fqn=row.get("fqn"),
+                            is_exported=row.get("is_exported", False),
+                            metadata=_meta,
                         )
 
                 relationships: list[Any] = []
@@ -1036,14 +1270,39 @@ def run_patch(options: PatchOptions) -> PatchResult:
                             source_id=row.get("source_id", ""),
                             target_id=row.get("target_id", ""),
                             type=rtype,
+                            confidence=row.get("confidence"),
                         ))
 
                 graph = InMemoryGraph(entities=entities, relationships=relationships)
                 communities = detect_communities(graph, community_cfg)
                 comm_rows = communities_to_rows(communities)
+
+                # Rebuilds produce fresh rows with empty llm_* columns —
+                # carry forward prior labels whose card input is unchanged
+                # (keyed on card_input_hash, not detection-order community_id)
+                # so a patch can't erase paid labels or the incremental
+                # re-label gate. Reads the PRE-rebuild file before replace().
+                final_comm_path = bundle_dir / "communities.ipc"
+                try:
+                    from batho.modules.graph.community_labels import carry_forward_labels
+                    from batho.modules.storage.arrow_bundle.writer import read_ipc_table
+                    _prev_rows = (
+                        read_ipc_table(final_comm_path).to_pylist()
+                        if final_comm_path.exists() else []
+                    )
+                    _max_card = int(
+                        (community_cfg.get("llm") or {}).get("max_card_tokens", 200)
+                    )
+                    _carried = carry_forward_labels(
+                        comm_rows, _prev_rows, graph, _max_card
+                    )
+                    if _carried:
+                        LOGGER.info("community_labels_carried", carried=_carried)
+                except Exception as exc:
+                    LOGGER.warning("community_labels_carry_failed", error=str(exc))
+
                 comm_path = bundle_dir / "communities.tmp.ipc"
                 write_simple_ipc(comm_rows, COMMUNITIES_SCHEMA, comm_path)
-                final_comm_path = bundle_dir / "communities.ipc"
                 comm_path.replace(final_comm_path)
                 db.register_simple_file("communities", final_comm_path.name)
                 comm_duration_ms = (time.monotonic() - t_comm_0) * 1000
@@ -1054,6 +1313,67 @@ def run_patch(options: PatchOptions) -> PatchResult:
                 )
             except Exception as exc:
                 LOGGER.warning("community_detection_rebuild_failed", error=str(exc))
+
+        artifact_blobs_cfg = cfg.get("artifact_blobs", {})
+
+        # T05: rule-stats.v1 payload — per-rule telemetry for longitudinal
+        # fitness scoring; null when rules disabled.
+        _rules_section = (getattr(indexer, "build_stats", {}) or {}).get("rules") or {}
+        _rule_stats_payload = _rules_section.get("rule_stats_payload")
+        if _rule_stats_payload:
+            _rule_stats_payload = {**_rule_stats_payload, "run_kind": "patch"}
+
+        # Security audit: reuse the interception stats merged during worker
+        # extraction (same source build uses); empty skeleton when rules are
+        # disabled so the column shape stays stable. run_kind/scope mark the
+        # payload as delta-scoped so consumers can distinguish a whole-repo
+        # audit (build) from a changed-files audit (patch).
+        _security_audit = {
+            **(
+                _rules_section.get("security_audit")
+                or {"schema_version": "interception-stats.v1", "plugins": {}}
+            ),
+            "run_kind": "patch",
+            "scope": "delta",
+        }
+
+        # enrich_profile + enrich_score — refreshed each patch so reports
+        # and scoring reflect the latest graph (best-effort).
+        from batho.modules.enrich import (
+            collect_enrich_artifacts,
+            write_enrich_reports,
+        )
+        _enrich = collect_enrich_artifacts(
+            db, run_internal_id, run_uuid, root,
+            rule_stats_payload=_rule_stats_payload,
+            entity_count=total_entities,
+        )
+
+        db.finalize_run_artifacts(
+            run_internal_id,
+            artifacts={
+                "context_overview": metrics["context_overview"],
+                "telemetry_metrics": telemetry,
+                "structural_metrics": metrics["structural_metrics"],
+                "security_audit": _security_audit,
+                "artifact_payload": metrics["artifact_payload"],
+                "delta_stats": delta_stats,
+                "rule_stats": _rule_stats_payload,
+                **_enrich,
+            },
+            blob_config=artifact_blobs_cfg
+        )
+        write_enrich_reports(
+            root,
+            profile=_enrich.get("enrich_profile"),
+            score=_enrich.get("enrich_score"),
+            context_overview=metrics.get("context_overview"),
+            plugin_report=(
+                _plugin_report_payload(plugin_host, telemetry)
+                if plugin_host is not None
+                else None
+            ),
+        )
 
         LOGGER.info(
             "patch_complete",
@@ -1068,6 +1388,8 @@ def run_patch(options: PatchOptions) -> PatchResult:
         db.prune_file_changelog(max_runs=file_changelog_max_runs)
 
         warnings_list = list(getattr(indexer, "warnings", [])) if indexer else []
+        if plugin_fingerprint_drift:
+            warnings_list.append(drift_msg)
         return PatchResult(
             success=True,
             run_id=run_uuid,

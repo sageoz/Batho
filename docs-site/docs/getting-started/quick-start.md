@@ -28,7 +28,7 @@ batho export --root .
 batho export --root . --json --view storage --output batho_export.json
 
 # Query node-level evolution history or run diffs
-batho diff --root . --run <run-id>
+batho history --root . --run <run-id>
 
 # Run integrity check and auto-repair on database
 batho fix --root . --dry-run

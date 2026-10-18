@@ -2,6 +2,12 @@ version = 1
 revision = 3
 requires-python = ">=3.12, <3.14"
 
+[manifest]
+members = [
+    "batho",
+    "batho-plugin-sdk",
+]
+
 [[package]]
 name = "aiofile"
 version = "3.11.1"
@@ -60,9 +66,10 @@ wheels = [
 
 [[package]]
 name = "batho"
-version = "1.4.3"
+version = "2.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "batho-plugin-sdk" },
     { name = "fastmcp" },
     { name = "jsonschema" },
     { name = "msgpack" },
@@ -107,6 +114,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "batho-plugin-sdk", editable = "sdk" },
     { name = "fastmcp", specifier = "==3.4.7" },
     { name = "httpx", marker = "extra == 'test'", specifier = "==0.28.1" },
     { name = "jsonschema", specifier = "==4.26.0" },
@@ -144,6 +152,21 @@ dev = [
     { name = "pytest-timeout", specifier = "==2.4.0" },
     { name = "pytest-xdist", specifier = "==3.8.0" },
     { name = "vulture", specifier = "==2.16" },
+]
+
+[[package]]
+name = "batho-plugin-sdk"
+version = "0.1.0"
+source = { editable = "sdk" }
+dependencies = [
+    { name = "jsonschema" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jsonschema", specifier = "==4.26.0" },
+    { name = "pyyaml", specifier = "==6.0.3" },
 ]
 
 [[package]]

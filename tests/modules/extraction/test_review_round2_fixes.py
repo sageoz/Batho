@@ -171,7 +171,13 @@ class TestPythonParameterQuery:
         extractor = create_extractor("python", PYTHON_QUERY)
         extractor.set_parsing_config({"extract_parameters": True})
         entities, _ = extractor.parse_file("test.py", content)
-        return [e.name for e in entities if e.type == EntityType.PARAMETER]
+        # Parameter names are scope-qualified under their parent function
+        # (e.g. "f_[40c1d6].a"); assert on the leaf segment.
+        return [
+            e.name.rsplit(".", 1)[-1]
+            for e in entities
+            if e.type == EntityType.PARAMETER
+        ]
 
     def test_all_parameter_forms_captured(self):
         """def f(a, b=1, *args, **kwargs) yields PARAMETER entities for all four."""

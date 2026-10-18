@@ -147,3 +147,29 @@ class TestGraphBackendYaml:
         assert "backend" in on_disk["graph"]
         assert on_disk["graph"]["backend"]["backend"] == "auto"
         assert cfg["graph"]["backend"]["backend"] == "auto"
+
+
+class TestIndexerEnvOverrides:
+    """CFG-05: BATHO_IGNORE_DEFAULTS and BATHO_PACKAGE_ROOTS must actually
+    override indexer.ignore_defaults / indexer.package_roots — previously
+    the keys existed in the schema with no env path to reach them."""
+
+    def test_ignore_defaults_env_override(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setenv("BATHO_IGNORE_DEFAULTS", "false")
+        cfg = get_config_with_root(tmp_path)
+        assert cfg["indexer"]["ignore_defaults"] is False
+
+    def test_package_roots_env_override(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setenv("BATHO_PACKAGE_ROOTS", "src,lib/core")
+        cfg = get_config_with_root(tmp_path)
+        assert cfg["indexer"]["package_roots"] == ["src", "lib/core"]
+
+    def test_package_roots_yaml_preserved_when_env_unset(
+        self, tmp_path: Path, monkeypatch
+    ):
+        monkeypatch.delenv("BATHO_PACKAGE_ROOTS", raising=False)
+        (tmp_path / "batho.yaml").write_text(
+            "indexer:\n  package_roots: ['pkg']\n", encoding="utf-8"
+        )
+        cfg = get_config_with_root(tmp_path)
+        assert cfg["indexer"]["package_roots"] == ["pkg"]

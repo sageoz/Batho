@@ -6,7 +6,7 @@ description: "Multi-ecosystem dependency indexing, manifest parsing, stdlib tabl
 
 # 6. Dependency Intelligence
 
-Batho's dependency subsystem resolves and indexes third-party and standard-library dependencies across 40+ languages. It populates the scope manager with resolved symbols, enabling cross-file reference resolution and external symbol entity creation. Stdlib symbol tables cover 27 languages and live introspection covers every package ecosystem with an offline install store — Python, npm, Cargo, Go, Maven, Gradle, Ruby gems, Composer, NuGet, Dart pub, Julia, CRAN, cabal, Swift SPM, zigmod, rebar3, opam, luarocks, and CPAN.
+Batho's dependency subsystem resolves and indexes third-party and standard-library dependencies across 34 languages and config formats (27 tree-sitter grammars plus 7 native format parsers). It populates the scope manager with resolved symbols, enabling cross-file reference resolution and external symbol entity creation. Stdlib symbol tables cover 28 languages and live introspection covers 20 package ecosystems with an offline install store — Python, npm, Cargo, Go, Maven, Gradle, Ruby gems, Composer, NuGet, Dart pub, Julia, CRAN, cabal, Swift SPM, zigmod, rebar3, opam, luarocks, CPAN, and Agda `.agda-lib`.
 
 ## 6.1 Indexing Pipeline
 

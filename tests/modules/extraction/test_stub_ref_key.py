@@ -123,3 +123,42 @@ class TestStubIdSingleSeparatorInvariant:
             assert stub.metadata.get("target_name") == stub.name
             assert stub.id.startswith("unresolved:")
             assert "::" in stub.id
+
+
+PY_TWO_CALL_SITES = b"""\
+def run():
+    helper()
+    helper()
+"""
+
+
+class TestStubIdPerCallSite:
+    """GRH-06: stub identity is per CALL SITE — two occurrences of the same
+    unresolved ref in one scope must produce distinct stub IDs, each pinned
+    to its own line, so position-aware binding sees both occurrences."""
+
+    def test_same_ref_two_call_sites_two_stubs(
+        self, tmp_path: Path
+    ) -> None:
+        extractor = get_extractor("python")
+        file_path = tmp_path / "main.py"
+        file_path.write_bytes(PY_TWO_CALL_SITES)
+
+        entities, _ = extractor.parse_file(str(file_path), PY_TWO_CALL_SITES)
+
+        stubs = [
+            e for e in entities
+            if e.id.startswith("unresolved:") and e.name == "helper"
+        ]
+        assert len(stubs) == 2, (
+            f"expected one stub per call site, got: {[s.id for s in stubs]}"
+        )
+        assert stubs[0].id != stubs[1].id
+        assert {s.start_line for s in stubs} == {2, 3}
+        # The line discriminator lives in the scope half — the ref key after
+        # the final '::' stays clean for stub_fqn().
+        for stub in stubs:
+            ref_key = stub.id.rsplit("::", 1)[-1]
+            assert ref_key == "helper"
+            scope_half = stub.id.split("::", 1)[0]
+            assert "@" in scope_half

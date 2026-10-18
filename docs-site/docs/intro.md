@@ -12,7 +12,7 @@ description: "Batho — Bidirectional AST Traversal & Hypergraph Orchestrator"
 
 | Capability | Description |
 |-----------|-------------|
-| **AST Extraction** | Parse 40+ languages via tree-sitter into structured entities and relationships |
+| **AST Extraction** | Parse 34 languages & config formats — 27 tree-sitter grammars plus 7 native parsers — into structured entities and relationships |
 | **Code Graph** | Build in-memory hypergraphs with cross-file symbol resolution |
 | **BSG Compression** | Compress code intelligence into token-budgeted formats for LLM injection |
 | **Time Machine** | Snapshot, diff, and incrementally patch code intelligence over time |
@@ -53,10 +53,10 @@ flowchart LR
 
 | Metric | Value |
 |--------|-------|
-| Supported Languages | 40+ via tree-sitter |
+| Supported Languages | 34 (27 tree-sitter grammars + 7 native parsers) |
 | Context Compression | Up to 10x for LLM injection |
 | Incremental Patch Speed | 10–100x faster than full re-index |
-| Test Coverage | 1603 automated tests |
+| Test Coverage | 2320 automated tests |
 | Cache Hit Rate | >95% on typical PR-sized changes |
 | Snapshot Retention | 90 days default, configurable |
 | Max Indexed Files | 200,000 per repository |

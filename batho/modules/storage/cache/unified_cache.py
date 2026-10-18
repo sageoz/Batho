@@ -1,4 +1,4 @@
-"""Unified cache service — disk-persistent AST cache (v3.0).
+"""Unified cache service — disk-persistent AST cache.
 
 AST caching delegates to AstCache (flat-file msgpack on disk).
 File tracking delegates to BathoBundle for persistence.
@@ -21,7 +21,7 @@ from batho.utils.logging import get_logger
 logger = get_logger(__name__, component="cache")
 
 
-CACHE_SCHEMA_VERSION = "v3"
+CACHE_SCHEMA_VERSION = "v4"
 
 
 def build_ast_cache_variant(
@@ -29,6 +29,9 @@ def build_ast_cache_variant(
     include_gaps: bool,
     parsing_config: dict[str, Any] | None = None,
     identity_fingerprint: str = "",
+    rules_fingerprint: str = "",
+    plugin_fingerprint: str = "",
+    query_fingerprint: str = "",
 ) -> str:
     """Return a stable variant key for AST cache entries.
 
@@ -36,12 +39,38 @@ def build_ast_cache_variant(
     part of the key: cached entities carry their stamped symbol IDs, so a
     changed workspace identity map must invalidate them or stale prefixes
     resurface from cache forever.
+
+    ``rules_fingerprint`` is equally mandatory: per-file BSG rules stamp
+    metadata onto entities before they are cached, so a changed rule set
+    (plugin files, disabled_rules, overrides, custom_rules_dir contents)
+    must invalidate the cache or pre-rule entities resurface.
+
+    ``plugin_fingerprint`` (T15, spec §9) covers the AST-stage hooks: hook
+    plugins stamp/classify entity metadata inside the worker before
+    ``set_ast``, so a changed plugin set (pack data, hook versions) must
+    invalidate cached entries or hook-derived metadata resurfaces stale.
+
+    ``query_fingerprint`` covers the tree-sitter queries themselves: a query
+    edit changes extraction shape, so cached entities produced by an older
+    query must be invalidated or pre-query entities resurface forever. When
+    not provided it is computed from the bundled queries so every call site
+    shares one variant — a caller must never omit it.
     """
+    if not query_fingerprint:
+        from batho.modules.extraction.submodules.parser_factory._queries import (
+            queries_fingerprint,
+        )
+
+        query_fingerprint = queries_fingerprint()
+
     payload = {
         "schema_version": CACHE_SCHEMA_VERSION,
         "include_gaps": bool(include_gaps),
         "parsing": parsing_config or {},
         "identity": identity_fingerprint,
+        "rules": rules_fingerprint or "",
+        "plugins": plugin_fingerprint or "",
+        "queries": query_fingerprint,
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:12]
@@ -121,10 +150,33 @@ class BathoCache:
         self._ast_cache.delete_ast(file_path)
 
     def delete_ast_by_path(self, file_path: str) -> int:
-        """Delete AST entries for a file path across all cache variants."""
+        """Delete AST entries for a file path across all cache variants.
+
+        Entries may be keyed by repo-relative or absolute path depending on
+        the caller; purge the alternate form as well.
+        """
         if self._ast_cache is None:
             return 0
-        return self._ast_cache.delete_ast(file_path)
+        deleted = self._ast_cache.delete_ast(file_path)
+        alternates: list[str] = []
+        p = Path(file_path)
+        if not p.is_absolute():
+            if self._repo_root is not None:
+                alternates.append(str(self._repo_root / file_path))
+        else:
+            resolved = str(p.resolve())
+            if resolved != file_path:
+                alternates.append(resolved)
+            if self._repo_root is not None:
+                try:
+                    alternates.append(
+                        p.resolve().relative_to(self._repo_root).as_posix()
+                    )
+                except ValueError:
+                    pass
+        for alt in alternates:
+            deleted += self._ast_cache.delete_ast(alt)
+        return deleted
 
     def clear_ast_cache(self, older_than_days: int | None = None) -> int:
         if self._ast_cache is None:

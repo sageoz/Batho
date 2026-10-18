@@ -1,0 +1,68 @@
+schema_version: bsg-plugin.v2
+plugin_id: gen_quarantine_unresolved
+name: Generated Quarantine — unresolved stubs
+version: 1.0.0
+enabled: true
+description: >
+  Quarantines unresolvable external_symbol stubs stored under the
+  __external_symbols__ pseudo-file so search, overview counts, and
+  communities stay clean. Split by stub_resolution_state (pruned stubs vs
+  bare ghosts) so each rule stays under the default selectivity cap.
+  Resolved contextual stubs keep their unresolved: id prefix but live under
+  their caller's file and are intentionally untouched. Quarantine is a
+  view-level exclusion — nothing is deleted.
+
+  Selectivity exception: quarantine-bare-ghosts is an intentionally-broad
+  rule that matches all external_symbols lacking a stub_resolution_state.
+  All bare ghosts live under the single __external_symbols__ pseudo-file,
+  so file_patterns cannot narrow them further, and splitting by the source
+  path embedded in the entity name would be fragile and miss new origins.
+  The rule breaches the default 10% cap (~10.8%) — validate with
+  --selectivity 15. Coverage and quarantine semantics are identical
+  regardless of originating source dir.
+rules:
+  - rule_id: quarantine-pruned-stubs
+    name: quarantine-pruned-stubs
+    description: >
+      External stubs whose resolution was pruned — permanently unresolvable.
+    severity: info
+    priority: 90
+    enabled: true
+    matchers:
+      entity_types:
+        - external_symbol
+      file_patterns:
+        - '**/__external_symbols__'
+      metadata_conditions:
+        - key: stub_resolution_state
+          operator: eq
+          value: pruned
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "unresolvable external_symbol stubs under __external_symbols__"
+        bsg.quarantined: true
+
+  - rule_id: quarantine-bare-ghosts
+    name: quarantine-bare-ghosts
+    description: >
+      Bare external ghosts with no resolution state recorded — unresolvable.
+      not_in is fail-open on a missing key, so this hits only entities whose
+      stub_resolution_state is absent.
+    severity: info
+    priority: 90
+    enabled: true
+    matchers:
+      entity_types:
+        - external_symbol
+      file_patterns:
+        - '**/__external_symbols__'
+      metadata_conditions:
+        - key: stub_resolution_state
+          operator: not_in
+          value: [pruned, resolved]
+    actions:
+      metadata:
+        bsg.generated: true
+        bsg.gen.reason: "unresolvable external_symbol stubs under __external_symbols__"
+        bsg.quarantined: true

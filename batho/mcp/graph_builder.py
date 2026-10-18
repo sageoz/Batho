@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import json
 
-from typing import Any
-
 from batho.core.schemas import INVERSE_TO_FORWARD
 
 TOKEN_HEURISTIC_DIVISOR = 4
@@ -392,6 +390,21 @@ def format_summary(
             lines.append(" | ".join(dir_parts))
             lines.append("")
 
+    # Top communities (T4: labeled, top-N already applied upstream)
+    if communities:
+        lines.append("### Communities")
+        for comm in communities:
+            if comm.get("is_aggregate"):
+                lines.append(f"- {comm.get('name', 'smaller communities')}")
+                continue
+            desc = comm.get("description", "")
+            suffix = f" — {desc}" if desc else ""
+            lines.append(
+                f"- **{comm.get('name', 'Unnamed')}** "
+                f"({comm.get('entity_count', 0)} entities){suffix}"
+            )
+        lines.append("")
+
     # Density metrics
     if total_files > 0 and total_entities > 0:
         avg_ent_per_file = total_entities / total_files
@@ -426,10 +439,16 @@ def format_summary(
         # 0 there. Prefer the stub count from stats; fall back to the legacy
         # UNRESOLVED type count for old stats dicts.
         unresolved_count = stats.get("stub_entity_count")
-        if unresolved_count is None:
+        if unresolved_count is not None:
+            # total_entities excludes stubs (quarantine) — the denominator must
+            # add them back or the percentage is inflated by the removal.
+            denom = total_entities + unresolved_count
+        else:
+            # Legacy stats: UNRESOLVED rows were already inside total_entities.
             unresolved_count = entity_breakdown.get("UNRESOLVED", 0)
-        if total_entities > 0 and unresolved_count / total_entities > 0.20:
-            pct = int(unresolved_count / total_entities * 100)
+            denom = total_entities
+        if denom > 0 and unresolved_count / denom > 0.20:
+            pct = int(unresolved_count / denom * 100)
             patterns.append(f"External dependencies significant ({pct}% unresolved)")
         function_count = entity_breakdown.get("FUNCTION", 0) + entity_breakdown.get("METHOD", 0)
         class_count = entity_breakdown.get("CLASS", 0)

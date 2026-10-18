@@ -33,6 +33,7 @@ def _make_entity(
     entity_type: EntityType,
     file: str = "/test/main.py",
     start_line: int = 1,
+    signature: str | None = None,
     metadata: dict | None = None,
     id_override: str | None = None,
 ) -> Entity:
@@ -43,6 +44,7 @@ def _make_entity(
         start_line=start_line,
         end_line=start_line,
         metadata=metadata or {},
+        signature=signature,
         id_override=id_override or f"batho test pkg 1.0.0 {file}/{name}#{start_line}",
     )
 
@@ -51,7 +53,6 @@ def _make_stub(
     target_name: str,
     caller_scope: str = "batho test pkg 1.0.0 /test/main.py",
     receiver_var: str | None = None,
-    receiver_type: str | None = None,
     file: str = "/test/main.py",
     line: int = 10,
     stub_id: str | None = None,
@@ -73,8 +74,6 @@ def _make_stub(
         "target_name": target_name,
         "receiver_var": receiver_var,
     }
-    if receiver_type:
-        meta["receiver_type"] = receiver_type
     return Entity(
         type=EntityType.EXTERNAL_SYMBOL,
         name=target_name,
@@ -100,9 +99,12 @@ class TestResolutionConfidenceConstant:
 
     def test_all_strategies_present(self):
         """All expected resolution strategies have confidence scores."""
+        # `import_map` was dropped (GRH-10): no code path ever emits it.
         expected = {
-            "exact_match", "stdlib_method", "import_map",
-            "parent_chain", "sibling_module", "scope_qualified", "receiver_type",
+            "exact_match", "stdlib_method", "package_alias",
+            "external_prefix",
+            "parent_chain", "sibling_module", "scope_qualified", "relative_path", "receiver_type",
+            "receiver_param", "receiver_assignment",
             "ambiguous", "unresolved",
         }
         assert set(_RESOLUTION_CONFIDENCE.keys()) == expected
@@ -112,7 +114,6 @@ class TestResolutionConfidenceConstant:
         values = [
             _RESOLUTION_CONFIDENCE["exact_match"],
             _RESOLUTION_CONFIDENCE["stdlib_method"],
-            _RESOLUTION_CONFIDENCE["import_map"],
             _RESOLUTION_CONFIDENCE["parent_chain"],
             _RESOLUTION_CONFIDENCE["scope_qualified"],
             _RESOLUTION_CONFIDENCE["receiver_type"],
@@ -189,12 +190,14 @@ class TestShouldPruneStub:
             assert indexer._should_prune_stub(stub) is True
             indexer.close()
 
-    def test_dont_prune_common_method_known_receiver(self):
-        """A common method name WITH a receiver_type is NOT pruned."""
+    def test_prune_common_method_receiver_hint_is_dead(self):
+        """Extraction never writes receiver_type, so a prunable-name stub is
+        pruned regardless of the hand-set metadata key."""
         with tempfile.TemporaryDirectory() as tmp:
             indexer = _make_indexer(tmp)
-            stub = _make_stub("cursor.unwrap", receiver_type="Connection")
-            assert indexer._should_prune_stub(stub) is False
+            stub = _make_stub("cursor.unwrap")
+            stub.metadata["receiver_type"] = "Connection"  # dead key
+            assert indexer._should_prune_stub(stub) is True
             indexer.close()
 
     def test_dont_prune_resolved_stub(self):
@@ -365,15 +368,18 @@ class TestConfidenceScoring:
 
             updated_stub = graph.get_entity(stub.id)
             assert updated_stub.metadata["stub_resolution_state"] == "resolved"
-            # The strategy may be "exact_match" (if dotpath resolves directly)
-            # or "stdlib_method" (if fast-path triggers). Both are valid.
-            assert updated_stub.metadata["resolution_strategy"] in ("exact_match", "stdlib_method")
+            # The strategy may be "exact_match" (if dotpath resolves directly),
+            # "stdlib_method" (if fast-path triggers), or "external_prefix"
+            # (ghost synthesized from the registered external prefix).
+            assert updated_stub.metadata["resolution_strategy"] in (
+                "exact_match", "stdlib_method", "external_prefix",
+            )
             assert "resolution_confidence" in updated_stub.metadata
             assert updated_stub.metadata["resolution_confidence"] > 0.0
             indexer.close()
 
     def test_receiver_type_strategy(self):
-        """A stub resolved via receiver-type inference gets receiver_type strategy."""
+        """A stub resolved via receiver-param inference gets the T1 confidence."""
         with tempfile.TemporaryDirectory() as tmp:
             indexer = _make_indexer(tmp)
             graph = InMemoryGraph()
@@ -387,16 +393,22 @@ class TestConfidenceScoring:
             sm.define_symbol("Cursor", class_ent.id, "STRUCT", is_global=True)
             sm.define_symbol("Cursor.execute", method_ent.id, "METHOD", is_global=True)
 
-            # Stub with receiver_type hint
-            stub = _make_stub("cursor.execute", receiver_type="Cursor")
+            # The caller's signature annotates `cursor: Cursor` — a live
+            # inference source (extraction never writes receiver_type).
+            caller = _make_entity(
+                "handler", EntityType.FUNCTION,
+                signature="fn handler(cursor: Cursor)",
+            )
+            graph.add_entity(caller)
+            stub = _make_stub("cursor.execute", caller_scope=caller.id)
             graph.add_entity(stub)
 
             indexer.resolve_contextual_stubs(graph, sm)
 
             updated_stub = graph.get_entity(stub.id)
             assert updated_stub.metadata["stub_resolution_state"] == "resolved"
-            assert updated_stub.metadata["resolution_strategy"] == "receiver_type"
-            assert updated_stub.metadata["resolution_confidence"] == 0.65
+            assert updated_stub.metadata["resolution_strategy"] == "receiver_param"
+            assert updated_stub.metadata["resolution_confidence"] == 0.90
             indexer.close()
 
     def test_relationship_gets_confidence(self):
@@ -513,22 +525,27 @@ class TestPruningIntegration:
             assert unresolved == 1
             indexer.close()
 
-    def test_known_receiver_type_not_pruned(self):
-        """A stub with a known receiver_type but unresolved method is NOT pruned."""
+    def test_inferable_receiver_still_pruned_by_name(self):
+        """Pruning looks only at the method name — a prunable-name stub is
+        pruned even when the caller signature would type the receiver."""
         with tempfile.TemporaryDirectory() as tmp:
             indexer = _make_indexer(tmp)
             graph = InMemoryGraph()
             sm = ScopeManager()
 
-            stub = _make_stub("cursor.unwrap", receiver_type="Connection")
+            caller = _make_entity(
+                "handler", EntityType.FUNCTION,
+                signature="fn handler(cursor: Connection)",
+            )
+            graph.add_entity(caller)
+            stub = _make_stub("cursor.unwrap", caller_scope=caller.id)
             graph.add_entity(stub)
 
             resolved, unresolved = indexer.resolve_contextual_stubs(graph, sm)
 
             updated_stub = graph.get_entity(stub.id)
-            # Should remain pending, not pruned
-            assert updated_stub.metadata["stub_resolution_state"] != "pruned"
-            assert unresolved == 1
+            assert updated_stub.metadata["stub_resolution_state"] == "pruned"
+            assert unresolved == 0
             indexer.close()
 
     def test_resolved_stub_not_pruned(self):
@@ -572,8 +589,8 @@ class TestPruningIntegration:
             stub2 = _make_stub("var.clone", stub_id="stub2")
             # Stub 3: unresolved (custom name, not prunable)
             stub3 = _make_stub("custom_thing", stub_id="stub3")
-            # Stub 4: prunable but has receiver_type (not pruned)
-            stub4 = _make_stub("var.unwrap", receiver_type="MyType", stub_id="stub4")
+            # Stub 4: unresolved (dotted target, non-prunable name)
+            stub4 = _make_stub("var.execute_custom", stub_id="stub4")
 
             graph.add_entity(stub1)
             graph.add_entity(stub2)

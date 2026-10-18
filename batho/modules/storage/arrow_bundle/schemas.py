@@ -62,9 +62,13 @@ AGENT_VIEWS_SCHEMA: pa.Schema = pa.schema([
     pa.field("content_hash", pa.utf8(), nullable=True),
     pa.field("is_exported", pa.bool_(), nullable=False),
     pa.field("fqn", pa.large_utf8(), nullable=True),
-    # Populated only for contextual-stub entities (unresolved:* ids): carries
+    # Populated for contextual-stub entities (unresolved:* ids: carries
     # stub_resolution_state / resolved_target_id / resolution_strategy /
-    # resolution_confidence after the writer's stub-rewrite pass (T5).
+    # resolution_confidence after the writer's stub-rewrite pass, T5) and,
+    # post-enrichment, for all other entities as a bsg.* projection
+    # (quarantine flags, usn tags, category, domain/service_tag) plus the
+    # fixed extraction keys (decorators/docstring/invocation_snippet);
+    # all other extraction metadata stays null to bound row size.
     pa.field("metadata_json", pa.utf8(), nullable=True),
 ])
 
@@ -95,6 +99,10 @@ FILE_CHANGELOG_SCHEMA: pa.Schema = pa.schema([
     pa.field("run_uuid", pa.utf8(), nullable=False),
     pa.field("base_run_uuid", pa.utf8(), nullable=True),
     pa.field("file_id", pa.int64(), nullable=False),
+    # Denormalized path — changelog rows are an append-only audit trail and
+    # must survive the file's removal from file_tracking. Nullable: rows
+    # written before this column existed read back as null.
+    pa.field("file_path", pa.large_utf8(), nullable=True),
     pa.field("entity_id", pa.utf8(), nullable=False),
     pa.field("entity_name", pa.utf8(), nullable=False),
     pa.field("entity_type", pa.utf8(), nullable=False),
@@ -112,6 +120,9 @@ RUN_ARTIFACTS_SCHEMA: pa.Schema = pa.schema([
     pa.field("security_audit_json", pa.large_utf8(), nullable=True),
     pa.field("artifact_payload_json", pa.large_utf8(), nullable=True),
     pa.field("delta_stats_json", pa.large_utf8(), nullable=True),
+    pa.field("rule_stats_json", pa.large_utf8(), nullable=True),
+    pa.field("enrich_profile_json", pa.large_utf8(), nullable=True),
+    pa.field("enrich_score_json", pa.large_utf8(), nullable=True),
     pa.field("created_at", pa.utf8(), nullable=False),
 ])
 
@@ -124,7 +135,18 @@ COMMUNITIES_SCHEMA: pa.Schema = pa.schema([
     pa.field("description", pa.large_utf8(), nullable=True),
     pa.field("file_paths", pa.list_(pa.utf8()), nullable=True),
     pa.field("member_entity_ids", pa.list_(pa.utf8()), nullable=True),
+    # T4: flag means "below community_detection.min_community_entities and
+    # unmergeable" (kept as a flagged small community), not "exactly 1 member".
     pa.field("is_singleton", pa.bool_(), nullable=False),
+    pa.field("heuristic_label", pa.utf8(), nullable=True),  # T4
+    # T15: hierarchy — nullable adds; missing on old bundles → None/0
+    pa.field("parent_id", pa.int32(), nullable=True),
+    pa.field("level", pa.int8(), nullable=True),
+    # T16: optional LLM labels — written post-build by `batho communities label`
+    pa.field("llm_label", pa.utf8(), nullable=True),
+    pa.field("label_source", pa.utf8(), nullable=True),
+    pa.field("label_input_hash", pa.utf8(), nullable=True),
+    pa.field("label_model", pa.utf8(), nullable=True),
 ])
 
 SCOPE_MANAGER_CACHE_SCHEMA: pa.Schema = pa.schema([

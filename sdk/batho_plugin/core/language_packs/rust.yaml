@@ -1,0 +1,56 @@
+# Language pack: Rust (class: core)
+# builtins from extractor.py:235 (_BUILTINS_BY_LANG["rust"]);
+# comment syntax from extractor.py:172,198; lang_to_manager from pipeline.py:45.
+plugin_id: lang-rust
+version: "1.0.0"
+class: core
+language: rust
+requires:
+  - batho_plugin.core
+data:
+  sets:
+    builtins:
+      - "int"
+      - "u8"
+      - "u16"
+      - "u32"
+      - "u64"
+      - "u128"
+      - "usize"
+      - "i8"
+      - "i16"
+      - "i32"
+      - "i64"
+      - "i128"
+      - "isize"
+      - "f32"
+      - "f64"
+      - "str"
+      - "String"
+      - "bool"
+      - "char"
+      - "Option"
+      - "Some"
+      - "None"
+      - "Result"
+      - "Ok"
+      - "Err"
+      - "Vec"
+      - "Box"
+      - "Rc"
+      - "Arc"
+      - "self"
+      - "Self"
+      - "true"
+      - "false"
+      - "println"
+      - "print"
+      - "format"
+      - "panic"
+    noise_symbols: []
+  maps:
+    comment_syntax:
+      line: ["//"]
+      block: [["/*", "*/"]]
+    lang_to_manager:
+      manager: cargo

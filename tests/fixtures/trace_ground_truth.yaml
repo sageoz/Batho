@@ -1,0 +1,163 @@
+# T6 ground-truth trace manifest (graph-accuracy-overhaul).
+#
+# Each entry asserts a trace_path result on a checked-in fixture repo under
+# tests/fixtures/trace_repos/<repo_fixture>/. The suite copies the fixture to a
+# tmp dir and builds the artifact in-session; `source`/`target` match the
+# entity `name` in agent_views (must be unique within the fixture).
+#
+# Fields:
+#   repo_fixture        directory name under tests/fixtures/trace_repos/
+#   source / target     entity display name (exact or unique "." suffix;
+#                       optional "@ENTITY_TYPE" suffix disambiguates e.g.
+#                       MODULE vs FUNCTION name collisions)
+#   expected_hops       path depth (edges traversed)
+#   expected_edge_kinds ordered relation_type per hop
+#   expect_no_path      true → the tool must return a clean "no path" error
+#   max_depth           optional BFS depth cap override
+traces:
+  # --- py_backend: 8 router→service (FastAPI Depends / receiver_param) ------
+  - repo_fixture: py_backend
+    source: endpoint_get_entity
+    target: GraphService.get_entity
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: endpoint_list_entities
+    target: GraphService.list_entities
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: endpoint_query
+    target: GraphService.query_graph
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: endpoint_file_graph
+    target: GraphService.get_file_graph
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: endpoint_overview
+    target: GraphService.overview_stats
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: endpoint_resolve
+    target: GraphService.resolve_repo
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: endpoint_delete
+    target: GraphService.delete_repo
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: endpoint_export
+    target: GraphService.export_graph
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+
+  # --- py_backend: 4 service→service ----------------------------------------
+  - repo_fixture: py_backend
+    source: GraphService.get_entity
+    target: lookup_repo
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: GraphService.list_entities
+    target: count_repos
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: GraphService.query_graph
+    target: register_repo
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: GraphService.delete_repo
+    target: remove_repo
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+
+  # --- py_backend: 4 cross-layer (endpoint→schema→service) -------------------
+  - repo_fixture: py_backend
+    source: endpoint_create
+    target: validate_entity_payload
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: endpoint_create
+    target: normalize_name
+    expected_hops: 2
+    expected_edge_kinds: [CALLS, CALLS]
+  - repo_fixture: py_backend
+    source: endpoint_search
+    target: validate_query_payload
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: py_backend
+    source: endpoint_search
+    target: check_name
+    expected_hops: 2
+    expected_edge_kinds: [CALLS, CALLS]
+
+  # --- py_backend: 2 negative ------------------------------------------------
+  - repo_fixture: py_backend
+    source: orphan_b@FUNCTION
+    target: validate_query_payload
+    expect_no_path: true
+  - repo_fixture: py_backend
+    source: orphan_a@FUNCTION
+    target: GraphService.get_entity
+    expect_no_path: true
+
+  # --- ts_frontend: 4 component→hook→client ----------------------------------
+  - repo_fixture: ts_frontend
+    source: GraphPanel@FUNCTION
+    target: useGraphEntity@FUNCTION
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: ts_frontend
+    source: useGraphEntity@FUNCTION
+    target: getEntity@FUNCTION
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: ts_frontend
+    source: GraphPanel@FUNCTION
+    target: getEntity@FUNCTION
+    expected_hops: 2
+    expected_edge_kinds: [CALLS, CALLS]
+  - repo_fixture: ts_frontend
+    source: RepoList@FUNCTION
+    target: listEntities@FUNCTION
+    expected_hops: 2
+    expected_edge_kinds: [CALLS, CALLS]
+
+  # --- synthetic_min: checked-in minimal repo (no external-repo dependency) --
+  - repo_fixture: synthetic_min
+    source: a
+    target: b
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: synthetic_min
+    source: a
+    target: c
+    expected_hops: 2
+    expected_edge_kinds: [CALLS, CALLS]
+
+  # --- per-language call-expression families --------------------------------
+  - repo_fixture: rust_min
+    source: main@FUNCTION
+    target: helper@FUNCTION
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: go_min
+    source: main@FUNCTION
+    target: helper@FUNCTION
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]
+  - repo_fixture: java_min
+    source: App.run@METHOD
+    target: App.process@METHOD
+    expected_hops: 1
+    expected_edge_kinds: [CALLS]

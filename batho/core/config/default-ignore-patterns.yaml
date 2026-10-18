@@ -50,11 +50,27 @@ patterns:
 
   # Lock files
   - "uv.lock"
+  - "pnpm-lock.yaml"
   - "package-lock.json"
   - "yarn.lock"
+  - "bun.lockb"
+  - "bun.lock"
+  - "deno.lock"
+  - "flake.lock"
   - "poetry.lock"
+  - "pdm.lock"
   - "Cargo.lock"
   - "Gemfile.lock"
+  - "composer.lock"
+  - "packages.lock.json"
+  - "Pipfile.lock"
+  - "conda-lock.yml"
+
+  # Generated build metadata, sourcemaps, and minified bundles
+  - "*.tsbuildinfo"
+  - "*.map"
+  - "*.min.js"
+  - "*.min.css"
 
   # Batho's own files and directories
   - "batho.yaml"
@@ -66,6 +82,10 @@ patterns:
   - ".kilo/"
   - ".devin/"
   - ".windsurf/"
+  - ".cursor/"
+  - ".claude/"
+  - ".codeium/"
+  - ".specs/"
 
   # Framework build directories
   - ".next/"
@@ -75,4 +95,8 @@ patterns:
   # Coverage cache
   - "coverage/"
   - "htmlcov/"
+
+  # Other tooling outputs (knowledge-graph / code-intel tools)
+  - "graphify-out/"
+  - ".graphify/"
 

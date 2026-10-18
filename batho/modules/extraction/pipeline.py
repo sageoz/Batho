@@ -25,9 +25,7 @@ from batho.modules.storage.cache.unified_cache import (
 )
 from batho.modules.extraction.extractor import ASTExtractor
 from batho.core.schemas import Entity, EntityType, FileSnapshot, Relationship
-from batho.modules.extraction.symbol_table import FileSymbolTable
 from batho.utils.file_io import read_file_bytes
-from batho.utils.hash import _is_binary
 from batho.utils.logging import configure_logging, get_logger
 from batho.utils.memory_monitor import cap_workers_by_ram
 
@@ -35,11 +33,15 @@ logger = get_logger(__name__, component="pipeline")
 _WORKER_LOGGING_INITIALIZED = False
 _WORKER_CACHE: BathoCache | None = None
 _WORKER_RULES_CACHE: list[Any] | None = None
+_WORKER_PLUGIN_HOST: Any | None = None  # T22: PluginHost for stage dispatch (T11)
 _WORKER_ROOT_PATH: str | None = None
 _WORKER_ZSTD_COMPRESSOR: Any | None = None
+_WORKER_HOOKS_METADATA: bool = False  # T33: plugins.telemetry.hooks_metadata
 
 # Language → package-manager name for the same-dir multi-manifest tiebreak
 # (T3). Only managers that manifests actually produce are mapped.
+# Compiled-in fallback for --no-plugins; language packs carry the canonical
+# ``lang_to_manager`` data (spec §7.4).
 _LANG_TO_MANAGER: dict[str, str] = {
     "python": "pip",
     "javascript": "npm",
@@ -48,6 +50,26 @@ _LANG_TO_MANAGER: dict[str, str] = {
     "go": "go",
     "java": "maven",
 }
+
+
+def _lang_to_manager(lang: str) -> str | None:
+    """Language-pack ``lang_to_manager`` lookup; engine map is the fallback."""
+    try:
+        from batho_plugin.runtime import get_active_plugin_host
+
+        host = get_active_plugin_host()
+    except Exception:
+        host = None
+    if host is not None:
+        try:
+            manager = (host.get_map("lang_to_manager", language=lang) or {}).get(
+                "manager"
+            )
+            if manager:
+                return str(manager)
+        except Exception as exc:
+            logger.debug("lang_to_manager_pack_lookup_failed", lang=lang, error=str(exc))
+    return _LANG_TO_MANAGER.get(lang)
 
 
 def _package_for_file(
@@ -73,7 +95,7 @@ def _package_for_file(
         get_language_for_extension,
     )
     lang = get_language_for_extension(p.suffix.lower()) or ""
-    manager = _LANG_TO_MANAGER.get(lang)
+    manager = _lang_to_manager(lang)
 
     cur = p.parent
     result: dict | None = None
@@ -180,6 +202,16 @@ def _serialize_extraction_result(
                 "type": e.type.value,
                 "file": filepath,
                 "parent_id": e.parent_id,
+                # T1: signature rides hollow topology so receiver-type
+                # resolution can read param annotations / return types
+                # (`svc: GraphService`, `-> GraphService`) at graph-build
+                # time without raw_content.
+                "signature": e.signature,
+                # T1 position-aware assignment binding: stub.start_line must
+                # be the real call-site line so Source 5 can order bindings
+                # (latest assignment at or before the call wins).
+                "start_line": e.start_line,
+                "end_line": e.end_line,
             }
             # Preserve stub resolution metadata if present
             if e.is_contextual_stub:
@@ -423,9 +455,10 @@ def _initialize_worker(
     rules_config: dict[str, Any] | None = None,
     ast_cache_dir: str | None = None,
     parsing_config: dict[str, Any] | None = None,
+    plugin_host: Any = None,
 ) -> None:
     """Apply configured logging, initialize cache, and pre-load BSG rules once per worker process."""
-    global _WORKER_LOGGING_INITIALIZED, _WORKER_CACHE, _WORKER_RULES_CACHE, _WORKER_ROOT_PATH, _WORKER_ZSTD_COMPRESSOR
+    global _WORKER_LOGGING_INITIALIZED, _WORKER_CACHE, _WORKER_RULES_CACHE, _WORKER_PLUGIN_HOST, _WORKER_ROOT_PATH, _WORKER_ZSTD_COMPRESSOR, _WORKER_HOOKS_METADATA
 
     import gc
     gc.set_threshold(50000, 50, 50)
@@ -467,13 +500,68 @@ def _initialize_worker(
         except Exception as exc:
             logger.warning("worker_cache_init_failed", cache_path=cache_path, error=str(exc))
 
+    # Worker ambient state must come from initargs, not the process context:
+    # the pool is spawn-based, so set_active_root / get_config_cached would
+    # otherwise resolve the parent's cwd — the wrong repo when --root differs.
+    # Rebind on every call so a reused serial-process run can't leak a stale
+    # root (or its config cache) into this run's hook contexts.
+    if root_path:
+        _WORKER_ROOT_PATH = root_path
+        try:
+            from batho.core.config.loader import set_active_root
+
+            set_active_root(Path(root_path))
+        except Exception as exc:
+            logger.debug("worker_active_root_bind_failed", error=str(exc))
+
     if root_path and rules_config and _WORKER_RULES_CACHE is None:
         try:
-            from batho.modules.compression.rules import load_effective_rules
+            from batho_plugin.rule_engine import load_effective_rules
             _WORKER_RULES_CACHE, _ = load_effective_rules(rules_config, Path(root_path), quiet=True)
-            _WORKER_ROOT_PATH = root_path
         except Exception as exc:
             logger.warning("worker_bsg_rules_init_failed", error=str(exc))
+
+    # T22: preloaded PluginHost for stage dispatch (T11) — dispatched per
+    # file below in the worker loop. An empty host (--no-plugins) binds as
+    # None so extractor call sites take their compiled-in fallbacks; the
+    # binding rebinds whenever a different host arrives because the serial
+    # path reuses this process across runs — a previous run's plugins must
+    # never leak into the next run.
+    _active = (
+        plugin_host
+        if plugin_host is not None and getattr(plugin_host, "plugin_ids", None)
+        else None
+    )
+    if _WORKER_PLUGIN_HOST is not _active:
+        _WORKER_PLUGIN_HOST = _active
+        try:
+            from batho_plugin.runtime import set_active_plugin_host
+            set_active_plugin_host(_active)
+        except Exception as exc:
+            logger.warning("worker_plugin_host_bind_failed", error=str(exc))
+        # Pack sets are per-host — a rebound host invalidates the cached
+        # (language → builtins/noise) pairs from the previous run. A failed
+        # clear would bind the new host to stale pack data — log it.
+        try:
+            from batho.modules.extraction import extractor as _extractor_mod
+
+            _extractor_mod._PRUNE_PACK_SETS_CACHE.clear()
+        except Exception as exc:
+            logger.warning("worker_prune_pack_cache_clear_failed", error=str(exc))
+
+    # T33: bsg.hooks provenance stamping is debug-gated
+    # (plugins.telemetry.hooks_metadata, spec §6.2 E2). Resolved once per
+    # worker — config is process-frozen for a run.
+    try:
+        from batho.core.config import get_config_cached
+
+        _plugins_cfg = get_config_cached().get("plugins", {}) or {}
+        _WORKER_HOOKS_METADATA = bool(
+            (_plugins_cfg.get("telemetry") or {}).get("hooks_metadata", False)
+        )
+    except Exception as exc:
+        logger.debug("worker_hooks_metadata_read_failed", error=str(exc))
+        _WORKER_HOOKS_METADATA = False
 
     # Initialize zstd compressor once per worker for reuse across files
     if _WORKER_ZSTD_COMPRESSOR is None:
@@ -617,18 +705,57 @@ def process_file_single_pass_worker(
             package=pkg,
         )
 
+        # T11: plugin stage dispatch (per-file stages, canonical order).
+        # Hooks mutate entity metadata in place; with no host (or no-op
+        # hooks) behavior is byte-identical to the pre-plugin engine.
+        # AST-alive stages (ON_COMMENT_CLASSIFY / ON_PROPERTY_CLASSIFY)
+        # already ran inside parse_file — the tree is dead at this level, so
+        # only ON_POST_ENTITIES dispatches here. Provenance marks recorded by
+        # the in-parse dispatch arrive via file_extractor._last_hook_marks.
+        if _WORKER_PLUGIN_HOST is not None:
+            try:
+                from batho_plugin import PluginContext, Stage
+                from pathlib import Path as _P
+
+                _ctx = PluginContext(
+                    file_path=filepath,
+                    root_path=_P(_WORKER_ROOT_PATH or "."),
+                    language=getattr(file_extractor, "_language_name", None),
+                    source_bytes=content,
+                    entities=list(entities),
+                )
+                # Merge marks recorded by the in-parse dispatch (same Entity
+                # objects → same id() keys; post_entities marks union in via
+                # setdefault below).
+                _ctx.hook_marks.update(
+                    getattr(file_extractor, "_last_hook_marks", None) or {}
+                )
+                _WORKER_PLUGIN_HOST.dispatch(Stage.ON_POST_ENTITIES, _ctx)
+
+                # T33: bsg.hooks provenance (E2, spec §6.2) — debug-gated by
+                # plugins.telemetry.hooks_metadata. The stamp lives in SDK
+                # code so the bsg.* namespace stays plugin-owned.
+                if _WORKER_HOOKS_METADATA and _ctx.hook_marks:
+                    _ctx.apply_hook_marks()
+            except Exception as exc:
+                logger.warning(
+                    "worker_plugin_dispatch_failed", filepath=filepath, error=str(exc)
+                )
+
         # Apply BSG rules per-file in parallel (before serialization)
         file_security_audit: dict[str, Any] = {}
         local_hits = {"rules_applied": 0, "entities_tagged": 0, "rules_loaded": 0}
+        file_rule_perf: dict[str, dict[str, int]] = {}
         if _WORKER_RULES_CACHE:
             try:
-                from batho.modules.compression.rules import apply_bsg_rules_to_entities
+                from batho_plugin.rule_engine import apply_bsg_rules_to_entities
                 entities, file_security_audit = apply_bsg_rules_to_entities(
                     entities=entities,
                     relationships=relationships,
                     rules=_WORKER_RULES_CACHE,
                     root_path=_WORKER_ROOT_PATH or str(file_path.parent),
                     file_path=filepath,
+                    perf_out=file_rule_perf,
                 )
             except Exception as exc:
                 logger.warning(
@@ -664,6 +791,7 @@ def process_file_single_pass_worker(
             file_security_audit=file_security_audit,
         )
         local_hits["rules_loaded"] = len(_WORKER_RULES_CACHE) if _WORKER_RULES_CACHE else 0
+        local_hits["rule_perf"] = file_rule_perf
 
         return (filepath, content_hash, hollow_bytes, rel_bytes, agent_blob, storage_blob, global_manifest, file_security_audit, local_hits)
     except Exception as exc:
@@ -753,6 +881,7 @@ def extract_and_emit_parallel(
     ast_cache_dir: str | None = None,
     progress_callback: Callable[[int], None] | None = None,
     package_map: dict[str, list[dict]] | None = None,
+    plugin_host: Any = None,
 ) -> tuple[list[tuple[str, bytes, bytes, list[dict]]], int, dict[str, Any]]:
     """
     Process files in parallel to parse and emit compressed binary representations
@@ -798,14 +927,54 @@ def extract_and_emit_parallel(
         identity_fp = hashlib.sha256(
             orjson.dumps(package_map, option=orjson.OPT_SORT_KEYS)
         ).hexdigest()[:12]
+    rules_config = bsg_cfg.get("rules", {})
+    root_path = bsg_cfg.get("root_path")
+
+    # Rules dimension of the cache variant: per-file rules stamp metadata
+    # onto entities inside workers before set_ast, so a changed rule set
+    # must invalidate cached entries or stale (un-enriched) entities return.
+    rules_fingerprint = ""
+    if root_path:
+        try:
+            from batho_plugin.rule_engine import rules_fingerprint_for_config
+            rules_fingerprint = rules_fingerprint_for_config(
+                rules_config, Path(root_path)
+            )
+        except Exception as exc:
+            logger.warning("bsg_rules_fingerprint_failed", error=str(exc))
+
+    # T15: plugin dimension of the cache variant (spec §9). AST-stage hooks
+    # stamp metadata inside the worker before set_ast, so a changed plugin
+    # set must invalidate cached entries or hook-derived metadata resurfaces
+    # stale. Gated by plugins.fingerprint_in_cache (default true).
+    # An empty host (--no-plugins) normalizes to None — same contract as
+    # codegraph's self._plugin_host — so identical logical states share one
+    # cache variant instead of fragmenting on sha256-of-empty.
+    active_plugin_host = (
+        plugin_host
+        if plugin_host is not None and getattr(plugin_host, "plugin_ids", None)
+        else None
+    )
+    plugin_fingerprint = ""
+    if active_plugin_host is not None:
+        try:
+            from batho.core.config import get_config_cached
+
+            plugins_cfg = get_config_cached().get("plugins", {}) or {}
+            if plugins_cfg.get("fingerprint_in_cache", True):
+                from batho_plugin.fingerprint import fingerprint_from_host
+
+                plugin_fingerprint = fingerprint_from_host(active_plugin_host)
+        except Exception as exc:
+            logger.warning("plugin_fingerprint_failed", error=str(exc))
+
     cache_variant = _build_ast_cache_variant(
         include_gaps=include_gaps,
         parsing_config=bsg_cfg.get("parsing", {}),
         identity_fingerprint=identity_fp,
+        rules_fingerprint=rules_fingerprint,
+        plugin_fingerprint=plugin_fingerprint,
     )
-
-    rules_config = bsg_cfg.get("rules", {})
-    root_path = bsg_cfg.get("root_path")
 
     raw_results = []
     error_count = 0
@@ -822,13 +991,31 @@ def extract_and_emit_parallel(
             return _package_for_file(rel, package_map, pkg_dir_cache)
         return package_dict
 
+    # Oversize outline mode: files over the configured limit but within the
+    # hard outline cap are still indexed (definitions + references) rather
+    # than dropped from the graph entirely — a partial view beats a hole.
+    # `indexer.oversize_mode`: "skip" (legacy) or "outline" (default).
+    from batho.core.config import get_config_cached as _get_cfg
+
+    _indexer_cfg = _get_cfg().get("indexer", {})
+    _oversize_mode = str(_indexer_cfg.get("oversize_mode", "outline")).lower()
+    _oversize_cap_kb = int(_indexer_cfg.get("oversize_outline_max_kb", 4096))
+
+    def _effective_size_kb(size: int) -> int | None:
+        """Per-file read cap: configured limit, or the outline cap for
+        oversize-but-bounded files when outline mode is on. None = skip."""
+        if size <= configured_max_file_size_kb * 1024:
+            return configured_max_file_size_kb
+        if _oversize_mode == "outline" and size <= _oversize_cap_kb * 1024:
+            return _oversize_cap_kb
+        return None
+
     if not parallel_enabled or len(candidates) == 0:
         logger.info("parallel_disabled_or_empty_candidates")
         # Initialize the global worker variables for the current (main) process
-        from batho.core.config import get_config_cached
-        worker_log_config = dict(get_config_cached().get("logging", {}))
+        worker_log_config = dict(_get_cfg().get("logging", {}))
         worker_parsing_config = bsg_cfg.get("parsing", {})
-        _initialize_worker(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir, worker_parsing_config)
+        _initialize_worker(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir, worker_parsing_config, active_plugin_host)
 
         for file_path, filepath in candidates:
             try:
@@ -840,7 +1027,8 @@ def extract_and_emit_parallel(
                 _tick(filepath)
                 continue
 
-            if size > configured_max_file_size_kb * 1024:
+            eff_kb = _effective_size_kb(size)
+            if eff_kb is None:
                 logger.warning(
                     "file_exceeds_max_size_limit",
                     filepath=filepath,
@@ -849,6 +1037,12 @@ def extract_and_emit_parallel(
                 )
                 _tick(filepath)
                 continue
+            if eff_kb != configured_max_file_size_kb:
+                logger.info(
+                    "oversize_outline_extracted",
+                    filepath=filepath,
+                    size_bytes=size,
+                )
 
             res = process_file_single_pass_worker(
                 file_path,
@@ -858,7 +1052,7 @@ def extract_and_emit_parallel(
                 cache_enabled,
                 cache_path,
                 ttl_days,
-                configured_max_file_size_kb,
+                eff_kb,
                 bsg_cache_cfg,
                 cache_variant=cache_variant,
                 index_id=index_id,
@@ -906,7 +1100,8 @@ def extract_and_emit_parallel(
                 error_count += 1
                 _tick(filepath)
                 continue
-            if size > configured_max_file_size_kb * 1024:
+            eff_kb = _effective_size_kb(size)
+            if eff_kb is None:
                 logger.warning(
                     "file_exceeds_max_size_limit",
                     filepath=filepath,
@@ -915,6 +1110,12 @@ def extract_and_emit_parallel(
                 )
                 _tick(filepath)
                 continue
+            if eff_kb != configured_max_file_size_kb:
+                logger.info(
+                    "oversize_outline_extracted",
+                    filepath=filepath,
+                    size_bytes=size,
+                )
             candidate_sizes.append(size)
             work_items.append((
                 file_path,
@@ -924,7 +1125,7 @@ def extract_and_emit_parallel(
                 cache_enabled,
                 cache_path,
                 ttl_days,
-                configured_max_file_size_kb,
+                eff_kb,
                 bsg_cache_cfg,
                 cache_variant,
                 index_id,
@@ -954,7 +1155,7 @@ def extract_and_emit_parallel(
             with ctx.Pool(
                 processes=actual_workers,
                 initializer=_initialize_worker,
-                initargs=(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir, worker_parsing_config),
+                initargs=(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir, worker_parsing_config, active_plugin_host),
             ) as pool:
                 for filepath, res in pool.imap_unordered(
                     _process_file_worker_wrapper, work_items, chunksize=chunk_size
@@ -976,7 +1177,7 @@ def extract_and_emit_parallel(
             from batho.core.config import get_config_cached
             worker_log_config = dict(get_config_cached().get("logging", {}))
             worker_parsing_config = bsg_cfg.get("parsing", {})
-            _initialize_worker(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir, worker_parsing_config)
+            _initialize_worker(worker_log_config, cache_path, root_path, rules_config, ast_cache_dir, worker_parsing_config, active_plugin_host)
 
             for item in work_items:
                 res = process_file_single_pass_worker(*item)

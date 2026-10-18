@@ -1,7 +1,24 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
+
+# Reference-site ids embed a line anchor (`unresolved:…@74::target`) —
+# normalize it away for changelog pairing so a line shift doesn't re-id
+# every reference site. Parameter-hash suffixes (`helper_[ef2e96]`) are
+# stripped from display names for the same reason.
+_LINE_ANCHOR = re.compile(r"@\d+::")
+_PARAM_HASH = re.compile(r"_\[[0-9a-fA-F]+\]")
+
+TRACKED_FIELDS = ("signature", "start_line", "end_line", "entity_type")
+
+
+def _get_val(e: Any, key: str) -> Any:
+    if isinstance(e, dict):
+        return e.get(key)
+    return getattr(e, key, None)
+
 
 @dataclass
 class NodeDiff:
@@ -26,12 +43,28 @@ class NodeDiff:
             "new_hash": self.new_hash,
         }
 
-TRACKED_FIELDS = ("signature", "start_line", "end_line", "entity_type")
 
-def _get_val(e: Any, key: str) -> Any:
-    if isinstance(e, dict):
-        return e.get(key)
-    return getattr(e, key, None)
+def _get_type(e: Any) -> str:
+    """Type as a plain string, from either shape.
+
+    dicts carry ``entity_type``; Entity objects carry a ``type`` enum —
+    comparing one against the other reported every node as
+    modified[entity_type] (phantom diffs against plugins_apply bases).
+    Enum values unwrap via ``.name``; dict-shaped values via ``["name"]``.
+    """
+    v = _get_val(e, "entity_type")
+    if v is None:
+        v = _get_val(e, "type")
+    if v is None:
+        return ""
+    if isinstance(v, dict):
+        v = v.get("name") or ""
+    return str(getattr(v, "name", v))
+
+
+def _display_name(e: Any) -> str:
+    return _get_val(e, "name") or ""
+
 
 def diff_file_nodes(
     old_entities: list[Any],
@@ -46,7 +79,13 @@ def diff_file_nodes(
     3. Deep diff on hash mismatch: Compare TRACKED_FIELDS only; emit NodeDiff(kind="modified").
     4. Rename heuristic: Match removed_ids ↔ added_ids by exact content_hash. If matched:
        emit kind="renamed" with changed_fields={"old_id": old_id}.
-    5. Pure adds/removes: Emit remaining added_ids and removed_ids.
+    5. Line-stable pairing: contextual-stub ids embed `@<line>`; pair
+       remaining removed↔added by the line-stripped id so pure line shifts
+       surface as modified, not as remove+add churn.
+    6. Same-name pairing: remaining removed↔added with equal raw (hash-stripped)
+       names are the same symbol with a new id (signature/param-hash change) —
+       emit kind="modified" with the id swap instead of add+remove pairs.
+    7. Pure adds/removes: Emit remaining added_ids and removed_ids.
     """
     old_map = {_get_val(e, "id"): e for e in old_entities if _get_val(e, "id") is not None}
     new_map = {_get_val(e, "id"): e for e in new_entities if _get_val(e, "id") is not None}
@@ -67,19 +106,22 @@ def diff_file_nodes(
 
         changed_fields = {}
         for f in TRACKED_FIELDS:
-            old_val = _get_val(old_ent, f)
-            new_val = _get_val(new_ent, f)
+            old_val = _get_type(old_ent) if f == "entity_type" else _get_val(old_ent, f)
+            new_val = _get_type(new_ent) if f == "entity_type" else _get_val(new_ent, f)
             if old_val != new_val:
                 changed_fields[f] = [old_val, new_val]
 
+        if not changed_fields and old_ch and new_ch and old_ch != new_ch:
+            # Body-only edit: no tracked field moved, but the entity's own
+            # source bytes changed — record it so history isn't silent.
+            changed_fields["content_hash"] = [old_ch[:8], new_ch[:8]]
+
         if changed_fields:
-            name = _get_val(new_ent, "name") or ""
-            type_str = _get_val(new_ent, "type") or _get_val(new_ent, "entity_type") or ""
             diffs.append(
                 NodeDiff(
                     entity_id=eid,
-                    entity_name=name,
-                    entity_type=str(type_str),
+                    entity_name=_display_name(new_ent),
+                    entity_type=_get_type(new_ent),
                     file_path=file_path,
                     change_kind="modified",
                     changed_fields=changed_fields,
@@ -111,13 +153,11 @@ def diff_file_nodes(
             matched_added.add(aid)
             matched_removed.add(rid)
 
-            name = _get_val(new_ent, "name") or ""
-            type_str = _get_val(new_ent, "type") or _get_val(new_ent, "entity_type") or ""
             diffs.append(
                 NodeDiff(
                     entity_id=aid,
-                    entity_name=name,
-                    entity_type=str(type_str),
+                    entity_name=_display_name(new_ent),
+                    entity_type=_get_type(new_ent),
                     file_path=file_path,
                     change_kind="renamed",
                     changed_fields={"old_id": rid},
@@ -126,20 +166,106 @@ def diff_file_nodes(
                 )
             )
 
-    # 3. Pure adds and removes
     remaining_added = added_ids - matched_added
     remaining_removed = removed_ids - matched_removed
 
-    for aid in sorted(remaining_added):
-        new_ent = new_map[aid]
-        ch = _get_val(new_ent, "content_hash")
-        name = _get_val(new_ent, "name") or ""
-        type_str = _get_val(new_ent, "type") or _get_val(new_ent, "entity_type") or ""
+    # 2b. Line-stable pairing for anchored reference-site ids: pair the
+    # k-th removed occurrence of a line-stripped id with the k-th added
+    # occurrence — deterministic (sorted) and immune to line shifts.
+    def _anchorless(eid: str) -> str:
+        return _LINE_ANCHOR.sub("@::", eid)
+
+    def _anchor_line(eid: str) -> int | None:
+        m = re.search(r"@(\d+)::", eid)
+        return int(m.group(1)) if m else None
+
+    rem_by_anchor: dict[str, list[str]] = {}
+    for rid in sorted(remaining_removed, key=lambda r: (_anchorless(r), _anchor_line(r) or 0)):
+        rem_by_anchor.setdefault(_anchorless(rid), []).append(rid)
+    add_by_anchor: dict[str, list[str]] = {}
+    for aid in sorted(remaining_added, key=lambda a: (_anchorless(a), _anchor_line(a) or 0)):
+        add_by_anchor.setdefault(_anchorless(aid), []).append(aid)
+
+    for key in sorted(set(rem_by_anchor) & set(add_by_anchor)):
+        pairs = min(len(rem_by_anchor[key]), len(add_by_anchor[key]))
+        for _ in range(pairs):
+            rid = rem_by_anchor[key].pop(0)
+            aid = add_by_anchor[key].pop(0)
+            matched_added.add(aid)
+            matched_removed.add(rid)
+            old_ent, new_ent = old_map[rid], new_map[aid]
+            changed_fields: dict[str, Any] = {"id": [rid, aid]}
+            old_line, new_line = _anchor_line(rid), _anchor_line(aid)
+            if old_line is not None and new_line is not None and old_line != new_line:
+                changed_fields["line"] = [old_line, new_line]
+            diffs.append(
+                NodeDiff(
+                    entity_id=aid,
+                    entity_name=_display_name(new_ent),
+                    entity_type=_get_type(new_ent),
+                    file_path=file_path,
+                    change_kind="modified",
+                    changed_fields=changed_fields,
+                    old_hash=None,
+                    new_hash=None,
+                )
+            )
+
+    remaining_added = added_ids - matched_added
+    remaining_removed = removed_ids - matched_removed
+
+    # 2c. Same-name pairing: equal raw (hash-stripped) display names in the
+    # same file are the same symbol under a new id (param-hash/signature
+    # change) — emit modified with the id swap rather than add+remove pairs.
+    def _raw_name(e: Any) -> str:
+        return _PARAM_HASH.sub("", _display_name(e))
+
+    rem_by_name: dict[str, list[str]] = {}
+    for rid in sorted(remaining_removed, key=lambda r: _raw_name(old_map[r])):
+        rem_by_name.setdefault(_raw_name(old_map[rid]), []).append(rid)
+
+    for aid in sorted(remaining_added, key=lambda a: _raw_name(new_map[a])):
+        name_key = _raw_name(new_map[aid])
+        bucket = rem_by_name.get(name_key)
+        if not bucket:
+            continue
+        rid = bucket.pop(0)
+        matched_added.add(aid)
+        matched_removed.add(rid)
+        old_ent, new_ent = old_map[rid], new_map[aid]
+        changed_fields = {"id": [rid, aid]}
+        for f in TRACKED_FIELDS:
+            old_val = _get_type(old_ent) if f == "entity_type" else _get_val(old_ent, f)
+            new_val = _get_type(new_ent) if f == "entity_type" else _get_val(new_ent, f)
+            if old_val != new_val:
+                changed_fields[f] = [old_val, new_val]
+        old_ch = _get_val(old_ent, "content_hash") or ""
+        new_ch = _get_val(new_ent, "content_hash") or ""
         diffs.append(
             NodeDiff(
                 entity_id=aid,
-                entity_name=name,
-                entity_type=str(type_str),
+                entity_name=_display_name(new_ent),
+                entity_type=_get_type(new_ent),
+                file_path=file_path,
+                change_kind="modified",
+                changed_fields=changed_fields,
+                old_hash=old_ch[:8] if old_ch else None,
+                new_hash=new_ch[:8] if new_ch else None,
+            )
+        )
+
+    remaining_added = added_ids - matched_added
+    remaining_removed = removed_ids - matched_removed
+
+    # 3. Pure adds and removes
+    for aid in sorted(remaining_added):
+        new_ent = new_map[aid]
+        ch = _get_val(new_ent, "content_hash")
+        diffs.append(
+            NodeDiff(
+                entity_id=aid,
+                entity_name=_display_name(new_ent),
+                entity_type=_get_type(new_ent),
                 file_path=file_path,
                 change_kind="added",
                 changed_fields={},
@@ -151,13 +277,11 @@ def diff_file_nodes(
     for rid in sorted(remaining_removed):
         old_ent = old_map[rid]
         ch = _get_val(old_ent, "content_hash")
-        name = _get_val(old_ent, "name") or ""
-        type_str = _get_val(old_ent, "type") or _get_val(old_ent, "entity_type") or ""
         diffs.append(
             NodeDiff(
                 entity_id=rid,
-                entity_name=name,
-                entity_type=str(type_str),
+                entity_name=_display_name(old_ent),
+                entity_type=_get_type(old_ent),
                 file_path=file_path,
                 change_kind="removed",
                 changed_fields={},

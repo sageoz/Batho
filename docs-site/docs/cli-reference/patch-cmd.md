@@ -11,6 +11,8 @@ Detect changes natively and apply incremental updates to an existing Batho artif
 
 Unlike legacy versions of Batho, `batho patch` detects changes natively using content hashing (SHA-256) of files against the Arrow `file_tracking` table, eliminating false positives from uncommitted files. It only parses modified or added files and removes references to deleted files, keeping the hypergraph up to date with minimal processing time.
 
+When the plugin fingerprint differs from the previous run (a plugin was added, removed, or reconfigured), the change set escalates to every tracked file — a full-repo re-extraction so entities on unchanged files are re-stamped under the current plugin set. Controlled by `plugins.reextract_on_drift` (default `true`; set `false` for warn-only). Escalated runs log a `patch_drift_escalation` warning with tracked/scanned/synthesized counts and scale extraction workers up to `bsg.parallel.max_workers` (a single worker when `bsg.parallel.enabled` is `false`). Synthesized entries respect the patch ignore spec and repository containment, and the AST cache is cleared wholesale so no stale entries survive the plugin change.
+
 ## Usage
 
 ```bash
@@ -67,3 +69,12 @@ If no changes are detected since the last index/patch, it outputs:
 ```
 No changes detected.
 ```
+
+## Limitations
+
+Derived cross-file edges — `OVERRIDES` (from `CONTAINS`+`INHERITS`) and doc→module
+`RATIONALE_FOR` (markdown path mentions) — are computed over the patch batch only.
+A changed doc that mentions an *unchanged* module, or an override spanning a changed
+file and an unchanged file, emits no edge until the next full `batho build`, which
+re-derives them over the complete entity set. Run a periodic full build to refresh
+these annotation edges.

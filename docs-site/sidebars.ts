@@ -38,9 +38,12 @@ const sidebars: SidebarsConfig = {
         'cli-reference/export-cmd',
         'cli-reference/load-cmd',
         'cli-reference/fix-cmd',
-        'cli-reference/diff-cmd',
+        'cli-reference/history-cmd',
         'cli-reference/gc-cmd',
         'cli-reference/mcp-cmd',
+        'cli-reference/install-cmd',
+        'cli-reference/plugins-cmd',
+        'cli-reference/communities-cmd',
       ],
     },
     {

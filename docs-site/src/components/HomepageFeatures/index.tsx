@@ -24,8 +24,9 @@ const FeatureList: FeatureItem[] = [
     ),
     description: (
       <>
-        Python, TypeScript, Rust, Go, Java, and more. Batho parses 40+ languages
-        so your AI agent understands your entire codebase — no blind spots.
+        Python, TypeScript, Rust, Go, Java, and more. Batho parses 34 languages
+        & config formats so your AI agent understands your entire codebase — no
+        blind spots.
       </>
     ),
     link: '/docs/whitepaper/code-graph',

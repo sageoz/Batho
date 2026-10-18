@@ -1,0 +1,38 @@
+# batho_plugin/core/noise_paths.yaml — generated/vendor/noise path markers.
+#
+# Single source for "is this path generated noise?" (PLUGIN_ARCHITECTURE_SPEC
+# §5 row 6): the engine's gap report reads these sets via the host
+# (``get_set``) instead of a private ``_NOISE_FILE_PATTERNS`` literal. Markers
+# are substring matches on the POSIX-rel path; suffixes are endswith matches
+# on the full path.
+plugin_id: noise-paths
+version: "1.0.0"
+class: core
+requires:
+  - batho_plugin.core
+data:
+  sets:
+    noise_path_markers:
+      - ".batho/"
+      - "graphify-out/"
+      - "node_modules/"
+      - "dist/"
+      - "build/"
+      - "vendor/"
+      - ".venv/"
+      - "venv/"
+      - "__pycache__/"
+      - ".tox/"
+      - "package-lock.json"
+      - "yarn.lock"
+      - "pipfile.lock"
+      - "poetry.lock"
+      - "cargo.lock"
+      - "go.sum"
+      - "gemfile.lock"
+      - ".tsbuildinfo"
+    noise_suffixes:
+      - ".lock"
+      - ".tsbuildinfo"
+      - ".min.js"
+      - ".map"
